@@ -1,0 +1,18 @@
+services:
+  luckfox-builder:
+    build:
+      context: .
+      args:
+        UID: ${CURRENT_UID:-1000}
+        GID: ${CURRENT_GID:-1000}
+    image: luckfox-builder:22.04
+    container_name: luckfox_oko_build_env
+    environment:
+      - TFTP_ROOT=/workspace/output/image
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    tty: true
+    stdin_open: true
+    # Критически важно для TFTP: используем сетевой стек хоста напрямую
+    network_mode: host
