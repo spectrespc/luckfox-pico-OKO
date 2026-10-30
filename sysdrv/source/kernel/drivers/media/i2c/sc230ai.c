@@ -1763,11 +1763,17 @@ static int sc230ai_probe(struct i2c_client *client,
 		return -EINVAL;
 	}
 
-	sc230ai->reset_gpio = devm_gpiod_get(dev, "reset", GPIOD_ASIS);
+	if (!sc230ai->is_thunderboot)
+		sc230ai->reset_gpio = devm_gpiod_get(dev, "reset", GPIOD_OUT_LOW);
+	else
+		sc230ai->reset_gpio = devm_gpiod_get(dev, "reset", GPIOD_ASIS);
 	if (IS_ERR(sc230ai->reset_gpio))
 		dev_warn(dev, "Failed to get reset-gpios\n");
 
-	sc230ai->pwdn_gpio = devm_gpiod_get(dev, "pwdn", GPIOD_ASIS);
+	if (!sc230ai->is_thunderboot)
+		sc230ai->pwdn_gpio = devm_gpiod_get(dev, "pwdn", GPIOD_OUT_LOW);
+	else
+		sc230ai->pwdn_gpio = devm_gpiod_get(dev, "pwdn", GPIOD_ASIS);
 	if (IS_ERR(sc230ai->pwdn_gpio))
 		dev_warn(dev, "Failed to get pwdn-gpios\n");
 
