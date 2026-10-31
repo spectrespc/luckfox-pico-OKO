@@ -1851,14 +1851,16 @@ fi
 # Netboot: oem/userdata come from the host NFS export instead of SPI NAND.
 # Server and path are parsed from the kernel cmdline (nfsroot=<host>:<path>,opts).
 if [ "\$mountpt" != "IGNORE" ] && [ -d "\$mountpt" ] && grep -q 'root=/dev/nfs' /proc/cmdline 2>/dev/null; then
-	nfs_srv=\$(sed -n 's#.*nfsroot=\([^:]*\):[^,]*.*#\1#p' /proc/cmdline)
-	nfs_dir=\$(sed -n 's#.*nfsroot=[^:]*:\([^, ]*\),.*#\1#p' /proc/cmdline)
+	nfs_srv=\$(sed -n 's#.*nfsroot=\([^:]*\):[^, ]*.*#\1#p' /proc/cmdline)
+	nfs_dir=\$(sed -n 's#.*nfsroot=[^:]*:\([^, ]*\).*#\1#p' /proc/cmdline)
 	if [ -n "\$nfs_srv" ] && [ -n "\$nfs_dir" ]; then
 		mount -t nfs -o vers=3,proto=tcp,nolock,soft,timeo=50,retrans=3 "\$nfs_srv:\$nfs_dir/.nfsroot/\$partname" "\$mountpt" && {
 			echo "netboot: \$partname from nfs \$nfs_srv:\$nfs_dir/.nfsroot"
 			return 0
 		}
 		echo "netboot: nfs mount \$partname failed, fallback to \$bootmedium"
+	else
+		echo "netboot: cannot parse nfsroot from cmdline, fallback to \$bootmedium"
 	fi
 fi
 

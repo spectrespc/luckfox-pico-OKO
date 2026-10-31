@@ -121,19 +121,26 @@ boot_fit ${ramdisk_addr_r}
 1. `./start.sh` — собрать/запустить контейнер, поднять TFTP на `69/udp`.
 2. Убедиться, что NFS экспортирует `/srv/nfs/rootfs` и в `output/image` есть
    актуальный `boot.img`.
-3. Выложить свежую сборку на хост (корень, `oem`, `userdata`):
+3. Выложить свежую сборку на хост (корень, `oem`, `userdata`). Экспорт идёт с
+   `no_root_squash`, поэтому устройство оставляет в дереве файлы `root:root`
+   (`/var/lib/seedrng`, `/userdata/rkipc.ini`, `/userdata/video*`); синхронизацию
+   выполняйте от root — например, из того же контейнера:
    ```sh
-   tar -C /srv/nfs -czf /srv/nfs/rootfs-backup-$(date +%Y%m%d-%H%M).tar.gz rootfs
-   rsync -a --delete --exclude='.nfsroot' output/out/rootfs_uclibc_rv1106/ /srv/nfs/rootfs/
-   mkdir -p /srv/nfs/rootfs/.nfsroot
-   rsync -a --delete output/out/oem/      /srv/nfs/rootfs/.nfsroot/oem/
-   rsync -a --delete output/out/userdata/ /srv/nfs/rootfs/.nfsroot/userdata/
-   mkdir -p /srv/nfs/rootfs/.nfsroot/userdata/data
-   chmod -R 777 /srv/nfs/rootfs/.nfsroot/userdata
-   chmod -R a+rX /srv/nfs/rootfs/.nfsroot/oem
+   docker run --rm -u 0 -v /srv/nfs:/srv/nfs \
+     -v "$PWD/output/out:/src:ro" --entrypoint bash luckfox-builder:22.04 -c '
+     ts=$(date +%Y%m%d-%H%M)
+     tar -C /srv/nfs -czf /srv/nfs/rootfs-backup-$ts.tar.gz rootfs
+     rsync -a --delete --exclude=.nfsroot /src/rootfs_uclibc_rv1106/ /srv/nfs/rootfs/
+     mkdir -p /srv/nfs/rootfs/.nfsroot
+     rsync -a --delete /src/oem/ /srv/nfs/rootfs/.nfsroot/oem/
+     rsync -a --delete /src/userdata/ /srv/nfs/rootfs/.nfsroot/userdata/
+     mkdir -p /srv/nfs/rootfs/.nfsroot/userdata/data
+     chmod -R 777 /srv/nfs/rootfs/.nfsroot/userdata
+     chmod -R a+rX /srv/nfs/rootfs/.nfsroot/oem'
    ```
    `/.nfsroot/` находится внутри того же экспорта, поэтому правка `/etc/exports`
-   не нужна. `--exclude='.nfsroot'` не даёт удалить зеркала разделов при синхронизации.
+   не нужна. `--exclude=.nfsroot` не даёт удалить зеркала разделов при синхронизации.
+   Эквивалентный вариант — те же команды через `sudo` от пользователя `builder`.
 4. На хосте:
    ```sh
    mkdir -p /tmp/kilo

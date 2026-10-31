@@ -33,7 +33,8 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 - Netboot-монтирование `oem` и `userdata` с хоста: `mount_part()` в генерируемом
   `project/build.sh` `S20linkmount` при `root=/dev/nfs` монтирует
   `<host>:<nfsroot>/.nfsroot/<раздел>` по NFS (сервер и путь парсятся из
-  `nfsroot=` в `/proc/cmdline`); при ошибке — откат на ubifs из SPI NAND.
+  `nfsroot=` в `/proc/cmdline`, в том числе без завершающих опций; при неудачном
+  разборе печатается причина); при ошибке монтирования — откат на ubifs из SPI NAND.
 - `RkLunch.sh`: ветка выбора `/oem/usr/share/rkipc-300w.ini` для сенсора
   `sc230ai` (раньше `post_chk` завершался с `Error: not found rkipc.ini !!!`).
 - `RkLunch.sh`: в netboot (`nfsroot=` в cmdline) `network_init` не меняет MAC и
