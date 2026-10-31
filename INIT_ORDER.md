@@ -40,8 +40,10 @@ BootROM → U-Boot → ядро Linux → busybox init → init-скрипты �
 
 1. **Прошивка SPI NAND** — самодостаточный вариант: ядро и корневая ФС находятся во flash.
 2. **Netboot** — рабочий вариант текущей конфигурации: ядро (`boot.img`) загружается по
-   TFTP, корневая ФС монтируется по NFS с хоста. Разделы `oem` и `userdata` при этом
-   по-прежнему берутся из SPI NAND (см. раздел 4, `S20linkmount`).
+   TFTP, корневая ФС монтируется по NFS с хоста. Разделы `oem` и `userdata` в netboot
+   также берутся с хоста: `S20linkmount` монтирует их по NFS из
+   `<host>:<nfsroot>/.nfsroot/{oem,userdata}` (см. раздел 4). Если NFS-монтирование
+   раздела не удалось, скрипт откатывается на прежнее поведение — ubifs из SPI NAND.
 
 После того как корневая ФС смонтирована и запущен busybox init, инициализация обоих
 вариантов идентична.
@@ -121,9 +123,10 @@ Docker-сборщик через `docker compose` — `build` + `up -d` — и �
 | 18 | `S99hciinit` | `hciattach` для AIC8800 и поднятие `wlan0` | зависит от `aic8800_fdrv` |
 | 19 | `S99luckfoxconfigload` | `luckfox-config load` — восстановление настроек | `/userdata` |
 | 20 | `S99luckfoxcustomoverlay` | применение пользовательского DT-overlay из `/mnt/cfg` | `dtc`, `configfs` |
-| 21 | `S99python` | запуск `/root/main.py` или `/root/boot.py` | `/usr/bin/python` |
-| 22 | `S99rtcinit` | калибровка RTC при «нулевом» времени | — |
-| 23 | `S99usb0config` | назначение IP `172.32.0.93` интерфейсу `usb0` | может перезапускать `S50usbdevice` |
+| 21 | `S99oko-test` | тестовый маркер OKO: пишет `/tmp/oko-test-ok` и строку в `/dev/kmsg` | оверлей OKO, `MARKER` в скрипте |
+| 22 | `S99python` | запуск `/root/main.py` или `/root/boot.py` | `/usr/bin/python` |
+| 23 | `S99rtcinit` | калибровка RTC при «нулевом» времени | — |
+| 24 | `S99usb0config` | назначение IP `172.32.0.93` интерфейсу `usb0` | может перезапускать `S50usbdevice` |
 
 `S20linkmount` генерируется в `project/build.sh` (при разборе таблицы разделов) в файл
 `$RK_PROJECT_OUTPUT/S20linkmount` с `bootmedium=$RK_BOOT_MEDIUM`. Для `spi_nand` он:
@@ -134,8 +137,19 @@ Docker-сборщик через `docker compose` — `build` + `up -d` — и �
 - монтирует `oem` → `/oem` и `userdata` → `/userdata` как ubifs, при необходимости
   выполняя `ubiattach`/`ubimkvol`.
 
-В netboot-режиме корень приходит по NFS, но `S20linkmount` всё равно поднимает `oem` и
-`userdata` из SPI NAND — приложение и его данные остаются на flash.
+В netboot-режиме (`root=/dev/nfs` в `/proc/cmdline`) `mount_part()` сначала пытается
+смонтировать `oem` и `userdata` по NFS:
+
+- сервер и путь берутся из `nfsroot=<host>:<path>` в `/proc/cmdline`, хардкода нет;
+- монтируется `<host>:<path>/.nfsroot/<partname>` с опциями
+  `vers=3,proto=tcp,nolock,soft,timeo=50,retrans=3`;
+- успешное монтирование печатает `netboot: <partname> from nfs <host>:<path>/.nfsroot`;
+- при ошибке NFS печатается `netboot: nfs mount <partname> failed, fallback to spi_nand`
+  и выполняется прежняя ветка — ubifs с SPI NAND.
+
+`rootfs` в этой ветке не участвует (`mountpt=IGNORE`), NAND при удачном NFS-монтировании
+не трогается. Зеркала разделов на хосте — `<nfsroot>/.nfsroot/{oem,userdata}`; их
+содержимое обновляется из `output/out/oem` и `output/out/userdata` после сборки.
 
 > **Критическая зависимость:** `S20linkmount` обязан выполниться раньше `S21appinit`.
 > `RkLunch.sh` читает `/oem/usr/bin`, `/oem/usr/ko`, `/oem/usr/share`, пишет в
@@ -172,15 +186,17 @@ esac
 2. Выбирает каталог модулей: `/oem/usr/ko`, если там есть `insmod_ko.sh`, иначе `/ko`,
    и выполняет `sh insmod_ko.sh` (раздел 6).
 3. Запускает `network_init &`: берёт MAC из `/data/ethaddr.txt` (при отсутствии —
-   сохраняет текущий), поднимает `eth0`, запускает `udhcpc -i eth0`.
+   сохраняет текущий), поднимает `eth0`, запускает `udhcpc -i eth0`. При netboot
+   (`nfsroot=` в `/proc/cmdline`) шаг пропускается: адрес уже задан параметром `ip=`,
+   а смена MAC или DHCP-адреса разрывает NFS-соединения корня и `/oem`/`/userdata`.
 4. Создаёт симлинки для веб-интерфейса: `/userdata → /oem/usr/www/userdata`,
    `/media/usb0 → /oem/usr/www/usb0`, `/mnt/sdcard → /oem/usr/www/sdcard`.
 5. Готовит `rkipc.ini`:
    - если `/oem/usr/share/rkipc.ini` отсутствует, фабричный ini выбирается по
      загруженному сенсору (`lsmod`): `mia1321` → `rkipc-mia1321-100w.ini`,
      `mis5001` → `rkipc-mis5001-500w.ini`, `sc530ai` → `rkipc-500w.ini`,
-     `sc4336` → `rkipc-400w.ini`, `sc3336` → `rkipc-300w.ini`,
-     `imx415` → `rkipc-800w.ini`;
+     `sc4336` → `rkipc-400w.ini`, `sc230ai` → `rkipc-300w.ini`,
+     `sc3336` → `rkipc-300w.ini`, `imx415` → `rkipc-800w.ini`;
    - выбранный файл копируется в `/userdata/rkipc.ini`;
    - если ни один вариант не найден, печатается `Error: not found rkipc.ini !!!`
      и `post_chk` завершается с ошибкой.
@@ -191,10 +207,10 @@ esac
    запуска rkipc (требуется перезагрузка).
 8. Запускает `rkipc -a /oem/usr/share/iqfiles &` (или `rkipc &`, если каталога IQ нет).
 
-> **Особенность SC230AI в текущей сборке:** отдельной ветки для `sc230ai` в выборе ini
-> нет, а файл `/oem/usr/share/rkipc.ini` в артефакте отсутствует. Без добавления
-> `rkipc.ini` (или отдельного правила выбора) `post_chk` завершится ошибкой и `rkipc`
-> не стартует. Это ограничение скрипта, а не ошибка описанного порядка.
+> **Особенность SC230AI:** отдельной ветки выбора ini долго не было — исправлено:
+> `post_chk` сопоставляет `sc230ai` шаблону `/oem/usr/share/rkipc-300w.ini`
+> (сенсор 3 МП, ближайшая геометрия). Если `rkipc` стартует с некорректной геометрией,
+> шаблон подбирается отдельно.
 
 ## 6. Порядок загрузки модулей ядра (`insmod_ko.sh`)
 
@@ -234,7 +250,9 @@ AIC8800 (`aic_load_fw` → `aic8800_fdrv`), AP6XXX (`bcmdhd`), RTL8723BS
 ### Разделы и файловая система
 
 - `S20linkmount` → `S21appinit`: без смонтированных `/oem` и `/userdata` `RkLunch.sh`
-  не найдёт `/oem/usr/bin/RkLunch.sh`, модули и IQ-файлы.
+  не найдёт `/oem/usr/bin/RkLunch.sh`, модули и IQ-файлы. Источник этих разделов зависит
+  от загрузки: SPI NAND → ubifs с flash, netboot → NFS `<host>:<nfsroot>/.nfsroot/*`
+  (fallback — снова NAND).
 - `/etc/iqfiles` — симлинк на `../oem/usr/share/iqfiles`, создаётся при упаковке
   (`build.sh`); `rkipc` запускается с `-a /oem/usr/share/iqfiles` напрямую.
 - `rkipc.ini` хранится в `/userdata` (переживает перепрошивку), фабричный шаблон — в
@@ -272,7 +290,8 @@ AIC8800 (`aic_load_fw` → `aic8800_fdrv`), AP6XXX (`bcmdhd`), RTL8723BS
 ### Сеть
 
 - `RkLunch.sh` поднимает `eth0` и `udhcpc` в фоне параллельно с `S40network` /
-  `S41dhcpcd`. MAC-адрес фиксируется в `/data/ethaddr.txt`.
+  `S41dhcpcd`. MAC-адрес фиксируется в `/data/ethaddr.txt`. В netboot DHCP не
+  запускается: адрес берётся из `ip=` в cmdline (иначе смена IP рвёт NFS-корень).
 - `S49ntp`, `S50sshd`, `S50telnet` рассчитывают на уже поднятую сеть.
 - В netboot-режиме сеть нужна ещё до старта userspace — на этапе U-Boot (TFTP) и ядра
   (NFS-root).

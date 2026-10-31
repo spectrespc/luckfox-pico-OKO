@@ -24,8 +24,28 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ## [Не выпущено]
 
+### Добавлено
+
+- Тестовый маркер `S99oko-test` в оверлее `overlay-luckfox-buildroot-init`:
+  скрипт пишет `/tmp/oko-test-ok` (`marker=OKO-TEST-2026.10-01`, uptime, версия
+  ядра) и строку `OKO-TEST: …` в `/dev/kmsg`; доказывает, что загружена сборка
+  после этой правки.
+- Netboot-монтирование `oem` и `userdata` с хоста: `mount_part()` в генерируемом
+  `project/build.sh` `S20linkmount` при `root=/dev/nfs` монтирует
+  `<host>:<nfsroot>/.nfsroot/<раздел>` по NFS (сервер и путь парсятся из
+  `nfsroot=` в `/proc/cmdline`); при ошибке — откат на ubifs из SPI NAND.
+- `RkLunch.sh`: ветка выбора `/oem/usr/share/rkipc-300w.ini` для сенсора
+  `sc230ai` (раньше `post_chk` завершался с `Error: not found rkipc.ini !!!`).
+- `RkLunch.sh`: в netboot (`nfsroot=` в cmdline) `network_init` не меняет MAC и
+  не запускает `udhcpc` — статический адрес из `ip=` сохраняется, NFS-соединения
+  корня и разделов не разрываются.
+
 ### Изменено
 
+- `INIT_ORDER.md`: источник `oem`/`userdata` при netboot, ветка `S20linkmount`,
+  строка `S99oko-test` в порядке init-скриптов, поведение сети при netboot.
+- `TESTBENCH.md`: `.nfsroot` внутри экспорта `/srv/nfs/rootfs`, деплой rsync с
+  бэкапом, проверки маркера и NFS-монтирований, статический IP в netboot.
 - `INIT_ORDER.md`: зафиксировано условие, что сборка прошивки OKO выполняется в
   Docker-контейнере `luckfox_oko_build_env` (`docker compose build` / `up -d`,
   запуск через `start.sh`); в разделе источников сборки добавлена строка про

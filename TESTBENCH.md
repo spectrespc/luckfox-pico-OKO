@@ -8,7 +8,7 @@ Pro Max (RV1106) в режиме netboot. Значения сверены с `ne
 
 | Поле | Значение |
 |---|---|
-| Дата обновления | `2026-10-29` |
+| Дата обновления | `2026-10-31` |
 | Ответственный | `<ФИО>` |
 | Статус | активен |
 | Назначение | сборка прошивки и загрузка по сети (TFTP + NFS) для отладки IPC |
@@ -38,7 +38,7 @@ Pro Max (RV1106) в режиме netboot. Значения сверены с `ne
 | Сеть контейнера | `network_mode: host` (общий сетевой стек с хостом) |
 | Рабочая папка | `/workspace` (корень репозитория смонтирован туда) |
 | TFTP-сервер | `tftpd-hpa`, порт `69/udp`, корень `./output/image` (`/workspace/output/image`) |
-| NFS-расшарка | `/srv/nfs/rootfs` (настраивается на хосте, в репозиторий не входит) |
+| NFS-расшарка | `/srv/nfs/rootfs` (настраивается на хосте, в репозиторий не входит); внутри — `.nfsroot/{oem,userdata}` |
 | Запуск окружения | `./start.sh` |
 
 ## 4. Подключения
@@ -85,7 +85,10 @@ boot_fit ${ramdisk_addr_r}
 - TFTP-корень отдаёт `output/image`, поэтому `boot.img` должен быть результатом
   свежей сборки (`./build.sh` внутри контейнера).
 - NFS-сервер должен экспортировать `/srv/nfs/rootfs` с поддержкой NFSv3 и TCP.
-- Разделы `oem` и `userdata` при netboot читаются из SPI NAND, а не с хоста.
+- Разделы `oem` и `userdata` при netboot монтируются по NFS из
+  `<host>:<nfsroot>/.nfsroot/{oem,userdata}`; при ошибке NFS — откат на ubifs из SPI NAND.
+- Экспорт хоста: `/srv/nfs/rootfs 192.168.52.0/24(rw,sync,no_subtree_check,no_root_squash,insecure)`.
+  `no_root_squash` позволяет устройству писать в `/userdata` без правки прав.
 
 ## 6. Учётные данные
 
@@ -118,14 +121,27 @@ boot_fit ${ramdisk_addr_r}
 1. `./start.sh` — собрать/запустить контейнер, поднять TFTP на `69/udp`.
 2. Убедиться, что NFS экспортирует `/srv/nfs/rootfs` и в `output/image` есть
    актуальный `boot.img`.
-3. На хосте:
+3. Выложить свежую сборку на хост (корень, `oem`, `userdata`):
+   ```sh
+   tar -C /srv/nfs -czf /srv/nfs/rootfs-backup-$(date +%Y%m%d-%H%M).tar.gz rootfs
+   rsync -a --delete --exclude='.nfsroot' output/out/rootfs_uclibc_rv1106/ /srv/nfs/rootfs/
+   mkdir -p /srv/nfs/rootfs/.nfsroot
+   rsync -a --delete output/out/oem/      /srv/nfs/rootfs/.nfsroot/oem/
+   rsync -a --delete output/out/userdata/ /srv/nfs/rootfs/.nfsroot/userdata/
+   mkdir -p /srv/nfs/rootfs/.nfsroot/userdata/data
+   chmod -R 777 /srv/nfs/rootfs/.nfsroot/userdata
+   chmod -R a+rX /srv/nfs/rootfs/.nfsroot/oem
+   ```
+   `/.nfsroot/` находится внутри того же экспорта, поэтому правка `/etc/exports`
+   не нужна. `--exclude='.nfsroot'` не даёт удалить зеркала разделов при синхронизации.
+4. На хосте:
    ```sh
    mkdir -p /tmp/kilo
    python3 netboot-catch.py
    ```
-4. Сбросить питание устройства. Скрипт пробивает U-Boot, отправляет команды из
+5. Сбросить питание устройства. Скрипт пробивает U-Boot, отправляет команды из
    `CMDS`, грузит `boot.img` по TFTP и выполняет `boot_fit`.
-5. Смотреть лог `/tmp/kilo/netboot-run4.log`. Лимит сессии — 900 секунд.
+6. Смотреть лог `/tmp/kilo/netboot-run4.log`. Лимит сессии — 900 секунд.
 
 Ручной вариант в консоли U-Boot — те же команды, что в `CMDS` файла
 `netboot-catch.py` (`setenv …`, `ping 192.168.52.200`, `tftp`, `boot_fit`).
@@ -135,6 +151,9 @@ boot_fit ${ramdisk_addr_r}
 Чек-лист после загрузки (по SSH `root@192.168.52.150` или UART):
 
 ```sh
+# маркер тестовой сборки (S99oko-test)
+cat /tmp/oko-test-ok
+
 # модули медиастека и сенсора
 lsmod | grep -E 'sc230ai|rockit|rga3|rknpu|video_rkisp'
 
@@ -148,8 +167,9 @@ ps | grep rkipc
 ifconfig eth0
 ip route
 
-# разделы смонтированы (netboot: oem/userdata из SPI NAND)
-mount | grep -E '/oem|/userdata'
+# разделы смонтированы: type nfs, источник 192.168.52.200:/srv/nfs/rootfs/.nfsroot/*
+# в консоли: netboot: oem from nfs … / netboot: userdata from nfs …
+mount | grep -E ' /oem | /userdata '
 
 # логи
 ls -l /tmp/*.log /data/core-* 2>/dev/null
@@ -163,6 +183,7 @@ dmesg | tail -50
 | Нет загрузки по TFTP | не запущен контейнер/TFTP, неверный `serverip`, `boot.img` отсутствует в `output/image` |
 | Ядро загрузилось, нет корня | не экспортирован `/srv/nfs/rootfs`, firewall, несовпадение `nfsroot` |
 | `rkipc` не стартует | нет `rkipc.ini` для сенсора или не смонтирован `/oem` (см. `INIT_ORDER.md`) |
+| `netboot: nfs mount … failed, fallback` | `.nfsroot` не создан/не синхронизирован, нет доступа к TCP 2049, неверный `nfsroot` в cmdline |
 | Нет `/dev/video*` | `insmod_ko.sh` не выполнился или `sc230ai.ko` отсутствует |
 | `motor.ko` не грузится | ожидаемо: драйвер выключен в конфигурации |
 
@@ -175,8 +196,17 @@ dmesg | tail -50
 - `insmod_ko.sh` вызывается из `RkLunch.sh`, который запускает `S21appinit`;
   каталог `/oem/usr/etc/init.d/` пуст, вся логика приложения зашита в `post_chk`.
   Подробнее — `INIT_ORDER.md`.
-- В `post_chk` нет ветки выбора `rkipc.ini` для `sc230ai`: без подготовки
-  `/userdata/rkipc.ini` приложение завершится с `Error: not found rkipc.ini !!!`.
+- `post_chk` выбирает для `sc230ai` шаблон `/oem/usr/share/rkipc-300w.ini`
+  (сенсор 3 МП). Если геометрия кадра окажется некорректной, ini подбирается отдельно.
+- При netboot `oem` и `userdata` берутся с хоста из `/srv/nfs/rootfs/.nfsroot/`, а не из
+  SPI NAND. Изменения, сделанные на устройстве в `/userdata`, попадают в это NFS-дерево;
+  NAND-разделы не затрагиваются. При недоступности NFS скрипт откатывается на NAND.
+- В netboot сеть статическая: адрес задаётся `ip=` в `sys_bootargs`, а
+  `network_init` в `RkLunch.sh` не запускает `udhcpc` и не меняет MAC. Иначе смена
+  адреса рвёт TCP-соединения NFS-корня и система зависает на жёстком NFS-монтировании.
+  Штатный `S41dhcpcd` при этом продолжает работать и может добавить вторичный
+  DHCP-адрес (`ip route` показывает его как `src`); статический `.150` и NFS-монтирования
+  сохраняются.
 - Docker использует `network_mode: host`, поэтому порт `69/udp` на хосте должен
   быть свободен.
 

@@ -1,0 +1,10 @@
+#!/bin/sh
+# OKO test marker: доказывает, что загрузилась прошивка, собранная после этой правки.
+MARKER="OKO-TEST-2026.10-01"
+{
+    echo "marker=$MARKER"
+    echo "uptime=$(cut -d' ' -f1 /proc/uptime)"
+    echo "kernel=$(uname -r)"
+} > /tmp/oko-test-ok 2>/dev/null
+echo "OKO-TEST: $MARKER" > /dev/kmsg 2>/dev/null
+exit 0
