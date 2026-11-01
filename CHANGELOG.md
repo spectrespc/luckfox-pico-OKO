@@ -188,6 +188,10 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   `./rkflash.sh update` (the script flashes nothing without an argument) and links
   to the per-partition mode; the `/bench` command now lists the flashing modes and
   `divinus` in its checklist.
+- `TESTBENCH.md`: зафиксировано покрытие шрифта `simsun_en` — ASCII `0x21–0x7e`
+  и несколько CJK-иероглифов, кириллицы нет; текст OSD пишется латиницей.
+- `TESTBENCH.md`: documented the `simsun_en` font coverage — ASCII `0x21–0x7e`
+  plus a few CJK characters, no Cyrillic; OSD text must be Latin.
 
 
 ### Исправлено

@@ -299,7 +299,9 @@ dmesg | tail -50
   `reg1` — эмуляция телеметрии (GPS/температура/батарея) раз в 15 с,
   `reg2` — внешний текст из `/tmp/osd.fifo` с TTL 60 с. Провайдер `@file` —
   локальный патч `region.c`; данные пишет демон `oko-osd`, сеть в канале не
-  участвует. Шрифт — `/oem/usr/share/simsun_en.ttf` (`regN_font: simsun_en`).
+  участвует. Шрифт — `/oem/usr/share/simsun_en.ttf` (`regN_font: simsun_en`):
+  покрытие — ASCII `0x21–0x7e` плюс несколько CJK-иероглифов, кириллицы в шрифте
+  нет, поэтому сообщения и телеметрию пишите латиницей.
   OSD виден в RTSP (VENC-канал 0); snapshots `/image.jpg` кодируются отдельным
   VENC-каналом и OSD не содержат — ограничение RGN на RV1106.
 - `S20oko-osd` перезаписывает `/userdata/divinus.yaml` фабричным, если в нём нет
