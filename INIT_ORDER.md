@@ -109,24 +109,25 @@ Docker-сборщик через `docker compose` — `build` + `up -d` — и �
 | 4 | `S02sysctl` | применение `/etc/sysctl.conf` | `/proc` уже смонтирован |
 | 5 | `S10udev` | eudev, создание узлов устройств | должен пройти до монтирования по `by-name` |
 | 6 | `S20linkmount` | симлинки `/dev/block/by-name`, монтирование `oem`/`userdata` | ключевой этап, см. ниже |
-| 7 | `S20urandom` | сохранение/восстановление seed urandom | — |
-| 8 | `S21appinit` | `sh /oem/usr/bin/RkLunch.sh` | **требует смонтированных `/oem` и `/userdata`** |
-| 9 | `S35iptables` | правила firewall | сеть ещё не обязательна |
-| 10 | `S40network` | базовая настройка сети | — |
-| 11 | `S41dhcpcd` | DHCP-клиент | после `S40network` |
-| 12 | `S49ntp` | синхронизация времени | требует рабочей сети |
-| 13 | `S50sshd` | SSH-сервер | сеть |
-| 14 | `S50telnet` | telnet-сервер | сеть |
-| 15 | `S50usbdevice` | настройка USB-режима (gadget) | — |
-| 16 | `S60micinit` | настройка микрофонного тракта через `amixer` | аудио-модули ядра |
-| 17 | `S99_auto_reboot` | скрипты rockchip_test (auto-reboot / power-lost) | `/oem/rockchip_test`, `/data/cfg` |
-| 18 | `S99hciinit` | `hciattach` для AIC8800 и поднятие `wlan0` | зависит от `aic8800_fdrv` |
-| 19 | `S99luckfoxconfigload` | `luckfox-config load` — восстановление настроек | `/userdata` |
-| 20 | `S99luckfoxcustomoverlay` | применение пользовательского DT-overlay из `/mnt/cfg` | `dtc`, `configfs` |
-| 21 | `S99oko-test` | тестовый маркер OKO: пишет `/tmp/oko-test-ok` и строку в `/dev/kmsg` | оверлей OKO, `MARKER` в скрипте |
-| 22 | `S99python` | запуск `/root/main.py` или `/root/boot.py` | `/usr/bin/python` |
-| 23 | `S99rtcinit` | калибровка RTC при «нулевом» времени | — |
-| 24 | `S99usb0config` | назначение IP `172.32.0.93` интерфейсу `usb0` | может перезапускать `S50usbdevice` |
+| 7 | `S20oko-osd` | divinus по умолчанию (`/userdata/divinus.enable`, opt-out — `/userdata/rkipc.enable`), бутстрап OSD-конфига, запуск `oko-osd` | оверлей OKO; после `S20linkmount`, до `S21appinit` |
+| 8 | `S20urandom` | сохранение/восстановление seed urandom | — |
+| 9 | `S21appinit` | `sh /oem/usr/bin/RkLunch.sh` | **требует смонтированных `/oem` и `/userdata`** |
+| 10 | `S35iptables` | правила firewall | сеть ещё не обязательна |
+| 11 | `S40network` | базовая настройка сети | — |
+| 12 | `S41dhcpcd` | DHCP-клиент | после `S40network` |
+| 13 | `S49ntp` | синхронизация времени | требует рабочей сети |
+| 14 | `S50sshd` | SSH-сервер | сеть |
+| 15 | `S50telnet` | telnet-сервер | сеть |
+| 16 | `S50usbdevice` | настройка USB-режима (gadget) | — |
+| 17 | `S60micinit` | настройка микрофонного тракта через `amixer` | аудио-модули ядра |
+| 18 | `S99_auto_reboot` | скрипты rockchip_test (auto-reboot / power-lost) | `/oem/rockchip_test`, `/data/cfg` |
+| 19 | `S99hciinit` | `hciattach` для AIC8800 и поднятие `wlan0` | зависит от `aic8800_fdrv` |
+| 20 | `S99luckfoxconfigload` | `luckfox-config load` — восстановление настроек | `/userdata` |
+| 21 | `S99luckfoxcustomoverlay` | применение пользовательского DT-overlay из `/mnt/cfg` | `dtc`, `configfs` |
+| 22 | `S99oko-test` | тестовый маркер OKO: пишет `/tmp/oko-test-ok` и строку в `/dev/kmsg` | оверлей OKO, `MARKER` в скрипте |
+| 23 | `S99python` | запуск `/root/main.py` или `/root/boot.py` | `/usr/bin/python` |
+| 24 | `S99rtcinit` | калибровка RTC при «нулевом» времени | — |
+| 25 | `S99usb0config` | назначение IP `172.32.0.93` интерфейсу `usb0` | может перезапускать `S50usbdevice` |
 
 `S20linkmount` генерируется в `project/build.sh` (при разборе таблицы разделов) в файл
 `$RK_PROJECT_OUTPUT/S20linkmount` с `bootmedium=$RK_BOOT_MEDIUM`. Для `spi_nand` он:
@@ -191,9 +192,15 @@ esac
    а смена MAC или DHCP-адреса разрывает NFS-соединения корня и `/oem`/`/userdata`.
 4. Создаёт симлинки для веб-интерфейса: `/userdata → /oem/usr/www/userdata`,
    `/media/usb0 → /oem/usr/www/usb0`, `/mnt/sdcard → /oem/usr/www/sdcard`.
-5. Проверяет маркер `/userdata/divinus.enable` — переключатель альтернативного
-   стримера OpenIPC `divinus` (MIT, вендорен в `project/app/divinus/`). Если маркер
-   есть:
+5. Проверяет маркер `/userdata/divinus.enable` — переключатель стримера OpenIPC
+   `divinus` (MIT, вендорен в `project/app/divinus/`). Маркер создаётся по
+   умолчанию скриптом `S20oko-osd` (оверлей OKO, выполняется до `S21appinit`);
+   opt-out — файл `/userdata/rkipc.enable`: при его наличии `S20oko-osd` удаляет
+   divinus-маркер, и `post_chk` запускает штатный `rkipc`. Если маркер есть:
+   - `S20oko-osd` заранее бутстрапит `/userdata/divinus.yaml`: при отсутствии
+     файла или отсутствии в нём `reg0_text` (старый/ручной конфиг) файл
+     перезаписывается фабричным `/oem/usr/share/divinus/divinus.yaml` с тремя
+     OSD-регионами (дата/время, телеметрия, внешние сообщения);
    - при отсутствии `/userdata/divinus.yaml` копируется фабричный конфиг
      `/oem/usr/share/divinus/divinus.yaml`;
    - `post_chk` переходит в `/userdata` (конфиг ищется в каталоге исполняемого
@@ -282,10 +289,11 @@ AIC8800 (`aic_load_fw` → `aic8800_fdrv`), AP6XXX (`bcmdhd`), RTL8723BS
 - `luckfox-config` (проверка/установка `csi_unite`);
 - смонтированных `/oem` и `/userdata`.
 
-### Приложение divinus (альтернатива rkipc, opt-in)
+### Приложение divinus (по умолчанию, opt-out через `rkipc.enable`)
 
-`/oem/usr/bin/divinus` запускается из `post_chk` только при наличии
-`/userdata/divinus.enable`:
+`/oem/usr/bin/divinus` запускается из `post_chk` при наличии
+`/userdata/divinus.enable`; маркер создаёт `S20oko-osd`, если нет
+`/userdata/rkipc.enable` (opt-out):
 
 - зависит от тех же `insmod_ko.sh`, `/oem/usr/share/iqfiles` и смонтированных
   `/oem`/`/userdata`; отдельного набора модулей ядра не требует;
@@ -295,10 +303,17 @@ AIC8800 (`aic_load_fw` → `aic8800_fdrv`), AP6XXX (`bcmdhd`), RTL8723BS
 - конфиг — `/userdata/divinus.yaml` (фабричный шаблон —
   `/oem/usr/share/divinus/divinus.yaml`); при старте каталог — `/userdata`, чтобы
   сохранение из WebUI пере-создавало именно этот файл, а не симлинк;
+- OSD-текст с датой/временем рендерится самим divinus (`reg0_text: "$t"`)
+  и виден в RTSP (VENC-канал 0); снимок `/image.jpg` кодируется отдельным
+  VENC-каналом и OSD не содержит (ограничение RGN на RV1106);
+- телеметрия и внешние сообщения — через `@file`-провайдер (локальный патч
+  `region.c`): `/tmp/osd-dyn.txt` и `/tmp/osd-msg.txt` пишет демон `oko-osd`,
+  который запускает `S20oko-osd` вместе с FIFO `/tmp/osd.fifo`;
 - `divinus` использует пропатченный `compat.c` (libc `mmap` с 32-битным `off_t`),
   поэтому дополнительный `LD_PRELOAD` не нужен;
 - `divinus` и `rkipc` используют один rockit/ISP-конвейер, поэтому
-  взаимоисключающие: одновременно не запускаются, выбор — маркером.
+  взаимоисключающие: одновременно не запускаются, выбор — маркерами
+  `divinus.enable`/`rkipc.enable`.
 
 ### Модули ядра
 

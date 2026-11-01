@@ -23,7 +23,21 @@ isp:
   antiflicker: 50
 
 osd:
-  enable: false
+  enable: true
+  # OSD regions (simsun_en.ttf is the only font available in /oem/usr/share).
+  # Global 1 Hz tick: "$t" is re-rendered every second, "@path" regions are
+  # re-rendered when the first line of the file changes (OKO local patch).
+  # reg0: date/time; reg1: simulated telemetry (oko-osd, every 15 s);
+  # reg2: external text from /tmp/osd.fifo (oko-osd, TTL 60 s).
+  reg0_text: "$t"
+  reg0_font: simsun_en
+  reg0_posy: 16
+  reg1_text: "@/tmp/osd-dyn.txt"
+  reg1_font: simsun_en
+  reg1_posy: 64
+  reg2_text: "@/tmp/osd-msg.txt"
+  reg2_font: simsun_en
+  reg2_posy: 112
 
 mdns:
   enable: false

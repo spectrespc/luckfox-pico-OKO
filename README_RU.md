@@ -87,10 +87,12 @@ TFTP-сервер (`tftpd-hpa`) стартует из `docker-entrypoint.sh` н�
 ```sh
 ./build.sh firmware
 # output/image/update.img
-./rkflash.sh          # или tools/linux/Linux_Upgrade_Tool
+./rkflash.sh update   # полный образ; или tools/linux/Linux_Upgrade_Tool
 ```
 
 Устройство переводится в режим Maskrom; затем образ пишется в SPI NAND.
+Для выкатки без полной прошивки (только изменённые разделы `oem`/`rootfs`) —
+`./rkflash.sh oem && ./rkflash.sh rootfs && ./rkflash.sh rd`, см. `TESTBENCH.md` §7C.
 
 **B. Netboot (текущий рабочий режим стенда).**
 
@@ -112,7 +114,7 @@ TFTP-сервер (`tftpd-hpa`) стартует из `docker-entrypoint.sh` н�
 | Файл | Содержание |
 |---|---|
 | `STRUCTURE.md` | структура репозитория: папки, ключевые файлы, назначение |
-| `INIT_ORDER.md` | порядок инициализации: U-Boot → ядро → busybox init → модули → `rkipc` |
+| `INIT_ORDER.md` | порядок инициализации: U-Boot → ядро → busybox init → модули → `divinus`/`rkipc` |
 | `TESTBENCH.md` | паспорт тестового стенда: железо, сеть, учётки, прошивка, диагностика |
 | `CHANGELOG.md` | история изменений OKO-форка (Keep a Changelog + SemVer) |
 | `README.md`, `README_CN.md` | вендорская документация SDK (EN/CN) |
@@ -131,6 +133,10 @@ sh /oem/usr/ko/insmod_ko.sh      # ручная перезагрузка мод�
 - Последовательный порт: `/dev/ttyACM0`, **115200 8N1** (устройство может
   определиться и как `/dev/ttyACM1` — скрипт берёт последний `ttyACM*`).
 - Лог serial-сессии: `/tmp/kilo/netboot-run4.log` (задаётся в `netboot-catch.py`).
+- Стример по умолчанию — `divinus` с включённым OSD (дата/время, телеметрия,
+  сообщения из `/tmp/osd.fifo`); вернуть штатный `rkipc` —
+  `touch /userdata/rkipc.enable && reboot`. Подробности — `INIT_ORDER.md`,
+  `TESTBENCH.md` и `project/app/divinus/README.md`.
 - Драйвер мотора 28BYJ-48: исходники в `sysdrv/drv_ko/motor`, строка
   `__insmod motor.ko` есть в `sysdrv/drv_ko/insmod_ko.sh`, но модуль **пока
   выключен**: `RK_ENABLE_MOTOR` не задан, `motor.ko` не собирается и в

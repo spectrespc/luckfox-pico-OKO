@@ -55,15 +55,22 @@ SC230AI. Драйвер шагового двигателя 28BYJ-48 и прош
 - `build.sh` — основной скрипт сборки SDK.
 - `rkflash.sh` — прошивка собранного образа на плату.
 - `app/` — прикладные приложения: `rkipc` (штатное IPC-приложение), `divinus`
-  (вендоренный OpenIPC-стример, альтернатива rkipc по маркеру), `uvc_app_tiny`,
+  (вендоренный OpenIPC-стример, по умолчанию вместо rkipc), `uvc_app_tiny`,
   `ipcweb` (веб-интерфейс), `rk_smart_door`, `wifi_app`, `fastboot_client`,
   `component` (общие компоненты).
 - `app/divinus/` — пакет `divinus`: `source/` (вендорские `src/`, `res/`, `doc/`,
-  лицензии, пин коммита и патч `compat.c` в `README.md`), `files/divinus.yaml`
-  (фабричный конфиг), `Makefile` (кросс-сборка и стейджинг в `/oem/usr/bin` и
-  `/oem/usr/share/divinus`). Сборка входит в общий цикл `project/app/Makefile`.
+  лицензии, пин коммита и локальные патчи — `compat.c` (ABI `mmap`), `region.c`
+  (`@file`-провайдер текста OSD) и `hal/plus/rk_hal.c`/`rk_rgn.h` (RGN OSD на
+  RV1106); описание патчей — в `README.md`), `files/divinus.yaml` (фабричный
+  конфиг с OSD-регионами), `Makefile` (кросс-сборка и стейджинг в
+  `/oem/usr/bin` и `/oem/usr/share/divinus`). Сборка входит в общий цикл
+  `project/app/Makefile`.
 - `cfg/BoardConfig_IPC/` — конфигурации плат (`BoardConfig-*.mk`), папка `overlay/`
-  с оверлеями rootfs и pre/post-скрипты (`*-pre.sh`, `*-post.sh`).
+  с оверлеями rootfs и pre/post-скрипты (`*-pre.sh`, `*-post.sh`). В оверлее OKO
+  `overlay-luckfox-buildroot-init/`: `etc/init.d/S20oko-osd` (divinus по
+  умолчанию, бутстрап OSD-конфига, запуск демона), `usr/bin/oko-osd`
+  (телеметрия и FIFO-сообщения для OSD) и `etc/init.d/S99oko-test` (маркер
+  тестовой сборки).
 - `cfg-all-items-introduction.txt` — описание всех параметров BoardConfig.
 - `scripts/`, `make_meta/`, `sfc_scripts/` — вспомогательные скрипты сборки и
   упаковки метаданных/разделов.

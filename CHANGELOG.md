@@ -62,6 +62,42 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   скрипт пишет `/tmp/oko-test-ok` (`marker=OKO-TEST-2026.10-01`, uptime, версия
   ядра) и строку `OKO-TEST: …` в `/dev/kmsg`; доказывает, что загружена сборка
   после этой правки.
+- `project/cfg/BoardConfig_IPC/overlay/overlay-luckfox-buildroot-init/`:
+  `etc/init.d/S20oko-osd` (активация `divinus` по умолчанию при отсутствии
+  `/userdata/rkipc.enable`, бутстрап OSD-конфига, создание `/tmp/osd.fifo` и
+  запуск демона) и `usr/bin/oko-osd` (эмуляция GPS/температуры/АКБ в
+  `/tmp/osd-dyn.txt` каждые 15 с; сообщения из FIFO в `/tmp/osd-msg.txt`
+  с TTL 60 с). UART/ADC-оборудование не используется.
+- `project/app/divinus/`: фабричный `divinus.yaml` включает OSD (`reg0` —
+  дата/время `$t`, `reg1` — телеметрия, `reg2` — внешние сообщения) и локальный
+  патч `source/src/region.c`: текст региона `@<path>` рендерится из первой строки
+  файла, перечитывается раз в секунду, обновляет кадр при изменении и гасит
+  регион при пустом/нечитаемом файле.
+- `project/app/divinus/`: локальный патч `source/src/hal/plus/rk_hal.c` и
+  `rk_rgn.h` для OSD на RV1106: преобразование растра `ARGB1555` в `BGRA5551`,
+  выравнивание позиции и размера региона на 16 пикселей, поле `BITMAP_S`
+  перед указателем данных (`pData` на смещении 16 в используемом
+  `librockit.so`), выделение canvas региона и отказ от повторного прикрепления
+  уже прикреплённого региона (иначе `RK_MPI_RGN_SetBitMap` возвращает ошибку,
+  а повторный attach приводит к oops).
+- `project/app/divinus/`: local `source/src/hal/plus/rk_hal.c` and `rk_rgn.h`
+  patch for RV1106 OSD: converts `ARGB1555` text bitmaps to `BGRA5551`, aligns
+  the region position and size to 16 pixels, adds the `BITMAP_S` field before
+  the data pointer (`pData` at offset 16 in the shipped `librockit.so`),
+  allocates the region canvas and skips re-attaching an already attached region
+  (otherwise `RK_MPI_RGN_SetBitMap` fails and a repeated attach leads to an
+  oops).
+- Overlay `overlay-luckfox-buildroot-init`: `etc/init.d/S20oko-osd` (enables
+  `divinus` by default unless `/userdata/rkipc.enable` exists, bootstraps the OSD
+  config, creates `/tmp/osd.fifo`, starts the daemon) and `usr/bin/oko-osd`
+  (simulated GPS/temperature/battery written to `/tmp/osd-dyn.txt` every 15 s;
+  FIFO messages shown in `/tmp/osd-msg.txt` for 60 s). No UART/ADC hardware is
+  used.
+- `project/app/divinus/`: the factory `divinus.yaml` enables OSD (`reg0` —
+  date/time `$t`, `reg1` — telemetry, `reg2` — external messages) and a local
+  `source/src/region.c` patch renders `@<path>` region text from the first line
+  of a file, re-reads it once per second, refreshes the frame on change and
+  hides the region while the file is empty or unreadable.
 - Netboot-монтирование `oem` и `userdata` с хоста: `mount_part()` в генерируемом
   `project/build.sh` `S20linkmount` при `root=/dev/nfs` монтирует
   `<host>:<nfsroot>/.nfsroot/<раздел>` по NFS (сервер и путь парсятся из
@@ -75,6 +111,24 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Изменено
 
+- Поведение запуска стримера: `divinus` стартует по умолчанию — маркер
+  `/userdata/divinus.enable` создаёт `S20oko-osd`; штатный `rkipc` запускается
+  только при opt-out `/userdata/rkipc.enable`. Логика `RkLunch.sh` не менялась.
+- `S20oko-osd` перезаписывает `/userdata/divinus.yaml` фабричным, если в нём нет
+  `reg0_text` (старый или ручной конфиг): ручные правки такого файла не
+  переживают перезагрузку.
+- `INIT_ORDER.md`, `TESTBENCH.md`, `STRUCTURE.md`, `README_RU.md`: divinus по
+  умолчанию, строка `S20oko-osd` в порядке init, OSD-чек-лист и файлы оверлея.
+- Streamer startup: `divinus` now starts by default — `S20oko-osd` creates
+  `/userdata/divinus.enable`; the stock `rkipc` runs only when the
+  `/userdata/rkipc.enable` opt-out marker exists. `RkLunch.sh` itself is
+  unchanged.
+- `S20oko-osd` replaces `/userdata/divinus.yaml` with the factory file when it
+  lacks `reg0_text` (old or hand-edited config); such a file does not survive a
+  reboot.
+- `INIT_ORDER.md`, `TESTBENCH.md`, `STRUCTURE.md`, `README_RU.md`: default
+  divinus startup, the `S20oko-osd` init step, the OSD checklist and the new
+  overlay files.
 - `STRUCTURE.md`: добавлен пакет `project/app/divinus/` (вендорские исходники,
   фабричный конфиг, Makefile) и уточнён состав `project/app/`.
 - `INIT_ORDER.md`: ветка `divinus.enable` в `post_chk` и зависимости `divinus`
@@ -115,6 +169,25 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 - `STRUCTURE.md`: the `.kilo/` description now matches the actual layout (commands, skill,
   plans), OKO documents and `AGENTS.md` were added to the root files list, and
   `.kilo/.gitignore` no longer ignores itself.
+- `TESTBENCH.md`: новый режим «C. Покомпонентная прошивка изменённых разделов» —
+  маппинг исходников на разделы SPI NAND (`oem`, `rootfs`, `userdata`, `boot`),
+  команды `./rkflash.sh oem|rootfs|userdata|rd` из Maskrom, правило «полный
+  `update.img` только при первичной прошивке или смене таблицы разделов, loader,
+  U-Boot env», сверка хешей образов с `.flashed.sha256` и альтернатива сырыми
+  `mtd erase/write` из `sd_update.txt`.
+- `README_RU.md`: в быстром старте прошивка полным образом — `./rkflash.sh update`
+  (без аргумента скрипт ничего не прошивает), добавлена ссылка на покомпонентный
+  режим; команда `/bench` дополнена режимами прошивки и `divinus` в чек-листе.
+- `TESTBENCH.md`: new "C. Per-partition flashing of changed sections" mode — a
+  source-to-SPI-NAND-partition map (`oem`, `rootfs`, `userdata`, `boot`), the
+  `./rkflash.sh oem|rootfs|userdata|rd` commands from Maskrom, the rule that a full
+  `update.img` is only for the first flash or a partition table, loader, or U-Boot
+  env change, image hash comparison against `.flashed.sha256`, and the raw
+  `mtd erase/write` alternative from `sd_update.txt`.
+- `README_RU.md`: the quick start now flashes the full image with
+  `./rkflash.sh update` (the script flashes nothing without an argument) and links
+  to the per-partition mode; the `/bench` command now lists the flashing modes and
+  `divinus` in its checklist.
 
 
 ### Исправлено

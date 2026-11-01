@@ -343,12 +343,22 @@ int rk_region_create(char handle, hal_rect rect, short opacity)
         .device = _rk_venc_dev, .channel = 0 };
     rk_rgn_cnf region, regionCurr;
     rk_rgn_chn attrib, attribCurr;
+    // OKO: the RV1106 overlay requires 16-pixel aligned position and size and
+    // only accepts BGRA5551; text bitmaps are ARGB1555, see rk_region_setbitmap.
+    short px = rect.x & ~15, py = rect.y & ~15;
+    short pw = (rect.width + 15) & ~15, ph = (rect.height + 15) & ~15;
+
+    if (pw < 16) pw = 16;
+    if (ph < 16) ph = 16;
 
     memset(&region, 0, sizeof(region));
     region.type = RK_RGN_TYPE_OVERLAY;
-    region.overlay.pixFmt = RK_PIXFMT_ARGB1555;
-    region.overlay.size.width = rect.width;
-    region.overlay.size.height = rect.height;
+    region.overlay.pixFmt = RK_PIXFMT_BGRA5551;
+    region.overlay.size.width = pw;
+    region.overlay.size.height = ph;
+    // OKO: request the default double canvas explicitly instead of relying on
+    // the library default (0 means "unspecified" in some librockit builds).
+    region.overlay.canvas = 2;
 
     if (rk_rgn.fnGetRegionConfig(handle, &regionCurr)) {
         HAL_INFO("rk_rgn", "Creating region %d...\n", handle);
@@ -364,24 +374,31 @@ int rk_region_create(char handle, hal_rect rect, short opacity)
             return ret;
     }
 
-    if (rk_rgn.fnGetChannelConfig(handle, &channel, &attribCurr))
+    if (rk_rgn.fnGetChannelConfig(handle, &channel, &attribCurr)) {
         HAL_INFO("rk_rgn", "Attaching region %d...\n", handle);
-    else if (attribCurr.overlay.point.x != rect.x || attribCurr.overlay.point.y != rect.y) {
+    } else if (attribCurr.overlay.point.x != px || attribCurr.overlay.point.y != py) {
         HAL_INFO("rk_rgn", "Position has changed, reattaching "
             "region %d...\n", handle);
         rk_rgn.fnDetachChannel(handle, &channel);
+    } else {
+        // OKO: librockit rejects a second attach of the same region to the same
+        // channel; position and size are unchanged, so there is nothing to do.
+        return EXIT_SUCCESS;
     }
 
     memset(&attrib, 0, sizeof(attrib));
     attrib.show = 1;
     attrib.type = RK_RGN_TYPE_OVERLAY;
     attrib.overlay.bgAlpha = 0;
-    attrib.overlay.fgAlpha = opacity >> 1;
-    attrib.overlay.point.x = rect.x;
-    attrib.overlay.point.y = rect.y;
+    attrib.overlay.fgAlpha = opacity;
+    attrib.overlay.point.x = px;
+    attrib.overlay.point.y = py;
     attrib.overlay.layer = 7;
 
-    rk_rgn.fnAttachChannel(handle, &channel, &attrib);
+    ret = rk_rgn.fnAttachChannel(handle, &channel, &attrib);
+    if (ret)
+        HAL_DANGER("rk_rgn", "Attaching region %d to channel %d failed with %#x!\n",
+            handle, channel.channel, ret);
 
     return EXIT_SUCCESS;
 }
@@ -397,11 +414,56 @@ void rk_region_destroy(char handle)
 
 int rk_region_setbitmap(int handle, hal_bitmap *bitmap)
 {
-    rk_rgn_bmp nativeBmp = { .data = bitmap->data, .pixFmt = RK_PIXFMT_ARGB1555,
-        .size.height = bitmap->dim.height,
-        .size.width = bitmap->dim.width };
+    // OKO: the overlay accepts only BGRA5551, the text bitmap is ARGB1555.
+    // Sizes are padded to the required 16-pixel alignment; padding stays
+    // transparent so the visible text does not move.
+    unsigned short w = bitmap->dim.width, h = bitmap->dim.height;
+    unsigned short aw = (w + 15) & ~15, ah = (h + 15) & ~15;
+    unsigned short *src = bitmap->data, *dst;
+    size_t i, count;
+    unsigned int painted = 0;
+    static unsigned int logged;
+    rk_rgn_bmp nativeBmp;
+    int ret;
 
-    return rk_rgn.fnSetBitmap(handle, &nativeBmp);
+    if (aw < 16) aw = 16;
+    if (ah < 16) ah = 16;
+
+    count = (size_t)aw * ah;
+    dst = calloc(count, sizeof(*dst));
+    if (!dst)
+        return EXIT_FAILURE;
+
+    for (i = 0; i < (size_t)w * h; i++) {
+        unsigned short s = src[i];
+        unsigned int r, g, b;
+        size_t row = i / w, col = i % w;
+        if (!(s & 0x8000)) continue;
+        r = (s >> 10) & 0x1F;
+        g = (s >> 5) & 0x1F;
+        b = s & 0x1F;
+        dst[row * aw + col] = (b << 11) | (g << 6) | (r << 1) | 1;
+        painted++;
+    }
+
+    nativeBmp.data = dst;
+    nativeBmp.pixFmt = RK_PIXFMT_BGRA5551;
+    nativeBmp.size.width = aw;
+    nativeBmp.size.height = ah;
+    nativeBmp.stride = aw;
+
+    if (!(logged & (1u << handle))) {
+        logged |= 1u << handle;
+        HAL_INFO("rk_rgn", "Region %d bitmap: %ux%u -> %ux%u, %u px\n",
+            handle, w, h, aw, ah, painted);
+    }
+
+    ret = rk_rgn.fnSetBitmap(handle, &nativeBmp);
+    if (ret)
+        HAL_DANGER("rk_rgn", "SetBitmap on region %d (%ux%u, %u px) failed "
+            "with %#x!\n", handle, aw, ah, painted, ret);
+    free(dst);
+    return ret;
 }
 
 int rk_sensor_find_v4l2_endpoint(void)

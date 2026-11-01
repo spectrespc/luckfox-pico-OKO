@@ -22,6 +22,10 @@ typedef enum {
 typedef struct {
     rk_common_pixfmt pixFmt;
     rk_common_dim size;
+    // OKO: the RV1106 librockit BITMAP_S has a 32-bit field between the size
+    // and the data pointer; without it pData is read at the wrong offset and
+    // RK_MPI_RGN_SetBitMap fails with "Bitmap data is NULL".
+    unsigned int stride;
     void *data;
 } rk_rgn_bmp;
 

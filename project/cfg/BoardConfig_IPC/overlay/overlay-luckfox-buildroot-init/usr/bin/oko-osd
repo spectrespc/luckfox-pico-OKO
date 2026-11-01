@@ -1,0 +1,100 @@
+#!/bin/sh
+#
+# OKO OSD sidecar for divinus.
+#
+# - every 15 s writes simulated telemetry to /tmp/osd-dyn.txt:
+#     GPS <lat>N <lon>E T <t>C BAT <p>%
+#   (divinus reg1 uses an '@file' text provider, see the divinus package)
+# - accepts one-line messages on /tmp/osd.fifo and shows them in
+#   /tmp/osd-msg.txt for 60 s (divinus reg2)
+#
+# All values are simulated: no GPS, UART or ADC hardware is involved.
+
+DYN=/tmp/osd-dyn.txt
+MSG=/tmp/osd-msg.txt
+STAMP=/tmp/osd-msg.ts
+FIFO=/tmp/osd.fifo
+PIDFILE=/tmp/oko-osd.pid
+TTL=60
+
+lat=550000 # 55.0000 N, units of 1/10000 degree
+lon=373000 # 37.3000 E
+temp=24
+bat=100
+tick=0
+
+cleanup() {
+	rm -f "$PIDFILE"
+	exit 0
+}
+trap cleanup TERM INT
+
+echo $$ >"$PIDFILE"
+
+if [ ! -p "$FIFO" ]; then
+	rm -f "$FIFO"
+	mkfifo -m 666 "$FIFO"
+fi
+
+# Opening the FIFO read-write never blocks and keeps external writers working.
+# With no data the read becomes a one-second sleep, which is also the loop
+# period; a kill removes the only process, so no reader can be orphaned.
+if ! exec 3<>"$FIFO"; then
+	rm -f "$PIDFILE"
+	exit 1
+fi
+
+coord() {
+	printf '%d.%04d%s' $(($1 / 10000)) $(($1 % 10000)) "$2"
+}
+
+write_dyn() {
+	printf 'GPS %s %s T %dC BAT %d%%\n' \
+		"$(coord "$lat" N)" "$(coord "$lon" E)" "$temp" "$bat" >"$DYN.tmp"
+	mv -f "$DYN.tmp" "$DYN"
+}
+
+write_msg() {
+	printf '%s\n' "$1" | cut -c1-79 >"$MSG.tmp"
+	mv -f "$MSG.tmp" "$MSG"
+	date +%s >"$STAMP"
+}
+
+write_dyn
+
+while :; do
+	if read -t 1 -r line <&3; then
+		[ -n "$line" ] && write_msg "[$(date +%H:%M:%S)] $line"
+	fi
+
+	tick=$((tick + 1))
+
+	if [ $((tick % 15)) -eq 0 ]; then
+		lat=$((lat + RANDOM % 5 - 2))
+		[ "$lat" -lt 1000 ] && lat=1000
+		[ "$lat" -gt 999000 ] && lat=999000
+
+		lon=$((lon + RANDOM % 5 - 2))
+		[ "$lon" -lt 1000 ] && lon=1000
+		[ "$lon" -gt 999000 ] && lon=999000
+
+		temp=$((temp + RANDOM % 3 - 1))
+		[ "$temp" -lt 22 ] && temp=22
+		[ "$temp" -gt 28 ] && temp=28
+
+		if [ $((tick % 60)) -eq 0 ] && [ "$bat" -gt 5 ]; then
+			bat=$((bat - 1))
+		fi
+
+		write_dyn
+	fi
+
+	if [ -f "$STAMP" ]; then
+		now=$(date +%s)
+		then=$(cat "$STAMP")
+		if [ $((now - then)) -ge "$TTL" ]; then
+			: >"$MSG"
+			rm -f "$STAMP"
+		fi
+	fi
+done

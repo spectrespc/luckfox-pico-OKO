@@ -1,0 +1,96 @@
+#!/bin/sh
+#
+# OKO OSD: divinus is the default streamer; OSD sidecar daemon startup.
+#
+# - no /userdata/rkipc.enable  -> create /userdata/divinus.enable (default)
+# - /userdata/rkipc.enable     -> remove /userdata/divinus.enable (opt-out)
+# - /userdata/divinus.yaml without reg0_text (old config) -> factory config
+# - divinus active             -> create /tmp/osd.fifo and start /usr/bin/oko-osd
+#
+# Runs after S20linkmount (lexicographic order) and before S21appinit, so the
+# markers and the config are ready before RkLunch.sh starts the application.
+
+DAEMON=/usr/bin/oko-osd
+FIFO=/tmp/osd.fifo
+PIDFILE=/tmp/oko-osd.pid
+
+wait_userdata() {
+	i=0
+	while [ "$i" -lt 30 ]; do
+		mount | grep -qw /userdata && return 0
+		i=$((i + 1))
+		sleep 0.1
+	done
+	return 1
+}
+
+start_daemon() {
+	if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+		return 0
+	fi
+	if [ ! -p "$FIFO" ]; then
+		rm -f "$FIFO"
+		mkfifo "$FIFO"
+	fi
+	setsid "$DAEMON" >/dev/null 2>&1 &
+}
+
+stop_daemon() {
+	if [ -f "$PIDFILE" ]; then
+		pid=$(cat "$PIDFILE")
+		kill "$pid" 2>/dev/null
+		i=0
+		while [ "$i" -lt 10 ] && kill -0 "$pid" 2>/dev/null; do
+			i=$((i + 1))
+			sleep 0.1
+		done
+		kill -9 "$pid" 2>/dev/null
+		rm -f "$PIDFILE"
+	fi
+	rm -f "$FIFO"
+}
+
+case "$1" in
+	start)
+		if ! wait_userdata; then
+			echo "oko-osd: /userdata is not mounted, skipping"
+			exit 1
+		fi
+
+		if [ -f /userdata/rkipc.enable ]; then
+			rm -f /userdata/divinus.enable
+		else
+			touch /userdata/divinus.enable
+		fi
+
+		# Old or hand-edited configs without OSD regions are replaced by the
+		# factory one; the marker reg0_text identifies the current format.
+		if [ ! -f /userdata/divinus.yaml ] ||
+			! grep -q 'reg0_text' /userdata/divinus.yaml; then
+			cp -f /oem/usr/share/divinus/divinus.yaml /userdata/divinus.yaml
+		fi
+
+		if [ -f /userdata/divinus.enable ] && [ -x /oem/usr/bin/divinus ]; then
+			start_daemon
+		fi
+		;;
+	stop)
+		stop_daemon
+		;;
+	restart)
+		stop_daemon
+		start_daemon
+		;;
+	status)
+		if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+			echo "oko-osd: running (pid $(cat "$PIDFILE"))"
+			exit 0
+		fi
+		echo "oko-osd: not running"
+		exit 1
+		;;
+	*)
+		echo "Usage: $0 {start|stop|restart|status}"
+		exit 1
+		;;
+esac

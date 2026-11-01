@@ -19,6 +19,52 @@ pthread_t regionPid = 0;
 char timefmt[64];
 unsigned int rxb_l, txb_l, cpu_l[6];
 
+// OKO: last content of an '@file' text region, used to detect updates.
+static char region_file_prev[MAX_OSD][80];
+
+// OKO: read the first line of an OSD text file and drop the trailing CR/LF.
+static void region_read_text_file(const char *path, char *out, size_t size) {
+    FILE *file = fopen(path, "r");
+    size_t len;
+
+    out[0] = '\0';
+    if (!file)
+        return;
+    if (!fgets(out, size, file))
+        out[0] = '\0';
+    fclose(file);
+
+    len = strlen(out);
+    while (len > 0 && (out[len - 1] == '\n' || out[len - 1] == '\r'))
+        out[--len] = '\0';
+}
+
+static void region_destroy(char id) {
+    switch (plat) {
+#if defined(__ARM_PCS_VFP)
+        case HAL_PLATFORM_I6:  i6_region_destroy(id); break;
+        case HAL_PLATFORM_I6C: i6c_region_destroy(id); break;
+        case HAL_PLATFORM_M6:  m6_region_destroy(id); break;
+        case HAL_PLATFORM_RK:  rk_region_destroy(id); break;
+#elif defined(__arm__) && !defined(__ARM_PCS_VFP)
+        case HAL_PLATFORM_GM:  gm_region_destroy(id); break;
+        case HAL_PLATFORM_V1:  v1_region_destroy(id); break;
+        case HAL_PLATFORM_V2:  v2_region_destroy(id); break;
+        case HAL_PLATFORM_V3:  v3_region_destroy(id); break;
+        case HAL_PLATFORM_V4:  v4_region_destroy(id); break;
+        case HAL_PLATFORM_AK:  ak_region_destroy(id); break;
+        #if __ARM_ARCH == 6
+        case HAL_PLATFORM_F1:  f1_region_destroy(&osds[id].hand); break;
+        case HAL_PLATFORM_F2:  f2_region_destroy(&osds[id].hand); break;
+        #endif
+#elif defined(__mips__)
+        case HAL_PLATFORM_T31: t31_region_destroy(&osds[id].hand); break;
+#elif defined(__riscv) || defined(__riscv__)
+        case HAL_PLATFORM_CVI: cvi_region_destroy(id); break;
+#endif
+    }
+}
+
 void region_fill_formatted(char* str) {
     char out[80] = "";
     char param = 0;
@@ -362,7 +408,36 @@ void *region_thread(void) {
             if (!EMPTY(osds[id].text))
             {
                 char out[80];
-                strncpy(out, osds[id].text, sizeof(out) - 1);
+                out[sizeof(out) - 1] = '\0';
+
+                if (osds[id].text[0] == '@' && osds[id].text[1] != '\0')
+                {
+                    // OKO: '@path' renders the first line of a file. An empty or
+                    // unreadable file hides the region until content appears.
+                    region_read_text_file(osds[id].text + 1, out, sizeof(out));
+                    if (EMPTY(out))
+                    {
+                        if (!EMPTY(region_file_prev[id]))
+                        {
+                            region_file_prev[id][0] = '\0';
+                            region_destroy(id);
+                        }
+                        osds[id].updt = 0;
+                        continue;
+                    }
+                    if (!EQUALS(out, region_file_prev[id]))
+                    {
+                        strncpy(region_file_prev[id], out, sizeof(region_file_prev[id]) - 1);
+                        region_file_prev[id][sizeof(region_file_prev[id]) - 1] = '\0';
+                        osds[id].updt = 1;
+                    }
+                }
+                else
+                {
+                    strncpy(out, osds[id].text, sizeof(out) - 1);
+                    out[sizeof(out) - 1] = '\0';
+                }
+
                 if (strstr(out, "$"))
                 {
                     region_fill_formatted(out);
@@ -547,29 +622,7 @@ found_font:;
                     }
                 }
                 else
-                    switch (plat) {
-#if defined(__ARM_PCS_VFP)
-                        case HAL_PLATFORM_I6:  i6_region_destroy(id); break;
-                        case HAL_PLATFORM_I6C: i6c_region_destroy(id); break;
-                        case HAL_PLATFORM_M6:  m6_region_destroy(id); break;
-                        case HAL_PLATFORM_RK:  rk_region_destroy(id); break;
-#elif defined(__arm__) && !defined(__ARM_PCS_VFP)
-                        case HAL_PLATFORM_GM:  gm_region_destroy(id); break;
-                        case HAL_PLATFORM_V1:  v1_region_destroy(id); break;
-                        case HAL_PLATFORM_V2:  v2_region_destroy(id); break;
-                        case HAL_PLATFORM_V3:  v3_region_destroy(id); break;
-                        case HAL_PLATFORM_V4:  v4_region_destroy(id); break;
-                        case HAL_PLATFORM_AK:  ak_region_destroy(id); break;
-                        #if __ARM_ARCH == 6
-                        case HAL_PLATFORM_F1:  f1_region_destroy(&osds[id].hand); break;
-                        case HAL_PLATFORM_F2:  f2_region_destroy(&osds[id].hand); break;
-                        #endif
-#elif defined(__mips__)
-                        case HAL_PLATFORM_T31: t31_region_destroy(&osds[id].hand); break;
-#elif defined(__riscv) || defined(__riscv__)
-                        case HAL_PLATFORM_CVI: cvi_region_destroy(id); break;
-#endif
-                    }
+                    region_destroy(id);
             }
             osds[id].updt = 0;
         }
