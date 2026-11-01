@@ -34,11 +34,9 @@ divinus-build:
 		GIT_REV=$(DIVINUS_REV)
 	@test -f source/divinus || (echo "### $(PKG_NAME): source/divinus was not produced" && exit 1)
 	rm -rf $(PKG_BIN)
-	mkdir -p $(PKG_BIN)/usr/bin $(PKG_BIN)/usr/lib $(PKG_BIN)/usr/share/divinus
+	mkdir -p $(PKG_BIN)/usr/bin $(PKG_BIN)/usr/share/divinus
 	cp -f source/divinus $(PKG_BIN)/usr/bin/divinus
 	cp -f files/divinus.yaml $(PKG_BIN)/usr/share/divinus/divinus.yaml
-	$(RK_APP_CROSS)-gcc -shared -fPIC -O2 -o \
-		$(PKG_BIN)/usr/lib/libdivinus-mmap.so shim/rk_mmap_offset.c -ldl
 	$(call MAROC_COPY_PKG_TO_APP_OUTPUT, $(RK_APP_OUTPUT), $(PKG_BIN))
 
 clean:

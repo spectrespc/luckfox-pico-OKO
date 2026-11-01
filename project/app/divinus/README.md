@@ -21,29 +21,26 @@
 ## Состав пакета
 
 - `Makefile` — обёртка SDK: кросс-сборка через `$(RK_APP_CROSS)-gcc`, стейджинг
-  `out/usr/bin/divinus`, `out/usr/share/divinus/divinus.yaml` и
-  `out/usr/lib/libdivinus-mmap.so` в `RK_APP_OUTPUT`.
+  `out/usr/bin/divinus` и `out/usr/share/divinus/divinus.yaml` в `RK_APP_OUTPUT`.
 - `files/divinus.yaml` — фабричный конфиг для платы Pico Pro Max / SC230AI.
-- `shim/rk_mmap_offset.c` — LD_PRELOAD-обход бага rockit (см. ниже).
 - `source/` — вендорские исходники без `.git`; `build.sh` и `remote.sh` upstream не
-  копируются: кросс-тулчейн берётся из SDK.
+  копируются: кросс-тулчейн берётся из SDK. В `source/src/compat.c` внесён один
+  локальный патч (см. ниже).
 
-## Обход бага rockit (`libdivinus-mmap.so`)
+## Патч upstream: ABI `mmap` в `compat.c`
 
-ROCKIT из этого SDK (git-4720dc10a) в `MpiAdapterEncode::ma_encode_get_pack`
-отображает выходное кольцо VENC двумя частями через `mmap2` с
-`MAP_SHARED|MAP_FIXED`. Для нашей сборки вызов приходит без корректного page offset,
-mmap падает (`mmap part 1 failed!`) и энкодер не отдаёт кадры: RTSP/web работают, но
-видео и JPEG пустые.
+`source/src/compat.c` для ARM определяет собственный `mmap`. Пакет собирается с
+`-D_FILE_OFFSET_BITS=64` (из `RK_APP_OPTS`), а `src/Makefile` линкует бинарь с
+`-rdynamic`, поэтому этот 64-битный `mmap` перехватывает `mmap` у `librockit.so`,
+который собран с 32-битным `off_t`. Offset читается из неверного stack-слота, и
+отображение выходного кольца VENC падает (`mmap part 1 failed!`), энкодер не отдаёт
+кадры. На uClibc hard-float локальный `mmap` не нужен: libc уже даёт оба варианта
+(`mmap`/`mmap64`), поэтому в `compat.c` определение `mmap` для
+`__ARM_PCS_VFP && __UCLIBC__` отключено (определение `__mmap64` оставлено).
 
-`shim/rk_mmap_offset.c` — минимальный `LD_PRELOAD`-перехватчик: у больших
-`MAP_SHARED|MAP_FIXED` mmap2 (кольца VENC) принудительно выставляет offset 0, все
-остальные syscall пропускает без изменений. Включается только для процесса divinus
-в `RkLunch.sh` (`LD_PRELOAD=/oem/usr/lib/libdivinus-mmap.so`), rkipc не затрагивает.
-
-Проверено на стенде: после обхода `/image.jpg` отдаёт JPEG 1920x1080 (~65 КБ), RTSP
-`rtsp://<ip>:554/` — H.265, ~1,3 МБ RTP за 5 с, `/api/status` — `rv11xx`/`sc230ai`.
-Шим можно удалить, когда rockit или divinus исправят offset в upstream.
+Проверено на стенде без LD_PRELOAD: `/image.jpg` — JPEG 1920x1080 (~65 КБ), RTSP
+`rtsp://admin:<пароль>@<ip>:554/` — H.265, ~1 МБ RTP за 5 с, `/api/status` —
+`rv11xx`/`sc230ai`.
 
 ## Правила обновления
 
@@ -51,8 +48,10 @@ mmap падает (`mmap part 1 failed!`) и энкодер не отдаёт к
    `source/COPYING`, `source/LICENSE`, удалить `.git`.
 2. Записать в таблицу выше новый **полный** хеш (`git rev-parse HEAD`) и дату.
 3. Обновить `DIVINUS_REV` (короткий хеш) в `Makefile`.
-4. Перед коммитом пересобрать (`./build.sh` в Docker) и проверить наличие
+4. **Повторно применить патч `compat.c`**: на uClibc hard-float не определять
+   собственный `mmap` (см. раздел выше), иначе вернётся `mmap part 1 failed!`.
+5. Перед коммитом пересобрать (`./build.sh` в Docker) и проверить наличие
    `output/out/oem/usr/bin/divinus` — цикл сборки приложений не прерывается на ошибке
    отдельного пакета.
-5. Правки upstream-файлов — только для сборки/запуска на плате, с явным диффом и
-   комментарием в коммите. Отдельного каталога `patches/` нет, пока правок upstream нет.
+6. Другие правки upstream-файлов — только для сборки/запуска на плате, с явным диффом
+   и комментарием в коммите.

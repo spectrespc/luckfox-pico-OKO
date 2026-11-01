@@ -59,9 +59,8 @@ SC230AI. Драйвер шагового двигателя 28BYJ-48 и прош
   `ipcweb` (веб-интерфейс), `rk_smart_door`, `wifi_app`, `fastboot_client`,
   `component` (общие компоненты).
 - `app/divinus/` — пакет `divinus`: `source/` (вендорские `src/`, `res/`, `doc/`,
-  лицензии, пин коммита в `README.md`), `files/divinus.yaml` (фабричный конфиг),
-  `shim/` (LD_PRELOAD-обход бага rockit с mmap кольца VENC), `Makefile`
-  (кросс-сборка и стейджинг в `/oem/usr/bin`, `/oem/usr/lib` и
+  лицензии, пин коммита и патч `compat.c` в `README.md`), `files/divinus.yaml`
+  (фабричный конфиг), `Makefile` (кросс-сборка и стейджинг в `/oem/usr/bin` и
   `/oem/usr/share/divinus`). Сборка входит в общий цикл `project/app/Makefile`.
 - `cfg/BoardConfig_IPC/` — конфигурации плат (`BoardConfig-*.mk`), папка `overlay/`
   с оверлеями rootfs и pre/post-скрипты (`*-pre.sh`, `*-post.sh`).

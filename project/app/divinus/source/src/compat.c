@@ -56,9 +56,17 @@ int __fgetc_unlocked(FILE *stream) { return fgetc(stream); }
 double __log_finite(double x) { return log(x); }
 
 #if defined(__arm__) || defined(__aarch64__) || defined(__mips__)
+/* OKO: on uClibc hard-float libc already provides mmap with the 32-bit
+ * off_t ABI that librockit.so is built against. Defining our own mmap here
+ * (compiled with _FILE_OFFSET_BITS=64 and interposed through -rdynamic)
+ * makes the wrapper read the caller's offset from the wrong stack slot and
+ * the VENC ring mapping fails with "mmap part 1 failed!". Keep libc's
+ * mmap/mmap64 on this target. */
+#if !(defined(__ARM_PCS_VFP) && defined(__UCLIBC__))
 void *mmap(void *start, size_t len, int prot, int flags, int fd, off_t off) {
     return (void*)syscall(SYS_mmap2, start, len, prot, flags, fd, (long)(off >> 12));
 }
+#endif
 
 void *__mmap64(void *start, size_t len, int prot, int flags, int fd, off_t off) {
     return (void*)syscall(SYS_mmap2, start, len, prot, flags, fd, (long)(off >> 12));

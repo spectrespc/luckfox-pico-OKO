@@ -79,16 +79,18 @@ post_chk() {
 	check_linker /mnt/sdcard /oem/usr/www/sdcard
 
 	# divinus (OpenIPC) as an alternative streamer: opt-in marker /userdata/divinus.enable
-	if [ -f /userdata/divinus.enable ]; then
+	if [ -f /userdata/divinus.enable ] && [ -x /oem/usr/bin/divinus ]; then
 		if [ ! -f /userdata/divinus.yaml ]; then
 			cp -f /oem/usr/share/divinus/divinus.yaml /userdata/divinus.yaml
 		fi
 		# config is searched in the exe dir, then ./, then /etc; run from
 		# /userdata so WebUI saves rewrite /userdata/divinus.yaml itself
 		cd /userdata
-		# work around the rockit VENC ring mmap offset bug on RV1106
-		LD_PRELOAD=/oem/usr/lib/libdivinus-mmap.so /oem/usr/bin/divinus &
+		/oem/usr/bin/divinus &
 		return
+	fi
+	if [ -f /userdata/divinus.enable ]; then
+		echo "divinus: /oem/usr/bin/divinus not found, falling back to rkipc"
 	fi
 
 	# if /data/rkipc not exist, cp /usr/share

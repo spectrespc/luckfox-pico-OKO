@@ -3,10 +3,12 @@
 # first start (see RkLunch.sh). WebUI saves land next to the running config.
 system:
   web_port: 80
-  web_enable_auth: false
+  # Factory credentials for the testbench; change before connecting the camera
+  # to an untrusted network (see TESTBENCH.md).
+  web_enable_auth: true
   web_auth_user: admin
-  web_auth_pass: 12345
-  web_auth_skiplocal: true
+  web_auth_pass: oko-change-me
+  web_auth_skiplocal: false
   web_enable_static: true
   isp_thread_stack_size: 16384
   venc_stream_thread_stack_size: 16384
@@ -28,15 +30,15 @@ mdns:
 
 onvif:
   enable: false
-  enable_auth: false
+  enable_auth: true
   auth_user: admin
-  auth_pass: 12345
+  auth_pass: oko-change-me
 
 rtsp:
   enable: true
-  enable_auth: false
+  enable_auth: true
   auth_user: admin
-  auth_pass: 12345
+  auth_pass: oko-change-me
   port: 554
 
 record:

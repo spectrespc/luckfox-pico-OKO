@@ -102,18 +102,36 @@ while time.time() < DEADLINE:
                 if c: log(c)
                 else: time.sleep(0.03)
         state = 'boot'
+        boot_deadline = time.time() + 180
         log(b'\n[COMMANDS SENT at %s]\n' % time.strftime('%H:%M:%S').encode())
 
     else:
         try:
             c = s.read(16384)
-            if c: log(c)
-            else: time.sleep(0.05)
+            if c:
+                log(c)
+                if (b'login:' in tail[-4096:] or
+                        b'Please press Enter' in tail[-4096:]):
+                    log(b'\n[DETECTED LOGIN at %s, closing port]\n' %
+                        time.strftime('%H:%M:%S').encode())
+                    break
+            else:
+                time.sleep(0.05)
+            if time.time() > boot_deadline:
+                log(b'\n[BOOT TIMEOUT at %s, closing port]\n' %
+                    time.strftime('%H:%M:%S').encode())
+                break
         except Exception as e:
             log(b'\n[read-error %s]\n' % str(e).encode())
             try: s.close()
             except Exception: pass
             s = None
+            break
 
 log(b'\n[run2 end %s state=%s]\n' % (time.strftime('%H:%M:%S').encode(), state.encode()))
+try:
+    if s:
+        s.close()
+except Exception:
+    pass
 f.close()
