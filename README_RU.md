@@ -93,8 +93,9 @@ TFTP-сервер (`tftpd-hpa`) стартует из `docker-entrypoint.sh` н�
 Устройство переводится в режим Maskrom; затем образ пишется в SPI NAND.
 Для выкатки без полной прошивки (только изменённые разделы `oem`/`rootfs`) —
 `upgrade_tool db` + `wl` по LBA с полным размером раздела, см. `TESTBENCH.md` §7C.
-`./rkflash.sh oem` / `rootfs` в текущей сборке не работает: `di` требует
-`parameter.txt`, которого нет (образы упакованы в `update.img`).
+`./rkflash.sh oem` / `rootfs` (`upgrade_tool di`) в чистом Maskrom отвечает
+`parameter is invalid`: таблица разделов появляется только после
+`db download.bin`; проверенный путь для этих разделов — `wl` из §7C.
 
 **B. Netboot (текущий рабочий режим стенда).**
 

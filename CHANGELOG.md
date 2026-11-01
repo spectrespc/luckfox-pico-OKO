@@ -235,17 +235,29 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   the server runs without `--create`, disabling uploads; downloading `boot.img`
   for netboot keeps working.
 - `TESTBENCH.md` §7C, `README_RU.md`, команда `/bench`: исправлена процедура
-  покомпонентной прошивки. `rkflash.sh oem/rootfs` (`upgrade_tool di`) не
-  работает без `parameter.txt` (`parameter is invalid`); нужен `db download.bin`
-  + `wl <LBA> <размер всего раздела в секторах>` (`oem` 0x2800/0xF000,
-  `rootfs` 0x16800/0x69000). `wl` с длиной образа оставляет в хвосте старые
-  UBI-PEB → `ubi_attach: bad image sequence number` и panic.
+  покомпонентной прошивки. `rkflash.sh oem/rootfs` (`upgrade_tool di`) в чистом
+  Maskrom без загруженного loader отвечает `parameter is invalid`; нужен
+  `db download.bin` + `wl <LBA> <размер всего раздела в секторах>` (`oem`
+  0x2800/0xF000, `rootfs` 0x16800/0x69000). `wl` с длиной образа оставляет в
+  хвосте старые UBI-PEB → `ubi_attach: bad image sequence number` и panic.
 - `TESTBENCH.md` §7C, `README_RU.md`, the `/bench` command: fixed the
   per-partition flashing procedure. `rkflash.sh oem/rootfs` (`upgrade_tool di`)
-  fails without `parameter.txt` (`parameter is invalid`); use
+  in bare Maskrom without a loaded loader reports `parameter is invalid`; use
   `db download.bin` plus `wl <LBA> <full partition size in sectors>` (`oem`
   0x2800/0xF000, `rootfs` 0x16800/0x69000). Passing the image length to `wl`
   leaves stale UBI PEBs → `ubi_attach: bad image sequence number` and panic.
+- `netboot-catch.py`: `OKO_NETBOOT_LOG` без каталога (например, `netboot.log`)
+  больше не падает на `os.makedirs('')` — родительский каталог нормализуется
+  в `.`.
+- `netboot-catch.py`: `OKO_NETBOOT_LOG` without a directory component (for
+  example, `netboot.log`) no longer fails on `os.makedirs('')`; the parent
+  directory is normalized to `.`.
+- `INIT_ORDER.md`: убрано дублирование условия бутстрапа `divinus.yaml` —
+  замена при отсутствии файла или `reg0_text` описана один раз, резервное
+  копирование в `post_chk` отмечено отдельно.
+- `INIT_ORDER.md`: removed the duplicated `divinus.yaml` bootstrap condition —
+  replacement when the file or `reg0_text` is missing is described once, and
+  the `post_chk` fallback is called out separately.
 
 ### Безопасность
 

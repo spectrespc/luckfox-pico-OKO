@@ -190,10 +190,10 @@ boot_fit ${ramdisk_addr_r}
    ./tools/linux/Linux_Upgrade_Tool/upgrade_tool pl   # LBA и размеры в секторах 512 B
    ```
 3. Прошить только изменённые разделы. `./rkflash.sh oem` / `rootfs` использует
-   `upgrade_tool di -oem/-rootfs`, но в текущей сборке нет `parameter.txt`
-   (образы упаковываются в `update.img`), поэтому в Maskrom он отвечает
-   `parameter is invalid,please check!`. Рабочий путь — запись по LBA с
-   **полным стиранием раздела**:
+   `upgrade_tool di -oem/-rootfs`, но в чистом Maskrom (до `db`) таблицы разделов
+   нет, и он отвечает `parameter is invalid,please check!`. Рабочий путь —
+   запись по LBA с **полным стиранием раздела** (после `db` таблицу можно
+   проверить через `upgrade_tool pl`):
    ```sh
    ./tools/linux/Linux_Upgrade_Tool/upgrade_tool wl 0x2800 0xF000 output/image/oem.img
    ./tools/linux/Linux_Upgrade_Tool/upgrade_tool wl 0x16800 0x69000 output/image/rootfs.img
@@ -208,8 +208,10 @@ boot_fit ${ramdisk_addr_r}
    поэтому следующие разделы прошиваются без повторного входа.
    `userdata` (LBA `0x11800`, 10M = `0x5000`) — только если менялось фабричное
    содержимое раздела.
-4. `./rkflash.sh boot` (`di -b` + `rd`) прошивает ядро/DTB и сам перезагружает
-   устройство — вызывать его последним, вместо отдельного `rd`.
+4. `boot`, `idblock`, `uboot` и `env` этой фичей не менялись. При необходимости
+   прошивайте их полным `./rkflash.sh update` (§7A) или отдельной проверенной
+   процедурой; `di -b`/`di -uboot` в чистом Maskrom так же требуют загруженного
+   через `db` loader.
 5. Полный `./rkflash.sh update` (`upgrade_tool uf update.img`) — **только** при
    первичной прошивке, смене таблицы разделов (`parameter.txt`), loader
    (`idblock`/`uboot`) или U-Boot env. Он затирает и неизменённые разделы.

@@ -7,7 +7,7 @@ LOG = os.environ.get(
     'OKO_NETBOOT_LOG',
     os.path.join(ROOT, 'output', 'bench',
                  'netboot-%s.log' % time.strftime('%Y%m%d-%H%M')))
-os.makedirs(os.path.dirname(LOG), exist_ok=True)
+os.makedirs(os.path.dirname(LOG) or '.', exist_ok=True)
 DEADLINE = time.time() + 900
 f = open(LOG, 'wb', buffering=0)
 f.write(b'[run2 start %s]\n' % time.strftime('%H:%M:%S').encode())
