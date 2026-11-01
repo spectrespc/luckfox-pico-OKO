@@ -43,6 +43,18 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 - `RkLunch.sh`: `/userdata/divinus.enable` toggle for opt-in `divinus` startup
   instead of `rkipc`; without the marker the init order and `rkipc` startup are
   unchanged.
+- `project/app/divinus/shim/rk_mmap_offset.c` + `libdivinus-mmap.so`: узкий
+  LD_PRELOAD-обход бага rockit на RV1106 — mmap кольца VENC вызывается без
+  корректного page offset (`mmap part 1 failed!`), из-за чего энкодер не отдавал
+  кадры. Shim принудительно ставит offset 0 только для больших
+  `MAP_SHARED|MAP_FIXED` mmap2 и подключается лишь к процессу `divinus`
+  (`LD_PRELOAD` в `RkLunch.sh`); `rkipc` не затрагивается.
+- `project/app/divinus/shim/rk_mmap_offset.c` + `libdivinus-mmap.so`: a narrow
+  LD_PRELOAD workaround for the RV1106 rockit bug where the VENC ring mmap2 call
+  lacks a valid page offset (`mmap part 1 failed!`), leaving the encoder without
+  frames. The shim forces offset 0 only for large `MAP_SHARED|MAP_FIXED` mmap2
+  calls and is applied to the `divinus` process alone (`LD_PRELOAD` in
+  `RkLunch.sh`); `rkipc` is unaffected.
 - Тестовый маркер `S99oko-test` в оверлее `overlay-luckfox-buildroot-init`:
   скрипт пишет `/tmp/oko-test-ok` (`marker=OKO-TEST-2026.10-01`, uptime, версия
   ядра) и строку `OKO-TEST: …` в `/dev/kmsg`; доказывает, что загружена сборка
@@ -63,14 +75,15 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 - `STRUCTURE.md`: добавлен пакет `project/app/divinus/` (вендорские исходники,
   фабричный конфиг, Makefile) и уточнён состав `project/app/`.
 - `INIT_ORDER.md`: ветка `divinus.enable` в `post_chk` и зависимости `divinus`
-  (общий rockit/ISP-конвейер с `rkipc`, `dlopen` вендорных библиотек).
+  (общий rockit/ISP-конвейер с `rkipc`, `dlopen` вендорных библиотек,
+  `LD_PRELOAD`-обход rockit).
 - `TESTBENCH.md`: чек-лист divinus (`/api/status`, `/image.jpg`, RTSP-корень),
   диагностика сбоев и особенности портов/конфига.
 - `STRUCTURE.md`: added the `project/app/divinus/` package (vendored sources,
   factory config, Makefile) and clarified the `project/app/` contents.
 - `INIT_ORDER.md`: documented the `divinus.enable` branch in `post_chk` and the
   `divinus` dependencies (shared rockit/ISP pipeline with `rkipc`, `dlopen` of
-  vendor libraries).
+  vendor libraries, the rockit `LD_PRELOAD` workaround).
 - `TESTBENCH.md`: added the divinus checklist (`/api/status`, `/image.jpg`, RTSP
   root) plus failure diagnostics and port/config notes.
 - `INIT_ORDER.md`: источник `oem`/`userdata` при netboot, ветка `S20linkmount`,

@@ -86,7 +86,8 @@ post_chk() {
 		# config is searched in the exe dir, then ./, then /etc; run from
 		# /userdata so WebUI saves rewrite /userdata/divinus.yaml itself
 		cd /userdata
-		/oem/usr/bin/divinus &
+		# work around the rockit VENC ring mmap offset bug on RV1106
+		LD_PRELOAD=/oem/usr/lib/libdivinus-mmap.so /oem/usr/bin/divinus &
 		return
 	fi
 

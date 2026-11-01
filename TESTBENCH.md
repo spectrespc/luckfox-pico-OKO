@@ -173,6 +173,7 @@ ps | grep rkipc
 # альтернативный стример divinus (включается маркером)
 # раскомментировать на DUT: touch /userdata/divinus.enable && reboot
 ps | grep -E 'divinus|rkipc'
+ls -l /oem/usr/lib/libdivinus-mmap.so
 curl -s http://192.168.52.150/api/status
 curl -s -o /tmp/snap.jpg http://192.168.52.150/image.jpg
 ls -l /userdata/divinus.yaml /userdata/divinus.enable
@@ -201,6 +202,7 @@ dmesg | tail -50
 | `rkipc` не стартует | нет `rkipc.ini` для сенсора или не смонтирован `/oem` (см. `INIT_ORDER.md`) |
 | `divinus` не стартует при маркере | нет `/oem/usr/bin/divinus` (сборка пакета упала молча), нет IQ-файла сенсора, `dlopen` не находит `librockit.so`/`librkaiq.so` (`LD_LIBRARY_PATH` без `/oem/usr/lib`) |
 | `divinus`: нет картинки, AIQ-ошибки | геометрия в `divinus.yaml` не совпадает с режимом сенсора (SC230AI — 1920x1080), IQ не найден по имени модуля из `/proc/rkisp-vir0` |
+| `divinus`: `mmap part 1 failed!`, пустые JPEG/RTSP | не загружен обход rockit: проверьте `/oem/usr/lib/libdivinus-mmap.so` и строку `LD_PRELOAD` в ветке `divinus.enable` файла `RkLunch.sh` |
 | Запущены и `divinus`, и `rkipc` | маркер появился после старта `rkipc`; перезагрузить DUT (ветки взаимоисключающие) |
 | `netboot: nfs mount … failed, fallback` | `.nfsroot` не создан/не синхронизирован, нет доступа к TCP 2049, неверный `nfsroot` в cmdline |
 | Нет `/dev/video*` | `insmod_ko.sh` не выполнился или `sc230ai.ko` отсутствует |
@@ -236,6 +238,11 @@ dmesg | tail -50
 - divinus ищет конфиг рядом с исполняемым файлом, затем в текущем каталоге, затем
   `/etc/divinus.yaml`. `post_chk` запускает его из `/userdata`, поэтому сохранение
   конфига из WebUI (`/api/cmd?save`) остаётся в `/userdata` (файл `.bak` — там же).
+- rockit из этого SDK отображает кольцо VENC без корректного page offset, поэтому
+  divinus стартует с `LD_PRELOAD=/oem/usr/lib/libdivinus-mmap.so` (пакетный shim).
+  В консоли при первом кадре печатается `[divinus] VENC ring mmap offset workaround
+  active`. Без shim видео и JPEG пустые, а в лог сыплется `mmap part 1 failed!`.
+  rkipc этот shim не использует.
 
 ## 10. Правила ведения
 

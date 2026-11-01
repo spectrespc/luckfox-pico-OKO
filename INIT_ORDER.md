@@ -200,9 +200,11 @@ esac
      файла, затем в `./`, затем в `/etc/divinus.yaml`; при сохранении из WebUI файл
      пере-создаётся рядом с текущим каталогом, поэтому `/userdata/divinus.yaml`
      остаётся постоянным);
-   - запускается `/oem/usr/bin/divinus &`, после чего `post_chk` завершается:
-     секции rkipc ниже (ini, `image.bmp`, `speaker_test`, `csi_unite`, запуск rkipc)
-     не выполняются. Удаление маркера возвращает штатный запуск `rkipc`.
+   - запускается `/oem/usr/bin/divinus &` с `LD_PRELOAD=/oem/usr/lib/libdivinus-mmap.so`
+     (обход бага rockit с offset при mmap кольца VENC), после чего `post_chk`
+     завершается: секции rkipc ниже (ini, `image.bmp`, `speaker_test`, `csi_unite`,
+     запуск rkipc) не выполняются. Удаление маркера возвращает штатный запуск
+     `rkipc`.
 6. Готовит `rkipc.ini`:
    - если `/oem/usr/share/rkipc.ini` отсутствует, фабричный ini выбирается по
      загруженному сенсору (`lsmod`): `mia1321` → `rkipc-mia1321-100w.ini`,
@@ -293,6 +295,10 @@ AIC8800 (`aic_load_fw` → `aic8800_fdrv`), AP6XXX (`bcmdhd`), RTL8723BS
 - конфиг — `/userdata/divinus.yaml` (фабричный шаблон —
   `/oem/usr/share/divinus/divinus.yaml`); при старте каталог — `/userdata`, чтобы
   сохранение из WebUI пере-создавало именно этот файл, а не симлинк;
+- `LD_PRELOAD=/oem/usr/lib/libdivinus-mmap.so` — обход бага rockit: mmap кольца
+  VENC вызывается без page offset и без обхода энкодер не отдаёт кадры
+  (`mmap part 1 failed!`). Shim ставится пакетом divinus и влияет только на его
+  процесс;
 - `divinus` и `rkipc` используют один rockit/ISP-конвейер, поэтому
   взаимоисключающие: одновременно не запускаются, выбор — маркером.
 

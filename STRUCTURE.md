@@ -60,7 +60,8 @@ SC230AI. Драйвер шагового двигателя 28BYJ-48 и прош
   `component` (общие компоненты).
 - `app/divinus/` — пакет `divinus`: `source/` (вендорские `src/`, `res/`, `doc/`,
   лицензии, пин коммита в `README.md`), `files/divinus.yaml` (фабричный конфиг),
-  `Makefile` (кросс-сборка и стейджинг в `/oem/usr/bin` и
+  `shim/` (LD_PRELOAD-обход бага rockit с mmap кольца VENC), `Makefile`
+  (кросс-сборка и стейджинг в `/oem/usr/bin`, `/oem/usr/lib` и
   `/oem/usr/share/divinus`). Сборка входит в общий цикл `project/app/Makefile`.
 - `cfg/BoardConfig_IPC/` — конфигурации плат (`BoardConfig-*.mk`), папка `overlay/`
   с оверлеями rootfs и pre/post-скрипты (`*-pre.sh`, `*-post.sh`).
