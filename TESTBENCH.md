@@ -184,23 +184,41 @@ boot_fit ${ramdisk_addr_r}
 1. Перевести устройство в Maskrom (`<кнопка / перемычка>`) либо выполнить на DUT
    `reboot loader` (Rockchip RESTART2); наличие устройства проверить
    `upgrade_tool ld`.
-2. Прошить только изменённые разделы (аргумент обязателен; без него
-   `rkflash.sh` не прошивает ничего):
+2. Загрузить loader в RAM и проверить таблицу разделов:
    ```sh
-   ./rkflash.sh oem       # upgrade_tool di -oem output/image/oem.img
-   ./rkflash.sh rootfs    # upgrade_tool di -rootfs output/image/rootfs.img
-   ./rkflash.sh userdata  # только если менялось фабричное содержимое раздела
-   ./rkflash.sh rd        # перезагрузка
+   ./tools/linux/Linux_Upgrade_Tool/upgrade_tool db output/image/download.bin
+   ./tools/linux/Linux_Upgrade_Tool/upgrade_tool pl   # LBA и размеры в секторах 512 B
    ```
-   Maskrom нужен один раз: после первой команды `di` устройство остаётся в
-   loader-режиме, поэтому следующие разделы прошиваются без повторного входа.
-   `./rkflash.sh boot` (`di -b` + `rd`) прошивает ядро/DTB и сам перезагружает
+3. Прошить только изменённые разделы. `./rkflash.sh oem` / `rootfs` использует
+   `upgrade_tool di -oem/-rootfs`, но в текущей сборке нет `parameter.txt`
+   (образы упаковываются в `update.img`), поэтому в Maskrom он отвечает
+   `parameter is invalid,please check!`. Рабочий путь — запись по LBA с
+   **полным стиранием раздела**:
+   ```sh
+   ./tools/linux/Linux_Upgrade_Tool/upgrade_tool wl 0x2800 0xF000 output/image/oem.img
+   ./tools/linux/Linux_Upgrade_Tool/upgrade_tool wl 0x16800 0x69000 output/image/rootfs.img
+   ./tools/linux/Linux_Upgrade_Tool/upgrade_tool rd
+   ```
+   Второй аргумент `wl` — размер **всего раздела** в секторах (oem 30M =
+   `0xF000`, rootfs 210M = `0x69000`), а не длина файла: tool стирает этот
+   диапазон и пишет образ. Если передать длину образа (oem `0x9D00`, rootfs
+   `0x1A500`), в хвосте останутся старые UBI-PEB с другим `image_seq`, и ядро
+   упадёт с `ubi0 error: ubi_attach: bad image sequence number …` (panic).
+   Maskrom нужен один раз: после `db` устройство остаётся в loader-режиме,
+   поэтому следующие разделы прошиваются без повторного входа.
+   `userdata` (LBA `0x11800`, 10M = `0x5000`) — только если менялось фабричное
+   содержимое раздела.
+4. `./rkflash.sh boot` (`di -b` + `rd`) прошивает ядро/DTB и сам перезагружает
    устройство — вызывать его последним, вместо отдельного `rd`.
-3. Полный `./rkflash.sh update` (`upgrade_tool uf update.img`) — **только** при
+5. Полный `./rkflash.sh update` (`upgrade_tool uf update.img`) — **только** при
    первичной прошивке, смене таблицы разделов (`parameter.txt`), loader
    (`idblock`/`uboot`) или U-Boot env. Он затирает и неизменённые разделы.
-4. Проверить после загрузки: чек-лист §8 (`/oem/usr/bin/divinus`,
+6. Проверить после загрузки: чек-лист §8 (`/oem/usr/bin/divinus`,
    `/etc/init.d/S20oko-osd`, OSD в RTSP).
+
+После перезаписи разделов при необходимости отключите и подключите USB-OTG
+на 5–10 с: `rd` не всегда выводит плату из loader-состояния, а BootROM при
+повторном подключении снова показывает устройство как Maskrom.
 
 **Как определить, что изменилось:** сравнить хеши собранных образов с последним
 выкатанным комплектом (вести на хосте файл `.flashed.sha256`):

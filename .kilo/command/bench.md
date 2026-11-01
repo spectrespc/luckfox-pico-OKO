@@ -19,8 +19,9 @@ agent: code
    - A. SPI NAND: `./build.sh firmware` → `./rkflash.sh update` (полный образ);
    - B. Netboot: `./start.sh`, NFS-экспорт, `bench/run.sh netboot.py catch`
      (или `reboot`), лог `output/bench/netboot-<ts>.log`;
-   - C. Покомпонентно: только изменённые разделы
-     `./rkflash.sh oem` / `rootfs`, затем `./rkflash.sh rd`.
+   - C. Покомпонентно: `upgrade_tool db output/image/download.bin`, затем
+     `wl` по LBA с полным размером раздела (`oem` 0x2800/0xF000,
+     `rootfs` 0x16800/0x69000) и `rd`; см. §7C.
 5. **Диагностика** — пройди чек-лист §8 (модули, сенсор, `divinus`/`rkipc`, OSD
    в RTSP, сеть, монтирование, логи); команды на DUT — `bench/run.sh
    serial_exec.py …` / `bench/run.sh dut.py …`, OSD — `bench/run.sh osd_check.py`.
