@@ -26,6 +26,23 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Добавлено
 
+- `project/app/divinus/`: вендоренный OpenIPC/divinus (MIT, upstream-коммит
+  `bca1932ed8b348af68fb33a82a67218e8f45db7a`), Makefile-обёртка для сборки в общем
+  цикле SDK (кросс-компилятор `arm-rockchip830-linux-uclibcgnueabihf`, hard-float)
+  со стейджингом `/oem/usr/bin/divinus` и `/oem/usr/share/divinus/divinus.yaml`,
+  фабричный конфиг под SC230AI (H.265 1920x1080/25, JPEG, RTSP 554, web 80,
+  watchdog 0) и `README.md` с пином коммита и правилами обновления.
+- `RkLunch.sh`: переключатель `/userdata/divinus.enable` — opt-in запуск `divinus`
+  вместо `rkipc`; без маркера порядок инициализации и запуск `rkipc` не меняются.
+- `project/app/divinus/`: vendored OpenIPC/divinus (MIT, upstream commit
+  `bca1932ed8b348af68fb33a82a67218e8f45db7a`), a Makefile wrapper for the SDK build
+  loop (cross-compiler `arm-rockchip830-linux-uclibcgnueabihf`, hard-float) that
+  stages `/oem/usr/bin/divinus` and `/oem/usr/share/divinus/divinus.yaml`, a
+  SC230AI factory config (H.265 1920x1080/25, JPEG, RTSP 554, web 80, watchdog 0),
+  and a `README.md` with the pinned commit and update rules.
+- `RkLunch.sh`: `/userdata/divinus.enable` toggle for opt-in `divinus` startup
+  instead of `rkipc`; without the marker the init order and `rkipc` startup are
+  unchanged.
 - Тестовый маркер `S99oko-test` в оверлее `overlay-luckfox-buildroot-init`:
   скрипт пишет `/tmp/oko-test-ok` (`marker=OKO-TEST-2026.10-01`, uptime, версия
   ядра) и строку `OKO-TEST: …` в `/dev/kmsg`; доказывает, что загружена сборка
@@ -43,6 +60,19 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Изменено
 
+- `STRUCTURE.md`: добавлен пакет `project/app/divinus/` (вендорские исходники,
+  фабричный конфиг, Makefile) и уточнён состав `project/app/`.
+- `INIT_ORDER.md`: ветка `divinus.enable` в `post_chk` и зависимости `divinus`
+  (общий rockit/ISP-конвейер с `rkipc`, `dlopen` вендорных библиотек).
+- `TESTBENCH.md`: чек-лист divinus (`/api/status`, `/image.jpg`, RTSP-корень),
+  диагностика сбоев и особенности портов/конфига.
+- `STRUCTURE.md`: added the `project/app/divinus/` package (vendored sources,
+  factory config, Makefile) and clarified the `project/app/` contents.
+- `INIT_ORDER.md`: documented the `divinus.enable` branch in `post_chk` and the
+  `divinus` dependencies (shared rockit/ISP pipeline with `rkipc`, `dlopen` of
+  vendor libraries).
+- `TESTBENCH.md`: added the divinus checklist (`/api/status`, `/image.jpg`, RTSP
+  root) plus failure diagnostics and port/config notes.
 - `INIT_ORDER.md`: источник `oem`/`userdata` при netboot, ветка `S20linkmount`,
   строка `S99oko-test` в порядке init-скриптов, поведение сети при netboot.
 - `TESTBENCH.md`: `.nfsroot` внутри экспорта `/srv/nfs/rootfs`, деплой rsync с

@@ -191,7 +191,19 @@ esac
    а смена MAC или DHCP-адреса разрывает NFS-соединения корня и `/oem`/`/userdata`.
 4. Создаёт симлинки для веб-интерфейса: `/userdata → /oem/usr/www/userdata`,
    `/media/usb0 → /oem/usr/www/usb0`, `/mnt/sdcard → /oem/usr/www/sdcard`.
-5. Готовит `rkipc.ini`:
+5. Проверяет маркер `/userdata/divinus.enable` — переключатель альтернативного
+   стримера OpenIPC `divinus` (MIT, вендорен в `project/app/divinus/`). Если маркер
+   есть:
+   - при отсутствии `/userdata/divinus.yaml` копируется фабричный конфиг
+     `/oem/usr/share/divinus/divinus.yaml`;
+   - `post_chk` переходит в `/userdata` (конфиг ищется в каталоге исполняемого
+     файла, затем в `./`, затем в `/etc/divinus.yaml`; при сохранении из WebUI файл
+     пере-создаётся рядом с текущим каталогом, поэтому `/userdata/divinus.yaml`
+     остаётся постоянным);
+   - запускается `/oem/usr/bin/divinus &`, после чего `post_chk` завершается:
+     секции rkipc ниже (ini, `image.bmp`, `speaker_test`, `csi_unite`, запуск rkipc)
+     не выполняются. Удаление маркера возвращает штатный запуск `rkipc`.
+6. Готовит `rkipc.ini`:
    - если `/oem/usr/share/rkipc.ini` отсутствует, фабричный ini выбирается по
      загруженному сенсору (`lsmod`): `mia1321` → `rkipc-mia1321-100w.ini`,
      `mis5001` → `rkipc-mis5001-500w.ini`, `sc530ai` → `rkipc-500w.ini`,
@@ -200,12 +212,12 @@ esac
    - выбранный файл копируется в `/userdata/rkipc.ini`;
    - если ни один вариант не найден, печатается `Error: not found rkipc.ini !!!`
      и `post_chk` завершается с ошибкой.
-6. Копирует `/oem/usr/share/image.bmp` в `/userdata`, при наличии проигрывает
+7. Копирует `/oem/usr/share/image.bmp` в `/userdata`, при наличии проигрывает
    `speaker_test.wav` через `rk_mpi_ao_test`.
-7. Вызывает `luckfox-config get_csi_unite`; для `imx415` требуется `unite=1`, для
+8. Вызывает `luckfox-config get_csi_unite`; для `imx415` требуется `unite=1`, для
    остальных — `0`. При расхождении значение меняется и `post_chk` возвращается без
    запуска rkipc (требуется перезагрузка).
-8. Запускает `rkipc -a /oem/usr/share/iqfiles &` (или `rkipc &`, если каталога IQ нет).
+9. Запускает `rkipc -a /oem/usr/share/iqfiles &` (или `rkipc &`, если каталога IQ нет).
 
 > **Особенность SC230AI:** отдельной ветки выбора ini долго не было — исправлено:
 > `post_chk` сопоставляет `sc230ai` шаблону `/oem/usr/share/rkipc-300w.ini`
@@ -267,6 +279,22 @@ AIC8800 (`aic_load_fw` → `aic8800_fdrv`), AP6XXX (`bcmdhd`), RTL8723BS
 - корректного `rkipc.ini` в `/userdata`;
 - `luckfox-config` (проверка/установка `csi_unite`);
 - смонтированных `/oem` и `/userdata`.
+
+### Приложение divinus (альтернатива rkipc, opt-in)
+
+`/oem/usr/bin/divinus` запускается из `post_chk` только при наличии
+`/userdata/divinus.enable`:
+
+- зависит от тех же `insmod_ko.sh`, `/oem/usr/share/iqfiles` и смонтированных
+  `/oem`/`/userdata`; отдельного набора модулей ядра не требует;
+- вендорные библиотеки `librockit.so` и `librkaiq.so` загружает через
+  `dlopen`/`dlsym` из `LD_LIBRARY_PATH`, который задаёт `RkEnv.sh`
+  (`/oem/usr/lib`), наследуемый от `S21appinit`;
+- конфиг — `/userdata/divinus.yaml` (фабричный шаблон —
+  `/oem/usr/share/divinus/divinus.yaml`); при старте каталог — `/userdata`, чтобы
+  сохранение из WebUI пере-создавало именно этот файл, а не симлинк;
+- `divinus` и `rkipc` используют один rockit/ISP-конвейер, поэтому
+  взаимоисключающие: одновременно не запускаются, выбор — маркером.
 
 ### Модули ядра
 

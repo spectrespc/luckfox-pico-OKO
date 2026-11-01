@@ -77,6 +77,19 @@ post_chk() {
 	check_linker /userdata /oem/usr/www/userdata
 	check_linker /media/usb0 /oem/usr/www/usb0
 	check_linker /mnt/sdcard /oem/usr/www/sdcard
+
+	# divinus (OpenIPC) as an alternative streamer: opt-in marker /userdata/divinus.enable
+	if [ -f /userdata/divinus.enable ]; then
+		if [ ! -f /userdata/divinus.yaml ]; then
+			cp -f /oem/usr/share/divinus/divinus.yaml /userdata/divinus.yaml
+		fi
+		# config is searched in the exe dir, then ./, then /etc; run from
+		# /userdata so WebUI saves rewrite /userdata/divinus.yaml itself
+		cd /userdata
+		/oem/usr/bin/divinus &
+		return
+	fi
+
 	# if /data/rkipc not exist, cp /usr/share
 	rkipc_ini=/userdata/rkipc.ini
 	default_rkipc_ini=/tmp/rkipc-factory-config.ini

@@ -8,7 +8,7 @@ Pro Max (RV1106) в режиме netboot. Значения сверены с `ne
 
 | Поле | Значение |
 |---|---|
-| Дата обновления | `2026-10-31` |
+| Дата обновления | `2026-11-01` |
 | Ответственный | `<ФИО>` |
 | Статус | активен |
 | Назначение | сборка прошивки и загрузка по сети (TFTP + NFS) для отладки IPC |
@@ -170,6 +170,15 @@ cat /proc/rkisp-vir0
 # приложение запущено
 ps | grep rkipc
 
+# альтернативный стример divinus (включается маркером)
+# раскомментировать на DUT: touch /userdata/divinus.enable && reboot
+ps | grep -E 'divinus|rkipc'
+curl -s http://192.168.52.150/api/status
+curl -s -o /tmp/snap.jpg http://192.168.52.150/image.jpg
+ls -l /userdata/divinus.yaml /userdata/divinus.enable
+# RTSP-корень divinus — без /live/0:
+# ffprobe -rtsp_transport tcp rtsp://192.168.52.150:554/
+
 # сеть
 ifconfig eth0
 ip route
@@ -190,6 +199,9 @@ dmesg | tail -50
 | Нет загрузки по TFTP | не запущен контейнер/TFTP, неверный `serverip`, `boot.img` отсутствует в `output/image` |
 | Ядро загрузилось, нет корня | не экспортирован `/srv/nfs/rootfs`, firewall, несовпадение `nfsroot` |
 | `rkipc` не стартует | нет `rkipc.ini` для сенсора или не смонтирован `/oem` (см. `INIT_ORDER.md`) |
+| `divinus` не стартует при маркере | нет `/oem/usr/bin/divinus` (сборка пакета упала молча), нет IQ-файла сенсора, `dlopen` не находит `librockit.so`/`librkaiq.so` (`LD_LIBRARY_PATH` без `/oem/usr/lib`) |
+| `divinus`: нет картинки, AIQ-ошибки | геометрия в `divinus.yaml` не совпадает с режимом сенсора (SC230AI — 1920x1080), IQ не найден по имени модуля из `/proc/rkisp-vir0` |
+| Запущены и `divinus`, и `rkipc` | маркер появился после старта `rkipc`; перезагрузить DUT (ветки взаимоисключающие) |
 | `netboot: nfs mount … failed, fallback` | `.nfsroot` не создан/не синхронизирован, нет доступа к TCP 2049, неверный `nfsroot` в cmdline |
 | Нет `/dev/video*` | `insmod_ko.sh` не выполнился или `sc230ai.ko` отсутствует |
 | `motor.ko` не грузится | ожидаемо: драйвер выключен в конфигурации |
@@ -216,6 +228,14 @@ dmesg | tail -50
   сохраняются.
 - Docker использует `network_mode: host`, поэтому порт `69/udp` на хосте должен
   быть свободен.
+- `divinus` — альтернативный стример OpenIPC (MIT, `project/app/divinus/`),
+  включается файлом `/userdata/divinus.enable`; без маркера поведение прежнее
+  (`rkipc`). RV11xx-HAL в upstream ещё «в разработке»: RTSP/fMP4/JPEG работают,
+  аудио/OSD ограничены (в фабричном конфиге выключены). Web-порт divinus — `80`,
+  RTSP — `554`; пока divinus активен, web/RTSP rkipc не запускаются.
+- divinus ищет конфиг рядом с исполняемым файлом, затем в текущем каталоге, затем
+  `/etc/divinus.yaml`. `post_chk` запускает его из `/userdata`, поэтому сохранение
+  конфига из WebUI (`/api/cmd?save`) остаётся в `/userdata` (файл `.bak` — там же).
 
 ## 10. Правила ведения
 
