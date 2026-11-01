@@ -1,0 +1,4 @@
+av==19.0.2
+pillow==13.0.0
+pyserial==3.5
+paramiko==5.1.0

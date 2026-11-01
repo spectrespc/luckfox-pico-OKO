@@ -18,11 +18,12 @@ SC230AI. Драйвер шагового двигателя 28BYJ-48 и прош
 | Папка | Назначение |
 |---|---|
 | `config/` | Извлечённые дефконфиги для быстрой настройки: `buildroot_defconfig`, `kernel_defconfig`, `dts_config`. |
+| `bench/` | Утилиты тестового стенда: UART/SSH-команды, управление U-Boot/netboot, проверка OSD по RTSP, venv. В сборке прошивки не участвует. |
 | `media/` | Медиастек Rockchip: кодеки, 2D-ускорение, ISP, NPU, медиафреймворк и примеры. |
 | `project/` | Скрипты сборки, конфигурации плат и прикладные приложения. Основная точка входа сборки. |
 | `sysdrv/` | Системный уровень: исходники U-Boot, ядра, Buildroot, прошивка MCU и модули ядра. |
 | `tools/` | Хостовые инструменты: кросс-тулчейн, утилиты упаковки и прошивки образов. |
-| `output/` | Результаты сборки: готовые образы в `image/`, промежуточные артефакты в `out/`, лог `build_all.log`. |
+| `output/` | Результаты сборки: готовые образы в `image/`, промежуточные артефакты в `out/`, лог `build_all.log`. В `output/bench/` — venv, логи netboot и кадры OSD-проверок (gitignore). |
 | `IMAGE/` | Готовые релизные образы: папка конкретного релиза с `IMAGES/`, `PATCHES/`, `DEBUG_FILES/` и `build_info.txt`. |
 | `.kilo/` | Служебная конфигурация Kilo: команды (`command/`), skill `oko-docs` (`skills/`), планы (`plans/`), настройки (`kilo.jsonc`). Проектных агентов здесь нет. |
 
@@ -63,8 +64,9 @@ SC230AI. Драйвер шагового двигателя 28BYJ-48 и прош
   (`@file`-провайдер текста OSD) и `hal/plus/rk_hal.c`/`rk_rgn.h` (RGN OSD на
   RV1106); описание патчей — в `README.md`), `files/divinus.yaml` (фабричный
   конфиг с OSD-регионами), `Makefile` (кросс-сборка и стейджинг в
-  `/oem/usr/bin` и `/oem/usr/share/divinus`). Сборка входит в общий цикл
-  `project/app/Makefile`.
+  `/oem/usr/bin` и `/oem/usr/share/divinus`), `tests/bmp_align_test.c`
+  (хостовый тест выравнивания растра OSD, в сборку не входит). Сборка входит в
+  общий цикл `project/app/Makefile`.
 - `cfg/BoardConfig_IPC/` — конфигурации плат (`BoardConfig-*.mk`), папка `overlay/`
   с оверлеями rootfs и pre/post-скрипты (`*-pre.sh`, `*-post.sh`). В оверлее OKO
   `overlay-luckfox-buildroot-init/`: `etc/init.d/S20oko-osd` (divinus по
@@ -101,7 +103,8 @@ SC230AI. Драйвер шагового двигателя 28BYJ-48 и прош
 - `build.sh`, `rkflash.sh` — симлинки на `project/build.sh` и `project/rkflash.sh`.
 - `Dockerfile`, `docker-compose.yml`, `docker-entrypoint.sh` — Docker-окружение сборки.
 - `start.sh` — сборка образа, запуск контейнера, подготовка TFTP-корня и вход в shell.
-- `netboot-catch.py` — сервисный скрипт захвата лога netboot через последовательный порт (UART).
+- `netboot-catch.py` — legacy-скрипт захвата лога netboot через UART (лог в
+  `output/bench/`); для новых сценариев — `bench/netboot.py`.
 - `AGENTS.md` — правила агента `code`: карта документации, делегирование, инструменты.
 - `README_RU.md` — русскоязычная точка входа OKO-форка: быстрый старт, сборка, ссылки.
 - `STRUCTURE.md`, `INIT_ORDER.md`, `TESTBENCH.md` — документация проекта: структура

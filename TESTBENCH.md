@@ -45,13 +45,15 @@ Pro Max (RV1106) в режиме netboot. Значения сверены с `ne
 
 | Интерфейс | Значение | Примечание |
 |---|---|---|
-| UART | `/dev/ttyACM0` | `netboot-catch.py` берёт последний найденный `/dev/ttyACM*` |
-| Скорость UART | `115200 8N1` | задана в скрипте |
-| Лог serial-сессии | `/tmp/kilo/netboot-run4.log` | каталог `/tmp/kilo` должен существовать |
+| UART | `/dev/ttyACM0` | `bench/serial_exec.py` и `bench/netboot.py` берут последний найденный `/dev/ttyACM*` |
+| Скорость UART | `115200 8N1` | задана в скриптах `bench/` |
+| Лог serial-сессии | `output/bench/netboot-<ts>.log` | каталог создаётся скриптом автоматически |
 | Ethernet | лабораторная сеть `192.168.52.0/24` | через порт устройства |
 | USB | `<порт / хаб>` | используется для Maskrom-прошивки |
 
-Требования к хосту для `netboot-catch.py`: Python 3 и модуль `pyserial`.
+Требования к хосту: Python 3 и зависимости из `bench/requirements.txt`;
+`bench/setup.sh` создаёт venv в `output/bench/venv`, запуск — `bench/run.sh`.
+Legacy-скрипт `netboot-catch.py` в корне требует только `pyserial`.
 
 ## 5. Сеть
 
@@ -142,17 +144,22 @@ boot_fit ${ramdisk_addr_r}
    `/.nfsroot/` находится внутри того же экспорта, поэтому правка `/etc/exports`
    не нужна. `--exclude=.nfsroot` не даёт удалить зеркала разделов при синхронизации.
    Эквивалентный вариант — те же команды через `sudo` от пользователя `builder`.
-4. На хосте:
+4. На хосте запустить перехват U-Boot (скрипт сам откроет последний
+   `/dev/ttyACM*` и создаст лог в `output/bench/`):
    ```sh
-   mkdir -p /tmp/kilo
-   python3 netboot-catch.py
+   bench/run.sh netboot.py catch
    ```
-5. Сбросить питание устройства. Скрипт пробивает U-Boot, отправляет команды из
-   `CMDS`, грузит `boot.img` по TFTP и выполняет `boot_fit`.
-6. Смотреть лог `/tmp/kilo/netboot-run4.log`. Лимит сессии — 900 секунд.
+   Альтернатива без ручного сброса питания — `bench/run.sh netboot.py reboot`:
+   скрипт войдёт в систему, выполнит `reboot` и перехватит U-Boot.
+5. Сбросить питание устройства (для режима `catch`). Скрипт пробивает U-Boot,
+   отправляет команды из `NETBOOT_CMDS`, грузит `boot.img` по TFTP и выполняет
+   `boot_fit`.
+6. Смотреть лог `output/bench/netboot-<ts>.log` (точный путь печатает скрипт).
+   Таймауты — `--prompt-timeout` и `--boot-timeout`; у legacy
+   `netboot-catch.py` лимит сессии 900 секунд.
 
-Ручной вариант в консоли U-Boot — те же команды, что в `CMDS` файла
-`netboot-catch.py` (`setenv …`, `ping 192.168.52.200`, `tftp`, `boot_fit`).
+Ручной вариант в консоли U-Boot — те же команды, что в `NETBOOT_CMDS` файла
+`bench/netboot.py` (`setenv …`, `ping 192.168.52.200`, `tftp`, `boot_fit`).
 
 ### C. Покомпонентная прошивка изменённых разделов
 
@@ -233,6 +240,10 @@ curl -s -u admin:oko-change-me -o /tmp/snap.jpg http://192.168.52.150/image.jpg
 echo 'OKO MESSAGE 123' > /tmp/osd.fifo
 # через 60+ с reg2 гаснет: /tmp/osd-msg.txt пуст, /tmp/osd-msg.ts удалён
 ls -l /tmp/osd-dyn.txt /tmp/osd-msg.txt /tmp/osd.fifo
+# OSD с хоста: попарный диф регионов по RTSP, кадры и кропы в output/bench/
+bench/run.sh osd_check.py --ip 192.168.52.150 --seconds 17
+# сообщение в reg2: сначала на DUT, затем повторить osd_check.py
+bench/run.sh serial_exec.py "echo 'OKO MSG TEST' > /tmp/osd.fifo"
 # RTSP-корень divinus — без /live/0:
 # ffprobe -rtsp_transport tcp rtsp://admin:oko-change-me@192.168.52.150:554/
 
@@ -323,4 +334,4 @@ dmesg | tail -50
 2. При каждом обновлении менять «Дату обновления» в разделе 1.
 3. Секреты не хранить: только плейсхолдеры `<...>` и публичные вендорские дефолты.
 4. Расхождения между документом и скриптами трактовать в пользу скриптов
-   (`netboot-catch.py`, `start.sh`, BoardConfig) и сразу править документ.
+   (`bench/*.py`, `netboot-catch.py`, `start.sh`, BoardConfig) и сразу править документ.

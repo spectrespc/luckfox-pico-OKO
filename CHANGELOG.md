@@ -108,6 +108,22 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 - `RkLunch.sh`: в netboot (`nfsroot=` в cmdline) `network_init` не меняет MAC и
   не запускает `udhcpc` — статический адрес из `ip=` сохраняется, NFS-соединения
   корня и разделов не разрываются.
+- `bench/`: утилиты тестового стенда в репозитории вместо `/tmp` —
+  `serial_exec.py` (UART), `dut.py` (SSH), `netboot.py` (`catch`/`reboot`/`cmd`
+  для U-Boot), `osd_check.py` (попарный диф OSD-регионов по RTSP), а также
+  `setup.sh`, `run.sh`, `requirements.txt` и `README.md`; venv, логи и кадры —
+  в `output/bench/` (gitignore).
+- `bench/`: bench utilities in the repository instead of `/tmp` —
+  `serial_exec.py` (UART), `dut.py` (SSH), `netboot.py` (`catch`/`reboot`/`cmd`
+  for U-Boot), `osd_check.py` (pairwise OSD region diff over RTSP), plus
+  `setup.sh`, `run.sh`, `requirements.txt` and `README.md`; the venv, logs and
+  frames live in `output/bench/` (gitignore).
+- `project/app/divinus/tests/bmp_align_test.c`: хостовый тест выравнивания
+  растра OSD (660x46 → 672x48, stride 672), не входит в Makefile пакета;
+  правило ре-вендоринга требует прогонять его после HAL-патча.
+- `project/app/divinus/tests/bmp_align_test.c`: host test for the OSD raster
+  alignment (660x46 → 672x48, stride 672), not part of the package Makefile;
+  the re-vendoring rules require running it after the HAL patch.
 
 ### Изменено
 
@@ -192,6 +208,16 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   и несколько CJK-иероглифов, кириллицы нет; текст OSD пишется латиницей.
 - `TESTBENCH.md`: documented the `simsun_en` font coverage — ASCII `0x21–0x7e`
   plus a few CJK characters, no Cyrillic; OSD text must be Latin.
+- Логи netboot и OSD-проверок перенесены из `/tmp/kilo` в `output/bench/`
+  (`netboot-<ts>.log`, `osd-<ts>-*.png`); `netboot-catch.py` читает
+  `OKO_NETBOOT_LOG` и создаёт каталог сам. Обновлены `TESTBENCH.md` (§4, §7B,
+  §8, §10), `README_RU.md`, `STRUCTURE.md` (папка `bench/`, `output/bench/`),
+  команда `/bench` и правило в `AGENTS.md` §6.
+- Netboot and OSD-check artifacts moved from `/tmp/kilo` to `output/bench/`
+  (`netboot-<ts>.log`, `osd-<ts>-*.png`); `netboot-catch.py` honours
+  `OKO_NETBOOT_LOG` and creates the directory itself. Updated `TESTBENCH.md`
+  (§4, §7B, §8, §10), `README_RU.md`, `STRUCTURE.md` (`bench/`, `output/bench/`),
+  the `/bench` command and the rule in `AGENTS.md` §6.
 
 
 ### Исправлено

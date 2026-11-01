@@ -23,6 +23,8 @@
 - `Makefile` — обёртка SDK: кросс-сборка через `$(RK_APP_CROSS)-gcc`, стейджинг
   `out/usr/bin/divinus` и `out/usr/share/divinus/divinus.yaml` в `RK_APP_OUTPUT`.
 - `files/divinus.yaml` — фабричный конфиг для платы Pico Pro Max / SC230AI.
+- `tests/bmp_align_test.c` — хостовый тест выравнивания растра OSD (не входит в
+  сборку пакета, см. правило 5 ниже).
 - `source/` — вендорские исходники без `.git`; `build.sh` и `remote.sh` upstream не
   копируются: кросс-тулчейн берётся из SDK. В `source/src/` внесены три локальных
   патча (`compat.c`, `region.c`, `hal/plus/rk_hal.c`, см. ниже).
@@ -122,6 +124,11 @@ Upstream-код OSD для RK-платформ рассчитан на друг�
      приводит к oops.
 5. Перед коммитом пересобрать (`./build.sh` в Docker) и проверить наличие
    `output/out/oem/usr/bin/divinus` — цикл сборки приложений не прерывается на ошибке
-   отдельного пакета.
+   отдельного пакета. После применения HAL-патча прогнать хостовый тест
+   выравнивания растра и дождаться `ok 660x46 rows placed at stride 672`:
+   ```sh
+   gcc -Wall -Wextra -O2 -o /tmp/bmp_align_test \
+       project/app/divinus/tests/bmp_align_test.c && /tmp/bmp_align_test
+   ```
 6. Другие правки upstream-файлов — только для сборки/запуска на плате, с явным диффом
    и комментарием в коммите.

@@ -1,6 +1,13 @@
-import serial, time, glob
+import serial, time, glob, os
 
-LOG = '/tmp/kilo/netboot-run4.log'
+# Legacy entry point, kept for compatibility.  New scenarios should use
+# `bench/run.sh netboot.py catch`, which writes into the same directory.
+ROOT = os.path.dirname(os.path.abspath(__file__))
+LOG = os.environ.get(
+    'OKO_NETBOOT_LOG',
+    os.path.join(ROOT, 'output', 'bench',
+                 'netboot-%s.log' % time.strftime('%Y%m%d-%H%M')))
+os.makedirs(os.path.dirname(LOG), exist_ok=True)
 DEADLINE = time.time() + 900
 f = open(LOG, 'wb', buffering=0)
 f.write(b'[run2 start %s]\n' % time.strftime('%H:%M:%S').encode())

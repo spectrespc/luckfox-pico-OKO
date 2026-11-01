@@ -97,15 +97,15 @@ TFTP-сервер (`tftpd-hpa`) стартует из `docker-entrypoint.sh` н�
 **B. Netboot (текущий рабочий режим стенда).**
 
 1. `./start.sh` — поднимает контейнер и TFTP-корень `output/image`.
-2. На хосте подготовить каталог лога и запустить автоматизацию по serial:
+2. На хосте запустить перехват U-Boot (venv создаётся при первом запуске):
    ```sh
-   mkdir -p /tmp/kilo
-   python3 netboot-catch.py
+   bench/run.sh netboot.py catch
    ```
-   Скрипт требует `pyserial`, открывает последний `/dev/ttyACM*` на 115200,
-   пробивает U-Boot, выставляет `ipaddr`/`serverip`/`sys_bootargs`, загружает
-   `boot.img` по TFTP и выполняет `boot_fit`.
+   Скрипт открывает последний `/dev/ttyACM*` на 115200, пробивает U-Boot,
+   выставляет `ipaddr`/`serverip`/`sys_bootargs`, загружает `boot.img` по TFTP
+   и выполняет `boot_fit`; лог пишется в `output/bench/`.
 3. Сбросить питание устройства (или нажать Reset) — дальше скрипт работает сам.
+   Перезагрузка из работающей системы — `bench/run.sh netboot.py reboot`.
 
 Подробные адреса, переменные U-Boot и порядок действий — в `TESTBENCH.md`.
 
@@ -117,6 +117,7 @@ TFTP-сервер (`tftpd-hpa`) стартует из `docker-entrypoint.sh` н�
 | `INIT_ORDER.md` | порядок инициализации: U-Boot → ядро → busybox init → модули → `divinus`/`rkipc` |
 | `TESTBENCH.md` | паспорт тестового стенда: железо, сеть, учётки, прошивка, диагностика |
 | `CHANGELOG.md` | история изменений OKO-форка (Keep a Changelog + SemVer) |
+| `bench/README.md` | утилиты стенда: UART/SSH-команды, netboot, проверка OSD по RTSP, venv |
 | `README.md`, `README_CN.md` | вендорская документация SDK (EN/CN) |
 | `UPDATE_LOG.md`, `UPDATE_LOG_CN.md` | вендорская история версий SDK (EN/CN) |
 
@@ -131,8 +132,9 @@ sh /oem/usr/ko/insmod_ko.sh      # ручная перезагрузка мод�
 ```
 
 - Последовательный порт: `/dev/ttyACM0`, **115200 8N1** (устройство может
-  определиться и как `/dev/ttyACM1` — скрипт берёт последний `ttyACM*`).
-- Лог serial-сессии: `/tmp/kilo/netboot-run4.log` (задаётся в `netboot-catch.py`).
+  определиться и как `/dev/ttyACM1` — `bench/` берёт последний `ttyACM*`).
+- Лог serial-сессии: `output/bench/netboot-<ts>.log` (путь печатает
+  `bench/run.sh netboot.py …`).
 - Стример по умолчанию — `divinus` с включённым OSD (дата/время, телеметрия,
   сообщения из `/tmp/osd.fifo`); вернуть штатный `rkipc` —
   `touch /userdata/rkipc.enable && reboot`. Подробности — `INIT_ORDER.md`,
