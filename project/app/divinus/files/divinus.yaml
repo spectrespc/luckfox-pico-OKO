@@ -29,6 +29,7 @@ osd:
   # reg1: T/BAT/LTE/WiFi, four lines, top-left;
   # reg2: GPS, top-right;
   # reg3: external text from /tmp/osd.fifo, top-left below telemetry.
+  # reg4: CPU load, free memory and CPU temperature, three lines, bottom-left.
   # Font size 24 px; text color RGB565 0x07e0 (bright green);
   # black outline 0x8000, 1 px thick, for readability over video.
   reg0_text: "$t"
@@ -63,6 +64,14 @@ osd:
   reg3_thick: 1.0
   reg3_posx: 16
   reg3_posy: 160
+  reg4_text: "@/tmp/osd-sys.txt"
+  reg4_font: simsun_en
+  reg4_size: 24.0
+  reg4_color: 0x07e0
+  reg4_outl: 0x8000
+  reg4_thick: 1.0
+  reg4_posx: 16
+  reg4_posy: 960
 
 mdns:
   enable: false

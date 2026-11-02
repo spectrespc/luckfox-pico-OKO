@@ -26,7 +26,7 @@
 | `RK_BOOT_MEDIUM` | `spi_nand` | загрузка с SPI NAND |
 | `LF_TARGET_ROOTFS` | `buildroot` | корневая ФС Buildroot (busybox init) |
 | Режим | **SPI NAND** | автономная загрузка с flash (`root=ubi0:rootfs`) |
-| Сенсор | **SC230AI** | драйвер `sc230ai` + `rv1106-sc230ai.config`; 1080p30 и 480p120 |
+| Сенсор | **SC230AI** | драйвер `sc230ai` + `rv1106-sc230ai.config`; 1080p30 и 480p120, `HDR_X2` экспериментально |
 | `RK_KERNEL_DTS` | `rv1106g-luckfox-pico-pro-max.dts` | device tree платы |
 | `RK_BOOTARGS_CMA_SIZE` | `66M` | CMA для медиастека |
 | `RK_ENABLE_WIFI` | `y` | WiFi-модули в `/oem/usr/ko` |
@@ -125,8 +125,9 @@ sh /oem/usr/ko/insmod_ko.sh      # ручная перезагрузка мод�
   определиться и как `/dev/ttyACM1` — `bench/` берёт последний `ttyACM*`).
 - Стример по умолчанию — `divinus` с включённым OSD (время справа снизу,
   телеметрия `T/BAT/LTE/WiFi` четырьмя строками слева сверху, GPS справа
-  сверху, сообщения из `/tmp/osd.fifo` слева сверху; ярко-зелёный текст
-  `0x07e0` с чёрным контуром, 30 fps); вернуть штатный `rkipc` —
+  сверху, сообщения из `/tmp/osd.fifo` слева сверху, CPU/свободная память/
+  температура CPU слева снизу; ярко-зелёный текст `0x07e0` с чёрным контуром,
+  30 fps); вернуть штатный `rkipc` —
   `touch /userdata/rkipc.enable && reboot`. Подробности — `INIT_ORDER.md`,
   `TESTBENCH.md` и `project/app/divinus/README.md`.
 - Драйвер мотора 28BYJ-48: исходники в `sysdrv/drv_ko/motor`, строка

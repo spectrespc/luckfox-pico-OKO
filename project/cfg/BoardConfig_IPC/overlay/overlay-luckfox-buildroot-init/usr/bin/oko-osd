@@ -7,13 +7,16 @@
 #     /tmp/osd-dyn.txt  : "T <t>C\nBAT <p>%\nLTE <bars>/5 <dbm>dBm\n
 #                          WiFi <bars>/5 <dbm>dBm"           (reg1, top-left,
 #                          literal backslash-n: divinus renders it as 4 lines)
+# - every 5 s writes real system stats to:
+#     /tmp/osd-sys.txt  : "CPU <usage>%\nMEM FREE <free>%\nT <temp>C"
+#                          (reg4, bottom-left, literal backslash-n: 3 lines)
 # - accepts one-line messages on /tmp/osd.fifo and shows them in
 #   /tmp/osd-msg.txt for 60 s (reg3, below the telemetry)
-#
-# All values are simulated: no GPS, LTE, WiFi, UART or ADC hardware is involved.
+# - GPS/LTE/WiFi values are simulated; CPU, memory and temperature are real.
 
 DYN=/tmp/osd-dyn.txt
 GPS=/tmp/osd-gps.txt
+SYS=/tmp/osd-sys.txt
 MSG=/tmp/osd-msg.txt
 STAMP=/tmp/osd-msg.ts
 FIFO=/tmp/osd.fifo
@@ -82,6 +85,59 @@ write_dyn() {
 	mv -f "$DYN.tmp" "$DYN"
 }
 
+write_cpu_mem() {
+	# CPU load from /proc/stat (user + nice + system + idle + iowait + irq + softirq)
+	local cpu_line=$(grep '^cpu ' /proc/stat)
+	local cpu_total=$(echo "$cpu_line" | awk '{for(i=2;i<=NF;i++) sum+=$i; print sum}')
+	local cpu_idle=$(echo "$cpu_line" | awk '{print $5}')
+
+	# Memory: available memory as a percentage of total (free + reclaimable).
+	local mem_total=$(grep '^MemTotal:' /proc/meminfo | awk '{print $2}')
+	local mem_avail=$(grep '^MemAvailable:' /proc/meminfo | awk '{print $2}')
+	[ -z "$mem_avail" ] && mem_avail=$(grep '^MemFree:' /proc/meminfo | awk '{print $2}')
+	local mem_free_pct=$((mem_avail * 100 / mem_total))
+
+	# CPU temperature: thermal_zone0 is "soc-thermal" on this board.
+	local temp_raw=$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null)
+	if [ -z "$temp_raw" ]; then
+		for f in /sys/class/thermal/thermal_zone*/temp; do
+			[ -r "$f" ] && temp_raw=$(cat "$f") && break
+		done
+	fi
+	local temp_whole=0 temp_frac=0
+	if [ -n "$temp_raw" ]; then
+		temp_whole=$((temp_raw / 1000))
+		temp_frac=$(((temp_raw % 1000) / 100))
+	fi
+
+	# CPU usage calculation using previous values (if available)
+	# Read previous values if they exist
+	local prev_cpu_total prev_cpu_idle
+	if [ -f /tmp/osd-cpu.stats ]; then
+		read prev_cpu_total prev_cpu_idle < /tmp/osd-cpu.stats
+	else
+		prev_cpu_total=0
+		prev_cpu_idle=0
+	fi
+
+	# Calculate difference
+	local cpu_diff=$((cpu_total - prev_cpu_total))
+	local idle_diff=$((cpu_idle - prev_cpu_idle))
+	local usage=0
+	if [ $cpu_diff -gt 0 ]; then
+		usage=$(( (cpu_diff - idle_diff) * 100 / cpu_diff ))
+		[ $usage -lt 0 ] && usage=0
+		[ $usage -gt 100 ] && usage=100
+	fi
+
+	# Save current values for next iteration
+	echo "$cpu_total $cpu_idle" > /tmp/osd-cpu.stats
+
+	printf 'CPU %d%%\\nMEM FREE %d%%\\nT %d.%dC\n' \
+		"$usage" "$mem_free_pct" "$temp_whole" "$temp_frac" >"$SYS.tmp"
+	mv -f "$SYS.tmp" "$SYS"
+}
+
 write_msg() {
 	printf '%s\n' "$1" | cut -c1-79 >"$MSG.tmp"
 	mv -f "$MSG.tmp" "$MSG"
@@ -89,6 +145,7 @@ write_msg() {
 }
 
 write_dyn
+write_cpu_mem
 
 while :; do
 	if read -t 1 -r line <&3; then
@@ -96,6 +153,10 @@ while :; do
 	fi
 
 	tick=$((tick + 1))
+
+	if [ $((tick % 5)) -eq 0 ]; then
+		write_cpu_mem
+	fi
 
 	if [ $((tick % 15)) -eq 0 ]; then
 		lat=$((lat + RANDOM % 5 - 2))

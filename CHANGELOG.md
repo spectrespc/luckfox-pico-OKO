@@ -146,6 +146,16 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   start/stop from upstream 6.1 / X5: `0x300a`, `0x3032`, `0x3222`, `0x3224`,
   `0x3614`. With `NO_SYNC` behavior is unchanged; module load, 30 fps and OSD
   were verified.
+- `sc230ai`: добавлен экспериментальный **HDR_X2** (SHDR/DCG, 2 lane,
+  742.5 Мбит/с, 1920×1080@30): таблица из SigmaStar, link frequency
+  371.25 МГц, VTS 2250, запись long/short exposure и gain в `set_hdrae()`.
+  По умолчанию не включается (`rockchip,camera-hdr-mode = <1>`); HDR IQ для
+  SC230AI на RV1106 не проверялся. Linear 30 fps работает без регрессий.
+- `sc230ai`: added experimental **HDR_X2** (SHDR/DCG, 2 lanes,
+  742.5 Mbps, 1920×1080@30): SigmaStar register table, 371.25 MHz link
+  frequency, VTS 2250, and long/short exposure + gain writes in
+  `set_hdrae()`. Disabled by default (`rockchip,camera-hdr-mode = <1>`);
+  SC230AI HDR IQ on RV1106 has not been validated. Linear 30 fps is unaffected.
 - `divinus`: основной поток (`mp4`) и `mjpeg` переведены на **30 fps**
   (`fps: 30`), битрейт `mp4` остаётся 4096 кбит/с. На DUT измерено
   **30.08 fps** за 20 с и ≈4.73 Мбит/с; OSD работает.
@@ -158,11 +168,17 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   (`fps: 30`); the `mp4` bitrate remains 4096 kbps. Measured on the DUT:
   **30.08 fps** over 20 s and ≈4.73 Mbps; OSD works.
 - OSD: добавлен чёрный контур текста — `regN_outl: 0x8000`,
-  `regN_thick: 1.0` для всех четырёх регионов. Конфиг применён на DUT и
+  `regN_thick: 1.0` для всех регионов. Конфиг применён на DUT и
   сохранён в `/userdata/divinus.yaml`; контур проверен по кадрам RTSP.
 - OSD: added a black text outline — `regN_outl: 0x8000`, `regN_thick: 1.0`
-  for all four regions. Applied on the DUT and persisted in
+  for all regions. Applied on the DUT and persisted in
   `/userdata/divinus.yaml`; verified from RTSP frames.
+- OSD: добавлен `reg4` в левом нижнем углу — реальные загрузка CPU,
+  процент свободной памяти (`MemAvailable/MemTotal`) и температура
+  `soc-thermal`; файл `/tmp/osd-sys.txt`, обновление раз в 5 с.
+- OSD: added `reg4` in the bottom-left corner — real CPU load, free memory
+  percentage (`MemAvailable/MemTotal`) and `soc-thermal` temperature; source
+  `/tmp/osd-sys.txt`, updated every 5 s.
 - `divinus`: битрейт основного RTSP-потока (`mp4.bitrate`, H.265 CBR)
   увеличен вдвое — `2048` → `4096` кбит/с; измеренный поток вырос
   с ≈2.28 до ≈4.5–4.9 Мбит/с. На DUT значение применено и сохранено в

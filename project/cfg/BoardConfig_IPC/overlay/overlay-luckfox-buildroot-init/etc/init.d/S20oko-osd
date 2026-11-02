@@ -5,7 +5,7 @@
 # - no /userdata/rkipc.enable  -> create /userdata/divinus.enable (default)
 # - /userdata/rkipc.enable     -> remove /userdata/divinus.enable (opt-out)
 # - /userdata/divinus.yaml without reg0_text/reg0_size/reg0_color/reg3_text
-#   (old config) -> factory config
+#   or without the osd-sys region (old config) -> factory config
 # - divinus active             -> create /tmp/osd.fifo and start /usr/bin/oko-osd
 #
 # Runs after S20linkmount (lexicographic order) and before S21appinit, so the
@@ -65,13 +65,14 @@ case "$1" in
 		fi
 
 		# Old or hand-edited configs without the current OSD layout are replaced by
-		# the factory one; reg0_text/size/color and reg3_text identify the current
-		# format (reg3 is the message region). Keep the first backup.
+		# the factory one; reg0_text/size/color, reg3_text and the osd-sys region
+		# identify the current format. Keep the first backup.
 		if [ ! -f /userdata/divinus.yaml ] ||
 			! grep -q 'reg0_text' /userdata/divinus.yaml ||
 			! grep -q 'reg0_size' /userdata/divinus.yaml ||
 			! grep -q 'reg0_color' /userdata/divinus.yaml ||
-			! grep -q 'reg3_text' /userdata/divinus.yaml; then
+			! grep -q 'reg3_text' /userdata/divinus.yaml ||
+			! grep -q 'osd-sys.txt' /userdata/divinus.yaml; then
 			[ -f /userdata/divinus.yaml ] &&
 				[ ! -f /userdata/divinus.yaml.bak ] &&
 				cp -f /userdata/divinus.yaml /userdata/divinus.yaml.bak
