@@ -28,15 +28,6 @@ check_linker() {
 }
 
 network_init() {
-	if grep -q 'nfsroot=' /proc/cmdline 2>/dev/null; then
-		# netboot: root fs and oem/userdata are mounted over NFS using the
-		# static address from the kernel ip= parameter. Changing the MAC or
-		# taking a DHCP lease would break the established NFS connections.
-		ifconfig eth0 up
-		echo "netboot: keep static eth0 config, skip dhcp"
-		return 0
-	fi
-
 	ethaddr1=$(ifconfig -a | grep "eth.*HWaddr" | awk '{print $5}')
 
 	if [ -f /data/ethaddr.txt ]; then

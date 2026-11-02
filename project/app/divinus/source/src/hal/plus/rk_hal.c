@@ -344,7 +344,7 @@ int rk_region_create(char handle, hal_rect rect, short opacity)
     rk_rgn_cnf region, regionCurr;
     rk_rgn_chn attrib, attribCurr;
     // OKO: the RV1106 overlay requires 16-pixel aligned position and size and
-    // only accepts BGRA5551; text bitmaps are ARGB1555, see rk_region_setbitmap.
+    // accepts BGRA5551; text bitmaps are converted in rk_region_setbitmap.
     short px = rect.x & ~15, py = rect.y & ~15;
     short pw = (rect.width + 15) & ~15, ph = (rect.height + 15) & ~15;
 
@@ -356,9 +356,9 @@ int rk_region_create(char handle, hal_rect rect, short opacity)
     region.overlay.pixFmt = RK_PIXFMT_BGRA5551;
     region.overlay.size.width = pw;
     region.overlay.size.height = ph;
-    // OKO: request the default double canvas explicitly instead of relying on
-    // the library default (0 means "unspecified" in some librockit builds).
-    region.overlay.canvas = 2;
+    // OKO: use a single canvas; double buffering can keep showing the previous
+    // second's OSD until the next update.
+    region.overlay.canvas = 1;
 
     if (rk_rgn.fnGetRegionConfig(handle, &regionCurr)) {
         HAL_INFO("rk_rgn", "Creating region %d...\n", handle);
@@ -414,9 +414,10 @@ void rk_region_destroy(char handle)
 
 int rk_region_setbitmap(int handle, hal_bitmap *bitmap)
 {
-    // OKO: the overlay accepts only BGRA5551, the text bitmap is ARGB1555.
-    // Sizes are padded to the required 16-pixel alignment; padding stays
-    // transparent so the visible text does not move.
+// OKO: RV1106 RGN accepts BGRA5551. The alpha bit position differs between
+    // librockit builds (bit 0 vs bit 15), so set both; this keeps non-white
+    // text visible. Sizes are padded to the required 16-pixel alignment;
+    // padding stays transparent so the visible text does not move.
     unsigned short w = bitmap->dim.width, h = bitmap->dim.height;
     unsigned short aw = (w + 15) & ~15, ah = (h + 15) & ~15;
     unsigned short *src = bitmap->data, *dst;
@@ -442,7 +443,7 @@ int rk_region_setbitmap(int handle, hal_bitmap *bitmap)
         r = (s >> 10) & 0x1F;
         g = (s >> 5) & 0x1F;
         b = s & 0x1F;
-        dst[row * aw + col] = (b << 11) | (g << 6) | (r << 1) | 1;
+        dst[row * aw + col] = (b << 11) | (g << 6) | (r << 1) | 1 | 0x8000;
         painted++;
     }
 

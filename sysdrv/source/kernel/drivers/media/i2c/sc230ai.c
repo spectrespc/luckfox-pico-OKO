@@ -382,9 +382,32 @@ static const struct regval sc230ai_linear_10_640x480_regs[] = {
 	{REG_NULL, 0x00},
 };
 
+static const struct regval sc230ai_internal_sync_master_start_regs[] = {
+	{0x300a, 0x24}, /* sync as output PAD */
+	{0x3032, 0xa0},
+	{0x3222, 0x00}, /* master mode */
+	{REG_NULL, 0x00},
+};
+
+static const struct regval sc230ai_internal_sync_master_stop_regs[] = {
+	{REG_NULL, 0x00},
+};
+
+static const struct regval sc230ai_internal_sync_slave_start_regs[] = {
+	{0x300a, 0x20}, /* sync as input PAD */
+	{0x3222, 0x01}, /* slave mode */
+	{0x3224, 0x92}, /* fsync trigger */
+	{0x3614, 0x01},
+	{REG_NULL, 0x00},
+};
+
+static const struct regval sc230ai_internal_sync_slave_stop_regs[] = {
+	{REG_NULL, 0x00},
+};
+
 /*
  * Xclk 27Mhz
- * max_framerate 25fps
+ * max_framerate 30fps
  * mipi_datarate per lane 371.25Mbps, 2lane
  */
 static const struct regval sc230ai_linear_10_1920x1080_regs[] = {
@@ -393,8 +416,8 @@ static const struct regval sc230ai_linear_10_1920x1080_regs[] = {
 	{0x36e9, 0x80},
 	{0x37f9, 0x80},
 	{0x301f, 0x01},
-	{0x320e, 0x05},
-	{0x320f, 0x46},
+	{0x320e, 0x04},
+	{0x320f, 0x65},
 	{0x3301, 0x07},
 	{0x3304, 0x50},
 	{0x3306, 0x70},
@@ -544,11 +567,11 @@ static const struct sc230ai_mode supported_modes[] = {
 		.height = 1080,
 		.max_fps = {
 			.numerator = 10000,
-			.denominator = 250000,
+			.denominator = 300000,
 		},
-		.exp_def = 0x0460,
+		.exp_def = 0x0450,
 		.hts_def = 0x44C * 2,
-		.vts_def = 0x0546,
+		.vts_def = 0x0465,
 		.bus_fmt = MEDIA_BUS_FMT_SBGGR10_1X10,
 		.reg_list = sc230ai_linear_10_1920x1080_regs,
 		.hdr_mode = NO_HDR,
@@ -1107,7 +1130,7 @@ static long sc230ai_compat_ioctl32(struct v4l2_subdev *sd,
 
 static int __sc230ai_start_stream(struct sc230ai *sc230ai)
 {
-	int ret;
+	int ret = 0;
 
 	if (!sc230ai->is_thunderboot) {
 		ret = sc230ai_write_array(sc230ai->client, sc230ai->cur_mode->reg_list);
@@ -1126,20 +1149,37 @@ static int __sc230ai_start_stream(struct sc230ai *sc230ai)
 				return ret;
 			}
 		}
+		if (sc230ai->sync_mode == INTERNAL_MASTER_MODE)
+			ret |= sc230ai_write_array(sc230ai->client,
+				sc230ai_internal_sync_master_start_regs);
+		else if (sc230ai->sync_mode == SLAVE_MODE)
+			ret |= sc230ai_write_array(sc230ai->client,
+				sc230ai_internal_sync_slave_start_regs);
 	}
-	return sc230ai_write_reg(sc230ai->client, SC230AI_REG_CTRL_MODE,
+	ret |= sc230ai_write_reg(sc230ai->client, SC230AI_REG_CTRL_MODE,
 				 SC230AI_REG_VALUE_08BIT, SC230AI_MODE_STREAMING);
+	return ret;
 }
 
 static int __sc230ai_stop_stream(struct sc230ai *sc230ai)
 {
+	int ret = 0;
+
 	sc230ai->has_init_exp = false;
 	if (sc230ai->is_thunderboot) {
 		sc230ai->is_first_streamoff = true;
 		pm_runtime_put(&sc230ai->client->dev);
+	} else {
+		if (sc230ai->sync_mode == INTERNAL_MASTER_MODE)
+			ret |= sc230ai_write_array(sc230ai->client,
+				sc230ai_internal_sync_master_stop_regs);
+		else if (sc230ai->sync_mode == SLAVE_MODE)
+			ret |= sc230ai_write_array(sc230ai->client,
+				sc230ai_internal_sync_slave_stop_regs);
 	}
-	return sc230ai_write_reg(sc230ai->client, SC230AI_REG_CTRL_MODE,
+	ret |= sc230ai_write_reg(sc230ai->client, SC230AI_REG_CTRL_MODE,
 				 SC230AI_REG_VALUE_08BIT, SC230AI_MODE_SW_STANDBY);
+	return ret;
 }
 
 static int __sc230ai_power_on(struct sc230ai *sc230ai);

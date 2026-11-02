@@ -1,6 +1,6 @@
 ---
 name: oko-docs
-description: Работа с документацией OKO — STRUCTURE.md (структура репозитория и папок), INIT_ORDER.md (порядок инициализации, boot-цепочка, U-Boot, ядро, DTS, init-скрипты, insmod_ko.sh, drv_ko, rkipc), TESTBENCH.md (тестовый стенд, железо, serial, сеть TFTP/NFS, прошивка, netboot, диагностика). Использовать при навигации по SDK, правках BoardConfig, kernel/dts, init-скриптов, модулей ядра, rkipc, при работе с железом и прошивкой, а также при обновлении документации и CHANGELOG.
+description: Работа с документацией OKO — STRUCTURE.md (структура репозитория и папок), INIT_ORDER.md (порядок инициализации, boot-цепочка, U-Boot, ядро, DTS, init-скрипты, insmod_ko.sh, drv_ko, rkipc), TESTBENCH.md (тестовый стенд, железо, serial, сеть, прошивка SPI NAND, диагностика). Использовать при навигации по SDK, правках BoardConfig, kernel/dts, init-скриптов, модулей ядра, rkipc, при работе с железом и прошивкой, а также при обновлении документации и CHANGELOG.
 ---
 
 # Skill `oko-docs`
@@ -18,7 +18,7 @@ Workflow для задач, где нужны `STRUCTURE.md`, `INIT_ORDER.md`, `
 | Init-скрипты, inittab, порядок S* | `INIT_ORDER.md` §3–§5 | `project/build.sh`, `sysdrv/source/buildroot/.../busybox/inittab` |
 | Модули ядра, `insmod_ko.sh`, motor | `INIT_ORDER.md` §6–§7 | `sysdrv/drv_ko/insmod_ko.sh`, `sysdrv/cfg/package.mk`, `RK_ENABLE_MOTOR` |
 | `rkipc`, IQ-файлы, `rkipc.ini` | `INIT_ORDER.md` §5, §7 | `project/app/rkipc/.../RkLunch.sh`, `/oem`, `/userdata` |
-| Железо, serial, сеть, прошивка, netboot | `TESTBENCH.md` §1–§8 | `netboot-catch.py` (`CMDS`), `start.sh`, `docker-compose.yml` |
+| Железо, serial, сеть, прошивка | `TESTBENCH.md` §1–§8 | `bench/*.py`, `start.sh`, `docker-compose.yml` |
 | Диагностика после загрузки | `TESTBENCH.md` §8–§9 | `lsmod`, `/proc/rkisp-vir0`, логи |
 | Обновление доков | тот док, который затронут, + `CHANGELOG.md` | источник изменения |
 
@@ -56,7 +56,7 @@ ls output/out/rootfs_uclibc_rv1106/etc/init.d/S??* 2>/dev/null
 ls output/out/oem/usr/ko/ 2>/dev/null | grep -E 'motor|hpmcu'
 
 # сетевые параметры стенда
-grep -n '192\.168\.52\|CMDS' netboot-catch.py
+grep -n '192\.168\.52' bench/*.py
 ```
 
 Правило приоритета: **скрипты, `.mk` и исходники важнее документа**. `output/` —

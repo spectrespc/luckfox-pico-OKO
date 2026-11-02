@@ -12,7 +12,7 @@ VENV="${OKO_BENCH_VENV:-$OUT/venv}"
 
 if [ "$#" -lt 1 ]; then
     echo "usage: bench/run.sh <script>.py [arguments]" >&2
-    echo "scripts: serial_exec.py dut.py netboot.py osd_check.py" >&2
+    echo "scripts: serial_exec.py dut.py osd_check.py" >&2
     exit 2
 fi
 

@@ -2,15 +2,18 @@
 #
 # OKO OSD sidecar for divinus.
 #
-# - every 15 s writes simulated telemetry to /tmp/osd-dyn.txt:
-#     GPS <lat>N <lon>E T <t>C BAT <p>%
-#   (divinus reg1 uses an '@file' text provider, see the divinus package)
+# - every 15 s writes simulated telemetry to two files:
+#     /tmp/osd-gps.txt  : "GPS <lat>N <lon>E"                (reg2, top-right)
+#     /tmp/osd-dyn.txt  : "T <t>C\nBAT <p>%\nLTE <bars>/5 <dbm>dBm\n
+#                          WiFi <bars>/5 <dbm>dBm"           (reg1, top-left,
+#                          literal backslash-n: divinus renders it as 4 lines)
 # - accepts one-line messages on /tmp/osd.fifo and shows them in
-#   /tmp/osd-msg.txt for 60 s (divinus reg2)
+#   /tmp/osd-msg.txt for 60 s (reg3, below the telemetry)
 #
-# All values are simulated: no GPS, UART or ADC hardware is involved.
+# All values are simulated: no GPS, LTE, WiFi, UART or ADC hardware is involved.
 
 DYN=/tmp/osd-dyn.txt
+GPS=/tmp/osd-gps.txt
 MSG=/tmp/osd-msg.txt
 STAMP=/tmp/osd-msg.ts
 FIFO=/tmp/osd.fifo
@@ -21,6 +24,8 @@ lat=550000 # 55.0000 N, units of 1/10000 degree
 lon=373000 # 37.3000 E
 temp=24
 bat=100
+lte=-78 # simulated LTE RSRP, dBm
+wifi=-56 # simulated WiFi RSSI, dBm
 tick=0
 
 cleanup() {
@@ -48,9 +53,32 @@ coord() {
 	printf '%d.%04d%s' $(($1 / 10000)) $(($1 % 10000)) "$2"
 }
 
+lte_bars() {
+	if [ "$1" -ge -65 ]; then echo 5
+	elif [ "$1" -ge -75 ]; then echo 4
+	elif [ "$1" -ge -85 ]; then echo 3
+	elif [ "$1" -ge -95 ]; then echo 2
+	else echo 1
+	fi
+}
+
+wifi_bars() {
+	if [ "$1" -ge -50 ]; then echo 5
+	elif [ "$1" -ge -60 ]; then echo 4
+	elif [ "$1" -ge -70 ]; then echo 3
+	elif [ "$1" -ge -80 ]; then echo 2
+	else echo 1
+	fi
+}
+
 write_dyn() {
-	printf 'GPS %s %s T %dC BAT %d%%\n' \
-		"$(coord "$lat" N)" "$(coord "$lon" E)" "$temp" "$bat" >"$DYN.tmp"
+	printf 'GPS %s %s\n' \
+		"$(coord "$lat" N)" "$(coord "$lon" E)" >"$GPS.tmp"
+	mv -f "$GPS.tmp" "$GPS"
+
+	printf 'T %dC\\nBAT %d%%\\nLTE %s/5 %ddBm\\nWiFi %s/5 %ddBm\n' \
+		"$temp" "$bat" "$(lte_bars "$lte")" "$lte" \
+		"$(wifi_bars "$wifi")" "$wifi" >"$DYN.tmp"
 	mv -f "$DYN.tmp" "$DYN"
 }
 
@@ -85,6 +113,14 @@ while :; do
 		if [ $((tick % 60)) -eq 0 ] && [ "$bat" -gt 5 ]; then
 			bat=$((bat - 1))
 		fi
+
+		lte=$((lte + RANDOM % 7 - 3))
+		[ "$lte" -lt -110 ] && lte=-110
+		[ "$lte" -gt -60 ] && lte=-60
+
+		wifi=$((wifi + RANDOM % 7 - 3))
+		[ "$wifi" -lt -85 ] && wifi=-85
+		[ "$wifi" -gt -40 ] && wifi=-40
 
 		write_dyn
 	fi

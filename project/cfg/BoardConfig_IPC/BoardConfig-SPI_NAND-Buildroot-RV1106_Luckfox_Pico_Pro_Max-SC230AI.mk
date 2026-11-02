@@ -3,7 +3,7 @@
 #################################################
 # 	Board Config
 #################################################
-export LF_ORIGIN_BOARD_CONFIG=BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-NETBOOT-SC230AI.mk
+export LF_ORIGIN_BOARD_CONFIG=BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI.mk
 # Target CHIP
 export RK_CHIP=rv1106
 
@@ -83,8 +83,8 @@ export RK_UBOOT_DEFCONFIG=luckfox_rv1106_uboot_defconfig
 # Kernel defconfig
 export RK_KERNEL_DEFCONFIG=luckfox_rv1106_linux_defconfig
 
-# Kernel config fragment: TFTP boot + NFS root + SC230AI sensor
-export RK_KERNEL_DEFCONFIG_FRAGMENT="rv1106-netboot.config rv1106-sc230ai.config"
+# Kernel config fragment: SC230AI sensor
+export RK_KERNEL_DEFCONFIG_FRAGMENT="rv1106-sc230ai.config"
 
 # Config sensor IQ files
 # RK_CAMERA_SENSOR_IQFILES format:

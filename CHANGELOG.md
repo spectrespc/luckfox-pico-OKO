@@ -26,6 +26,12 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Добавлено
 
+- `oko-osd`: в эмуляцию телеметрии добавлены LTE (RSRP, dBm + 1–5 полос) и
+  WiFi (RSSI, dBm + 1–5 полос); значения меняются раз в 15 с вместе с
+  GPS/температурой/батареей.
+- `oko-osd`: added simulated LTE (RSRP in dBm + 1–5 bars) and WiFi (RSSI in dBm
+  + 1–5 bars) to the telemetry; values change every 15 s together with
+  GPS/temperature/battery.
 - `project/app/divinus/`: вендоренный OpenIPC/divinus (MIT, upstream-коммит
   `bca1932ed8b348af68fb33a82a67218e8f45db7a`), Makefile-обёртка для сборки в общем
   цикле SDK (кросс-компилятор `arm-rockchip830-linux-uclibcgnueabihf`, hard-float)
@@ -127,11 +133,97 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Изменено
 
+- `sc230ai`: режим 1920×1080 переведён с 25 на **30 fps** (`VTS = 0x0465`,
+  HTS остаётся 2200, MIPI link 371.25 Мбит/с не менялся). Проверено на DUT:
+  `v4l2-ctl` даёт стабильные **30.01–30.02 fps** на 300 кадрах, ошибок
+  CSI/MIPI нет. Модуль собран отдельно и загружен через
+  `/oem/usr/ko/sc230ai.ko` без полной перепрошивки.
+- `sc230ai`: в проект перенесена запись internal sync master/slave регистров
+  при старте и остановке потока (из upstream 6.1 / X5): `0x300a`, `0x3032`,
+  `0x3222`, `0x3224`, `0x3614`. При `NO_SYNC` поведение не меняется; проверены
+  загрузка модуля, 30 fps и OSD.
+- `sc230ai`: ported internal sync master/slave register writes at stream
+  start/stop from upstream 6.1 / X5: `0x300a`, `0x3032`, `0x3222`, `0x3224`,
+  `0x3614`. With `NO_SYNC` behavior is unchanged; module load, 30 fps and OSD
+  were verified.
+- `divinus`: основной поток (`mp4`) и `mjpeg` переведены на **30 fps**
+  (`fps: 30`), битрейт `mp4` остаётся 4096 кбит/с. На DUT измерено
+  **30.08 fps** за 20 с и ≈4.73 Мбит/с; OSD работает.
+- `sc230ai`: the 1920×1080 mode is switched from 25 to **30 fps**
+  (`VTS = 0x0465`, HTS stays 2200, MIPI link 371.25 Mbps unchanged). Verified
+  on the DUT: `v4l2-ctl` reports stable **30.01–30.02 fps** over 300 frames with
+  no CSI/MIPI errors. The module was built separately and loaded through
+  `/oem/usr/ko/sc230ai.ko` without a full reflash.
+- `divinus`: the main stream (`mp4`) and `mjpeg` are switched to **30 fps**
+  (`fps: 30`); the `mp4` bitrate remains 4096 kbps. Measured on the DUT:
+  **30.08 fps** over 20 s and ≈4.73 Mbps; OSD works.
+- OSD: добавлен чёрный контур текста — `regN_outl: 0x8000`,
+  `regN_thick: 1.0` для всех четырёх регионов. Конфиг применён на DUT и
+  сохранён в `/userdata/divinus.yaml`; контур проверен по кадрам RTSP.
+- OSD: added a black text outline — `regN_outl: 0x8000`, `regN_thick: 1.0`
+  for all four regions. Applied on the DUT and persisted in
+  `/userdata/divinus.yaml`; verified from RTSP frames.
+- `divinus`: битрейт основного RTSP-потока (`mp4.bitrate`, H.265 CBR)
+  увеличен вдвое — `2048` → `4096` кбит/с; измеренный поток вырос
+  с ≈2.28 до ≈4.5–4.9 Мбит/с. На DUT значение применено и сохранено в
+  `/userdata/divinus.yaml`.
+- `divinus`: main RTSP stream bitrate (`mp4.bitrate`, H.265 CBR) doubled —
+  `2048` → `4096` kbps; the measured stream grew from ≈2.28 to ≈4.5–4.9 Mbps.
+  Applied on the DUT and persisted in `/userdata/divinus.yaml`.
+- OSD: размер шрифта всех регионов — `24.0` px; время перенесено в правый
+  нижний угол, GPS — в правый верхний, телеметрия `T/BAT/LTE/WiFi` разбита на
+  четыре строки в левом верхнем углу, сообщения — под ней в `reg3`. Цвет —
+  ярко-зелёный `regN_color: 0x07e0` (RGB565). `S20oko-osd` мигрирует старый
+  `/userdata/divinus.yaml` (без `reg0_size`/`reg0_color`/`reg3_text`) с
+  сохранением первого бэкапа `/userdata/divinus.yaml.bak`.
+- OSD: font size for all regions is `24.0` px; time moved to bottom-right, GPS
+  to top-right, `T/BAT/LTE/WiFi` split into four lines in the top-left, and
+  messages placed below them in `reg3`. Color is bright green
+  `regN_color: 0x07e0` (RGB565). `S20oko-osd` migrates an old
+  `/userdata/divinus.yaml` (without `reg0_size`/`reg0_color`/`reg3_text`) and
+  keeps the first backup `/userdata/divinus.yaml.bak`.
+- `divinus` RGN (`rk_hal.c`): в конверсии BGRA5551 выставляются оба бита
+  альфы (бит 0 и бит 15); сборки librockit для RV1106 различаются, без этого
+  не белый цвет OSD (зелёный/красный) рендерится полностью прозрачным.
+- `divinus` RGN (`rk_hal.c`): the BGRA5551 conversion now sets both alpha bits
+  (bit 0 and bit 15); RV1106 librockit builds differ, and otherwise a non-white
+  OSD color (green/red) is rendered fully transparent.
+- Активная конфигурация переключена на
+  `project/cfg/BoardConfig_IPC/BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI.mk`:
+  SPI NAND, Buildroot, SC230AI, фрагмент ядра только `rv1106-sc230ai.config`.
+  Сборка, прошивка и проверки выполняются в автономном режиме, без TFTP/NFS.
+- `Dockerfile`, `docker-entrypoint.sh`, `docker-compose.yml`, `start.sh`: убраны
+  TFTP-сервер, пакеты `tftpd-hpa`/`atftp` и соответствующие сообщения; контейнер
+  больше не запускает сетевых сервисов.
+- `AGENTS.md`, `README_RU.md`, `TESTBENCH.md`, `INIT_ORDER.md`, `STRUCTURE.md`,
+  `bench/README.md`, `.kilo/command/bench.md`, `.kilo/command/docs-check.md`,
+  `.kilo/skills/oko-docs/SKILL.md`: netboot удалён из описания стенда, прошивки,
+  диагностики и утилит; основной режим — SPI NAND.
+- После перехода на автономную загрузку DUT получает адрес по DHCP; фактический
+  адрес на `2026-11-01` — `192.168.52.65`. `TESTBENCH.md` §5 и примеры в
+  `README_RU.md` / `bench/README.md` / `/bench` обновлены; `192.168.52.150`
+  остаётся резервным адресом для DHCP-резервирования.
+- Active configuration switched to
+  `project/cfg/BoardConfig_IPC/BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI.mk`:
+  SPI NAND, Buildroot, SC230AI, kernel fragment `rv1106-sc230ai.config` only.
+  Build, flashing and checks run standalone without TFTP/NFS.
+- After the switch to standalone boot the DUT obtains its address via DHCP; the
+  actual address on `2026-11-01` is `192.168.52.65`. `TESTBENCH.md` §5 and the
+  examples in `README_RU.md` / `bench/README.md` / `/bench` were updated;
+  `192.168.52.150` remains a reserved address for a DHCP reservation.
+- `Dockerfile`, `docker-entrypoint.sh`, `docker-compose.yml`, `start.sh`: removed
+  the TFTP server, the `tftpd-hpa`/`atftp` packages and related messages; the
+  container no longer starts network services.
+- `AGENTS.md`, `README_RU.md`, `TESTBENCH.md`, `INIT_ORDER.md`, `STRUCTURE.md`,
+  `bench/README.md`, `.kilo/command/bench.md`, `.kilo/command/docs-check.md`,
+  `.kilo/skills/oko-docs/SKILL.md`: netboot removed from the bench, flashing,
+  diagnostics and tooling docs; SPI NAND is the primary mode.
 - Поведение запуска стримера: `divinus` стартует по умолчанию — маркер
   `/userdata/divinus.enable` создаёт `S20oko-osd`; штатный `rkipc` запускается
   только при opt-out `/userdata/rkipc.enable`. Логика `RkLunch.sh` не менялась.
 - `S20oko-osd` перезаписывает `/userdata/divinus.yaml` фабричным, если в нём нет
-  `reg0_text` (старый или ручной конфиг): ручные правки такого файла не
+  `reg0_text`/`reg0_size`/`reg0_color` (старый или ручной конфиг); первый прежний
+  файл сохраняется как `divinus.yaml.bak`, ручные правки такого файла не
   переживают перезагрузку.
 - `INIT_ORDER.md`, `TESTBENCH.md`, `STRUCTURE.md`, `README_RU.md`: divinus по
   умолчанию, строка `S20oko-osd` в порядке init, OSD-чек-лист и файлы оверлея.
@@ -220,8 +312,37 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   the `/bench` command and the rule in `AGENTS.md` §6.
 
 
+### Удалено
+
+- Netboot-режим: файлы `BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-NETBOOT.mk`,
+  `BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-NETBOOT-SC230AI.mk`,
+  фрагмент ядра `sysdrv/source/kernel/arch/arm/configs/rv1106-netboot.config`,
+  утилиты `bench/netboot.py` и `netboot-catch.py`.
+- NFS-root в `S20linkmount` (`project/build.sh`): ветка монтирования
+  `oem`/`userdata` с хоста и сообщения `netboot: …`; разделы всегда берутся из
+  SPI NAND (ubifs).
+- Netboot-ветка в `RkLunch.sh`: статическая сеть из `ip=` больше не
+  поддерживается, `network_init` всегда настраивает MAC и запускает DHCP.
+- Netboot mode: the
+  `BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-NETBOOT.mk` and
+  `BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-NETBOOT-SC230AI.mk`
+  files, the `sysdrv/source/kernel/arch/arm/configs/rv1106-netboot.config`
+  kernel fragment, and the `bench/netboot.py` / `netboot-catch.py` tools.
+- NFS root in `S20linkmount` (`project/build.sh`): the host-side
+  `oem`/`userdata` mount branch and `netboot: …` messages; partitions always come
+  from SPI NAND (ubifs).
+- Netboot branch in `RkLunch.sh`: static networking from `ip=` is no longer
+  supported; `network_init` always configures the MAC and starts DHCP.
+
 ### Исправлено
 
+- OSD: RGN переведён на один canvas (`region.overlay.canvas = 1`). При двух
+  canvas драйвер периодически отдавал кадр с OSD предыдущей секунды — время на
+  видео шло не по порядку. Проверено 60 с: кадров со «старым» временем нет.
+- OSD: the RGN now uses a single canvas (`region.overlay.canvas = 1`). With two
+  canvases the driver periodically emitted a frame with the previous second's
+  OSD, so the displayed time was not sequential. Verified for 60 s with no
+  stale-time frames.
 - `netboot-catch.py`: после появления login-приглашения (или по таймауту 180 с)
   скрипт закрывает `/dev/ttyACM*` и завершается, больше не держит serial и не
   спамит `^C` в консоль; окно ожидания U-Boot остаётся 900 с.

@@ -1,29 +1,29 @@
 # Структура проекта
 
 Репозиторий — это Luckfox Pico SDK (Rockchip RV1103/RV1106) с доработками под проект
-**OKO**: сборка в Docker-окружении, загрузка по сети (TFTP/NFS) и поддержка сенсора
-SC230AI. Драйвер шагового двигателя 28BYJ-48 и прошивка сопроцессора на RT-Thread
-входят в вендорский SDK.
+**OKO**: сборка в Docker-окружении, автономная загрузка с SPI NAND и поддержка
+сенсора SC230AI. Драйвер шагового двигателя 28BYJ-48 и прошивка сопроцессора
+на RT-Thread входят в вендорский SDK.
 
 Активная конфигурация платы задаётся симлинком `.BoardConfig.mk`:
 
 ```
-.BoardConfig.mk -> project/cfg/BoardConfig_IPC/BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-NETBOOT-SC230AI.mk
+.BoardConfig.mk -> project/cfg/BoardConfig_IPC/BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI.mk
 ```
 
-То есть SPI NAND, Buildroot, плата Luckfox Pico Pro Max, режим netboot, камера SC230AI.
+То есть SPI NAND, Buildroot, плата Luckfox Pico Pro Max, камера SC230AI.
 
 ## Корневые папки
 
 | Папка | Назначение |
 |---|---|
 | `config/` | Извлечённые дефконфиги для быстрой настройки: `buildroot_defconfig`, `kernel_defconfig`, `dts_config`. |
-| `bench/` | Утилиты тестового стенда: UART/SSH-команды, управление U-Boot/netboot, проверка OSD по RTSP, venv. В сборке прошивки не участвует. |
+| `bench/` | Утилиты тестового стенда: UART/SSH-команды, проверка OSD по RTSP, venv. В сборке прошивки не участвует. |
 | `media/` | Медиастек Rockchip: кодеки, 2D-ускорение, ISP, NPU, медиафреймворк и примеры. |
 | `project/` | Скрипты сборки, конфигурации плат и прикладные приложения. Основная точка входа сборки. |
 | `sysdrv/` | Системный уровень: исходники U-Boot, ядра, Buildroot, прошивка MCU и модули ядра. |
 | `tools/` | Хостовые инструменты: кросс-тулчейн, утилиты упаковки и прошивки образов. |
-| `output/` | Результаты сборки: готовые образы в `image/`, промежуточные артефакты в `out/`, лог `build_all.log`. В `output/bench/` — venv, логи netboot и кадры OSD-проверок (gitignore). |
+| `output/` | Результаты сборки: готовые образы в `image/`, промежуточные артефакты в `out/`, лог `build_all.log`. В `output/bench/` — venv и кадры OSD-проверок (gitignore). |
 | `IMAGE/` | Готовые релизные образы: папка конкретного релиза с `IMAGES/`, `PATCHES/`, `DEBUG_FILES/` и `build_info.txt`. |
 | `.kilo/` | Служебная конфигурация Kilo: команды (`command/`), skill `oko-docs` (`skills/`), планы (`plans/`), настройки (`kilo.jsonc`). Проектных агентов здесь нет. |
 
@@ -102,9 +102,7 @@ SC230AI. Драйвер шагового двигателя 28BYJ-48 и прош
 
 - `build.sh`, `rkflash.sh` — симлинки на `project/build.sh` и `project/rkflash.sh`.
 - `Dockerfile`, `docker-compose.yml`, `docker-entrypoint.sh` — Docker-окружение сборки.
-- `start.sh` — сборка образа, запуск контейнера, подготовка TFTP-корня и вход в shell.
-- `netboot-catch.py` — legacy-скрипт захвата лога netboot через UART (лог в
-  `output/bench/`); для новых сценариев — `bench/netboot.py`.
+- `start.sh` — сборка образа, запуск контейнера и вход в shell.
 - `AGENTS.md` — правила агента `code`: карта документации, делегирование, инструменты.
 - `README_RU.md` — русскоязычная точка входа OKO-форка: быстрый старт, сборка, ссылки.
 - `STRUCTURE.md`, `INIT_ORDER.md`, `TESTBENCH.md` — документация проекта: структура

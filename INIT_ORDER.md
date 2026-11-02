@@ -5,7 +5,7 @@ BootROM → U-Boot → ядро Linux → busybox init → init-скрипты �
 запуск приложения `rkipc`, а также зависимости между разделами, модулями и сервисами.
 
 Активная конфигурация определяется симлинком `.BoardConfig.mk`, который указывает на
-`project/cfg/BoardConfig_IPC/BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-NETBOOT-SC230AI.mk`.
+`project/cfg/BoardConfig_IPC/BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI.mk`.
 
 Канонический источник порядка — исходные скрипты и сборочные файлы. Каталог
 `output/out/` — это артефакт последней сборки; он может устареть и используется только
@@ -29,48 +29,32 @@ BootROM → U-Boot → ядро Linux → busybox init → init-скрипты �
 | `RK_UBOOT_DEFCONFIG` | `luckfox_rv1106_uboot_defconfig` | конфигурация U-Boot |
 | `RK_UBOOT_DEFCONFIG_FRAGMENT` | `rk-sfc.config` | поддержка SPI flash controller |
 | `RK_KERNEL_DEFCONFIG` | `luckfox_rv1106_linux_defconfig` | базовая конфигурация ядра |
-| `RK_KERNEL_DEFCONFIG_FRAGMENT` | `rv1106-netboot.config rv1106-sc230ai.config` | NFS-root + сенсор SC230AI |
+| `RK_KERNEL_DEFCONFIG_FRAGMENT` | `rv1106-sc230ai.config` | сенсор SC230AI |
 | `RK_BOOTARGS_CMA_SIZE` | `66M` | в cmdline попадает как `rk_dma_heap_cma=66M` |
 | `RK_CAMERA_SENSOR_IQFILES` | `sc230ai_CMK-OT2115-PC1_30IRC-F16.json` | IQ-файл сенсора |
 | `RK_ENABLE_WIFI` | `y` | WiFi-модули собираются и копируются в `/oem/usr/ko` |
 | `RK_ENABLE_MOTOR` | **не задан** | `motor.ko` не собирается (см. раздел 7) |
 | `RK_POST_BUILD_SCRIPT` | **не задан** | init-скрипты не переписываются пост-скриптом |
 
-Используются два пути загрузки:
+Используется автономная загрузка из SPI NAND: ядро и корневая ФС находятся
+во flash, `oem` и `userdata` монтируются из соответствующих UBI-разделов.
+Сетевые сервисы хоста для загрузки не используются.
 
-1. **Прошивка SPI NAND** — самодостаточный вариант: ядро и корневая ФС находятся во flash.
-2. **Netboot** — рабочий вариант текущей конфигурации: ядро (`boot.img`) загружается по
-   TFTP, корневая ФС монтируется по NFS с хоста. Разделы `oem` и `userdata` в netboot
-   также берутся с хоста: `S20linkmount` монтирует их по NFS из
-   `<host>:<nfsroot>/.nfsroot/{oem,userdata}` (см. раздел 4). Если NFS-монтирование
-   раздела не удалось, скрипт откатывается на прежнее поведение — ubifs из SPI NAND.
-
-После того как корневая ФС смонтирована и запущен busybox init, инициализация обоих
-вариантов идентична.
+После того как корневая ФС смонтирована и запущен busybox init, инициализация
+выполняется по разделам 3–7.
 
 ## 2. Boot-цепочка
 
 1. **BootROM** читает загрузчик из SPI NAND и передаёт управление TPL/SPL.
 2. **U-Boot** (`luckfox_rv1106_uboot_defconfig` + фрагмент `rk-sfc.config`) инициализирует
-   SFC и загружает ядро:
-   - **SPI NAND:** из раздела `boot` читается FIT-образ (ядро + DTB
-     `rv1106g-luckfox-pico-pro-max.dts`); корень — `root=ubi0:rootfs rootfstype=ubifs`.
-   - **Netboot:** по TFTP загружается `boot.img`, затем выполняется `boot_fit`; переменная
-     `sys_bootargs` содержит NFS-root, например:
-     ```
-     root=/dev/nfs rw nfsroot=<host>:/srv/nfs/rootfs,vers=3,proto=tcp,nolock \
-     ip=<ip>:<server>:<gw>:<mask>:luckfox:eth0:off rk_dma_heap_cma=66M
-     ```
-     Поддержка обеспечивается фрагментом `rv1106-netboot.config`
-     (`CONFIG_IP_PNP`, `CONFIG_ROOT_NFS`).
+   SFC и загружает ядро из раздела `boot`: читается FIT-образ (ядро + DTB
+   `rv1106g-luckfox-pico-pro-max.dts`); корень — `root=ubi0:rootfs rootfstype=ubifs`.
 3. **Ядро Linux 5.10.160** монтирует корень и запускает `/sbin/init` — симлинк на
    `/bin/busybox` (в текущем rootfs отдельного `/init` нет, `init=` в cmdline не задан).
 4. **busybox init** читает `/etc/inittab` (раздел 3).
 
-Вспомогательные средства netboot в корне репозитория: `start.sh` (поднимает
-Docker-сборщик через `docker compose` — `build` + `up -d` — и открывает shell внутри
-контейнера; TFTP-корень `output/image`) и `netboot-catch.py` (автоматизация загрузки по serial:
-`setenv sys_bootargs`, `tftp ${ramdisk_addr_r} boot.img`, `boot_fit`).
+`start.sh` поднимает Docker-сборщик через `docker compose` (`build` + `up -d`)
+и открывает shell внутри контейнера.
 
 ## 3. Инициализация busybox (inittab)
 
@@ -138,19 +122,8 @@ Docker-сборщик через `docker compose` — `build` + `up -d` — и �
 - монтирует `oem` → `/oem` и `userdata` → `/userdata` как ubifs, при необходимости
   выполняя `ubiattach`/`ubimkvol`.
 
-В netboot-режиме (`root=/dev/nfs` в `/proc/cmdline`) `mount_part()` сначала пытается
-смонтировать `oem` и `userdata` по NFS:
-
-- сервер и путь берутся из `nfsroot=<host>:<path>` в `/proc/cmdline`, хардкода нет;
-- монтируется `<host>:<path>/.nfsroot/<partname>` с опциями
-  `vers=3,proto=tcp,nolock,soft,timeo=50,retrans=3`;
-- успешное монтирование печатает `netboot: <partname> from nfs <host>:<path>/.nfsroot`;
-- при ошибке NFS печатается `netboot: nfs mount <partname> failed, fallback to spi_nand`
-  и выполняется прежняя ветка — ubifs с SPI NAND.
-
-`rootfs` в этой ветке не участвует (`mountpt=IGNORE`), NAND при удачном NFS-монтировании
-не трогается. Зеркала разделов на хосте — `<nfsroot>/.nfsroot/{oem,userdata}`; их
-содержимое обновляется из `output/out/oem` и `output/out/userdata` после сборки.
+`rootfs` в этой ветке не участвует (`mountpt=IGNORE`): корень уже поднят ядром
+из UBI-раздела. `oem` и `userdata` всегда монтируются из SPI NAND (ubifs).
 
 > **Критическая зависимость:** `S20linkmount` обязан выполниться раньше `S21appinit`.
 > `RkLunch.sh` читает `/oem/usr/bin`, `/oem/usr/ko`, `/oem/usr/share`, пишет в
@@ -187,9 +160,7 @@ esac
 2. Выбирает каталог модулей: `/oem/usr/ko`, если там есть `insmod_ko.sh`, иначе `/ko`,
    и выполняет `sh insmod_ko.sh` (раздел 6).
 3. Запускает `network_init &`: берёт MAC из `/data/ethaddr.txt` (при отсутствии —
-   сохраняет текущий), поднимает `eth0`, запускает `udhcpc -i eth0`. При netboot
-   (`nfsroot=` в `/proc/cmdline`) шаг пропускается: адрес уже задан параметром `ip=`,
-   а смена MAC или DHCP-адреса разрывает NFS-соединения корня и `/oem`/`/userdata`.
+   сохраняет текущий), поднимает `eth0`, запускает `udhcpc -i eth0`.
 4. Создаёт симлинки для веб-интерфейса: `/userdata → /oem/usr/www/userdata`,
    `/media/usb0 → /oem/usr/www/usb0`, `/mnt/sdcard → /oem/usr/www/sdcard`.
 5. Проверяет маркер `/userdata/divinus.enable` — переключатель стримера OpenIPC
@@ -197,12 +168,13 @@ esac
    умолчанию скриптом `S20oko-osd` (оверлей OKO, выполняется до `S21appinit`);
    opt-out — файл `/userdata/rkipc.enable`: при его наличии `S20oko-osd` удаляет
    divinus-маркер, и `post_chk` запускает штатный `rkipc`. Если маркер есть:
-   - `S20oko-osd` заранее бутстрапит `/userdata/divinus.yaml`: при отсутствии
-     файла или отсутствии в нём `reg0_text` (старый/ручной конфиг) файл
-     перезаписывается фабричным `/oem/usr/share/divinus/divinus.yaml` с тремя
-     OSD-регионами (дата/время, телеметрия, внешние сообщения); в `post_chk`
-     остаётся только резервное копирование фабричного конфига при отсутствии
-     файла;
+- `S20oko-osd` заранее бутстрапит `/userdata/divinus.yaml`: при отсутствии
+      файла или отсутствии в нём `reg0_text`/`reg0_size`/`reg0_color`/`reg3_text`
+      (старый/ручной конфиг) файл сохраняется как `divinus.yaml.bak` и
+      перезаписывается фабричным `/oem/usr/share/divinus/divinus.yaml` с тремя
+      OSD-регионами (дата/время, телеметрия, внешние сообщения); в `post_chk`
+      остаётся только резервное копирование фабричного конфига при отсутствии
+      файла;
    - `post_chk` переходит в `/userdata` (конфиг ищется в каталоге исполняемого
      файла, затем в `./`, затем в `/etc/divinus.yaml`; при сохранении из WebUI файл
      пере-создаётся рядом с текущим каталогом, поэтому `/userdata/divinus.yaml`
@@ -271,9 +243,8 @@ AIC8800 (`aic_load_fw` → `aic8800_fdrv`), AP6XXX (`bcmdhd`), RTL8723BS
 ### Разделы и файловая система
 
 - `S20linkmount` → `S21appinit`: без смонтированных `/oem` и `/userdata` `RkLunch.sh`
-  не найдёт `/oem/usr/bin/RkLunch.sh`, модули и IQ-файлы. Источник этих разделов зависит
-  от загрузки: SPI NAND → ubifs с flash, netboot → NFS `<host>:<nfsroot>/.nfsroot/*`
-  (fallback — снова NAND).
+  не найдёт `/oem/usr/bin/RkLunch.sh`, модули и IQ-файлы. Источник этих разделов —
+  ubifs из SPI NAND.
 - `/etc/iqfiles` — симлинк на `../oem/usr/share/iqfiles`, создаётся при упаковке
   (`build.sh`); `rkipc` запускается с `-a /oem/usr/share/iqfiles` напрямую.
 - `rkipc.ini` хранится в `/userdata` (переживает перепрошивку), фабричный шаблон — в
@@ -303,12 +274,20 @@ AIC8800 (`aic_load_fw` → `aic8800_fdrv`), AP6XXX (`bcmdhd`), RTL8723BS
 - конфиг — `/userdata/divinus.yaml` (фабричный шаблон —
   `/oem/usr/share/divinus/divinus.yaml`); при старте каталог — `/userdata`, чтобы
   сохранение из WebUI пере-создавало именно этот файл, а не симлинк;
-- OSD-текст с датой/временем рендерится самим divinus (`reg0_text: "$t"`)
-  и виден в RTSP (VENC-канал 0); снимок `/image.jpg` кодируется отдельным
+- OSD-текст с датой/временем рендерится самим divinus (`reg0_text: "$t"`),
+  время — в правом нижнем углу; снимок `/image.jpg` кодируется отдельным
   VENC-каналом и OSD не содержит (ограничение RGN на RV1106);
-- телеметрия и внешние сообщения — через `@file`-провайдер (локальный патч
-  `region.c`): `/tmp/osd-dyn.txt` и `/tmp/osd-msg.txt` пишет демон `oko-osd`,
-  который запускает `S20oko-osd` вместе с FIFO `/tmp/osd.fifo`;
+- `reg1` — телеметрия `T/BAT/LTE/WiFi` четырьмя строками в левом верхнем углу,
+  `reg2` — GPS в правом верхнем, `reg3` — сообщения из FIFO под телеметрией;
+  телеметрия и GPS пишутся через `@file`-провайдер (локальный патч `region.c`):
+  `/tmp/osd-dyn.txt`, `/tmp/osd-gps.txt` и `/tmp/osd-msg.txt` пишет демон
+  `oko-osd`, который запускает `S20oko-osd` вместе с FIFO `/tmp/osd.fifo`;
+  эмулированные `GPS`, температура, батарея, `LTE` и `WiFi` (dBm + полосы)
+  обновляются раз в 15 с;
+- размер шрифта всех OSD-регионов задан `regN_size: 24.0`, цвет текста —
+  `regN_color: 0x07e0` (ярко-зелёный RGB565), контур — `regN_outl: 0x8000`
+  (чёрный) толщиной `regN_thick: 1.0` в фабричном `divinus.yaml`;
+  RGN использует один canvas, чтобы OSD не отставал на секунду;
 - `divinus` использует пропатченный `compat.c` (libc `mmap` с 32-битным `off_t`),
   поэтому дополнительный `LD_PRELOAD` не нужен;
 - `divinus` и `rkipc` используют один rockit/ISP-конвейер, поэтому
@@ -337,26 +316,22 @@ AIC8800 (`aic_load_fw` → `aic8800_fdrv`), AP6XXX (`bcmdhd`), RTL8723BS
 ### Сеть
 
 - `RkLunch.sh` поднимает `eth0` и `udhcpc` в фоне параллельно с `S40network` /
-  `S41dhcpcd`. MAC-адрес фиксируется в `/data/ethaddr.txt`. В netboot DHCP не
-  запускается: адрес берётся из `ip=` в cmdline (иначе смена IP рвёт NFS-корень).
+  `S41dhcpcd`. MAC-адрес фиксируется в `/data/ethaddr.txt`.
 - `S49ntp`, `S50sshd`, `S50telnet` рассчитывают на уже поднятую сеть.
-- В netboot-режиме сеть нужна ещё до старта userspace — на этапе U-Boot (TFTP) и ядра
-  (NFS-root).
 
 ## 8. Источники и проверка
 
 | Этап | Исходный файл |
 |---|---|
-| Конфигурация платы | `project/cfg/BoardConfig_IPC/BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-NETBOOT-SC230AI.mk` |
+| Конфигурация платы | `project/cfg/BoardConfig_IPC/BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI.mk` |
 | Окружение сборки (Docker) | `Dockerfile`, `docker-compose.yml`, `docker-entrypoint.sh`, `start.sh` |
-| U-Boot / ядро / cmdline | `project/build.sh` (генерация `S20linkmount`, `S21appinit`), `sysdrv/source/kernel/arch/arm/configs/rv1106-netboot.config` |
+| U-Boot / ядро / cmdline | `project/build.sh` (генерация `S20linkmount`, `S21appinit`), `sysdrv/source/kernel/arch/arm/configs/rv1106-sc230ai.config` |
 | inittab | `sysdrv/source/buildroot/buildroot-2023.02.6/package/busybox/inittab` |
 | Init-скрипты (оверлей) | `project/cfg/BoardConfig_IPC/overlay/overlay-luckfox-buildroot-init/etc/init.d/` |
 | Загрузка модулей | `sysdrv/drv_ko/insmod_ko.sh` |
 | WiFi | `sysdrv/drv_ko/wifi/insmod_wifi.sh` |
 | Приложение | `project/app/rkipc/rkipc/src/rv1106_ipc/RkLunch.sh` |
 | Мотор | `sysdrv/drv_ko/motor/ReadMe`, `sysdrv/cfg/package.mk` |
-| Netboot-утилиты | `start.sh`, `netboot-catch.py` |
 | Сверка артефакта | `output/out/rootfs_uclibc_rv1106/etc/init.d/`, `output/out/oem/usr/ko/` |
 
 Быстрая проверка после изменений:

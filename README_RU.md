@@ -2,7 +2,7 @@
 
 Русскоязычная точка входа в репозиторий проекта **OKO** — форк SDK Luckfox Pico
 (Rockchip RV1103/RV1106). Доработки форка: IPC-камера на сенсоре **SC230AI**,
-сборка в Docker и отладка с загрузкой по сети (**netboot**: TFTP + NFS).
+сборка в Docker и автономная загрузка с **SPI NAND**.
 Вендорский SDK уже содержит драйвер шагового двигателя **28BYJ-48**; в текущей
 конфигурации он выключен (см. «Полезные команды»).
 
@@ -14,7 +14,7 @@
 Активная конфигурация задаётся симлинком `.BoardConfig.mk`:
 
 ```
-.BoardConfig.mk -> project/cfg/BoardConfig_IPC/BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-NETBOOT-SC230AI.mk
+.BoardConfig.mk -> project/cfg/BoardConfig_IPC/BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI.mk
 ```
 
 Что выбрано в этом файле:
@@ -25,8 +25,8 @@
 | `RK_APP_TYPE` | `RKIPC_RV1106` | приложение `rkipc` |
 | `RK_BOOT_MEDIUM` | `spi_nand` | загрузка с SPI NAND |
 | `LF_TARGET_ROOTFS` | `buildroot` | корневая ФС Buildroot (busybox init) |
-| Режим | **NETBOOT** | ядро по TFTP, корень по NFS (`rv1106-netboot.config`) |
-| Сенсор | **SC230AI** | драйвер `sc230ai` + `rv1106-sc230ai.config` |
+| Режим | **SPI NAND** | автономная загрузка с flash (`root=ubi0:rootfs`) |
+| Сенсор | **SC230AI** | драйвер `sc230ai` + `rv1106-sc230ai.config`; 1080p30 и 480p120 |
 | `RK_KERNEL_DTS` | `rv1106g-luckfox-pico-pro-max.dts` | device tree платы |
 | `RK_BOOTARGS_CMA_SIZE` | `66M` | CMA для медиастека |
 | `RK_ENABLE_WIFI` | `y` | WiFi-модули в `/oem/usr/ko` |
@@ -41,7 +41,7 @@
 ## Быстрый старт (Docker)
 
 Сборка выполняется в изолированном контейнере Ubuntu 22.04 с уже установленным
-кросс-тулчейном Rockchip и TFTP-сервером.
+кросс-тулчейном Rockchip.
 
 ```sh
 ./start.sh
@@ -53,7 +53,7 @@
 2. поднимает контейнер `luckfox_oko_build_env` (`docker compose up -d`,
    `network_mode: host`, рабочая папка `/workspace`, проект смонтирован туда же);
 3. при наличии `.gitattributes` подтягивает Git LFS-файлы;
-4. создаёт `output/image` (корень TFTP) и открывает shell внутри контейнера.
+4. создаёт `output/image` (каталог готовых образов) и открывает shell внутри контейнера.
 
 Внутри контейнера:
 
@@ -65,10 +65,8 @@
 Результаты сборки — в `output/image/` (например, `update.img`), промежуточные
 артефакты — в `output/out/`, общий лог — `output/build_all.log`.
 
-TFTP-сервер (`tftpd-hpa`) стартует из `docker-entrypoint.sh` на порту `69/udp`
-с корнем `/workspace/output/image` (`TFTP_ROOT`). NFS-сервер в образ не входит —
-экспорт `/srv/nfs/rootfs` для netboot настраивается на хосте отдельно
-(см. `TESTBENCH.md`).
+Контейнер не запускает сетевых сервисов: сборка и прошивка выполняются локально,
+готовые образы лежат в `output/image/`.
 
 ## Сборка без Docker
 
@@ -80,9 +78,9 @@ TFTP-сервер (`tftpd-hpa`) стартует из `docker-entrypoint.sh` н�
 
 ## Загрузка на устройство
 
-Используются два пути.
+Используется SPI NAND.
 
-**A. Прошивка SPI NAND (автономная загрузка).**
+**A. Полная прошивка SPI NAND.**
 
 ```sh
 ./build.sh firmware
@@ -91,26 +89,15 @@ TFTP-сервер (`tftpd-hpa`) стартует из `docker-entrypoint.sh` н�
 ```
 
 Устройство переводится в режим Maskrom; затем образ пишется в SPI NAND.
-Для выкатки без полной прошивки (только изменённые разделы `oem`/`rootfs`) —
-`upgrade_tool db` + `wl` по LBA с полным размером раздела, см. `TESTBENCH.md` §7C.
-`./rkflash.sh oem` / `rootfs` (`upgrade_tool di`) в чистом Maskrom отвечает
-`parameter is invalid`: таблица разделов появляется только после
-`db download.bin`; проверенный путь для этих разделов — `wl` из §7C.
 
-**B. Netboot (текущий рабочий режим стенда).**
+**B. Покомпонентная прошивка изменённых разделов.**
 
-1. `./start.sh` — поднимает контейнер и TFTP-корень `output/image`.
-2. На хосте запустить перехват U-Boot (venv создаётся при первом запуске):
-   ```sh
-   bench/run.sh netboot.py catch
-   ```
-   Скрипт открывает последний `/dev/ttyACM*` на 115200, пробивает U-Boot,
-   выставляет `ipaddr`/`serverip`/`sys_bootargs`, загружает `boot.img` по TFTP
-   и выполняет `boot_fit`; лог пишется в `output/bench/`.
-3. Сбросить питание устройства (или нажать Reset) — дальше скрипт работает сам.
-   Перезагрузка из работающей системы — `bench/run.sh netboot.py reboot`.
+Режим для выкатки в SPI NAND без полного образа: прошиваются только изменённые
+разделы `oem`/`rootfs`, остальные (включая `env` с MAC-адресом) не трогаются.
+Нужны `upgrade_tool db output/image/download.bin` и запись по LBA с полным
+размером раздела — см. `TESTBENCH.md` §7B.
 
-Подробные адреса, переменные U-Boot и порядок действий — в `TESTBENCH.md`.
+Подробные адреса, команды и порядок действий — в `TESTBENCH.md`.
 
 ## Документация проекта
 
@@ -120,15 +107,15 @@ TFTP-сервер (`tftpd-hpa`) стартует из `docker-entrypoint.sh` н�
 | `INIT_ORDER.md` | порядок инициализации: U-Boot → ядро → busybox init → модули → `divinus`/`rkipc` |
 | `TESTBENCH.md` | паспорт тестового стенда: железо, сеть, учётки, прошивка, диагностика |
 | `CHANGELOG.md` | история изменений OKO-форка (Keep a Changelog + SemVer) |
-| `bench/README.md` | утилиты стенда: UART/SSH-команды, netboot, проверка OSD по RTSP, venv |
+| `bench/README.md` | утилиты стенда: UART/SSH-команды, проверка OSD по RTSP, venv |
 | `README.md`, `README_CN.md` | вендорская документация SDK (EN/CN) |
 | `UPDATE_LOG.md`, `UPDATE_LOG_CN.md` | вендорская история версий SDK (EN/CN) |
 
 ## Полезные команды
 
 ```sh
-# на устройстве (после netboot)
-ssh root@192.168.52.150          # пароль по умолчанию — вендорский, см. TESTBENCH.md
+# на устройстве (адрес eth0 выдаётся по DHCP — смотрите TESTBENCH.md §5)
+ssh root@<IP-адрес-DUT>         # пароль по умолчанию — вендорский, см. TESTBENCH.md
 luckfox-config                   # настройки платы/камеры
 lsmod                            # загруженные модули ядра
 sh /oem/usr/ko/insmod_ko.sh      # ручная перезагрузка модулей (порядок важен)
@@ -136,10 +123,10 @@ sh /oem/usr/ko/insmod_ko.sh      # ручная перезагрузка мод�
 
 - Последовательный порт: `/dev/ttyACM0`, **115200 8N1** (устройство может
   определиться и как `/dev/ttyACM1` — `bench/` берёт последний `ttyACM*`).
-- Лог serial-сессии: `output/bench/netboot-<ts>.log` (путь печатает
-  `bench/run.sh netboot.py …`).
-- Стример по умолчанию — `divinus` с включённым OSD (дата/время, телеметрия,
-  сообщения из `/tmp/osd.fifo`); вернуть штатный `rkipc` —
+- Стример по умолчанию — `divinus` с включённым OSD (время справа снизу,
+  телеметрия `T/BAT/LTE/WiFi` четырьмя строками слева сверху, GPS справа
+  сверху, сообщения из `/tmp/osd.fifo` слева сверху; ярко-зелёный текст
+  `0x07e0` с чёрным контуром, 30 fps); вернуть штатный `rkipc` —
   `touch /userdata/rkipc.enable && reboot`. Подробности — `INIT_ORDER.md`,
   `TESTBENCH.md` и `project/app/divinus/README.md`.
 - Драйвер мотора 28BYJ-48: исходники в `sysdrv/drv_ko/motor`, строка
@@ -160,5 +147,5 @@ sh /oem/usr/ko/insmod_ko.sh      # ручная перезагрузка мод�
   `.BoardConfig.mk` и `output/`, а не на `IMAGE/`.
 - `output/`, `IMAGE/`, `config/` и объектные файлы (`*.o`, `*.ko`) исключены из
   Git — это артефакты, а не исходники.
-- Docker использует `network_mode: host`: TFTP виден из локальной сети хоста,
-  но порт `69/udp` будет занят, если на хосте уже запущен другой TFTP-сервер.
+- Docker использует `network_mode: host`: контейнер видит сеть хоста, но не
+  запускает собственных сетевых сервисов.

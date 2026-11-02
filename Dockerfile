@@ -3,7 +3,6 @@ FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=en_US.UTF-8
 ENV LC_ALL=en_US.UTF-8
-ENV TFTP_ROOT=/workspace/output/image
 
 ARG UID=1000
 ARG GID=1000
@@ -20,8 +19,6 @@ RUN apt-get update && apt-get install -y \
     squashfs-tools mtd-utils e2fsprogs dosfstools mtools xz-utils bzip2 \
     p7zip-full zip wget curl \
     bash-completion \
-    tftpd-hpa \
-    atftp \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -61,10 +58,9 @@ RUN echo 'echo "==========================================="' >> ~/.bashrc && \
     echo 'echo "  OS: Ubuntu 22.04"' >> ~/.bashrc && \
     echo 'echo "  User: $(whoami) (UID: $UID)"' >> ~/.bashrc && \
     echo 'echo "  Workspace: /workspace"' >> ~/.bashrc && \
-    echo 'echo "  TFTP Root: $TFTP_ROOT"' >> ~/.bashrc && \
     echo 'echo "==========================================="' >> ~/.bashrc && \
     echo 'echo ""' >> ~/.bashrc && \
-    echo 'echo "✅ Тулчейн Rockchip и TFTP-сервер инициализированы."' >> ~/.bashrc && \
+    echo 'echo "✅ Тулчейн Rockchip инициализирован."' >> ~/.bashrc && \
     echo 'echo ""' >> ~/.bashrc
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

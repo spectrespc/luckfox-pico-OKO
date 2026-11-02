@@ -9,7 +9,7 @@
 ```sh
 bench/setup.sh                          # создать output/bench/venv и поставить зависимости
 bench/run.sh serial_exec.py 'cat /proc/uptime'
-bench/run.sh netboot.py catch           # затем сбросить питание DUT
+bench/run.sh dut.py 'mount | grep -w " / "'
 ```
 
 `bench/run.sh` сам вызывает `setup.sh`, если venv ещё нет.
@@ -20,7 +20,6 @@ bench/run.sh netboot.py catch           # затем сбросить питан
 |---|---|
 | `serial_exec.py` | вход в консоль по UART (`/dev/ttyACM*`, 115200 8N1) и выполнение команд на DUT |
 | `dut.py` | выполнение команд по SSH через `paramiko` |
-| `netboot.py` | управление U-Boot: `catch` (спам Ctrl-C до `=>`, затем netboot-команды), `reboot` (перезагрузка DUT с перехватом U-Boot), `cmd '<команда>'` (одна команда в U-Boot) |
 | `osd_check.py` | захват кадров RTSP, попарный диф боксов OSD-регионов, сохранение полных кадров и кропов |
 
 ## Примеры
@@ -32,20 +31,11 @@ bench/run.sh serial_exec.py --wait 5 'ps | grep -E "divinus|oko-osd|rkipc"' 'cat
 # SSH без пароля в командной строке (пароль — вендорский дефолт из TESTBENCH.md §6)
 bench/run.sh dut.py 'mount | grep -w " / "' 'cat /userdata/divinus.yaml'
 
-# обычный цикл netboot: запустить захват, затем сбросить питание вручную
-bench/run.sh netboot.py catch
-
-# перезагрузка из работающей системы: скрипт сам войдёт, перезагрузит и поймает U-Boot
-bench/run.sh netboot.py reboot
-
-# одна команда в уже открытом U-Boot
-bench/run.sh netboot.py cmd 'printenv ipaddr'
-
-# OSD: 17 с наблюдения, reg0 меняется за 1 с, reg1 — за 16 с
-bench/run.sh osd_check.py --ip 192.168.52.150 --seconds 17
+# OSD: 17 с наблюдения; время меняется за 1 с, телеметрия и GPS — за 16 с
+bench/run.sh osd_check.py --ip 192.168.52.65 --seconds 17
 
 # свои регионы (имя:x0,y0,x1,y1;...)
-bench/run.sh osd_check.py --regions 'top:0,16,1200,64;msg:0,112,1200,160'
+bench/run.sh osd_check.py --regions 'telemetry:0,16,760,160;gps:1500,16,1920,64'
 ```
 
 ## Переменные окружения
@@ -55,20 +45,15 @@ bench/run.sh osd_check.py --regions 'top:0,16,1200,64;msg:0,112,1200,160'
 | `OKO_BENCH_OUT` | `output/bench` | каталог логов, кадров и кропов |
 | `OKO_BENCH_VENV` | `$OKO_BENCH_OUT/venv` | путь к virtualenv |
 | `OKO_SERIAL_PORT` | последний `/dev/ttyACM*` | UART-порт |
-| `OKO_DUT_HOST` | `192.168.52.150` | адрес DUT (SSH/RTSP, `ipaddr` в netboot) |
+| `OKO_DUT_HOST` | `192.168.52.65` | адрес DUT (SSH/RTSP; DHCP, см. TESTBENCH.md §5) |
 | `OKO_DUT_PASSWORD` | `luckfox` | пароль root (публичный вендорский дефолт) |
 | `OKO_RTSP_USER` / `OKO_RTSP_PASS` | `admin` / `oko-change-me` | учётка divinus (фабричный дефолт) |
-| `OKO_TFTP_HOST` | `192.168.52.200` | `serverip` для TFTP/NFS |
-| `OKO_GATEWAY` | `192.168.52.254` | `gatewayip` |
-| `OKO_NFSROOT` | `192.168.52.200:/srv/nfs/rootfs` | NFS-корень для `sys_bootargs` |
-| `OKO_NETBOOT_LOG` | `output/bench/netboot-<ts>.log` | лог legacy-скрипта `netboot-catch.py` в корне |
 
 Секреты в репозитории не хранятся: только публичные вендорские дефолты и
 переопределение переменными окружения.
 
 ## Артефакты
 
-- Логи U-Boot/netboot: `output/bench/netboot-<YYYYmmdd-HHMMSS>.log`.
 - Кадры и кропы OSD: `output/bench/osd-<YYYYmmdd-HHMMSS>-fNN[-<reg>].png`.
 - Каталог создаётся автоматически; `output/` в `.gitignore`.
 
@@ -79,9 +64,7 @@ bench/run.sh osd_check.py --regions 'top:0,16,1200,64;msg:0,112,1200,160'
 - `Permission denied: '/dev/ttyACM0'` — добавьте пользователя в группу `dialout`
   и перелогиньтесь: `sudo usermod -aG dialout "$USER"`.
 - `device or resource busy` — порт держит другой процесс (`fuser /dev/ttyACM0`);
-  `netboot.py` и `serial_exec.py` запускайте последовательно.
-- `U-Boot prompt not found` — устройство уже загрузило Linux (используйте
-  `netboot.py reboot`) либо автозагрузка не прерывается (проверьте `bootdelay`).
+  `serial_exec.py` запускайте после завершения других UART-сессий.
 - PyAV не ставится из-за отсутствия колеса под версию Python — поставьте
   системный пакет (`sudo apt install python3-av`) и запускайте `osd_check.py`
   системным Python; остальные скрипты от этого не зависят.
@@ -91,13 +74,11 @@ bench/run.sh osd_check.py --regions 'top:0,16,1200,64;msg:0,112,1200,160'
 
 ## Регионы OSD
 
-Боксы по умолчанию — `0,16,1200,64`, `0,64,1200,112`, `0,112,1200,160`
-(`reg0..reg2`); они соответствуют `regN_posy` в
-`project/app/divinus/files/divinus.yaml`. При смене раскладки OSD правьте
-значения в обоих местах.
+Боксы по умолчанию:
+- `time` — `1600,1024,1920,1080` (правый нижний угол);
+- `telemetry` — `0,16,760,160` (четыре строки слева сверху);
+- `gps` — `1500,16,1920,64` (справа сверху);
+- `msg` — `0,160,1200,224` (слева сверху под телеметрией).
 
-## Legacy
-
-`netboot-catch.py` в корне репозитория оставлен для совместимости и пишет лог в
-`output/bench/` (переопределение — `OKO_NETBOOT_LOG`). Для новых сценариев
-используйте `bench/run.sh netboot.py catch`.
+Они соответствуют `regN_posx/posy` в `project/app/divinus/files/divinus.yaml`.
+При смене раскладки OSD правьте значения в обоих местах.

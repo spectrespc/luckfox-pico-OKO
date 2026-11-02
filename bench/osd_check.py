@@ -24,7 +24,12 @@ from PIL import ImageChops
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUT = ROOT / "output" / "bench"
-DEFAULT_REGIONS = "reg0:0,16,1200,64;reg1:0,64,1200,112;reg2:0,112,1200,160"
+DEFAULT_REGIONS = (
+    "time:1600,1024,1920,1080;"
+    "telemetry:0,16,760,160;"
+    "gps:1500,16,1920,64;"
+    "msg:0,160,1200,224"
+)
 THRESHOLD = 30
 
 

@@ -25,19 +25,44 @@ isp:
 osd:
   enable: true
   # OSD regions (simsun_en.ttf is the only font available in /oem/usr/share).
-  # Global 1 Hz tick: "$t" is re-rendered every second, "@path" regions are
-  # re-rendered when the first line of the file changes (OKO local patch).
-  # reg0: date/time; reg1: simulated telemetry (oko-osd, every 15 s);
-  # reg2: external text from /tmp/osd.fifo (oko-osd, TTL 60 s).
+  # reg0: time, bottom-right (1920x1080);
+  # reg1: T/BAT/LTE/WiFi, four lines, top-left;
+  # reg2: GPS, top-right;
+  # reg3: external text from /tmp/osd.fifo, top-left below telemetry.
+  # Font size 24 px; text color RGB565 0x07e0 (bright green);
+  # black outline 0x8000, 1 px thick, for readability over video.
   reg0_text: "$t"
   reg0_font: simsun_en
-  reg0_posy: 16
+  reg0_size: 24.0
+  reg0_color: 0x07e0
+  reg0_outl: 0x8000
+  reg0_thick: 1.0
+  reg0_posx: 1648
+  reg0_posy: 1024
   reg1_text: "@/tmp/osd-dyn.txt"
   reg1_font: simsun_en
-  reg1_posy: 64
-  reg2_text: "@/tmp/osd-msg.txt"
+  reg1_size: 24.0
+  reg1_color: 0x07e0
+  reg1_outl: 0x8000
+  reg1_thick: 1.0
+  reg1_posx: 16
+  reg1_posy: 16
+  reg2_text: "@/tmp/osd-gps.txt"
   reg2_font: simsun_en
-  reg2_posy: 112
+  reg2_size: 24.0
+  reg2_color: 0x07e0
+  reg2_outl: 0x8000
+  reg2_thick: 1.0
+  reg2_posx: 1600
+  reg2_posy: 16
+  reg3_text: "@/tmp/osd-msg.txt"
+  reg3_font: simsun_en
+  reg3_size: 24.0
+  reg3_color: 0x07e0
+  reg3_outl: 0x8000
+  reg3_thick: 1.0
+  reg3_posx: 16
+  reg3_posy: 160
 
 mdns:
   enable: false
@@ -102,9 +127,9 @@ mp4:
   # SC230AI native mode is 1920x1080 (sc230ai.c supported_modes[0])
   width: 1920
   height: 1080
-  fps: 25
+  fps: 30
   gop: 50
-  bitrate: 2048
+  bitrate: 4096
   profile: 2
 
 jpeg:
@@ -118,6 +143,6 @@ mjpeg:
   mode: CBR
   width: 1920
   height: 1080
-  fps: 25
+  fps: 30
   bitrate: 1024
   qfactor: 80
