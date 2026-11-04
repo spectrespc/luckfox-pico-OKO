@@ -1,0 +1,208 @@
+#!/bin/sh
+#
+# OKO Ethernet helper.
+#
+# The persistent settings live in the U-Boot env partition (/dev/mtd0) as
+# oko_* variables, because /userdata is recreated by a full firmware update.
+# The MAC is also stored there; if the env is still empty it is derived from
+# the SoC serial number, so it does not change when /userdata is wiped.
+#
+#   oko-net apply                 read env and configure eth0
+#   oko-net env                   print current settings as key=value
+#   oko-net set <mode> <ip> <mask> <gw> <dns>
+#                                 validate and store settings (no apply)
+#
+# mode is "dhcp" or "static".  IP values are IPv4 dotted quads.
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+find_tool() {
+	for _p in /usr/sbin /sbin /usr/bin /bin; do
+		[ -x "$_p/$1" ] && { echo "$_p/$1"; return 0; }
+	done
+	command -v "$1" 2>/dev/null
+}
+
+FW_PRINTENV=$(find_tool fw_printenv)
+FW_SETENV=$(find_tool fw_setenv)
+
+is_ipv4() {
+	[ -n "$1" ] || return 1
+	echo "$1" | awk -F. '
+		NF != 4 { exit 1 }
+		{
+			for (i = 1; i <= 4; i++) {
+				if ($i !~ /^[0-9]+$/ || $i < 0 || $i > 255)
+					exit 1
+			}
+		}
+		{ exit 0 }' >/dev/null 2>&1
+}
+
+is_mac() {
+	echo "$1" | grep -Eq '^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$'
+}
+
+env_get() {
+	[ -n "$FW_PRINTENV" ] || return 1
+	"$FW_PRINTENV" -n "$1" 2>/dev/null
+}
+
+env_set() {
+	[ -n "$FW_SETENV" ] || return 1
+	"$FW_SETENV" "$1" "$2" 2>/dev/null
+}
+
+derive_mac() {
+	_serial=$(tr -d '\000\r\n' < /proc/device-tree/serial-number 2>/dev/null)
+	case "$_serial" in
+		''|*[!0-9A-Fa-f]*) return 1 ;;
+	esac
+	[ ${#_serial} -ge 10 ] || return 1
+	_a=$(echo "$_serial" | cut -c1-2)
+	_b=$(echo "$_serial" | cut -c3-4)
+	_c=$(echo "$_serial" | cut -c5-6)
+	_d=$(echo "$_serial" | cut -c7-8)
+	_e=$(echo "$_serial" | cut -c9-10)
+	echo "02:$_a:$_b:$_c:$_d:$_e"
+}
+
+ensure_mac() {
+	_mac=$(env_get oko_mac)
+	if ! is_mac "$_mac"; then
+		_derived=$(derive_mac) || _derived=
+		if is_mac "$_derived"; then
+			_mac=$_derived
+			env_set oko_mac "$_mac" || true
+		fi
+	fi
+	if ! is_mac "$_mac" && [ -f /data/ethaddr.txt ]; then
+		_mac=$(cat /data/ethaddr.txt 2>/dev/null)
+	fi
+	if ! is_mac "$_mac"; then
+		_mac=$(cat /sys/class/net/eth0/address 2>/dev/null)
+	fi
+	echo "$_mac"
+}
+
+load_settings() {
+	MODE=$(env_get oko_net_mode)
+	[ "$MODE" = "static" ] || MODE=dhcp
+	IPADDR=$(env_get oko_ipaddr)
+	NETMASK=$(env_get oko_netmask)
+	GATEWAY=$(env_get oko_gateway)
+	DNS=$(env_get oko_dns)
+	MAC=$(ensure_mac)
+}
+
+current_ip() {
+	ip -4 addr show eth0 2>/dev/null | \
+		sed -n 's/.*inet \([0-9.]*\)\/.*/\1/p' | head -n 1
+}
+
+current_mac() {
+	cat /sys/class/net/eth0/address 2>/dev/null
+}
+
+show_env() {
+	load_settings
+	echo "mode=$MODE"
+	echo "ipaddr=$IPADDR"
+	echo "netmask=$NETMASK"
+	echo "gateway=$GATEWAY"
+	echo "dns=$DNS"
+	echo "mac=$MAC"
+	echo "current_ip=$(current_ip)"
+	echo "current_mac=$(current_mac)"
+	if pidof udhcpc >/dev/null 2>&1 || pidof dhcpcd >/dev/null 2>&1; then
+		echo "dhcp_running=true"
+	else
+		echo "dhcp_running=false"
+	fi
+}
+
+apply_network() {
+	load_settings
+
+	# S41dhcpcd is replaced by a stub in this image; still stop a manually
+	# started daemon so only one DHCP client owns eth0.
+	killall dhcpcd 2>/dev/null
+	killall udhcpc 2>/dev/null
+
+	ifconfig eth0 down 2>/dev/null
+	ip addr flush dev eth0 2>/dev/null
+	if is_mac "$MAC"; then
+		ifconfig eth0 hw ether "$MAC" 2>/dev/null
+	fi
+	ifconfig eth0 up 2>/dev/null
+
+	if [ "$MODE" = "static" ] && is_ipv4 "$IPADDR" && is_ipv4 "$NETMASK"; then
+		killall udhcpc 2>/dev/null
+		ifconfig eth0 "$IPADDR" netmask "$NETMASK" up 2>/dev/null
+		route del default dev eth0 2>/dev/null
+		if [ -n "$GATEWAY" ] && is_ipv4 "$GATEWAY"; then
+			route add default gw "$GATEWAY" 2>/dev/null
+		fi
+		: > /etc/resolv.conf
+		if [ -n "$DNS" ] && is_ipv4 "$DNS"; then
+			echo "nameserver $DNS" >> /etc/resolv.conf
+		fi
+	else
+		killall udhcpc 2>/dev/null
+		killall dhcpcd 2>/dev/null
+		# dhcpcd.conf uses the MAC as client ID (not a DUID that is lost on
+		# a full flash), and -b leaves the daemon running for renewals.
+		dhcpcd -b eth0 >/dev/null 2>&1
+	fi
+}
+
+set_settings() {
+	_mode=$1
+	_ip=$2
+	_mask=$3
+	_gw=$4
+	_dns=$5
+
+	case "$_mode" in
+		dhcp|static) ;;
+		*) echo "invalid mode" >&2; return 1 ;;
+	esac
+
+	if [ "$_mode" = "static" ]; then
+		is_ipv4 "$_ip" || { echo "invalid IP address" >&2; return 1; }
+		is_ipv4 "$_mask" || { echo "invalid netmask" >&2; return 1; }
+	fi
+	if [ -n "$_gw" ] && ! is_ipv4 "$_gw"; then
+		echo "invalid gateway" >&2
+		return 1
+	fi
+	if [ -n "$_dns" ] && ! is_ipv4 "$_dns"; then
+		echo "invalid DNS" >&2
+		return 1
+	fi
+
+	env_set oko_net_mode "$_mode" || return 1
+	env_set oko_ipaddr "$_ip" || return 1
+	env_set oko_netmask "$_mask" || return 1
+	env_set oko_gateway "$_gw" || return 1
+	env_set oko_dns "$_dns" || return 1
+	return 0
+}
+
+case "$1" in
+	apply)
+		apply_network
+		;;
+	env|show)
+		show_env
+		;;
+	set)
+		shift
+		set_settings "$1" "$2" "$3" "$4" "$5"
+		;;
+	*)
+		echo "usage: $0 {apply|env|set <dhcp|static> <ip> <mask> <gw> <dns>}" >&2
+		exit 1
+		;;
+esac

@@ -15,10 +15,11 @@ typedef enum {
     RK_AIQ_WBL_FLUORESCENT
 } rk_aiq_wbl;
 
+/* rk_aiq_working_mode_t from rk_aiq_comm.h; HDR2/HDR3 are not 1/2. */
 typedef enum {
-    RK_AIQ_WORK_NORMAL,
-    RK_AIQ_WORK_ISP_HDR2,
-    RK_AIQ_WORK_ISP_HDR3
+    RK_AIQ_WORK_NORMAL = 0,
+    RK_AIQ_WORK_ISP_HDR2 = 0x10,
+    RK_AIQ_WORK_ISP_HDR3 = 0x20
 } rk_aiq_work;
 
 typedef struct {
@@ -32,6 +33,19 @@ typedef struct {
 typedef struct {
     float min, max;
 } rk_aiq_rng;
+
+/* First fields of rk_ainr_param (algos/anr/rkpostisp.h).  Only the enable
+ * flag is consumed; the rest is opaque to divinus. */
+typedef struct {
+    int enable;
+    float gain;
+} rk_aiq_ainr;
+
+/* First field of work_mode_t (RkAiqUapitypes.h); the enum values are the
+ * rk_aiq_working_mode_t values (0 normal, 0x10 HDR2, 0x20 HDR3). */
+typedef struct {
+    int mode;
+} rk_aiq_work_mode;
 
 typedef struct {
     void *handle;
@@ -65,6 +79,13 @@ typedef struct {
     int (*fnGetSharpness)(const rk_aiq_ctx *context, int *sharpness);
     int (*fnSetSharpness)(const rk_aiq_ctx *context, int sharpness);
     int (*fnSetMirrorFlip)(const rk_aiq_ctx *context, bool mirror, bool flip, int skipFrmCnt);
+
+    /* Optional scene/IQ controls; resolved with dlsym.  The RV1106 librkaiq
+     * does not export rk_aiq_uapi_sysctl_swWorkingModeDyn2. */
+    int (*fnSwitchScene)(const rk_aiq_ctx *context, const char *main, const char *sub);
+    int (*fnUpdateIq)(rk_aiq_ctx *context, char *file);
+    int (*fnSwWorkingModeDyn)(const rk_aiq_ctx *context, rk_aiq_work_mode *mode);
+    int (*fnGetAinrParams)(const rk_aiq_ctx *context, rk_aiq_ainr *param);
 } rk_aiq_impl;
 
 
@@ -175,6 +196,15 @@ static int rk_aiq_load(rk_aiq_impl *aiq_lib) {
     if (!(aiq_lib->fnSetMirrorFlip = (int(*)(const rk_aiq_ctx*, bool, bool, int))
         hal_symbol_load("rk_aiq", aiq_lib->handle, "rk_aiq_uapi2_setMirrorFlip")))
         return EXIT_FAILURE;
+
+    aiq_lib->fnSwitchScene = (int(*)(const rk_aiq_ctx*, const char*, const char*))
+        dlsym(aiq_lib->handle, "rk_aiq_uapi2_sysctl_switch_scene");
+    aiq_lib->fnUpdateIq = (int(*)(rk_aiq_ctx*, char*))
+        dlsym(aiq_lib->handle, "rk_aiq_uapi2_sysctl_updateIq");
+    aiq_lib->fnSwWorkingModeDyn = (int(*)(const rk_aiq_ctx*, rk_aiq_work_mode*))
+        dlsym(aiq_lib->handle, "rk_aiq_uapi_sysctl_swWorkingModeDyn2");
+    aiq_lib->fnGetAinrParams = (int(*)(const rk_aiq_ctx*, rk_aiq_ainr*))
+        dlsym(aiq_lib->handle, "rk_aiq_uapi2_sysctl_getAinrParams");
 
     return EXIT_SUCCESS;
 }

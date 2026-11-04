@@ -22,6 +22,11 @@ int jpeg_init() {
     }
 
     jpeg_index = take_next_free_channel(false);
+    if (jpeg_index < 0) {
+        pthread_mutex_unlock(&jpeg_mutex);
+        HAL_ERROR("jpeg", "No free channel for JPEG!\n");
+    }
+    chnState[jpeg_index].role = HAL_CHNROLE_JPEG;
 
     if (ret = create_channel(jpeg_index, app_config.jpeg_width, app_config.jpeg_height, 1, 1)) {
         pthread_mutex_unlock(&jpeg_mutex);
@@ -31,6 +36,7 @@ int jpeg_init() {
 
     {
         hal_vidconfig config;
+        memset(&config, 0, sizeof(config));
         config.width = app_config.jpeg_width;
         config.height = app_config.jpeg_height;
         config.codec = HAL_VIDCODEC_JPG;

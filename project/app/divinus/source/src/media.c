@@ -1,4 +1,5 @@
 #include "media.h"
+#include "gating.h"
 
 char audioOn = 0, udpOn = 0;
 pthread_mutex_t aencMtx, chnMtx, mp4Mtx;
@@ -186,17 +187,30 @@ int save_video_stream(char index, hal_vidstream *stream) {
         case HAL_VIDCODEC_H265:
         {
             char isH265 = chnState[index].payload == HAL_VIDCODEC_H265 ? 1 : 0;
+            int role = chnState[index].role;
+
+            if (role == HAL_CHNROLE_SUB) {
+                /* The sub stream is RTSP-only and, optionally, the recording
+                 * source; it never feeds the MP4 client or RTMP/UDP. */
+                if (app_config.rtsp_enable)
+                    rtp_send_h26x(rtspHandle, 1, stream, isH265);
+                if (record_wants_source(true))
+                    record_ingest_stream(stream, isH265);
+                break;
+            }
 
             if (app_config.mp4_enable) {
                 pthread_mutex_lock(&mp4Mtx);
                 send_mp4_to_client(index, stream, isH265);
-                if (record_active()) record_ingest_stream(stream, isH265);
                 pthread_mutex_unlock(&mp4Mtx);
 
                 send_h26x_to_client(index, stream);
             }
             if (app_config.rtsp_enable)
-                rtp_send_h26x(rtspHandle, stream, isH265);
+                rtp_send_h26x(rtspHandle, 0, stream, isH265);
+
+            if (record_wants_source(false))
+                record_ingest_stream(stream, isH265);
 
             if (app_config.stream_enable) {
                 for (int i = 0; i < stream->count; i++) {
@@ -316,16 +330,10 @@ void media_stop(void) {
     rtmp_close();
 }
 
-void request_idr(void) {
-    signed char index = -1;
+void request_idr(int index) {
+    if (index < 0 || index >= chnCount) return;
     pthread_mutex_lock(&chnMtx);
-    for (int i = 0; i < chnCount; i++) {
-        if (!chnState[i].enable) continue;
-        if (chnState[i].payload != HAL_VIDCODEC_H264 &&
-            chnState[i].payload != HAL_VIDCODEC_H265) continue;
-        index = i;
-        break;
-    }
+    if (!chnState[index].enable) index = -1;
     if (index != -1) switch (plat) {
 #if defined(__ARM_PCS_VFP)
         case HAL_PLATFORM_I6:  i6_video_request_idr(index); break;
@@ -382,14 +390,31 @@ void set_grayscale(bool active) {
 int take_next_free_channel(bool mainLoop) {
     pthread_mutex_lock(&chnMtx);
     for (int i = 0; i < chnCount; i++) {
+        /* Index 5 belongs to the IVS feed and must never be a VENC channel. */
+        if (i == HAL_CHN_IVS && app_config.ivs_enable) continue;
         if (chnState[i].enable) continue;
         chnState[i].enable = true;
         chnState[i].mainLoop = mainLoop;
+        chnState[i].role = HAL_CHNROLE_NONE;
         pthread_mutex_unlock(&chnMtx);
         return i;
     }
     pthread_mutex_unlock(&chnMtx);
     return -1;
+}
+
+int channel_by_role(int role) {
+    int index = -1;
+
+    pthread_mutex_lock(&chnMtx);
+    for (int i = 0; i < chnCount; i++) {
+        if (!chnState[i].enable) continue;
+        if (chnState[i].role != role) continue;
+        index = i;
+        break;
+    }
+    pthread_mutex_unlock(&chnMtx);
+    return index;
 }
 
 int create_channel(char index, short width, short height, char framerate, char jpeg) {
@@ -650,12 +675,17 @@ int media_mjpeg_enable(void) {
     int ret;
 
     int index = take_next_free_channel(true);
+    if (index < 0) {
+        HAL_ERROR("media", "No free channel for MJPEG!\n");
+    }
+    chnState[index].role = HAL_CHNROLE_MJPG;
 
     if (ret = create_channel(index, app_config.mjpeg_width,
         app_config.mjpeg_height, app_config.mjpeg_fps, 1))
     {
         /* Only the slot needs releasing. */
         chnState[index].enable = false;
+        chnState[index].role = HAL_CHNROLE_NONE;
         HAL_ERROR("media", "Creating channel %d failed with %#x!\n%s\n",
             index, ret, errstr(ret));
     }
@@ -699,6 +729,7 @@ int media_mjpeg_enable(void) {
             /* Release the channel before clearing the slot. */
             media_video_disable(index, 1);
             chnState[index].enable = false;
+            chnState[index].role = HAL_CHNROLE_NONE;
             HAL_ERROR("media", "Creating encoder %d failed with %#x!\n%s\n",
                 index, ret, errstr(ret));
         }
@@ -709,6 +740,7 @@ int media_mjpeg_enable(void) {
         /* Drop the encoder before releasing the slot. */
         media_video_disable(index, 1);
         chnState[index].enable = false;
+        chnState[index].role = HAL_CHNROLE_NONE;
         HAL_ERROR("media", "Binding channel %d failed with %#x!\n%s\n",
             index, ret, errstr(ret));
     }
@@ -721,6 +753,8 @@ int media_mp4_disable(void) {
 
     for (char i = 0; i < chnCount; i++) {
         if (!chnState[i].enable) continue;
+        if (chnState[i].role != HAL_CHNROLE_MAIN &&
+            chnState[i].role != HAL_CHNROLE_NONE) continue;
         if (chnState[i].payload != HAL_VIDCODEC_H264 &&
             chnState[i].payload != HAL_VIDCODEC_H265) continue;
 
@@ -731,6 +765,8 @@ int media_mp4_disable(void) {
         if (ret = media_video_disable(i, 1))
             HAL_ERROR("media", "Disabling encoder %d failed with %#x!\n%s\n",
                 i, ret, errstr(ret));
+        chnState[i].enable = false;
+        chnState[i].role = HAL_CHNROLE_NONE;
     }
 
     return EXIT_SUCCESS;
@@ -740,18 +776,24 @@ int media_mp4_enable(void) {
     int ret;
 
     int index = take_next_free_channel(true);
+    if (index < 0) {
+        HAL_ERROR("media", "No free channel for the main stream!\n");
+    }
+    chnState[index].role = HAL_CHNROLE_MAIN;
 
     if (ret = create_channel(index, app_config.mp4_width,
         app_config.mp4_height, app_config.mp4_fps, 0))
     {
         /* Only the slot needs releasing. */
         chnState[index].enable = false;
+        chnState[index].role = HAL_CHNROLE_NONE;
         HAL_ERROR("media", "Creating channel %d failed with %#x!\n%s\n",
             index, ret, errstr(ret));
     }
 
     {
         hal_vidconfig config;
+        memset(&config, 0, sizeof(config));
         config.width = app_config.mp4_width;
         config.height = app_config.mp4_height;
         config.codec = app_config.mp4_codecH265 ?
@@ -762,6 +804,14 @@ int media_mp4_enable(void) {
         config.framerate = app_config.mp4_fps;
         config.bitrate = app_config.mp4_bitrate;
         config.maxBitrate = app_config.mp4_bitrate * 5 / 4;
+        config.smartp = app_config.venc_smartp;
+        config.virIdr = app_config.venc_vir_idr;
+        config.svc = app_config.venc_svc;
+        config.motionDeblur = app_config.venc_motion_deblur;
+        config.minQp = app_config.venc_min_qp;
+        config.maxQp = app_config.venc_max_qp;
+        config.minIQp = app_config.venc_min_iqp;
+        config.maxIQp = app_config.venc_max_iqp;
 
         switch (plat) {
 #if defined(__ARM_PCS_VFP)
@@ -792,6 +842,7 @@ int media_mp4_enable(void) {
             /* Release the channel before clearing the slot. */
             media_video_disable(index, 0);
             chnState[index].enable = false;
+            chnState[index].role = HAL_CHNROLE_NONE;
             HAL_ERROR("media", "Creating encoder %d failed with %#x!\n%s\n",
                 index, ret, errstr(ret));
         }
@@ -806,11 +857,258 @@ int media_mp4_enable(void) {
         /* Drop the encoder before releasing the slot. */
         media_video_disable(index, 0);
         chnState[index].enable = false;
+        chnState[index].role = HAL_CHNROLE_NONE;
         HAL_ERROR("media", "Binding channel %d failed with %#x!\n%s\n",
             index, ret, errstr(ret));
     }
 
+#if defined(__ARM_PCS_VFP)
+    if (plat == HAL_PLATFORM_RK && rtspHandle)
+        rtsp_set_stream_channel(rtspHandle, 0, index);
+#endif
     return EXIT_SUCCESS;
+}
+
+int media_substream_enable(void) {
+    int ret;
+    int index = channel_by_role(HAL_CHNROLE_SUB);
+
+    /* The channel may still exist after a soft stop; only create it once. */
+    if (index >= 0) {
+#if defined(__ARM_PCS_VFP)
+        if (plat == HAL_PLATFORM_RK && rtspHandle)
+            rtsp_set_stream_channel(rtspHandle, 1, index);
+#endif
+        HAL_INFO("media", "Sub stream resumed on channel %d\n", index);
+        return EXIT_SUCCESS;
+    }
+
+    index = take_next_free_channel(true);
+
+    if (index < 0) {
+        HAL_ERROR("media", "No free channel for the sub stream!\n");
+    }
+    chnState[index].role = HAL_CHNROLE_SUB;
+
+    if (ret = create_channel(index, app_config.substream_width,
+        app_config.substream_height, app_config.substream_fps, 0))
+    {
+        chnState[index].enable = false;
+        chnState[index].role = HAL_CHNROLE_NONE;
+        HAL_ERROR("media", "Creating sub channel %d failed with %#x!\n%s\n",
+            index, ret, errstr(ret));
+    }
+
+    {
+        hal_vidconfig config;
+        memset(&config, 0, sizeof(config));
+        config.width = app_config.substream_width;
+        config.height = app_config.substream_height;
+        config.codec = app_config.substream_codecH265 ?
+            HAL_VIDCODEC_H265 : HAL_VIDCODEC_H264;
+        config.mode = app_config.substream_mode;
+        config.profile = app_config.substream_profile;
+        config.gop = app_config.substream_gop;
+        config.framerate = app_config.substream_fps;
+        config.bitrate = app_config.substream_bitrate;
+        config.maxBitrate = app_config.substream_bitrate * 5 / 4;
+        config.smartp = app_config.venc_smartp;
+        config.virIdr = app_config.venc_vir_idr;
+        config.svc = app_config.venc_svc;
+        config.motionDeblur = app_config.venc_motion_deblur;
+        config.minQp = app_config.venc_min_qp;
+        config.maxQp = app_config.venc_max_qp;
+        config.minIQp = app_config.venc_min_iqp;
+        config.maxIQp = app_config.venc_max_iqp;
+
+        switch (plat) {
+#if defined(__ARM_PCS_VFP)
+            case HAL_PLATFORM_I6:  ret = i6_video_create(index, &config); break;
+            case HAL_PLATFORM_I6C: ret = i6c_video_create(index, &config); break;
+            case HAL_PLATFORM_M6:  ret = m6_video_create(index, &config); break;
+            case HAL_PLATFORM_RK:  ret = rk_video_create(index, &config); break;
+#elif defined(__arm__) && !defined(__ARM_PCS_VFP)
+            case HAL_PLATFORM_AK:  ret = ak_video_create(index, &config); break;
+            case HAL_PLATFORM_GM:  ret = gm_video_create(index, &config); break;
+            case HAL_PLATFORM_V1:  ret = v1_video_create(index, &config); break;
+            case HAL_PLATFORM_V2:  ret = v2_video_create(index, &config); break;
+            case HAL_PLATFORM_V3:  ret = v3_video_create(index, &config); break;
+            case HAL_PLATFORM_V4:  ret = v4_video_create(index, &config); break;
+            #if __ARM_ARCH == 6
+            case HAL_PLATFORM_F1:  ret = f1_video_create(index, &config); break;
+            case HAL_PLATFORM_F2:  ret = f2_video_create(index, &config); break;
+            #endif
+#elif defined(__mips__)
+            case HAL_PLATFORM_T31: ret = t31_video_create(index, &config); break;
+#elif defined(__riscv) || defined(__riscv__)
+            case HAL_PLATFORM_CVI: ret = cvi_video_create(index, &config); break;
+#endif
+            default: ret = EXIT_FAILURE; break;
+        }
+
+        if (ret)
+        {
+            if (plat == HAL_PLATFORM_RK) media_video_disable(index, 0);
+            chnState[index].enable = false;
+            chnState[index].role = HAL_CHNROLE_NONE;
+            HAL_ERROR("media", "Creating sub encoder %d failed with %#x!\n%s\n",
+                index, ret, errstr(ret));
+        }
+    }
+
+    if (ret = bind_channel(index, app_config.substream_fps, 0))
+    {
+        if (plat == HAL_PLATFORM_RK) media_video_disable(index, 0);
+        chnState[index].enable = false;
+        chnState[index].role = HAL_CHNROLE_NONE;
+        HAL_ERROR("media", "Binding sub channel %d failed with %#x!\n%s\n",
+            index, ret, errstr(ret));
+    }
+
+#if defined(__ARM_PCS_VFP)
+    if (plat == HAL_PLATFORM_RK && rtspHandle)
+        rtsp_set_stream_channel(rtspHandle, 1, index);
+#endif
+    HAL_INFO("media", "Sub stream channel %d at %dx%d@%d\n",
+        index, app_config.substream_width, app_config.substream_height,
+        app_config.substream_fps);
+    return EXIT_SUCCESS;
+}
+
+int media_substream_disable(void) {
+    /* Stop serving the sub stream but keep the VENC/VPSS channel allocated.
+     * On RV1106 destroying a channel while RGN overlays are attached to the
+     * main VENC invalidates those regions (RK_MPI_RGN_SetBitMap starts
+     * returning 0xfffffffe); the channel is released by sdk_stop(). */
+    int index = channel_by_role(HAL_CHNROLE_SUB);
+
+    if (index < 0) return EXIT_SUCCESS;
+
+#if defined(__ARM_PCS_VFP)
+    if (plat == HAL_PLATFORM_RK && rtspHandle) {
+        rtsp_set_stream_channel(rtspHandle, 1, -1);
+        rtsp_disable_stream(rtspHandle, 1);
+    }
+#endif
+    HAL_INFO("media", "Sub stream channel %d stopped (kept allocated)\n", index);
+    return EXIT_SUCCESS;
+}
+
+int media_apply_eptz(void) {
+    int index = -1;
+    hal_crop crop;
+    hal_rect rect;
+
+    index = channel_by_role(app_config.eptz_stream ? HAL_CHNROLE_SUB : HAL_CHNROLE_MAIN);
+    if (index < 0) return EXIT_FAILURE;
+
+    rect.x = app_config.eptz_x;
+    rect.y = app_config.eptz_y;
+    rect.width = app_config.eptz_w;
+    rect.height = app_config.eptz_h;
+    crop.enable = app_config.eptz_enable ? 1 : 0;
+    crop.rect = rect;
+
+    switch (plat) {
+#if defined(__ARM_PCS_VFP)
+        case HAL_PLATFORM_RK: return rk_vpss_set_chn_crop(index, &crop);
+#endif
+    }
+    return EXIT_FAILURE;
+}
+
+int media_apply_rotation(void) {
+    int index = -1;
+    hal_rotation rotation = HAL_ROTATE_NONE;
+
+    index = channel_by_role(app_config.rotate_stream ? HAL_CHNROLE_SUB : HAL_CHNROLE_MAIN);
+    if (index < 0) return EXIT_FAILURE;
+
+    switch (app_config.rotate_enable ? app_config.rotate_angle : 0) {
+        case 90: rotation = HAL_ROTATE_90; break;
+        case 180: rotation = HAL_ROTATE_180; break;
+        case 270: rotation = HAL_ROTATE_270; break;
+        default: rotation = HAL_ROTATE_NONE; break;
+    }
+
+    switch (plat) {
+#if defined(__ARM_PCS_VFP)
+        case HAL_PLATFORM_RK:
+            /* The RV1106 VPSS accepts SetChnRotation but does not change the
+             * encoded picture; the VENC rotation does.  Fall back to VPSS only
+             * when the encoder API is missing. */
+            if (rk_video_set_rotation(index, rotation) == EXIT_SUCCESS)
+                return EXIT_SUCCESS;
+            return rk_vpss_set_chn_rotation(index, rotation);
+#endif
+    }
+    return EXIT_FAILURE;
+}
+
+int media_apply_venc_extras(void) {
+    hal_vidconfig config;
+    int index, ret = EXIT_SUCCESS;
+
+    memset(&config, 0, sizeof(config));
+    config.svc = app_config.venc_svc;
+    config.motionDeblur = app_config.venc_motion_deblur;
+    config.minQp = app_config.venc_min_qp;
+    config.maxQp = app_config.venc_max_qp;
+    config.minIQp = app_config.venc_min_iqp;
+    config.maxIQp = app_config.venc_max_iqp;
+
+    index = channel_by_role(HAL_CHNROLE_MAIN);
+    if (index >= 0) switch (plat) {
+#if defined(__ARM_PCS_VFP)
+        case HAL_PLATFORM_RK:
+            if (rk_video_apply_extras(index, &config)) ret = EXIT_FAILURE;
+            break;
+#endif
+    }
+    index = channel_by_role(HAL_CHNROLE_SUB);
+    if (index >= 0) switch (plat) {
+#if defined(__ARM_PCS_VFP)
+        case HAL_PLATFORM_RK:
+            if (rk_video_apply_extras(index, &config)) ret = EXIT_FAILURE;
+            break;
+#endif
+    }
+
+    return ret;
+}
+
+int media_apply_aiisp(void) {
+    hal_aiisp_config config;
+
+    /* mode == OFF is a valid request: it calls SetGrpAIISPAttr(enable=0) so a
+     * running model is actually released. */
+    memset(&config, 0, sizeof(config));
+    config.mode = (hal_aiisp_mode)app_config.aiisp_enable;
+    snprintf(config.model, sizeof(config.model),
+        "%s/", app_config.aiisp_model_dir);
+    config.bufCnt = app_config.aiisp_buf_cnt;
+    config.fpsEnabled = app_config.aiisp_fps_enabled;
+    config.fpsDisabled = app_config.aiisp_fps_disabled;
+
+    switch (plat) {
+#if defined(__ARM_PCS_VFP)
+        case HAL_PLATFORM_RK: return rk_group_set_aiisp(&config);
+#endif
+    }
+    return EXIT_FAILURE;
+}
+
+int media_apply_iq(const char *main, const char *sub, const char *file) {
+    switch (plat) {
+#if defined(__ARM_PCS_VFP)
+        case HAL_PLATFORM_RK:
+            if (file && *file && rk_aiq_update_iq(file)) return EXIT_FAILURE;
+            if (main && *main && rk_aiq_switch_scene(main, sub && *sub ? sub : "day"))
+                return EXIT_FAILURE;
+            return EXIT_SUCCESS;
+#endif
+    }
+    return EXIT_FAILURE;
 }
 
 int sdk_start(void) {
@@ -843,6 +1141,15 @@ int sdk_start(void) {
     if (ret)
         HAL_ERROR("media", "HAL initialization failed with %#x!\n%s\n",
             ret, errstr(ret));
+
+    /* osd.scope=all needs the multi-attach PoC to have passed (G4).  Until
+     * then the safe single-channel behaviour is enforced here as well, so a
+     * hand-edited YAML cannot enable an unverified path. */
+    if (app_config.osd_scope_all && !(halCapabilities & HAL_CAP_OSD_MULTI)) {
+        HAL_WARNING("media", "osd.scope=all is not verified on this build; "
+            "using scope=main\n");
+        app_config.osd_scope_all = false;
+    }
 
     switch (plat) {
 #if defined(__ARM_PCS_VFP)
@@ -1006,11 +1313,36 @@ int sdk_start(void) {
     if (app_config.mp4_enable && (ret = media_mp4_enable()))
         HAL_ERROR("media", "MP4 initialization failed with %#x!\n", ret);
 
+    if (app_config.substream_enable && (ret = media_substream_enable()))
+        HAL_WARNING("media", "Sub stream initialization failed with %#x!\n", ret);
+
     if (app_config.mjpeg_enable && (ret = media_mjpeg_enable()))
         HAL_ERROR("media", "MJPEG initialization failed with %#x!\n", ret);
 
     if (app_config.jpeg_enable && (ret = jpeg_init()))
         HAL_ERROR("media", "JPEG initialization failed with %#x!\n", ret);
+
+    /* Group/channel features are applied once every VENC channel exists. */
+    if (app_config.aiisp_enable != HAL_AIISP_OFF) {
+        /* Do not let a missing model or an unsupported library spam
+         * rkPostIspInit failures on every frame. */
+        gating_result gate = gating_check("aiisp");
+        if (gate.ok) {
+            if (media_apply_aiisp())
+                HAL_WARNING("media", "AIISP could not be enabled\n");
+        } else {
+            HAL_WARNING("media", "AIISP disabled: %s\n", gate.reason);
+            app_config.aiisp_enable = HAL_AIISP_OFF;
+        }
+    }
+    if (app_config.eptz_enable && media_apply_eptz())
+        HAL_WARNING("media", "ePTZ could not be applied\n");
+    if (app_config.rotate_enable && media_apply_rotation())
+        HAL_WARNING("media", "Rotation could not be applied\n");
+    if ((*app_config.iq_main_scene || *app_config.iq_file) &&
+        media_apply_iq(app_config.iq_main_scene, app_config.iq_sub_scene,
+            app_config.iq_file))
+        HAL_WARNING("media", "IQ switch could not be applied\n");
 
 #if defined(__arm__) && !defined(__ARM_PCS_VFP)
     if (plat == HAL_PLATFORM_AK)

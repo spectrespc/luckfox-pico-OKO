@@ -1,8 +1,17 @@
 #include "record.h"
 
+#include <dirent.h>
+#include <limits.h>
+#include <strings.h>
+#include <sys/statvfs.h>
+
+#include "gating.h"
+
 /* Guards the recording state: the encoder thread feeds fragments while the
  * server thread starts and stops sessions. */
 static pthread_mutex_t recordMtx = PTHREAD_MUTEX_INITIALIZER;
+
+volatile int storageBusy;
 
 static FILE *recordFile;
 static struct Mp4State recordState;
@@ -10,7 +19,99 @@ static unsigned long long recordSize;
 static time_t recordStartTime;
 static time_t recordLastFlush;
 static bool recordActive;
+static bool recordEventActive;
+static bool recordEventSub;
+static unsigned int recordEventGeneration;
 static char recordPath[RECORD_PATH_MAX];
+
+#define RECORD_MAX_SEGMENTS 512
+
+typedef struct {
+    char name[256];
+    unsigned long long size;
+    time_t mtime;
+} record_seg;
+
+static int record_seg_cmp(const void *a, const void *b)
+{
+    const record_seg *ra = a, *rb = b;
+    return (ra->mtime > rb->mtime) - (ra->mtime < rb->mtime);
+}
+
+/* Ring quota: keep the directory within record.max_bytes and free at least
+ * record.min_free_mb, deleting the oldest segments first.  Called with
+ * recordMtx held. */
+static void record_prune_locked(void)
+{
+    DIR *dir;
+    struct dirent *entry;
+    record_seg *segs = NULL;
+    int count = 0, capacity = 0;
+    unsigned long long total = 0;
+    unsigned long long freeBytes = ULLONG_MAX;
+    struct statvfs vfs;
+
+    if (app_config.record_max_bytes == 0 && app_config.record_min_free_mb == 0)
+        return;
+    if (statvfs(app_config.record_path, &vfs) == 0)
+        freeBytes = (unsigned long long)vfs.f_bavail * vfs.f_frsize;
+
+    dir = opendir(app_config.record_path);
+    if (!dir) return;
+
+    while ((entry = readdir(dir))) {
+        char path[RECORD_PATH_MAX + 256];
+        struct stat st;
+        size_t len = strlen(entry->d_name);
+
+        if (entry->d_name[0] == '.') continue;
+        if (len < 4 || strcasecmp(entry->d_name + len - 4, ".mp4")) continue;
+
+        snprintf(path, sizeof(path), "%s/%s", app_config.record_path, entry->d_name);
+        if (stat(path, &st) || !S_ISREG(st.st_mode)) continue;
+
+        if (count == capacity) {
+            int next = capacity ? capacity * 2 : 32;
+            record_seg *grown;
+            if (next > RECORD_MAX_SEGMENTS) next = RECORD_MAX_SEGMENTS;
+            if (next == capacity) break;
+            grown = realloc(segs, sizeof(*segs) * next);
+            if (!grown) break;
+            segs = grown;
+            capacity = next;
+        }
+        snprintf(segs[count].name, sizeof(segs[count].name), "%s", entry->d_name);
+        segs[count].size = st.st_size;
+        segs[count].mtime = st.st_mtime;
+        total += st.st_size;
+        count++;
+    }
+    closedir(dir);
+
+    if (count < 1) { free(segs); return; }
+
+    qsort(segs, count, sizeof(*segs), record_seg_cmp);
+    for (int i = 0; i < count; i++) {
+        char path[RECORD_PATH_MAX + 256];
+        bool overQuota = app_config.record_max_bytes &&
+            total > app_config.record_max_bytes;
+        bool lowSpace = app_config.record_min_free_mb &&
+            freeBytes / (1024 * 1024) < app_config.record_min_free_mb;
+
+        if (!overQuota && !lowSpace) break;
+
+        snprintf(path, sizeof(path), "%s/%s", app_config.record_path, segs[i].name);
+        if (recordFile && !strcmp(path, recordPath)) continue;
+        if (!unlink(path)) {
+            HAL_INFO("record", "Removed old segment '%s' (%llu bytes)\n",
+                path, segs[i].size);
+            if (total >= segs[i].size) total -= segs[i].size;
+            freeBytes += segs[i].size;
+        }
+    }
+
+    free(segs);
+}
 
 static bool record_ensure_dir(const char *path) {
     char tmp[RECORD_PATH_MAX];
@@ -93,6 +194,9 @@ static void record_close_locked(void) {
 
     if (fflush(recordFile))
         HAL_DANGER("record", "Flushing '%s' failed: %s\n", recordPath, strerror(errno));
+    /* A card pulled during recording must not lose the last segment. */
+    if (fsync(fileno(recordFile)))
+        HAL_DANGER("record", "Fsync of '%s' failed: %s\n", recordPath, strerror(errno));
     if (fclose(recordFile))
         HAL_DANGER("record", "Closing '%s' failed: %s\n", recordPath, strerror(errno));
     else
@@ -103,6 +207,17 @@ static void record_close_locked(void) {
     recordState.header_sent = false;
 }
 
+/* True only for paths below the real microSD mount point.  A bare prefix
+ * check is not enough: /mnt/sdcard-backup must be rejected as well. */
+static bool record_path_is_sdcard(const char *path) {
+    static const char base[] = "/mnt/sdcard";
+    size_t len = sizeof(base) - 1;
+
+    if (!path || strstr(path, "..") || strncmp(path, base, len))
+        return false;
+    return path[len] == '/' || path[len] == '\0';
+}
+
 static bool record_open_locked(void) {
     if (recordFile) return true;
 
@@ -110,7 +225,22 @@ static bool record_open_locked(void) {
         HAL_DANGER("record", "Destination path is not set!\n");
         return false;
     }
+    /* Never write to SPI NAND.  Only /mnt/sdcard is allowed, and only while a
+     * card is really mounted there (the web server maps /oem/usr/www/sdcard
+     * to /mnt/sdcard, so a path alone does not prove that a card exists).
+     * storageBusy closes the race with /api/storage?action=format. */
+    if (storageBusy) {
+        HAL_DANGER("record", "Refusing to record while the microSD is busy!\n");
+        return false;
+    }
+    if (!record_path_is_sdcard(app_config.record_path) || !gating_sd_mounted()) {
+        HAL_DANGER("record", "Refusing to record to '%s': "
+            "write only to a mounted microSD at /mnt/sdcard!\n",
+            app_config.record_path);
+        return false;
+    }
     if (!record_ensure_dir(app_config.record_path)) return false;
+    record_prune_locked();
     if (!record_build_path(recordPath, sizeof(recordPath))) return false;
 
     if (!(recordFile = fopen(recordPath, "wb"))) {
@@ -133,6 +263,13 @@ static bool record_open_locked(void) {
 }
 
 static bool record_rotate_locked(void) {
+    if (!gating_sd_mounted()) {
+        HAL_DANGER("record", "microSD removed; stopping recording '%s'\n", recordPath);
+        record_close_locked();
+        recordActive = false;
+        recordStartTime = 0;
+        return false;
+    }
     record_close_locked();
     recordStartTime = time(NULL);
     return record_open_locked();
@@ -146,39 +283,42 @@ static bool record_write_locked(const void *data, size_t len) {
     return true;
 }
 
-/* Guards against NALU offsets and lengths that would read past the pack or
- * underflow "length - scLen". */
-static void record_feed_nalu(unsigned char *data, unsigned int len,
-    const hal_vidnalu *nalu, char isH265) {
-    unsigned int offset = nalu->offset;
-    unsigned int nalu_len = nalu->length;
-    unsigned int scLen;
-    const char *payload;
-    unsigned int payload_len;
+/* Feeds one Annex B NAL payload to the MP4 muxer.  The H.265 branch is
+ * explicit because the vendor pack metadata exposes the whole access unit as
+ * a single NAL for HEVC (see rk_video_thread), so the caller splits it first. */
+static void record_feed_payload(const char *payload, unsigned int payload_len,
+    unsigned int type, char isH265) {
+    if (!payload || !payload_len) return;
 
-    if (offset > len || nalu_len > len - offset) return;
-    if (nalu_len <= 3 || offset + 3 > len) return;
+    if (isH265) {
+        switch (type) {
+            case NalUnitType_VPS_HEVC:
+                mp4_set_vps(payload, payload_len);
+                break;
+            case NalUnitType_SPS_HEVC:
+                mp4_set_sps(payload, payload_len, 1);
+                break;
+            case NalUnitType_PPS_HEVC:
+                mp4_set_pps(payload, payload_len, 1);
+                break;
+            default:
+                if (type == 19 || type == 20)       /* IDR_W_RADL / IDR_N_LP */
+                    mp4_set_slice(payload, payload_len, 1);
+                else if (type <= 9)                 /* TRAIL/TSA/STSA... */
+                    mp4_set_slice(payload, payload_len, 0);
+                break;
+        }
+        return;
+    }
 
-    scLen = (data[offset + 2] == 1) ? 3 : 4;
-    if (nalu_len <= scLen) return;
-
-    payload = (const char *)data + offset + scLen;
-    payload_len = nalu_len - scLen;
-
-    switch (nalu->type) {
+    switch (type) {
         case NalUnitType_SPS:
-        case NalUnitType_SPS_HEVC:
-            if (payload_len <= UINT16_MAX) mp4_set_sps(payload, payload_len, isH265);
+            mp4_set_sps(payload, payload_len, 0);
             break;
         case NalUnitType_PPS:
-        case NalUnitType_PPS_HEVC:
-            if (payload_len <= UINT16_MAX) mp4_set_pps(payload, payload_len, isH265);
-            break;
-        case NalUnitType_VPS_HEVC:
-            if (payload_len <= UINT16_MAX) mp4_set_vps(payload, payload_len);
+            mp4_set_pps(payload, payload_len, 0);
             break;
         case NalUnitType_CodedSliceIdr:
-        case NalUnitType_CodedSliceAux:
             mp4_set_slice(payload, payload_len, 1);
             break;
         case NalUnitType_CodedSliceNonIdr:
@@ -267,6 +407,17 @@ static void record_flush_locked(void) {
     now = time(NULL);
     if (now == (time_t)-1 || now == recordLastFlush) return;
     recordLastFlush = now;
+
+    /* A removed card must close the segment instead of letting writes fall
+     * through to the SPI NAND.  The check runs once per second. */
+    if (!gating_sd_mounted()) {
+        HAL_DANGER("record", "microSD removed; closing '%s' and stopping\n",
+            recordPath);
+        record_close_locked();
+        recordActive = false;
+        recordStartTime = 0;
+        return;
+    }
 
     if (fflush(recordFile))
         HAL_DANGER("record", "Flushing '%s' failed: %s\n", recordPath, strerror(errno));
@@ -361,8 +512,16 @@ void record_ingest_stream(hal_vidstream *stream, char isH265) {
         pack_len = pack->length - pack->offset;
         pack_data = pack->data + pack->offset;
 
-        for (int j = 0; j < pack->naluCnt; j++)
-            record_feed_nalu(pack_data, pack_len, &pack->nalu[j], isH265);
+        /* The H.265 pack metadata is a single entry for the whole access
+         * unit, so split the Annex B buffer here for both codecs. */
+        unsigned char *nalptr = pack_data;
+        size_t single_len = 0;
+        while (nal_split(pack_data, &nalptr, &single_len, pack_len) == 0) {
+            if (!single_len) continue;
+            unsigned int type = isH265 ?
+                ((nalptr[0] >> 1) & 0x3F) : (nalptr[0] & 0x1F);
+            record_feed_payload((const char *)nalptr, single_len, type, isH265);
+        }
 
         if (!record_emit_fragment_locked()) {
             HAL_DANGER("record", "Stopping recording after a write failure!\n");
@@ -384,5 +543,99 @@ void record_ingest_stream(hal_vidstream *stream, char isH265) {
     }
 
     record_flush_locked();
+    pthread_mutex_unlock(&recordMtx);
+}
+
+bool record_wants_source(bool sub) {
+    bool wants;
+
+    pthread_mutex_lock(&recordMtx);
+    wants = recordActive &&
+        (recordEventActive ? recordEventSub : app_config.record_sub) == sub;
+    pthread_mutex_unlock(&recordMtx);
+    return wants;
+}
+
+static void *record_event_thread(void *arg) {
+    unsigned int seconds = (unsigned int)(uintptr_t)arg;
+    unsigned int generation;
+
+    pthread_mutex_lock(&recordMtx);
+    generation = recordEventGeneration;
+    pthread_mutex_unlock(&recordMtx);
+
+    for (unsigned int i = 0; i < seconds * 10; i++) {
+        struct timespec ts = { .tv_sec = 0, .tv_nsec = 100 * 1000 * 1000 };
+        nanosleep(&ts, NULL);
+        pthread_mutex_lock(&recordMtx);
+        if (!recordEventActive || generation != recordEventGeneration) {
+            pthread_mutex_unlock(&recordMtx);
+            return NULL;
+        }
+        pthread_mutex_unlock(&recordMtx);
+    }
+
+    pthread_mutex_lock(&recordMtx);
+    if (recordEventActive && generation == recordEventGeneration) {
+        recordEventActive = false;
+        record_close_locked();
+        recordActive = false;
+        recordStartTime = 0;
+        HAL_INFO("record", "Motion clip finished\n");
+    }
+    pthread_mutex_unlock(&recordMtx);
+    return NULL;
+}
+
+bool record_start_event(unsigned int seconds, bool sub) {
+    pthread_t thread;
+    pthread_attr_t attr;
+
+    if (storageBusy || !gating_sd_mounted()) {
+        HAL_WARNING("record", "Motion recording needs an idle, mounted microSD\n");
+        return false;
+    }
+    if (seconds < 1) seconds = 1;
+
+    pthread_mutex_lock(&recordMtx);
+    if (recordActive) {
+        pthread_mutex_unlock(&recordMtx);
+        return true;
+    }
+    recordEventActive = true;
+    recordEventSub = sub;
+    recordEventGeneration++;
+    recordStartTime = time(NULL);
+    if (!record_open_locked()) {
+        recordEventActive = false;
+        recordStartTime = 0;
+        pthread_mutex_unlock(&recordMtx);
+        return false;
+    }
+    recordActive = true;
+    pthread_mutex_unlock(&recordMtx);
+
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    if (pthread_create(&thread, &attr, record_event_thread,
+            (void *)(uintptr_t)seconds)) {
+        HAL_DANGER("record", "Starting the motion clip timer failed!\n");
+        record_stop_event();
+    }
+    pthread_attr_destroy(&attr);
+    return true;
+}
+
+void record_stop_event(void) {
+    pthread_mutex_lock(&recordMtx);
+    if (!recordEventActive) {
+        pthread_mutex_unlock(&recordMtx);
+        return;
+    }
+    recordEventActive = false;
+    recordEventGeneration++;
+    record_close_locked();
+    recordActive = false;
+    recordStartTime = 0;
     pthread_mutex_unlock(&recordMtx);
 }

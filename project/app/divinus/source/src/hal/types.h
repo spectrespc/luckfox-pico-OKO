@@ -71,10 +71,26 @@ typedef struct {
     char interleavedOn;
 } hal_audframe;
 
+typedef enum {
+    HAL_CHNROLE_NONE,
+    HAL_CHNROLE_MAIN,
+    HAL_CHNROLE_SUB,
+    HAL_CHNROLE_JPEG,
+    HAL_CHNROLE_MJPG,
+    HAL_CHNROLE_IVS
+} hal_chnrole;
+
+/* RV1106 exposes four VPSS output channels (VPSS_MAX_CHN_NUM == 4).  IVS
+ * takes the last one while it is enabled; the VENC pool then has 0..2, which
+ * is enough for main, sub and JPEG, but not for MJPEG at the same time. */
+#define HAL_CHN_IVS 3
+#define HAL_CHN_COUNT 4
+
 typedef struct {
     int fileDesc;
     char enable;
     char mainLoop;
+    char role;
     hal_vidcodec payload;
 } hal_chnstate;
 
@@ -104,6 +120,13 @@ typedef struct {
     hal_vidprofile profile;
     unsigned char gop, framerate, minQual, maxQual;
     unsigned short bitrate, maxBitrate;
+    /* Optional encoder extensions (RV1106).  Zero keeps the previous
+     * behaviour: NormalP GOP, no SVC, no motion deblur, driver QP window. */
+    unsigned char smartp;
+    unsigned char virIdr;
+    unsigned char svc;
+    unsigned char motionDeblur;
+    unsigned char minQp, maxQp, minIQp, maxIQp;
 } hal_vidconfig;
 
 typedef struct {
@@ -126,3 +149,62 @@ typedef struct {
     unsigned int count;
     unsigned int seq;
 } hal_vidstream;
+
+/* Digital zoom/crop and rotation of a VPSS output channel.  The crop
+ * rectangle is in the coordinates of the VPSS group input (the full sensor
+ * frame); the channel output keeps its configured size, so the cropped area
+ * is scaled back up. */
+typedef enum {
+    HAL_ROTATE_NONE = 0,
+    HAL_ROTATE_90,
+    HAL_ROTATE_180,
+    HAL_ROTATE_270
+} hal_rotation;
+
+typedef struct {
+    unsigned char enable;
+    hal_rect rect;
+} hal_crop;
+
+/* AIISP (AI noise reduction) is a per-VPSS-group attribute. */
+typedef enum {
+    HAL_AIISP_OFF,
+    HAL_AIISP_AUTO,
+    HAL_AIISP_ON
+} hal_aiisp_mode;
+
+typedef struct {
+    hal_aiisp_mode mode;
+    char model[192];
+    unsigned char bufCnt;
+    unsigned short fpsEnabled;
+    unsigned short fpsDisabled;
+} hal_aiisp_config;
+
+/* Motion/object detection (IVS).  Only the fields the RV1106 IVS channel
+ * exposes are mirrored here. */
+typedef enum {
+    HAL_IVS_MD = 1,
+    HAL_IVS_OD = 2,
+    HAL_IVS_MD_OD = 3
+} hal_ivs_mode;
+
+typedef struct {
+    hal_ivs_mode mode;
+    unsigned short width, height;
+    unsigned char sensitivity;      /* 1 low, 2 mid, 3 high */
+    unsigned short mdInterval;
+    unsigned short odInterval;
+    unsigned char odPercent;        /* [5, 8] */
+} hal_ivs_config;
+
+typedef struct {
+    unsigned short x, y, width, height;
+} hal_ivs_rect;
+
+typedef struct {
+    unsigned int frameId;
+    unsigned int rectCount;
+    hal_ivs_rect rect[8];
+    unsigned int odPercent;
+} hal_ivs_result;

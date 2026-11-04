@@ -172,12 +172,58 @@
 			var elems = document.getElementsByTagName('*');
 			for (var i = 0; i < elems.length; i++) {
 				if (!elems[i].id || elems[i].id.lastIndexOf(endp + '_', 0)) continue;
+				if (elems[i].tagName != 'INPUT' && elems[i].tagName != 'SELECT') continue;
 				if (elems[i].type && elems[i].type == "file") continue;
 					dest += elems[i].id.substring(endp.length + 1) +
 						'=' + encodeURIComponent(elems[i].value) + '&';
 			}
 			dest = dest.slice(0, -1);
+			req.onreadystatechange = function() {
+				if (this.readyState != 4 || this.status != 200) return;
+				try {
+					var dec = JSON.parse(req.responseText);
+					if (dec.error)
+						alert(dec.reason + (dec.hint ? '\n' + dec.hint : ''));
+				} catch (e) {}
+			};
 			req.open('GET', dest);
+			req.send();
+		}
+
+		function loadStreams() {
+			var req = new XMLHttpRequest();
+			req.onreadystatechange = function() {
+				if (this.readyState != 4 || this.status != 200) return;
+				var dec = JSON.parse(req.responseText);
+				var out = '<table class="w-100"><tr><th>Path</th><th>Codec</th><th>Channel</th><th>Active</th></tr>';
+				for (var i = 0; i < dec.streams.length; i++) {
+					var s = dec.streams[i];
+					out += '<tr><td>' + s.path + '</td><td>' + s.codec + '</td><td>' +
+						s.channel + '</td><td>' + (s.enabled ? 'yes' : 'no') + '</td></tr>';
+				}
+				out += '</table><div class="small gray">Connections: ' + dec.connections +
+					' / ' + dec.max_connections + '</div>';
+				document.getElementById('streams_table').innerHTML = out;
+			};
+			req.open('GET', '/api/streams');
+			req.send();
+		}
+
+		function loadIvsEvents() {
+			var req = new XMLHttpRequest();
+			req.onreadystatechange = function() {
+				if (this.readyState != 4 || this.status != 200) return;
+				var dec = JSON.parse(req.responseText);
+				var out = '';
+				for (var i = dec.events ? dec.events.length - 1 : -1; i >= 0; i--) {
+					var e = dec.events[i];
+					out += e.time + ' &mdash; ' + e.rects + ' region(s) ' +
+						'[' + e.bbox.join(',') + ']<br>';
+				}
+				if (!out) out = 'No motion events yet.';
+				document.getElementById('ivs_events').innerHTML = out;
+			};
+			req.open('GET', '/api/ivs');
 			req.send();
 		}
 
@@ -188,6 +234,7 @@
 				var dec = JSON.parse(req.responseText);
 				for (var key in dec) {
 					if (!dec.hasOwnProperty(key)) continue;
+					if (dec[key] !== null && typeof dec[key] === 'object') continue;
 
 					var elem = document.getElementById(endp + '_' + key);
 					if (elem && elem.type && elem.type == "file") {
@@ -219,10 +266,84 @@
 						elem.innerHTML = dec[key];
 					}
 				}
+				if (endp == 'storage' && typeof updateStorageButtons === 'function')
+					updateStorageButtons();
+				if (endp == 'network' && typeof updateNetworkFields === 'function')
+					updateNetworkFields();
 			}
 			req.open('GET', '/api/' + endp);
 			req.send();
 			return true;
+		}
+
+		function storageAction(action) {
+			var url = '/api/storage?action=' + encodeURIComponent(action);
+			if (action == 'unmount')
+				url += '&token=' + encodeURIComponent(
+					document.getElementById('storage_format_token').value);
+			var req = new XMLHttpRequest();
+			req.onreadystatechange = function() {
+				if (this.readyState != 4 || this.status != 200) return;
+				var dec = JSON.parse(this.responseText);
+				if (dec.error) alert(dec.reason || dec.error);
+				apiRead('storage');
+			};
+			req.open('GET', url);
+			req.send();
+		}
+
+		function formatSd() {
+			if (!confirm('ALL DATA ON microSD WILL BE LOST. Continue?')) return;
+			var req = new XMLHttpRequest();
+			req.onreadystatechange = function() {
+				if (this.readyState != 4 || this.status != 200) return;
+				var dec = JSON.parse(this.responseText);
+				if (dec.error) alert(dec.reason || dec.error);
+				apiRead('storage');
+			};
+			var token = document.getElementById('storage_format_token').value;
+			req.open('GET', '/api/storage?action=format&fs=fat32&confirm=FORMAT&token=' +
+				encodeURIComponent(token));
+			req.send();
+		}
+
+		function updateStorageButtons() {
+			var supported = document.getElementById('storage_format_supported');
+			var busy = document.getElementById('storage_format_busy');
+			var button = document.getElementById('storage_format_btn');
+			if (!button) return;
+			var canFormat = supported && supported.innerHTML == 'true';
+			var isBusy = busy && busy.innerHTML == 'true';
+			button.disabled = !canFormat || isBusy;
+		}
+
+		function updateNetworkFields() {
+			var mode = document.getElementById('network_mode');
+			var disabled = !mode || mode.value != 'static';
+			var ids = ['network_ipaddr', 'network_netmask',
+				'network_gateway', 'network_dns'];
+			for (var i = 0; i < ids.length; i++) {
+				var elem = document.getElementById(ids[i]);
+				if (elem) elem.disabled = disabled;
+			}
+		}
+
+		function applyNetwork() {
+			var mode = document.getElementById('network_mode');
+			if (mode && mode.value == 'static') {
+				var ip = document.getElementById('network_ipaddr');
+				var mask = document.getElementById('network_netmask');
+				if (!ip || !ip.value || !mask || !mask.value) {
+					alert('Static mode requires IP address and netmask.');
+					return;
+				}
+			}
+			if (!confirm('Changing Ethernet settings can disconnect this page. Continue?'))
+				return;
+			apiApply('network');
+			setTimeout(function() {
+				alert('Network settings saved. Reconnect to the new address if it changed.');
+			}, 2000);
 		}
 
 		function duplicateRows(row, num) {
@@ -309,14 +430,28 @@
 			apiRead('time');
 		}
 
+		function featureEnabled(id) {
+			var elem = document.getElementById(id);
+			return elem && elem.value == 'true';
+		}
+
 		function setSource(id, src) {
 			var frame = document.getElementById(id), ext = '.mp4';
 			if (frame.firstChild) frame.firstChild.src = "#";
+			if (src === 'video.mp4' && !featureEnabled('mp4_enable')) {
+				frame.innerHTML = '<p class="ph2">MP4 is disabled. Enable it in Media &rarr; MP4 and press Apply.</p>';
+				return;
+			}
+			if (src === 'mjpeg' && !featureEnabled('mjpeg_enable')) {
+				frame.innerHTML = '<p class="ph2">MJPEG is disabled. Enable it in Media &rarr; MJPEG and press Apply.</p>';
+				return;
+			}
 			if (src.indexOf(ext, src.length - ext.length) > -1)
 				frame.innerHTML = '<video id="player" width="100%" autoplay controls> \
 					<source src="' + src + '" type="video/mp4"> \
 					<p>Please update your browser to view this content.</p> \
-					</video>';
+					</video> \
+					<p class="ph2">MP4 uses H.265; if the picture stays blank, use MJPEG.</p>';
 			else if (src)
 				frame.innerHTML = '<img src="' + src + '" width="100%">';
 			else
@@ -374,6 +509,19 @@
 			apiRead('onvif');
 			apiRead('record');
 			apiRead('rtsp');
+			apiRead('eptz');
+			apiRead('rotate');
+			apiRead('venc');
+			apiRead('substream');
+			apiRead('aiisp');
+			apiRead('iq');
+			apiRead('hdr');
+			apiRead('ivs');
+			apiRead('network');
+			apiRead('storage');
+			loadStreams();
+			loadIvsEvents();
+			setInterval(loadIvsEvents, 2000);
 			toggleRecord(document.getElementById('record_state'));
 			apiRead('time');
 
@@ -664,6 +812,235 @@
 					</fieldset>
 				</div>
 			</div>
+			<div class="row">
+				<div class="6 col box">
+					<fieldset>
+						<legend>Geometry (digital zoom and rotation)</legend>
+						<table class="w-100">
+							<tr>
+								<td><label for="eptz_enable">Digital zoom</label></td>
+								<td><select id="eptz_enable">
+									<option value="false">OFF</option>
+									<option value="true">ON</option>
+								</select></td>
+							</tr>
+							<tr>
+								<td><label for="eptz_stream">Zoom stream</label></td>
+								<td><select id="eptz_stream">
+									<option value="main">Main</option>
+									<option value="sub">Sub</option>
+								</select></td>
+							</tr>
+							<tr>
+								<td><label for="eptz_zoom">Preset</label></td>
+								<td><select id="eptz_zoom">
+									<option value="">Keep</option>
+									<option value="1">1x</option>
+									<option value="2">2x</option>
+									<option value="4">4x</option>
+								</select></td>
+							</tr>
+							<tr>
+								<td><label for="eptz_x">Crop X / Y / W / H</label></td>
+								<td><input type="number" id="eptz_x" placeholder="x">
+									<input type="number" id="eptz_y" placeholder="y">
+									<input type="number" id="eptz_w" placeholder="w">
+									<input type="number" id="eptz_h" placeholder="h"></td>
+							</tr>
+							<tr>
+								<td><label for="rotate_enable">Rotation</label></td>
+								<td><select id="rotate_enable">
+									<option value="false">OFF</option>
+									<option value="true">ON</option>
+								</select></td>
+							</tr>
+							<tr>
+								<td><label for="rotate_stream">Rotate stream</label></td>
+								<td><select id="rotate_stream">
+									<option value="main">Main</option>
+									<option value="sub">Sub</option>
+								</select></td>
+							</tr>
+							<tr>
+								<td><label for="rotate_angle">Angle</label></td>
+								<td><select id="rotate_angle">
+									<option value="0">0&deg;</option>
+									<option value="90">90&deg;</option>
+									<option value="180">180&deg;</option>
+									<option value="270">270&deg;</option>
+								</select></td>
+							</tr>
+						</table>
+						<a href="javascript:apiApply('eptz')" class="btn right">Apply zoom</a>
+						<a href="javascript:apiApply('rotate')" class="btn right">Apply rotation</a>
+					</fieldset>
+				</div>
+				<div class="6 col box">
+					<fieldset>
+						<legend>Encoding (main and sub)</legend>
+						<table class="w-100">
+							<tr>
+								<td><label for="venc_smartp">SmartP</label></td>
+								<td><select id="venc_smartp">
+									<option value="false">OFF</option>
+									<option value="true">ON</option>
+								</select></td>
+							</tr>
+							<tr>
+								<td><label for="venc_vir_idr_len">Virtual IDR length</label></td>
+								<td><input type="number" id="venc_vir_idr_len" min="0" max="255"></td>
+							</tr>
+							<tr>
+								<td><label for="venc_svc">SVC</label></td>
+								<td><select id="venc_svc">
+									<option value="false">OFF</option>
+									<option value="true">ON</option>
+								</select></td>
+							</tr>
+							<tr>
+								<td><label for="venc_motion_deblur">Motion deblur</label></td>
+								<td><select id="venc_motion_deblur">
+									<option value="false">OFF</option>
+									<option value="true">ON</option>
+								</select></td>
+							</tr>
+							<tr>
+								<td><label for="venc_min_qp">QP window (min/max, I min/max)</label></td>
+								<td><input type="number" id="venc_min_qp" min="0" max="51" placeholder="min">
+									<input type="number" id="venc_max_qp" min="0" max="51" placeholder="max">
+									<input type="number" id="venc_min_iqp" min="0" max="51" placeholder="I min">
+									<input type="number" id="venc_max_iqp" min="0" max="51" placeholder="I max"></td>
+							</tr>
+						</table>
+						<a href="javascript:apiApply('venc')" class="btn right">Apply (recreates channels)</a>
+					</fieldset>
+				</div>
+			</div>
+			<div class="row">
+				<div class="6 col box">
+					<fieldset>
+						<legend>Night image (AIISP)</legend>
+						<table class="w-100">
+							<tr>
+								<td><label for="aiisp_enable">AIISP</label></td>
+								<td><select id="aiisp_enable">
+									<option value="off">OFF</option>
+									<option value="auto">Auto</option>
+									<option value="on">ON</option>
+								</select></td>
+							</tr>
+							<tr>
+								<td><label for="aiisp_model_dir">Model directory</label></td>
+								<td><input type="text" id="aiisp_model_dir"></td>
+							</tr>
+							<tr>
+								<td><label for="aiisp_buf_cnt">Frame buffers</label></td>
+								<td><input type="number" id="aiisp_buf_cnt" min="1" max="8"></td>
+							</tr>
+						</table>
+						<a href="javascript:apiApply('aiisp')" class="btn right">Apply</a>
+					</fieldset>
+				</div>
+				<div class="6 col box">
+					<fieldset>
+						<legend>Image (HDR and IQ)</legend>
+						<table class="w-100">
+							<tr>
+								<td><label for="hdr_mode">HDR</label></td>
+								<td><select id="hdr_mode">
+									<option value="normal">Normal</option>
+									<option value="hdr2">HDR 2-frame</option>
+									<option value="hdr3">HDR 3-frame</option>
+								</select></td>
+							</tr>
+							<tr>
+								<td><label for="hdr_apply">Apply</label></td>
+								<td><select id="hdr_apply">
+									<option value="auto">Auto</option>
+									<option value="restart">Restart</option>
+								</select></td>
+							</tr>
+							<tr>
+								<td><label for="iq_main_scene">IQ main scene</label></td>
+								<td><input type="text" id="iq_main_scene" placeholder="normal"></td>
+							</tr>
+							<tr>
+								<td><label for="iq_sub_scene">IQ sub scene</label></td>
+								<td><input type="text" id="iq_sub_scene" placeholder="day"></td>
+							</tr>
+							<tr>
+								<td><label for="iq_file">IQ file</label></td>
+								<td><input type="text" id="iq_file" placeholder="iqfile.xml"></td>
+							</tr>
+						</table>
+						<a href="javascript:apiApply('hdr')" class="btn right">Apply HDR</a>
+						<a href="javascript:apiApply('iq')" class="btn right">Apply IQ</a>
+					</fieldset>
+				</div>
+			</div>
+			<div class="row">
+				<div class="12 col box">
+					<fieldset>
+						<legend>Analytics (motion and object detection)</legend>
+						<table class="w-100">
+							<tr>
+								<td><label for="ivs_enable">IVS</label></td>
+								<td><select id="ivs_enable">
+									<option value="false">OFF</option>
+									<option value="true">ON</option>
+								</select></td>
+							</tr>
+							<tr>
+								<td><label for="ivs_mode">Mode</label></td>
+								<td><select id="ivs_mode">
+									<option value="md">Motion</option>
+									<option value="od">Object</option>
+									<option value="md_od">Motion + object</option>
+								</select></td>
+							</tr>
+							<tr>
+								<td><label for="ivs_sensitivity">Sensitivity (1-3)</label></td>
+								<td><input type="number" id="ivs_sensitivity" min="1" max="3"></td>
+							</tr>
+							<tr>
+								<td><label for="ivs_md_interval">MD interval</label></td>
+								<td><input type="number" id="ivs_md_interval" min="1" max="100"></td>
+							</tr>
+							<tr>
+								<td><label for="ivs_od_interval">OD interval</label></td>
+								<td><input type="number" id="ivs_od_interval" min="1" max="100"></td>
+							</tr>
+							<tr>
+								<td><label for="ivs_act_record">Record on motion</label></td>
+								<td><select id="ivs_act_record">
+									<option value="false">OFF</option>
+									<option value="true">ON</option>
+								</select></td>
+							</tr>
+							<tr>
+								<td><label for="ivs_record_seconds">Clip length&nbsp;(s)</label></td>
+								<td><input type="number" id="ivs_record_seconds" min="1" max="600"></td>
+							</tr>
+							<tr>
+								<td><label for="ivs_act_http_post">Upload snapshot</label></td>
+								<td><select id="ivs_act_http_post">
+									<option value="false">OFF</option>
+									<option value="true">ON</option>
+								</select></td>
+							</tr>
+							<tr>
+								<td><label for="ivs_act_osd">OSD indicator</label></td>
+								<td><select id="ivs_act_osd">
+									<option value="false">OFF</option>
+									<option value="true">ON</option>
+								</select></td>
+							</tr>
+						</table>
+						<a href="javascript:apiApply('ivs')" class="btn right">Apply</a>
+						<div id="ivs_events" class="small gray"></div>
+					</fieldset>
+				</div>
+			</div>
 		</div>
 	</div>
 	<input type="checkbox" id="osd-modal">
@@ -740,6 +1117,56 @@
 			<div class="row">
 				<div class="6 col box">
 					<fieldset>
+						<legend>Ethernet</legend>
+						<table class="w-100">
+							<tr>
+								<td><label for="network_mode">Mode</label></td>
+								<td><select id="network_mode" onchange="updateNetworkFields()">
+									<option value="dhcp">DHCP</option>
+									<option value="static">Static</option>
+								</select></td>
+							</tr>
+							<tr>
+								<td><label for="network_ipaddr">IP address</label></td>
+								<td><input type="text" id="network_ipaddr" placeholder="192.168.52.100"></td>
+							</tr>
+							<tr>
+								<td><label for="network_netmask">Netmask</label></td>
+								<td><input type="text" id="network_netmask" placeholder="255.255.255.0"></td>
+							</tr>
+							<tr>
+								<td><label for="network_gateway">Gateway</label></td>
+								<td><input type="text" id="network_gateway" placeholder="192.168.52.1"></td>
+							</tr>
+							<tr>
+								<td><label for="network_dns">DNS</label></td>
+								<td><input type="text" id="network_dns" placeholder="192.168.52.1"></td>
+							</tr>
+						</table>
+						<p class="small gray">Stored in the U-Boot env partition; survives a /userdata reset. Changing the IP can disconnect this page.</p>
+						<a href="javascript:applyNetwork()" class="btn right">Apply</a>
+					</fieldset>
+				</div>
+				<div class="6 col box">
+					<fieldset>
+						<legend>Current link</legend>
+						<table class="w-100">
+							<tr><td><label>IP address</label></td>
+								<td><span id="network_current_ip"></span></td></tr>
+							<tr><td><label>MAC address</label></td>
+								<td><span id="network_current_mac"></span></td></tr>
+							<tr><td><label>Persistent MAC</label></td>
+								<td><span id="network_mac"></span></td></tr>
+							<tr><td><label>DHCP client</label></td>
+								<td><span id="network_dhcp_running"></span></td></tr>
+						</table>
+						<a href="javascript:apiRead('network')" class="btn right">Refresh</a>
+					</fieldset>
+				</div>
+			</div>
+			<div class="row">
+				<div class="6 col box">
+					<fieldset>
 						<legend>RTSP</legend>
 						<table class="w-100">
 							<tr>
@@ -808,6 +1235,55 @@
 							</tr>
 						</table>
 						<a href="javascript:apiApply('onvif')" class="btn right">Apply</a>
+					</fieldset>
+				</div>
+			</div>
+			<div class="row">
+				<div class="6 col box">
+					<fieldset>
+						<legend>Sub stream (RTSP /live/1)</legend>
+						<table class="w-100">
+							<tr>
+								<td><label for="substream_enable">Enabled</label></td>
+								<td><select id="substream_enable">
+									<option value="false">OFF</option>
+									<option value="true">ON</option>
+								</select></td>
+							</tr>
+							<tr>
+								<td><label for="substream_path">RTSP path</label></td>
+								<td><input type="text" id="substream_path"></td>
+							</tr>
+							<tr>
+								<td><label for="substream_codec">Codec</label></td>
+								<td><select id="substream_codec">
+									<option value="H.265">H.265</option>
+									<option value="H.264">H.264</option>
+								</select></td>
+							</tr>
+							<tr>
+								<td><label for="substream_width">Width / height</label></td>
+								<td><input type="number" id="substream_width">
+									<input type="number" id="substream_height"></td>
+							</tr>
+							<tr>
+								<td><label for="substream_fps">FPS / GOP</label></td>
+								<td><input type="number" id="substream_fps">
+									<input type="number" id="substream_gop"></td>
+							</tr>
+							<tr>
+								<td><label for="substream_bitrate">Bitrate&nbsp;(kbps)</label></td>
+								<td><input type="number" id="substream_bitrate"></td>
+							</tr>
+						</table>
+						<a href="javascript:apiApply('substream')" class="btn right">Apply</a>
+					</fieldset>
+				</div>
+				<div class="6 col box">
+					<fieldset>
+						<legend>RTSP streams</legend>
+						<div id="streams_table" class="small"></div>
+						<a href="javascript:loadStreams()" class="btn right">Refresh</a>
 					</fieldset>
 				</div>
 			</div>
@@ -907,6 +1383,40 @@
 							</tr>
 						</table>
 						<a href="javascript:apiRead('time')" class="btn right">Refresh</a>
+					</fieldset>
+				</div>
+			</div>
+			<div class="row">
+				<div class="12 col box">
+					<fieldset>
+						<legend>Storage</legend>
+						<table class="w-100">
+							<tr><td><label for="storage_sd_mounted">microSD mounted</label></td>
+								<td><span id="storage_sd_mounted"></span></td></tr>
+							<tr><td><label for="storage_device">Device</label></td>
+								<td><span id="storage_device"></span></td></tr>
+							<tr><td><label for="storage_fs">Filesystem</label></td>
+								<td><span id="storage_fs"></span></td></tr>
+							<tr><td><label for="storage_total_mb">Capacity (MB)</label></td>
+								<td><span id="storage_total_mb"></span></td></tr>
+							<tr><td><label for="storage_free_mb">Free (MB)</label></td>
+								<td><span id="storage_free_mb"></span></td></tr>
+							<tr><td><label for="storage_path">Recording path</label></td>
+								<td><span id="storage_path"></span></td></tr>
+							<tr><td><label for="storage_max_bytes">Ring limit (bytes)</label></td>
+								<td><span id="storage_max_bytes"></span></td></tr>
+							<tr><td><label for="storage_format_supported">Format supported</label></td>
+								<td><span id="storage_format_supported"></span></td></tr>
+							<tr><td><label for="storage_format_busy">Format busy</label></td>
+								<td><span id="storage_format_busy"></span></td></tr>
+							<tr><td><label for="storage_reason">Status</label></td>
+								<td><span id="storage_reason"></span></td></tr>
+						</table>
+						<input type="hidden" id="storage_format_token" value="">
+						<button type="button" class="btn" onclick="storageAction('mount')">Mount</button>
+						<button type="button" class="btn" onclick="storageAction('unmount')">Unmount</button>
+						<button type="button" class="btn error" id="storage_format_btn" onclick="formatSd()">Format card</button>
+						<a href="javascript:apiRead('storage')" class="btn right">Refresh</a>
 					</fieldset>
 				</div>
 			</div>

@@ -60,10 +60,87 @@ This document describes the fields that can be found within a configuration file
 
 - **enable**: Boolean to allow or block recording operations (default: `false`).
 - **continuous**: Boolean to turn on continuous recording at launch (default: `false`).
-- **path**: Path to save recordings (e.g., `/mnt/sdcard/recordings`). Missing directories are created automatically.
+- **path**: Path to save recordings. Only `/mnt/sdcard` and its subdirectories are accepted (e.g., `/mnt/sdcard/recordings`); missing directories are created automatically. `/oem`, `/userdata`, `/tmp` and `/` are always refused.
 - **filename**: Base name for the resulting files (e.g., `Entrance.mp4`). A `_<timestamp>` suffix is appended before the extension so segments never overwrite each other; leave empty to use `recording`.
 - **segment_duration**: Target duration for a recording in seconds
 - **segment_size**: Target file size for a recording in bytes
+- **source**: VENC channel that feeds the recorder: `main` (default) or `sub`.
+- **max_bytes**: Ring quota for the recording directory in bytes; `0` keeps everything (default: `0`). The oldest `.mp4` segments are deleted first.
+- **min_free_mb**: Minimum free space on the card in MiB; older segments are removed before writing when the card gets full (default: `2`). Recording is refused unless `/mnt/sdcard` is a real mount point. If the card is unmounted or removed while recording, the current segment is closed and writing stops; the recorder never falls back to SPI NAND. `/api/storage?action=unmount` and `action=format` are refused while a recording is active.
+
+Both H.264 and H.265 are recorded as fragmented MP4.  The quota is checked when a
+segment is opened, so the current segment may temporarily exceed `max_bytes`
+until the next rotation; the oldest files are removed first.
+
+## ePTZ section
+
+Digital zoom by cropping the VPSS input and scaling it back to the configured channel size.
+
+- **enable**: Boolean to turn the crop on (default: `false`).
+- **stream**: `main` or `sub` (default: `main`).
+- **x**, **y**, **w**, **h**: Crop rectangle in sensor pixels. Clamped to the main stream size; `w`/`h` are at least 16.
+
+## Rotation section
+
+- **enable**: Boolean to turn rotation on (default: `false`).
+- **stream**: `main` or `sub` (default: `main`).
+- **angle**: `0`, `90`, `180` or `270` degrees (default: `0`). On RV1106 the VENC rotation is used because the VPSS rotation is a no-op for the encoded picture.
+
+## VENC section
+
+- **smartp**: SmartP GOP mode (default: `false`); applied at the next start.
+- **vir_idr_len**: Virtual IDR interval for SmartP; `0` uses the GOP length.
+- **svc**: Enable SVC (default: `false`).
+- **motion_deblur**: Enable motion deblur (default: `false`).
+- **min_qp**, **max_qp**, **min_iqp**, **max_iqp**: QP window (0 keeps the driver value). SVC, deblur and QP are applied live.
+
+## Sub stream section
+
+- **enable**: Boolean to create the second H.26x channel (default: `false`).
+- **path**: RTSP path (default: `/live/1`).
+- **codec**: `H.264` or `H.265` (default: `H.265`).
+- **mode**: Rate-control mode, same values as the MP4 section.
+- **width**, **height**, **fps**, **gop**, **bitrate**, **profile**: Encoder parameters (defaults `640x360`, `10`, `20`, `512`, `1`).
+
+The channel is created at boot when `enable` is true, before JPEG, because that
+order keeps the main OSD working on RV1106.  Enabling a channel that does not
+exist, or changing encoder parameters at runtime, saves the configuration and
+restarts the application.  Disabling keeps the channel allocated until the next
+restart so re-enabling is instant.
+
+## AIISP section
+
+- **enable**: `off`, `auto` or `on` (default: `off`).
+- **model_dir**: Directory that contains `rkmodel_1080_1920.aiisp` (default: `/oem/usr/lib`). The board config exports `RK_AIISP_MODEL` so only the matching model is installed.
+- **buf_cnt**: AIISP frame buffers (default: `1` on RV1106).
+- **fps_enabled**: Encoder rate while the AINR model is active (default: `30`).
+- **fps_disabled**: Encoder rate while the model is bypassed (default: `20`).
+
+## IVS section
+
+- **enable**: Boolean to start motion/object analytics (default: `false`).
+- **mode**: `md`, `od` or `md_od` (default: `md`).
+- **width**, **height**: Analytics input size (default `640x360`).
+- **sensitivity**: MD sensitivity 1-3 (default: `2`).
+- **md_interval**, **od_interval**: Detection intervals (defaults `5`, `1`).
+- **od_percent**: OD confidence threshold 5-8 (default: `7`).
+- **act_http_post**: Upload a JPEG snapshot on motion (default: `false`).
+- **act_record**: Write a short clip on motion (default: `false`).
+- **act_osd**: Show `MOTION HH:MM:SS` in the OSD for 10 s (default: `false`).
+- **record_seconds**: Clip length (default: `15`).
+- **record_source**: `main` or `sub` (default: `main`).
+
+IVS uses the last VPSS channel (index 3). It cannot run together with MJPEG.
+
+## IQ section
+
+- **main_scene**, **sub_scene**: Scene names passed to `rk_aiq_uapi2_sysctl_switch_scene`.
+- **file**: IQ file passed to `rk_aiq_uapi2_sysctl_updateIq` (empty to skip).
+
+## HDR section
+
+- **mode**: `normal`, `hdr2` or `hdr3` (default: `normal`). HDR is currently refused by the API on SC230AI because the AIQ HDR prepare fails; a hand-edited value falls back to normal at start.
+- **apply**: `auto`, `dyn` or `restart` (default: `auto`). `dyn` is unavailable in the RV1106 `librkaiq`.
 
 ## Stream section
 
@@ -93,6 +170,7 @@ This document describes the fields that can be found within a configuration file
 ## OSD section
 
 - **enable**: Boolean to turn on On-Screen Display regions globally, used to reduce resource usage or let another app manage the functionality (default: `true`).
+- **scope**: `main` (default) attaches regions to the main VENC channel only; `all` would also attach the same region handle to the sub and JPEG channels. `all` is refused on this build because the RV1106 RGN multi-attach gate has not passed.
 - **regX_img**: Path to the image for OSD region X.
 - **regX_text**: Text displayed in OSD region X.
 - **regX_font**: Font used for text in OSD region X.

@@ -24,13 +24,22 @@
 | `RK_CHIP` | `rv1106` | SoC RV1106 |
 | `RK_APP_TYPE` | `RKIPC_RV1106` | приложение `rkipc` |
 | `RK_BOOT_MEDIUM` | `spi_nand` | загрузка с SPI NAND |
+| `RK_PARTITION_CMD_IN_ENV` | `256K(env),256K@256K(idblock),512K(uboot),6M(boot),40M(oem),10M(userdata),198M(rootfs)` | разметка 256 МБ NAND: `boot` 6 МБ, `oem` 40 МБ, `rootfs` 198 МБ |
 | `LF_TARGET_ROOTFS` | `buildroot` | корневая ФС Buildroot (busybox init) |
 | Режим | **SPI NAND** | автономная загрузка с flash (`root=ubi0:rootfs`) |
 | Сенсор | **SC230AI** | драйвер `sc230ai` + `rv1106-sc230ai.config`; 1080p30 и 480p120, `HDR_X2` экспериментально |
-| `RK_KERNEL_DTS` | `rv1106g-luckfox-pico-pro-max.dts` | device tree платы |
+| `RK_KERNEL_DTS` | `rv1106g-luckfox-pico-pro-max-sc230ai.dts` | device tree платы; `&sc3336`/`&mis5001` выключены |
+| I2C3-M1 | **включён, 100 кГц** | `pinctrl-0 = <&i2c3m1_xfer>` (`GPIO1_D2`/`GPIO1_D3`), устройство `/dev/i2c-3` |
 | `RK_BOOTARGS_CMA_SIZE` | `66M` | CMA для медиастека |
 | `RK_ENABLE_WIFI` | `y` | WiFi-модули в `/oem/usr/ko` |
+| `RK_AIISP_MODEL` | `rkmodel_1080_1920.aiisp` | в `/oem/usr/lib` ставится только эта модель AIISP |
 | `RK_ENABLE_MOTOR` | **не задан** | драйвер мотора не собирается (см. ниже) |
+
+В образ активной SC230AI-платы попадают только `sc230ai.ko` и IQ-файл
+`sc230ai_CMK-OT2115-PC1_30IRC-F16.json`. Неиспользуемые сенсоры (SC3336,
+MIS5001, IMX415, MIA1321) выключены в DTS и config-фрагменте, их модули и IQ
+удаляются из oem. Демонстрационные `sample_*` и `simple_*` из образа удалены;
+диагностические `rk_*_test`/`rk_mpi_*_test` сохранены.
 
 Сменить конфигурацию можно интерактивным меню:
 
@@ -80,6 +89,12 @@
 
 Используется SPI NAND.
 
+> **Внимание:** таблица разделов изменена (`boot` 6 МБ, `oem` 40 МБ,
+> `rootfs` 198 МБ). После первой прошивки этого образа покомпонентная прошивка
+> `oem`/`rootfs` со старой разметкой несовместима: нужна **полная прошивка**
+> `output/image/update.img`. Старые `/userdata` и данные на NAND будут
+> потеряны — сохраните нужное на microSD/хост до прошивки.
+
 **A. Полная прошивка SPI NAND.**
 
 ```sh
@@ -95,9 +110,89 @@
 Режим для выкатки в SPI NAND без полного образа: прошиваются только изменённые
 разделы `oem`/`rootfs`, остальные (включая `env` с MAC-адресом) не трогаются.
 Нужны `upgrade_tool db output/image/download.bin` и запись по LBA с полным
-размером раздела — см. `TESTBENCH.md` §7B.
+размером раздела — см. `TESTBENCH.md` §7B. Применять только после того, как
+устройство уже прошито новой таблицей разделов (полный `update.img`); иначе
+LBA не совпадут.
 
 Подробные адреса, команды и порядок действий — в `TESTBENCH.md`.
+
+## Медиа-фичи divinus
+
+Стример `divinus` (запускается при наличии `/userdata/divinus.enable`) получил
+набор возможностей с гейтами на стенде:
+
+| Возможность | Состояние | Включение |
+|---|---|---|
+| ePTZ (цифровой зум, кроп VPSS) | работает | `POST /api/eptz`, секция `[eptz]` |
+| Поворот 90/180/270 | работает через VENC | `POST /api/rotate`, `[rotate]` |
+| SmartP/SVC/motion deblur/QP | работает (SmartP — со следующего старта) | `POST /api/venc`, `[venc]` |
+| Ethernet: DHCP/static IP | работает | WebUI `Network`, `/api/network`, env `oko_*` |
+| Второй H.26x поток `/live/1` | работает | `POST /api/substream`, `[substream]` |
+| AIISP (ночная шумоподавка) | работает при модели в `/oem/usr/lib` | `POST /api/aiisp`, `[aiisp]` |
+| IVS (детекция движения/объектов) | работает (MD), действия: снимок, клип, OSD | `POST /api/ivs`, `[ivs]` |
+| Runtime IQ (`switch_scene`/`updateIq`) | API работает, смена сцены принята | `POST /api/iq`, `[iq]` |
+| HDR2/HDR3 | заблокировано: prepare падает на SC230AI | `POST /api/hdr` вернёт причину |
+| OSD на main+sub+JPEG | заблокировано: multi-attach не прошёл гейт | `osd.scope` |
+| microSD: mount/unmount/format | формат FAT32/MBR из WebUI, mount/unmount, запись и hotplug проверены на стенде 2026-11-04 | `/api/storage`, `oko-sdcard`, `[record]` |
+
+Ethernet в WebUI (Network → Ethernet) переключается между DHCP и статическим
+IPv4. Настройки (`mode`, `ipaddr`, `netmask`, `gateway`, `dns`) и постоянный
+MAC (`oko_mac`) хранятся в env-разделе U-Boot (`fw_printenv`/`fw_setenv`,
+`/etc/fw_env.config`), а не в `/userdata`, поэтому переживают reboot и
+покомпонентную прошивку. Полный `update.img` перезаписывает `env.img`, но MAC
+после него восстанавливается из `/proc/device-tree/serial-number` и остаётся
+тем же; статические настройки после полной прошивки нужно задать заново.
+DHCP-клиент один — `dhcpcd` с client ID по MAC; vendor-`S41dhcpcd` заменён
+заглушкой, а DUID из `/var/db/dhcpcd` больше не используется. `oko-net apply`
+применяет настройки при загрузке.
+
+Модель AIISP ставится в образ по `RK_AIISP_MODEL` в BoardConfig. Карта microSD
+монтируется udev-скриптом `oko-sdcard` в `/mnt/sdcard`; запись разрешена только
+при реальном монтировании, старые сегменты удаляются по `record.max_bytes` и
+`record.min_free_mb`. В WebUI (секция Storage) доступны `Mount`, `Unmount` и
+`Format card`: формат создаёт один MBR-раздел FAT32 с меткой `OKO` на съёмной
+`mmcblk`, требует подтверждения и одноразовый токен, блокируется во время
+записи. Unmount/формат переводят recorder в отказ: файлы в `/oem` и
+`/userdata` не создаются. Подробности, результаты гейтов и ограничения —
+`project/app/divinus/source/doc/README.md`, архитектура и список локальных
+патчей — `project/app/divinus/README.md`, реестр проверенного —
+`VERIFIED_FUNCTIONS.md`.
+
+## Утилита oko-ec
+
+`/oem/usr/bin/oko-ec` работает с тремя устройствами на I2C3-M1 (`/dev/i2c-3`,
+100 кГц): SHT21 `0x40`, INA3221/INA226 `0x41` и STM32 ACPI-EC `0x42`. Сборка —
+`project/app/oko-ec` (`./build.sh app` → `output/out/app_out/usr/bin/oko-ec`);
+исходники и правила обновления — `project/app/oko-ec/README.md`.
+
+```sh
+oko-ec scan                 # кого видно на шине
+oko-ec info                 # тип устройства EC, протокол, версия, число ячеек
+oko-ec battery              # напряжение/ток/температура/SOC/ячейки
+oko-ec cells                # три ячейки, мВ
+oko-ec temp                 # температура EC, 0.1 °C
+oko-ec ina226               # INA3221/INA226: напряжение, ток, мощность
+oko-ec --ina-channel 2 ina226   # канал 1..3 (только INA3221)
+oko-ec sht21                # температура и влажность
+oko-ec sensors              # все три устройства одним блоком
+oko-ec --json sensors       # одна строка JSON
+oko-ec flash app.bin 0x00010001   # OTA STM32 через загрузчик
+oko-ec reset                # перезагрузка STM32
+```
+
+Адрес шины, адреса устройств, шунт и тайминги переопределяются опциями
+`--dev`, `--ec-addr`, `--ina-addr`, `--ina-channel`, `--sht-addr`,
+`--shunt-mohm`, `--delay-us`, `--retries` (шина также берётся из `OKO_EC_DEV`,
+шунт — из `OKO_EC_SHUNT_MOHM`, канал INA3221 — из `OKO_EC_INA_CHANNEL`).
+Для демона канал задаётся переменной `INA_CHANNEL` в `S21oko-ec`.
+
+Демон запускается `S21oko-ec` при наличии `/dev/i2c-3` и утилиты; opt-out —
+`/userdata/oko-ec.disable`. Он пишет `/tmp/oko-ec.json` (полные данные) и
+`/tmp/oko-ec.osd` (`TS`/`OK`/`SHT`/`EC`/`INA`/`T`/`BAT`) каждые 2 с. `oko-osd`
+из свежего файла (≤ 30 с) выводит четыре строки: SHT21 (температура и
+влажность), STM32 (напряжение, ток, температура, SOC, ячейки), INA3221/INA226
+(напряжение, ток, мощность) и LTE/WiFi. Без демона или при отсутствии всех
+датчиков OSD работает на прежней симуляции.
 
 ## Документация проекта
 
@@ -106,6 +201,7 @@
 | `STRUCTURE.md` | структура репозитория: папки, ключевые файлы, назначение |
 | `INIT_ORDER.md` | порядок инициализации: U-Boot → ядро → busybox init → модули → `divinus`/`rkipc` |
 | `TESTBENCH.md` | паспорт тестового стенда: железо, сеть, учётки, прошивка, диагностика |
+| `VERIFIED_FUNCTIONS.md` | реестр проверенных на стенде функций: статус, доказательство, ограничения |
 | `CHANGELOG.md` | история изменений OKO-форка (Keep a Changelog + SemVer) |
 | `bench/README.md` | утилиты стенда: UART/SSH-команды, проверка OSD по RTSP, venv |
 | `README.md`, `README_CN.md` | вендорская документация SDK (EN/CN) |

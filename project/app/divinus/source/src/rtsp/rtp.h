@@ -47,6 +47,8 @@ struct nal_rtp_t {
         unsigned char payload[__RTP_MAXPAYLOADSIZE];
     } packet;
     int    rtpsize;
+    /* Video timestamp for this frame, per stream (audio uses its own). */
+    unsigned int frame_ts;
     struct list_t list_entry;
 };
 

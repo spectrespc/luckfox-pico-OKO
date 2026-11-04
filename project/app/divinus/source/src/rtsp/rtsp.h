@@ -101,6 +101,7 @@ struct connection_item_t {
     FILE *fp_tcp_write;
     int client_fd;
     int track_id;
+    int stream_id;
     int cseq;
 
     transport_t trans[2];
@@ -127,6 +128,23 @@ struct transfer_item_t {
     bufpool_handle pool;
 };
 
+/* Per-path state: SDP parameters, payload type, timestamps and the VENC
+ * channel that feeds it.  Stream 0 is the main stream and keeps the legacy
+ * behaviour; stream 1 is the optional sub stream. */
+typedef struct {
+    char enabled;
+    char path[64];
+    char isH265;
+    unsigned char audioPt;
+    mime_encoded_handle sprop_vps_b64;
+    mime_encoded_handle sprop_sps_b64;
+    mime_encoded_handle sprop_pps_b64;
+    mime_encoded_handle sprop_sps_b16;
+    int venc_channel;
+    unsigned int ts_video;
+    unsigned int ts_audio;
+} rtsp_stream_t;
+
 struct __rtsp_obj_t {
     pthread_mutex_t mutex;
     struct list_head_t con_list;
@@ -135,12 +153,7 @@ struct __rtsp_obj_t {
     bufpool_handle transfer_pool;
     unsigned short port;
     struct __time_stat_t stat;
-    char isH265;
-    unsigned char audioPt;
-    mime_encoded_handle sprop_vps_b64;
-    mime_encoded_handle sprop_sps_b64;
-    mime_encoded_handle sprop_pps_b64;
-    mime_encoded_handle sprop_sps_b16;
+    rtsp_stream_t streams[RTSP_MAX_STREAMS];
     unsigned ctx; /* for rand_r */
     int con_num;
     unsigned char max_con;

@@ -1,0 +1,403 @@
+#!/bin/sh
+#
+# OKO microSD helper for the RkLunch/divinus image.
+#
+# udev calls it for add/remove events of mmcblk devices:
+#   oko-sdcard add /dev/mmcblk0p1
+#   oko-sdcard remove /dev/mmcblk0p1
+#
+# The WebUI calls mount/unmount/format:
+#   oko-sdcard mount [device]
+#   oko-sdcard unmount
+#   oko-sdcard format [fat32] [device]
+#
+# Only removable mmcblk whole disks may be formatted; /dev/mtd*, /dev/ubi*,
+# eMMC boot partitions and the root device are rejected.  The mount point is
+# /mnt/sdcard and the state is written to /run/oko-sd.state so divinus and the
+# WebUI can report it without guessing.  RkLunch.sh only creates
+# /oem/usr/www/sdcard -> /mnt/sdcard, so replacing a /mnt/sdcard symlink (if an
+# old image has one) does not disturb it.
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+MNT=/mnt/sdcard
+STATE=/run/oko-sd.state
+LOCK=/run/oko-sd.lock
+LOG=/tmp/oko-sdcard.log
+
+log() {
+	echo "oko-sdcard: $*" >> "$LOG"
+	echo "oko-sdcard: $*" > /dev/kmsg 2>/dev/null
+}
+
+is_mounted() {
+	grep -q " $MNT " /proc/mounts
+}
+
+state_value() {
+	[ -f "$STATE" ] || return 1
+	sed -n "s/^$1=//p" "$STATE" 2>/dev/null | head -n 1
+}
+
+write_state() {
+	# $1 present (0/1), $2 mounted (0/1), $3 device, $4 error, $5 fs
+	_tmp="$STATE.tmp.$$"
+	{
+		echo "present=$1"
+		echo "mounted=$2"
+		echo "device=$3"
+		echo "error=$4"
+		echo "fs=$5"
+		if [ "$2" = "1" ]; then
+			_total=$(df -k "$MNT" 2>/dev/null | awk 'NR==2 {print $2}')
+			_free=$(df -k "$MNT" 2>/dev/null | awk 'NR==2 {print $4}')
+			echo "total_kb=${_total:-0}"
+			echo "free_kb=${_free:-0}"
+		fi
+	} > "$_tmp"
+	mv "$_tmp" "$STATE"
+}
+
+lock_acquire() {
+	_i=0
+	while ! mkdir "$LOCK" 2>/dev/null; do
+		_i=$(( _i + 1 ))
+		if [ "$_i" -ge 200 ]; then
+			log "lock timeout"
+			return 1
+		fi
+		sleep 0.1
+	done
+	return 0
+}
+
+lock_release() {
+	rmdir "$LOCK" 2>/dev/null
+}
+
+wait_device() {
+	_i=0
+	while [ "$_i" -lt 50 ]; do
+		[ -b "$1" ] && return 0
+		_i=$(( _i + 1 ))
+		sleep 0.1
+	done
+	return 1
+}
+
+whole_disk() {
+	# Prints the whole-disk device for a partition path.
+	case "$1" in
+		/dev/mmcblk*p[0-9]*) echo "${1%p[0-9]*}" ;;
+		*) echo "$1" ;;
+	esac
+}
+
+is_mmcblk_whole() {
+	case "$1" in
+		/dev/mmcblk*) ;;
+		*) return 1 ;;
+	esac
+	case "${1#/dev/}" in
+		*p[0-9]*|*boot*) return 1 ;;
+		mmcblk[0-9]*) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
+is_sd_card() {
+	# This Rockchip 5.10 kernel does not set GENHD_FL_REMOVABLE for mmcblk
+	# devices (see drivers/mmc/core/block.c), so /sys/block/*/removable is 0
+	# even for a real microSD.  Use the card type instead: SD vs MMC/eMMC.
+	_dev="$1"
+	_name="${_dev#/dev/}"
+	[ "$(cat "/sys/block/$_name/device/type" 2>/dev/null)" = "SD" ]
+}
+
+unmount_all() {
+	_i=0
+	while is_mounted && [ "$_i" -lt 4 ]; do
+		umount "$MNT" 2>>"$LOG" || umount -l "$MNT" 2>>"$LOG"
+		_i=$(( _i + 1 ))
+	done
+	! is_mounted
+}
+
+detect_fs() {
+	_fs=$(blkid -s TYPE -o value "$1" 2>/dev/null | head -n 1)
+	[ -n "$_fs" ] || _fs=auto
+	echo "$_fs"
+}
+
+detect_device() {
+	# $1 optional explicit device
+	if [ -n "$1" ] && [ -b "$1" ]; then
+		echo "$1"
+		return 0
+	fi
+
+	_dev=$(state_value device)
+	if [ -n "$_dev" ] && [ -b "$_dev" ]; then
+		echo "$_dev"
+		return 0
+	fi
+
+	_count=0
+	for _sys in /sys/block/mmcblk*; do
+		[ -e "$_sys" ] || continue
+		[ "$(cat "$_sys/device/type" 2>/dev/null)" = "SD" ] || continue
+		_count=$(( _count + 1 ))
+		_dev="/dev/${_sys##*/}"
+	done
+
+	if [ "$_count" = "1" ]; then
+		echo "$_dev"
+		return 0
+	fi
+	return 1
+}
+
+do_mount() {
+	_dev=$(detect_device "$1") || {
+		log "no microSD card"
+		write_state 0 0 "" "no-sd" ""
+		return 1
+	}
+
+	# A whole-disk event is useful when the card has no partition table.
+	_whole=$(whole_disk "$_dev")
+	if [ "$_whole" = "$_dev" ] && [ -b "${_dev}p1" ]; then
+		_dev="${_dev}p1"
+	fi
+
+	wait_device "$_dev" || {
+		log "device $_dev did not appear"
+		write_state 0 0 "$_dev" "no-device" ""
+		return 1
+	}
+
+	[ -L "$MNT" ] && rm -f "$MNT"
+	mkdir -p "$MNT"
+
+	if is_mounted; then
+		log "$MNT is already mounted"
+		write_state 1 1 "$_dev" "" "$(detect_fs "$_dev")"
+		return 0
+	fi
+
+	_fs=$(detect_fs "$_dev")
+	if [ "$_fs" = "vfat" ]; then
+		mount -t vfat \
+			-o noatime,uid=1000,gid=1000,fmask=0133,dmask=0022 \
+			"$_dev" "$MNT" 2>>"$LOG"
+	elif [ "$_fs" = "exfat" ]; then
+		mount -t exfat -o noatime,uid=1000,gid=1000 \
+			"$_dev" "$MNT" 2>>"$LOG"
+	else
+		mount -o noatime "$_dev" "$MNT" 2>>"$LOG" || \
+			mount -t "$_fs" -o noatime "$_dev" "$MNT" 2>>"$LOG"
+	fi
+
+	if is_mounted; then
+		log "mounted $_dev on $MNT"
+		write_state 1 1 "$_dev" "" "$(detect_fs "$_dev")"
+		return 0
+	fi
+
+	log "mount of $_dev failed"
+	write_state 1 0 "$_dev" "mount-failed" ""
+	return 1
+}
+
+do_unmount() {
+	_dev=$(state_value device)
+	if ! unmount_all; then
+		log "unmount of $MNT failed"
+		write_state 1 1 "$_dev" "unmount-failed" "$(state_value fs)"
+		return 1
+	fi
+	log "unmounted $MNT"
+	write_state 1 0 "$_dev" "" ""
+	return 0
+}
+
+do_remove() {
+	# sfdisk/partprobe emits remove events for the old partition while the new
+	# one is already mounted.  Ignore such stale events: the whole disk and the
+	# device node are still present.  A real unplug has neither.
+	_whole=$(whole_disk "$1")
+	_name="${_whole#/dev/}"
+	if [ -n "$1" ] && [ -b "$1" ] && [ -e "/sys/block/$_name" ]; then
+		log "ignoring stale remove for $1: $_whole is still present"
+		return 0
+	fi
+
+	# Lazy unmount so a recording writer does not block the udev worker.
+	unmount_all
+	log "removed $1"
+	write_state 0 0 "$1" "" ""
+}
+
+do_format() {
+	_fs="$1"
+	_dev=$(whole_disk "$2")
+
+	if [ -z "$_fs" ]; then
+		_fs=fat32
+	fi
+	if [ "$_fs" != "fat32" ]; then
+		log "unsupported filesystem $_fs"
+		write_state 1 0 "$_dev" "unsupported-fs" ""
+		return 1
+	fi
+
+	if ! is_mmcblk_whole "$_dev"; then
+		log "refusing to format $_dev: not an mmcblk whole disk"
+		write_state 1 0 "$_dev" "not-sd" ""
+		return 1
+	fi
+	if ! is_sd_card "$_dev"; then
+		log "refusing to format $_dev: not an SD card"
+		write_state 1 0 "$_dev" "not-sd" ""
+		return 1
+	fi
+	if ! wait_device "$_dev"; then
+		log "device $_dev did not appear"
+		write_state 0 0 "$_dev" "no-device" ""
+		return 1
+	fi
+
+	# The API refuses to format while recording.  Drop any stale mount here so
+	# wipefs/sfdisk never touch a mounted filesystem.
+	if ! unmount_all; then
+		log "cannot unmount $MNT before format"
+		write_state 1 0 "$_dev" "unmount-failed" ""
+		return 1
+	fi
+
+	_wipefs=$(command -v wipefs 2>/dev/null)
+	_sfdisk=$(command -v sfdisk 2>/dev/null)
+	_mkfs=$(command -v mkfs.vfat 2>/dev/null)
+	if [ -z "$_sfdisk" ] || [ -z "$_mkfs" ]; then
+		log "format tools are missing"
+		write_state 1 0 "$_dev" "tools-missing" ""
+		return 1
+	fi
+
+	_name="${_dev#/dev/}"
+	_sectors=$(cat "/sys/block/$_name/size" 2>/dev/null)
+	if [ -z "$_sectors" ] || [ "$_sectors" -le 2048 ]; then
+		log "cannot read the size of $_dev"
+		write_state 1 0 "$_dev" "no-size" ""
+		return 1
+	fi
+	_size=$(( _sectors - 2048 ))
+
+	if [ -n "$_wipefs" ]; then
+		"$_wipefs" -a "$_dev" >>"$LOG" 2>&1 || {
+			log "wipefs failed on $_dev"
+			write_state 1 0 "$_dev" "format-failed" ""
+			return 1
+		}
+	else
+		log "wipefs is not available; sfdisk will overwrite the partition table"
+	fi
+
+	printf 'label: dos\nstart=2048, size=%s, type=0c\n' "$_size" | \
+		"$_sfdisk" --no-reread "$_dev" >>"$LOG" 2>&1 || {
+		log "sfdisk failed on $_dev"
+		write_state 1 0 "$_dev" "format-failed" ""
+		return 1
+	}
+
+	partprobe "$_dev" >>"$LOG" 2>&1
+	if ! wait_device "${_dev}p1"; then
+		log "partition ${_dev}p1 did not appear"
+		write_state 1 0 "$_dev" "format-failed" ""
+		return 1
+	fi
+
+	"$_mkfs" -F 32 -n OKO "${_dev}p1" >>"$LOG" 2>&1 || {
+		log "mkfs.vfat failed on ${_dev}p1"
+		write_state 1 0 "$_dev" "format-failed" ""
+		return 1
+	}
+
+	mkdir -p "$MNT"
+	if ! mount -t vfat \
+		-o noatime,uid=1000,gid=1000,fmask=0133,dmask=0022 \
+		"${_dev}p1" "$MNT" 2>>"$LOG"; then
+		log "mount of ${_dev}p1 failed after format"
+		write_state 1 0 "${_dev}p1" "mount-failed" ""
+		return 1
+	fi
+
+	log "formatted $_dev as FAT32 and mounted ${_dev}p1 on $MNT"
+	write_state 1 1 "${_dev}p1" "" "vfat"
+	return 0
+}
+
+case "$1" in
+	add)
+		[ -n "$2" ] || exit 1
+		lock_acquire || exit 1
+		do_mount "$2"
+		_rc=$?
+		lock_release
+		exit $_rc
+		;;
+	remove)
+		lock_acquire || exit 1
+		do_remove "$2"
+		_rc=$?
+		lock_release
+		exit $_rc
+		;;
+	mount)
+		lock_acquire || exit 1
+		do_mount "$2"
+		_rc=$?
+		lock_release
+		exit $_rc
+		;;
+	unmount)
+		lock_acquire || exit 1
+		do_unmount
+		_rc=$?
+		lock_release
+		exit $_rc
+		;;
+	format)
+		shift
+		_fs=fat32
+		_dev=""
+		for _arg in "$@"; do
+			case "$_arg" in
+				/dev/*) _dev="$_arg" ;;
+				*) _fs="$_arg" ;;
+			esac
+		done
+		if [ -z "$_dev" ]; then
+			_dev=$(detect_device "") || {
+				log "no removable microSD card"
+				write_state 0 0 "" "no-sd" ""
+				exit 1
+			}
+		fi
+		lock_acquire || exit 1
+		do_format "$_fs" "$_dev"
+		_rc=$?
+		lock_release
+		exit $_rc
+		;;
+	status)
+		[ -f "$STATE" ] && cat "$STATE" || echo "present=0"
+		;;
+	*)
+		echo "usage: $0 {add|remove|mount|unmount|format|status} [device]" >&2
+		exit 1
+		;;
+esac
+
+exit 0

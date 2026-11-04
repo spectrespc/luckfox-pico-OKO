@@ -2428,6 +2428,14 @@ function __RUN_POST_CLEAN_FILES() {
 	echo "================================================================================"
 
 	if [ -n "$RK_AIISP_MODEL" ]; then
+		# The model lives in media_out/lib and is not part of the normal oem
+		# copy set; install only the model selected by the board config.
+		if [ "$RK_BUILD_APP_TO_OEM_PARTITION" = "y" ] &&
+			[ -f "$RK_PROJECT_PATH_MEDIA/lib/$RK_AIISP_MODEL" ]; then
+			mkdir -p "$RK_PROJECT_PACKAGE_OEM_DIR/usr/lib"
+			cp -fv "$RK_PROJECT_PATH_MEDIA/lib/$RK_AIISP_MODEL" \
+				"$RK_PROJECT_PACKAGE_OEM_DIR/usr/lib/"
+		fi
 		if find $dir_find -type f -name $RK_AIISP_MODEL | grep -w $RK_AIISP_MODEL; then
 			echo "Found config RK_AIISP_MODEL: $RK_AIISP_MODEL"
 			todo_files=$(find $dir_find -name "*.aiisp" | grep -v $RK_AIISP_MODEL || echo "")
@@ -2470,6 +2478,45 @@ function __RUN_POST_CLEAN_FILES() {
 			fi
 		fi
 	fi
+	echo "================================================================================"
+
+	# OKO: the oem partition must keep space for the OSD/telemetry tooling.
+	# Drop the vendor demo binaries (sample_*/simple_*), but keep rk_*_test and
+	# rk_mpi_*_test as the diagnostic tool set.
+	if [ "$RK_BUILD_APP_TO_OEM_PARTITION" = "y" ] &&
+		[ -d "$RK_PROJECT_PACKAGE_OEM_DIR/usr/bin" ]; then
+		for _oko_demo in \
+			"$RK_PROJECT_PACKAGE_OEM_DIR"/usr/bin/sample_* \
+			"$RK_PROJECT_PACKAGE_OEM_DIR"/usr/bin/simple_* \
+			"$RK_PROJECT_PACKAGE_OEM_DIR"/usr/bin/rk_mpi_avs_test \
+			"$RK_PROJECT_PACKAGE_OEM_DIR"/usr/bin/rkisp_demo \
+			"$RK_PROJECT_PACKAGE_OEM_DIR"/usr/bin/j2s4b_dev; do
+			[ -e "$_oko_demo" ] && rm -fv "$_oko_demo"
+		done
+	fi
+	echo "================================================================================"
+
+	# OKO: the SC230AI board image must contain only its own sensor driver and
+	# IQ file.  output/out/oem is not wiped between builds, so stale modules and
+	# IQ files from the vendor boards are removed explicitly here.  Gate this on
+	# the active DTS so builds for the other vendor boards keep their sensors.
+	case "$RK_KERNEL_DTS" in
+	*sc230ai*)
+		if [ "$RK_BUILD_APP_TO_OEM_PARTITION" = "y" ]; then
+			for _oko_sensor in imx415 mis5001 mia1321 sc3336 os04a10 \
+				sc4336 sc530ai gc2053 sc200ai sc401ai sc450ai techpoint; do
+				rm -fv "$RK_PROJECT_PACKAGE_OEM_DIR/usr/ko/$_oko_sensor.ko"
+			done
+			if [ -d "$RK_PROJECT_PACKAGE_OEM_DIR/usr/share/iqfiles" ] &&
+				[ -n "$RK_CAMERA_SENSOR_IQFILES" ]; then
+				find "$RK_PROJECT_PACKAGE_OEM_DIR/usr/share/iqfiles" \
+					-mindepth 1 -maxdepth 1 \
+					! -name "$RK_CAMERA_SENSOR_IQFILES" \
+					-exec rm -rfv {} +
+			fi
+		fi
+		;;
+	esac
 	echo "================================================================================"
 
 }
@@ -2542,6 +2589,17 @@ function build_firmware() {
 	__BUILD_ENABLE_COREDUMP_SCRIPT
 
 	__RUN_PRE_BUILD_OEM_SCRIPT
+
+	# OKO: the media libs are copied by __PACKAGE_OEM, but the selected AIISP
+	# model must be present before build_mkimg creates oem.img.  Copy it here
+	# explicitly instead of relying only on the post-build clean hook.
+	if [ "$RK_BUILD_APP_TO_OEM_PARTITION" = "y" ] &&
+		[ -n "$RK_AIISP_MODEL" ] &&
+		[ -f "$RK_PROJECT_PATH_MEDIA/lib/$RK_AIISP_MODEL" ]; then
+		mkdir -p "$RK_PROJECT_PACKAGE_OEM_DIR/usr/lib"
+		cp -fv "$RK_PROJECT_PATH_MEDIA/lib/$RK_AIISP_MODEL" \
+			"$RK_PROJECT_PACKAGE_OEM_DIR/usr/lib/"
+	fi
 
 	if [ "$RK_BUILD_APP_TO_OEM_PARTITION" = "y" ]; then
 		rm -rf $RK_PROJECT_PACKAGE_ROOTFS_DIR/oem/*

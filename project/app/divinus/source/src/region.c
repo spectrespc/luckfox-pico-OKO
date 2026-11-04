@@ -20,7 +20,11 @@ char timefmt[64];
 unsigned int rxb_l, txb_l, cpu_l[6];
 
 // OKO: last content of an '@file' text region, used to detect updates.
-static char region_file_prev[MAX_OSD][80];
+static char region_file_prev[MAX_OSD][256];
+
+// Set when VENC channels are recreated; all overlays are rebuilt on the next
+// tick so they attach to the new channels instead of the destroyed ones.
+static volatile char region_invalidated;
 
 // OKO: read the first line of an OSD text file and drop the trailing CR/LF.
 static void region_read_text_file(const char *path, char *out, size_t size) {
@@ -404,10 +408,19 @@ void *region_thread(void) {
     }
 
     while (keepRunning) {
+        if (region_invalidated) {
+            region_invalidated = 0;
+            for (char id = 0; id < MAX_OSD; id++) {
+                region_destroy(id);
+                region_file_prev[id][0] = '\0';
+                osds[id].updt = 1;
+            }
+        }
+
         for (char id = 0; id < MAX_OSD; id++) {
             if (!EMPTY(osds[id].text))
             {
-                char out[80];
+                char out[256];
                 out[sizeof(out) - 1] = '\0';
 
                 if (osds[id].text[0] == '@' && osds[id].text[1] != '\0')
@@ -656,4 +669,8 @@ int region_start() {
 
 void region_stop() {
     pthread_join(regionPid, NULL);
+}
+
+void region_invalidate(void) {
+    region_invalidated = 1;
 }

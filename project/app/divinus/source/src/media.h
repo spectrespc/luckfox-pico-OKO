@@ -32,9 +32,18 @@ int sdk_stop(void);
 int media_start(void);
 void media_stop(void);
 
-void request_idr(void);
+void request_idr(int index);
 void set_grayscale(bool active);
 int take_next_free_channel(bool mainLoop);
+int channel_by_role(int role);
+
+int media_substream_enable(void);
+int media_substream_disable(void);
+int media_apply_eptz(void);
+int media_apply_rotation(void);
+int media_apply_aiisp(void);
+int media_apply_iq(const char *main, const char *sub, const char *file);
+int media_apply_venc_extras(void);
 
 int create_channel(char index, short width, short height, char framerate, char jpeg);
 int bind_channel(char index, char framerate, char jpeg);

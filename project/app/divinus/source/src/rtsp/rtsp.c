@@ -19,7 +19,7 @@
 #include <netinet/in.h>
 #include <sys/ioctl.h>
 
-extern void request_idr();
+extern void request_idr(int channel);
 
 /******************************************************************************
  *              PRIVATE DEFINITIONS
@@ -164,9 +164,24 @@ static void __method_options(struct connection_item_t *p, rtsp_handle h)
             "\r\n", p->cseq);
 }
 
+static void __method_notfound(struct connection_item_t *p)
+{
+    __rtsp_write(p, "RTSP/1.0 404 Not Found\r\n"
+            "CSeq: %d\r\n"
+            "\r\n", p->cseq);
+}
+
 static void __method_describe(struct connection_item_t *p, rtsp_handle h)
 {
     char sdp[__RTSP_TCP_BUF_SIZE];
+    rtsp_stream_t *s;
+
+    if (p->stream_id < 0 || p->stream_id >= RTSP_MAX_STREAMS ||
+        !h->streams[p->stream_id].enabled) {
+        __method_notfound(p);
+        return;
+    }
+    s = &h->streams[p->stream_id];
 
     const char baseRtp[] =
         "v=0\r\n"
@@ -178,8 +193,9 @@ static void __method_describe(struct connection_item_t *p, rtsp_handle h)
     char audioRtp[256] = "\r\n";
     char audioRtpfmt[16];
 
-    if (h->audioPt != 255) {
-        switch (h->audioPt) {
+    /* Audio belongs to the main stream only. */
+    if (s->audioPt != 255) {
+        switch (s->audioPt) {
             case 0: strncpy(audioRtpfmt, "PCMU", 16 - 1); break;
             case 8: strncpy(audioRtpfmt, "PCMA", 16 - 1); break;
             case 14: strncpy(audioRtpfmt, "MPA", 16 - 1); break;
@@ -192,20 +208,20 @@ static void __method_describe(struct connection_item_t *p, rtsp_handle h)
             "m=audio 0 RTP/AVP %d\r\n"
             "a=control:track=1\r\n"
             "a=rtpmap:%d %s/%d\r\n",
-            h->audioPt, h->audioPt, audioRtpfmt, (h->audioPt == 8 || h->audioPt == 0) ? 8000 : 90000);
+            s->audioPt, s->audioPt, audioRtpfmt, (s->audioPt == 8 || s->audioPt == 0) ? 8000 : 90000);
     }
 
-    if (h->isH265 &&
-        h->sprop_vps_b64 && h->sprop_sps_b64 && h->sprop_sps_b16 && h->sprop_pps_b64) {
-        DASSERT(h->sprop_vps_b64->result, return);
-        DASSERT(h->sprop_sps_b64->result, return);
-        DASSERT(h->sprop_sps_b16->result, return);
-        DASSERT(h->sprop_pps_b64->result, return);
+    if (s->isH265 &&
+        s->sprop_vps_b64 && s->sprop_sps_b64 && s->sprop_sps_b16 && s->sprop_pps_b64) {
+        DASSERT(s->sprop_vps_b64->result, return);
+        DASSERT(s->sprop_sps_b64->result, return);
+        DASSERT(s->sprop_sps_b16->result, return);
+        DASSERT(s->sprop_pps_b64->result, return);
 
-        DBG("VPS BASE64:%s\n", h->sprop_vps_b64->result);
-        DBG("SPS BASE64:%s\n", h->sprop_sps_b64->result);
-        DBG("SPS BASE16:%s\n", h->sprop_sps_b16->result);
-        DBG("PPS BASE64:%s\n", h->sprop_pps_b64->result);
+        DBG("VPS BASE64:%s\n", s->sprop_vps_b64->result);
+        DBG("SPS BASE64:%s\n", s->sprop_sps_b64->result);
+        DBG("SPS BASE16:%s\n", s->sprop_sps_b16->result);
+        DBG("PPS BASE64:%s\n", s->sprop_pps_b64->result);
 
         snprintf(sdp, __RTSP_TCP_BUF_SIZE- 1,
                 "%sm=video 0 RTP/AVP 96\r\n"
@@ -215,20 +231,20 @@ static void __method_describe(struct connection_item_t *p, rtsp_handle h)
                 " packetization-mode=1;"
                 " sprop-parameter-sets=%s,%s,%s;%s",
                 baseRtp,
-                h->sprop_sps_b16->result,
-                h->sprop_vps_b64->result,
-                h->sprop_sps_b64->result,
-                h->sprop_pps_b64->result,
+                s->sprop_sps_b16->result,
+                s->sprop_vps_b64->result,
+                s->sprop_sps_b64->result,
+                s->sprop_pps_b64->result,
                 audioRtp);
-    } else if (!h->isH265 &&
-        h->sprop_sps_b64 && h->sprop_sps_b16 && h->sprop_pps_b64) {
-        DASSERT(h->sprop_sps_b64->result, return);
-        DASSERT(h->sprop_sps_b16->result, return);
-        DASSERT(h->sprop_pps_b64->result, return);
+    } else if (!s->isH265 &&
+        s->sprop_sps_b64 && s->sprop_sps_b16 && s->sprop_pps_b64) {
+        DASSERT(s->sprop_sps_b64->result, return);
+        DASSERT(s->sprop_sps_b16->result, return);
+        DASSERT(s->sprop_pps_b64->result, return);
 
-        DBG("SPS BASE64:%s\n", h->sprop_sps_b64->result);
-        DBG("SPS BASE16:%s\n", h->sprop_sps_b16->result);
-        DBG("PPS BASE64:%s\n", h->sprop_pps_b64->result);
+        DBG("SPS BASE64:%s\n", s->sprop_sps_b64->result);
+        DBG("SPS BASE16:%s\n", s->sprop_sps_b16->result);
+        DBG("PPS BASE64:%s\n", s->sprop_pps_b64->result);
 
         snprintf(sdp, __RTSP_TCP_BUF_SIZE - 1,
                 "%sm=video 0 RTP/AVP 96\r\n"
@@ -238,9 +254,9 @@ static void __method_describe(struct connection_item_t *p, rtsp_handle h)
                 " packetization-mode=1;"
                 " sprop-parameter-sets=%s,%s;%s",
                 baseRtp,
-                h->sprop_sps_b16->result,
-                h->sprop_sps_b64->result,
-                h->sprop_pps_b64->result,
+                s->sprop_sps_b16->result,
+                s->sprop_sps_b64->result,
+                s->sprop_pps_b64->result,
                 audioRtp);
     } else {
         snprintf(sdp, __RTSP_TCP_BUF_SIZE - 1,
@@ -249,7 +265,7 @@ static void __method_describe(struct connection_item_t *p, rtsp_handle h)
                 "a=rtpmap:96 %s/90000\r\n"
                 "a=fmtp:96 packetization-mode=1;%s",
                 baseRtp,
-                h->isH265 ? "H265" : "H264",
+                s->isH265 ? "H265" : "H264",
                 audioRtp);
     }
 
@@ -270,6 +286,17 @@ static void __method_setup(struct connection_item_t *p, rtsp_handle h)
 	}
 
     DBG("created session id %llx\n", p->session_id);
+
+    if (p->stream_id < 0 || p->stream_id >= RTSP_MAX_STREAMS ||
+        !h->streams[p->stream_id].enabled) {
+        __method_notfound(p);
+        return;
+    }
+    /* The sub stream carries video only: there is no audio track. */
+    if (p->stream_id != 0 && p->track_id != 0) {
+        __method_notfound(p);
+        return;
+    }
 
     if (p->trans[p->track_id].is_tcp) {
         __rtsp_write(p, "RTSP/1.0 200 OK\r\n"
@@ -319,6 +346,12 @@ static void __method_error(struct connection_item_t *p, rtsp_handle h)
 
 static void __method_play(struct connection_item_t *p, rtsp_handle h)
 {
+    if (p->stream_id < 0 || p->stream_id >= RTSP_MAX_STREAMS ||
+        !h->streams[p->stream_id].enabled) {
+        __method_notfound(p);
+        return;
+    }
+
     __rtsp_write(p,
         "RTSP/1.0 200 OK\r\n"
         "CSeq: %d\r\n"
@@ -343,7 +376,7 @@ static void __method_play(struct connection_item_t *p, rtsp_handle h)
 
     p->con_state = __CON_S_PLAYING;
 
-    request_idr();
+    request_idr(h->streams[p->stream_id].venc_channel);
 }
 
 static int __method_teardown(struct connection_item_t *p, rtsp_handle h)
@@ -362,6 +395,32 @@ static int __method_teardown(struct connection_item_t *p, rtsp_handle h)
 /******************************************************************************
  *              METHOD IMPLEMENTATIONS
  ******************************************************************************/
+
+/* Maps a request line such as
+ *   DESCRIBE rtsp://host/live/1/track0 RTSP/1.0
+ * to a stream id.  An empty path, "/" or "/live/0" keeps using the main
+ * stream, so legacy clients keep working. */
+static int __stream_from_uri(rtsp_handle h, const char *line)
+{
+    const char *uri = strchr(line, ' ');
+    if (!uri) return 0;
+    uri++;
+
+    /* /live/0 is the main stream; a URI without a stream path is the
+     * legacy aggregate URL. */
+    if (h->streams[0].path[0] && strstr(uri, h->streams[0].path))
+        return 0;
+
+    for (int i = 1; i < RTSP_MAX_STREAMS; i++) {
+        if (!h->streams[i].enabled) continue;
+        if (h->streams[i].path[0] && strstr(uri, h->streams[i].path))
+            return i;
+    }
+
+    /* A /live/<n> path that does not resolve must be a 404, not main. */
+    if (strstr(uri, "/live/")) return -1;
+    return 0;
+}
 
 static int __message_proc_sock(struct list_t *e, void *p)
 {
@@ -411,6 +470,7 @@ static int __message_proc_sock(struct list_t *e, void *p)
         while (__read_line(con, buf)) {
             if (header < 1) {
                 con->track_id = 0;
+                con->stream_id = __stream_from_uri(h, buf);
                 if (SCMP(__STR_OPTIONS, buf))            { con->method = __METHOD_OPTIONS;
                 } else if (SCMP(__STR_DESCRIBE, buf))    { con->method = __METHOD_DESCRIBE;
                 } else if (SCMP(__STR_SETUP, buf))       { con->method = __METHOD_SETUP;
@@ -537,6 +597,8 @@ static int __connection_reset(void *v)
 
     p->given_session_id = 0;
     p->cseq = 0;
+    p->stream_id = 0;
+    p->track_id = 0;
 
     /* randomize session id to avoid conflict */
     p->session_id = __get_random_llu(&ctx);
@@ -867,10 +929,12 @@ void rtsp_finish(rtsp_handle h)
             bufpool_delete(h->con_pool);
             bufpool_delete(h->transfer_pool);
 
-            mime_encoded_delete(h->sprop_vps_b64);
-            mime_encoded_delete(h->sprop_sps_b64);
-            mime_encoded_delete(h->sprop_sps_b16);
-            mime_encoded_delete(h->sprop_pps_b64);
+            for (int i = 0; i < RTSP_MAX_STREAMS; i++) {
+                mime_encoded_delete(h->streams[i].sprop_vps_b64);
+                mime_encoded_delete(h->streams[i].sprop_sps_b64);
+                mime_encoded_delete(h->streams[i].sprop_sps_b16);
+                mime_encoded_delete(h->streams[i].sprop_pps_b64);
+            }
 
             threadpool_delete(h->pool);
         }
@@ -893,7 +957,16 @@ rtsp_handle rtsp_create(unsigned char max_con, unsigned int port, int priority)
 
     TALLOC(nh, return NULL);
 
-    nh->audioPt = 255;
+    for (int i = 0; i < RTSP_MAX_STREAMS; i++) {
+        nh->streams[i].audioPt = 255;
+        nh->streams[i].venc_channel = -1;
+        nh->streams[i].enabled = 0;
+        nh->streams[i].path[0] = '\0';
+    }
+    nh->streams[0].enabled = 1;
+    nh->streams[0].venc_channel = 0;
+    strcpy(nh->streams[0].path, "/live/0");
+
     nh->max_con = max_con;
     nh->port = port;
     nh->priority = priority;
@@ -918,6 +991,91 @@ rtsp_handle rtsp_create(unsigned char max_con, unsigned int port, int priority)
 error:
     rtsp_finish(nh);
     return NULL;
+}
+
+int rtsp_add_stream(rtsp_handle h, const char *path)
+{
+    int result = -1;
+
+    if (!h || !path || !*path) return -1;
+
+    pthread_mutex_lock(&h->mutex);
+    for (int i = 1; i < RTSP_MAX_STREAMS; i++) {
+        if (h->streams[i].enabled) {
+            if (!strcmp(h->streams[i].path, path)) { result = i; break; }
+            continue;
+        }
+        strncpy(h->streams[i].path, path, sizeof(h->streams[i].path) - 1);
+        h->streams[i].path[sizeof(h->streams[i].path) - 1] = 0;
+        h->streams[i].enabled = 1;
+        h->streams[i].audioPt = 255;
+        h->streams[i].venc_channel = -1;
+        HAL_INFO("rtsp", "Added stream %d at %s\n", i, h->streams[i].path);
+        result = i;
+        break;
+    }
+    pthread_mutex_unlock(&h->mutex);
+    return result;
+}
+
+int rtsp_set_stream_channel(rtsp_handle h, int stream_id, int channel)
+{
+    if (!h || stream_id < 0 || stream_id >= RTSP_MAX_STREAMS) return -1;
+    pthread_mutex_lock(&h->mutex);
+    h->streams[stream_id].venc_channel = channel;
+    pthread_mutex_unlock(&h->mutex);
+    return 0;
+}
+
+int rtsp_get_stream_channel(rtsp_handle h, int stream_id)
+{
+    int channel;
+
+    if (!h || stream_id < 0 || stream_id >= RTSP_MAX_STREAMS) return -1;
+    pthread_mutex_lock(&h->mutex);
+    channel = h->streams[stream_id].venc_channel;
+    pthread_mutex_unlock(&h->mutex);
+    return channel;
+}
+
+int rtsp_disable_stream(rtsp_handle h, int stream_id)
+{
+    if (!h || stream_id <= 0 || stream_id >= RTSP_MAX_STREAMS) return -1;
+    pthread_mutex_lock(&h->mutex);
+    h->streams[stream_id].enabled = 0;
+    h->streams[stream_id].venc_channel = -1;
+    h->streams[stream_id].audioPt = 255;
+    h->streams[stream_id].path[0] = '\0';
+    pthread_mutex_unlock(&h->mutex);
+    return 0;
+}
+
+int rtsp_set_stream_path(rtsp_handle h, int stream_id, const char *path)
+{
+    if (!h || !path || !*path || stream_id < 0 || stream_id >= RTSP_MAX_STREAMS)
+        return -1;
+    pthread_mutex_lock(&h->mutex);
+    strncpy(h->streams[stream_id].path, path,
+        sizeof(h->streams[stream_id].path) - 1);
+    h->streams[stream_id].path[sizeof(h->streams[stream_id].path) - 1] = 0;
+    pthread_mutex_unlock(&h->mutex);
+    return 0;
+}
+
+int rtsp_get_connection_count(rtsp_handle h)
+{
+    int count = 0;
+    struct list_t *item;
+
+    if (!h) return 0;
+    pthread_mutex_lock(&h->mutex);
+    for (item = h->con_list.list; item; item = item->next) {
+        struct connection_item_t *con;
+        list_upcast(con, item);
+        if (con->con_state != __CON_S_DISCONNECTED) count++;
+    }
+    pthread_mutex_unlock(&h->mutex);
+    return count;
 }
 
 void rtsp_configure_auth(rtsp_handle h, const char *user, const char *pass)

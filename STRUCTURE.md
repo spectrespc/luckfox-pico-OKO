@@ -67,12 +67,30 @@
   `/oem/usr/bin` и `/oem/usr/share/divinus`), `tests/bmp_align_test.c`
   (хостовый тест выравнивания растра OSD, в сборку не входит). Сборка входит в
   общий цикл `project/app/Makefile`.
+- `app/oko-ec/` — пакет `oko-ec`: `source/` (вендоренный хостовый инструмент
+  `spectrespc/stm32_acpi-ec` на пине `41728ddaf6936d49a5fb65676ca5203dd631b4f6`
+  — `main.c`, `crc_host.*`, `i2c_transport.*`; локальные `ec_proto.*`,
+  `sensors_math.*`, `sensors.*`, `daemon.*`), `Makefile` (кросс-сборка и
+  стейджинг `/oem/usr/bin/oko-ec`), `tests/sensors_math_test.c` (хостовый тест,
+  в сборку не входит) и `README.md` с пином upstream и локальными патчами.
+  Работает с SHT21 `0x40`, INA3221/INA226 `0x41` и STM32 ACPI-EC `0x42` на
+  `/dev/i2c-3`:
+  команды чтения, OTA STM32 и демон `oko-ec daemon`, который пишет
+  `/tmp/oko-ec.json`, `/tmp/oko-ec.osd` и `/tmp/oko-ec.pid`.
 - `cfg/BoardConfig_IPC/` — конфигурации плат (`BoardConfig-*.mk`), папка `overlay/`
   с оверлеями rootfs и pre/post-скрипты (`*-pre.sh`, `*-post.sh`). В оверлее OKO
   `overlay-luckfox-buildroot-init/`: `etc/init.d/S20oko-osd` (divinus по
-  умолчанию, бутстрап OSD-конфига, запуск демона), `usr/bin/oko-osd`
-  (телеметрия и FIFO-сообщения для OSD) и `etc/init.d/S99oko-test` (маркер
-  тестовой сборки).
+  умолчанию, бутстрап OSD-конфига, запуск демона), `etc/init.d/S21oko-ec`
+  (запуск `oko-ec daemon`, opt-out `/userdata/oko-ec.disable`), `usr/bin/oko-osd`
+  (телеметрия и FIFO-сообщения для OSD; реальные `T`/`BAT` из
+  `/tmp/oko-ec.osd`), `usr/bin/oko-sdcard` + `lib/udev/rules.d/60-oko-sdcard.rules`
+  (монтирование microSD в `/mnt/sdcard`, состояние `/run/oko-sd.state`,
+  `mount`/`unmount`/`format` для `/api/storage`, lock `/run/oko-sd.lock`;
+  eudev в этом образе читает только `/lib/udev/rules.d`),
+  `usr/bin/oko-net` + `etc/fw_env.config` (MAC, DHCP/static в env-разделе
+  U-Boot), `etc/init.d/S41dhcpcd` (заглушка, DHCP только через `oko-net`) и
+  `etc/dhcpcd.conf` (client ID по MAC, без DUID); `etc/init.d/S99oko-test`
+  (маркер тестовой сборки).
 - `cfg-all-items-introduction.txt` — описание всех параметров BoardConfig.
 - `scripts/`, `make_meta/`, `sfc_scripts/` — вспомогательные скрипты сборки и
   упаковки метаданных/разделов.
@@ -80,7 +98,10 @@
 ### `sysdrv/`
 
 - `source/uboot` — исходники загрузчика U-Boot.
-- `source/kernel` — исходники ядра Linux.
+- `source/kernel` — исходники ядра Linux; активный DTS
+  `arch/arm/boot/dts/rv1106g-luckfox-pico-pro-max-sc230ai.dts` (Pro Max +
+  выключенные `&sc3336`/`&mis5001`), фрагмент `rv1106-sc230ai.config` собирает
+  только `sc230ai`.
 - `source/buildroot` — исходники Buildroot (корневая файловая система).
 - `source/mcu` — прошивка сопроцессора MCU на RT-Thread (вендорская часть SDK).
 - `source/objs_kernel` — промежуточные объекты сборки ядра.
@@ -107,6 +128,8 @@
 - `README_RU.md` — русскоязычная точка входа OKO-форка: быстрый старт, сборка, ссылки.
 - `STRUCTURE.md`, `INIT_ORDER.md`, `TESTBENCH.md` — документация проекта: структура
   репозитория, порядок инициализации, параметры тестового стенда.
+- `VERIFIED_FUNCTIONS.md` — реестр проверенных на стенде функций: статус,
+  доказательство, ограничения и команды воспроизведения.
 - `CHANGELOG.md` — история изменений OKO-форка (Keep a Changelog + SemVer).
 - `README.md` / `README_CN.md` — документация SDK (EN/CN).
 - `UPDATE_LOG.md` / `UPDATE_LOG_CN.md` — журнал изменений SDK (EN/CN).

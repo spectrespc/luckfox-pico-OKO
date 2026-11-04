@@ -10,7 +10,10 @@
 #include "macros.h"
 #include "tools.h"
 
-#define MAX_SECTIONS 16
+/* The OKO feature set adds eight sections to the original thirteen; the old
+ * limit silently truncated find_sections() and made a saved config look
+ * partially empty. */
+#define MAX_SECTIONS 40
 #define REG_SECTION "^([[:space:]]*\\[(\\w+)\\][[:space:]]|(\\w+):)"
 #define REG_PARAM "^[[:space:]]*%s[[:blank:]]*[=:][[:blank:]]*(.[^;#\n\r]*)"
 

@@ -3,6 +3,7 @@
 #include "rk_common.h"
 #include "rk_aiq.h"
 #include "rk_aud.h"
+#include "rk_ivs.h"
 #include "rk_mb.h"
 #include "rk_rgn.h"
 #include "rk_sys.h"
@@ -38,7 +39,26 @@ int rk_channel_unbind(char index);
 int rk_pipeline_create(short width, short height);
 void rk_pipeline_destroy(void);
 
+int rk_vpss_set_chn_crop(char channel, hal_crop *crop);
+int rk_vpss_set_chn_rotation(char channel, hal_rotation rotation);
+int rk_vpss_get_chn_rotation(char channel, hal_rotation *rotation);
+int rk_video_set_rotation(char channel, hal_rotation rotation);
+int rk_video_apply_extras(char channel, const hal_vidconfig *config);
+int rk_group_set_aiisp(hal_aiisp_config *config);
+
+int rk_aiq_switch_scene(const char *main, const char *sub);
+int rk_aiq_update_iq(const char *file);
+int rk_aiq_set_work_mode(int mode);
+
+int rk_ivs_create(hal_ivs_config *config);
+int rk_ivs_set_config(hal_ivs_config *config);
+int rk_ivs_get_results(hal_ivs_result *result, int timeoutMs);
+void rk_ivs_release_results(void);
+void rk_ivs_destroy(void);
+
 int rk_region_create(char handle, hal_rect rect, short opacity);
+int rk_region_create2(char handle, hal_rect rect, short opacity,
+    int module, int device, int channel);
 void rk_region_destroy(char handle);
 int rk_region_setbitmap(int handle, hal_bitmap *bitmap);
 

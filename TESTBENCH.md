@@ -8,7 +8,7 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
 
 | Поле | Значение |
 |---|---|
-| Дата обновления | `2026-11-02` |
+| Дата обновления | `2026-11-04` |
 | Ответственный | `<ФИО>` |
 | Статус | активен |
 | Назначение | сборка прошивки и прошивка SPI NAND для отладки IPC |
@@ -48,6 +48,7 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
 | Скорость UART | `115200 8N1` | задана в скриптах `bench/` |
 | Ethernet | лабораторная сеть `192.168.52.0/24` | через порт устройства |
 | USB | `<порт / хаб>` | используется для Maskrom-прошивки |
+| I2C3-M1 | `/dev/i2c-3`, 100 кГц, `GPIO1_D2`/`GPIO1_D3` | SHT21 `0x40`, INA3221 `0x41` (`A0` = VS; die ID `0x3220`; силовые входы пока не подключены), STM32 ACPI-EC `0x42`; нужны внешние pull-up 2.2–4.7 кОм к 3.3 В (в DTS `pcfg_pull_none_smt`) |
 
 Требования к хосту: Python 3 и зависимости из `bench/requirements.txt`;
 `bench/setup.sh` создаёт venv в `output/bench/venv`, запуск — `bench/run.sh`.
@@ -56,7 +57,7 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
 
 | Узел | Адрес |
 |---|---|
-| Устройство (DUT) | `192.168.52.65` (DHCP, факт на `2026-11-01`) |
+| Устройство (DUT) | `192.168.52.97` (DHCP, факт на `2026-11-04`) |
 | Маска | `255.255.255.0` |
 | Шлюз | `192.168.52.254` |
 
@@ -92,11 +93,24 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
 4. Прошить: `./rkflash.sh` или `tools/linux/Linux_Upgrade_Tool/upgrade_tool`.
 5. Перезагрузить; загрузка пойдёт из SPI NAND без хоста.
 
+> **С 2026-11-04 разметка изменена** (`boot` 6 МБ, `oem` 40 МБ, `rootfs`
+> 198 МБ). Первая прошивка такой сборки — **только полный `update.img`**;
+> покомпонентная выкатка со старой таблицей несовместима. Сохраните нужное из
+> `/userdata` и с microSD: раздел `userdata` будет пересоздан. Проверка после
+> загрузки: `cat /proc/cmdline` и `cat /proc/mtd` (см. §8).
+
 ### B. Покомпонентная прошивка изменённых разделов
 
 Режим для выкатки изменённых разделов в SPI NAND без полного образа: прошиваются
 только разделы, содержимое которых изменилось, остальные (включая `env`
 с MAC-адресом) не трогаются. Уменьшает износ NAND и исключает сброс U-Boot env.
+
+> **Только после переразметки.** Текущая таблица (`boot` 6 МБ, `oem` 40 МБ,
+> `userdata` 10 МБ, `rootfs` 198 МБ) сначала выкатывается полным
+> `./rkflash.sh update` / `upgrade_tool uf update.img`. Покомпонентная запись
+> ниже применима только к устройству, уже прошитому этой таблицей; LBA и
+> размеры из старых заметок (`oem 0x2800`, `rootfs 0x16800`/`0x69000`)
+> недействительны.
 
 **Маппинг исходников на разделы** (`output/image/*.img` собирает
 `./build.sh firmware`):
@@ -126,18 +140,18 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
    запись по LBA с **полным стиранием раздела** (после `db` таблицу можно
    проверить через `upgrade_tool pl`):
    ```sh
-   ./tools/linux/Linux_Upgrade_Tool/upgrade_tool wl 0x2800 0xF000 output/image/oem.img
-   ./tools/linux/Linux_Upgrade_Tool/upgrade_tool wl 0x16800 0x69000 output/image/rootfs.img
+   ./tools/linux/Linux_Upgrade_Tool/upgrade_tool wl 0x3800 0x14000 output/image/oem.img
+   ./tools/linux/Linux_Upgrade_Tool/upgrade_tool wl 0x1C800 0x63000 output/image/rootfs.img
    ./tools/linux/Linux_Upgrade_Tool/upgrade_tool rd
    ```
-   Второй аргумент `wl` — размер **всего раздела** в секторах (oem 30M =
-   `0xF000`, rootfs 210M = `0x69000`), а не длина файла: tool стирает этот
+   Второй аргумент `wl` — размер **всего раздела** в секторах (oem 40M =
+   `0x14000`, rootfs 198M = `0x63000`), а не длина файла: tool стирает этот
    диапазон и пишет образ. Если передать длину образа (oem `0x9D00`, rootfs
    `0x1A500`), в хвосте останутся старые UBI-PEB с другим `image_seq`, и ядро
    упадёт с `ubi0 error: ubi_attach: bad image sequence number …` (panic).
    Maskrom нужен один раз: после `db` устройство остаётся в loader-режиме,
    поэтому следующие разделы прошиваются без повторного входа.
-   `userdata` (LBA `0x11800`, 10M = `0x5000`) — только если менялось фабричное
+   `userdata` (LBA `0x17800`, 10M = `0x5000`) — только если менялось фабричное
    содержимое раздела.
 4. `boot`, `idblock`, `uboot` и `env` этой фичей не менялись. При необходимости
    прошивайте их полным `./rkflash.sh update` (§7A) или отдельной проверенной
@@ -160,7 +174,11 @@ sha256sum output/image/*.img > /tmp/now.sha256
 diff /tmp/now.sha256 .flashed.sha256   # прошивать только различающиеся разделы
 ```
 Альтернатива без Maskrom — сырые `mtd erase/write` из `output/image/sd_update.txt`
-(смещения и размеры по разделам, выполняется из U-Boot).
+(смещения и размеры по разделам, выполняется из U-Boot). Файл и образы кладутся
+в FAT-раздел карты; `sd_update.txt` должен оставаться **без** строки `reset`:
+после записи U-Boot вернётся в консоль, и карту/файл нужно убрать до следующей
+загрузки. Если оставить `sd_update.txt` (или добавить `reset`), U-Boot будет
+перепрошивать NAND при каждом старте.
 
 ## 8. Диагностика
 
@@ -183,13 +201,49 @@ media-ctl -p | grep -A6 'sc230ai 4-0032' | grep fmt
 # проверка потока (divinus должен быть остановлен): ожидается 30.0 fps
 v4l2-ctl -d /dev/video0 --stream-mmap --stream-count=60 --stream-poll
 
+# новая разметка: boot 0x600000, oem 0x2800000, userdata 0xA00000, rootfs 0xC600000
+cat /proc/cmdline
+cat /proc/mtd
+
+# microSD: состояние, mount/unmount и формат (формат уничтожает данные карты)
+curl -s -u admin:oko-change-me http://192.168.52.97/api/storage
+curl -s -u admin:oko-change-me 'http://192.168.52.97/api/storage?action=unmount&token=<token>'
+# без карты start=1 должен вернуть blocked и не создать файл в /oem или /userdata
+curl -s -u admin:oko-change-me 'http://192.168.52.97/api/record?enable=true&start=1'
+# с картой: format -> один раздел FAT32 OKO, затем запись 5 с и проверка MP4
+# token берётся из ответа /api/storage (поле format_token)
+curl -s -u admin:oko-change-me \
+  'http://192.168.52.97/api/storage?action=format&fs=fat32&confirm=FORMAT&token=<token>'
+ls -l /mnt/sdcard
+ls /oem/usr/ko | grep -E 'sc3336|mis5001|imx415|mia1321'   # пусто
+ls /oem/usr/share/iqfiles                                   # только sc230ai_*.json
+ls /oem/usr/bin/sample_* /oem/usr/bin/simple_* 2>/dev/null  # пусто
+
+# I2C3-M1: 100 kHz = 0x000186a0
+hexdump -C /sys/class/i2c-adapter/i2c-3/of_node/clock-frequency
+
+# Ethernet: MAC и настройки в env-разделе U-Boot
+fw_printenv oko_mac oko_net_mode oko_ipaddr oko_netmask oko_gateway oko_dns
+oko-net env
+curl -s -u admin:oko-change-me http://192.168.52.97/api/network
+# статический режим (сменить адрес на свободный; страница отключится)
+curl -s -u admin:oko-change-me \
+  'http://192.168.52.97/api/network?mode=static&ipaddr=192.168.52.220&netmask=255.255.255.0&gateway=192.168.52.254&dns=192.168.52.254'
+# после переподключения на .220 вернуть DHCP:
+curl -s -u admin:oko-change-me \
+  'http://192.168.52.220/api/network?mode=dhcp&ipaddr=192.168.52.220&netmask=255.255.255.0&gateway=192.168.52.254&dns=192.168.52.254'
+# MAC/IP должны сохраняться после reboot; DHCP-клиент — только dhcpcd.
+# Полный update.img перезаписывает env: static-настройки задать заново,
+# MAC восстановится из serial.
+ps | grep dhcpcd | grep -v grep
+
 # приложение запущено: divinus по умолчанию, rkipc — только при opt-out
 ps | grep -E 'divinus|rkipc'
 ls -l /oem/usr/bin/divinus /userdata/divinus.enable
 ls -l /userdata/divinus.yaml /userdata/rkipc.enable 2>/dev/null
 # opt-out на DUT: touch /userdata/rkipc.enable && reboot
-curl -s -u admin:oko-change-me http://192.168.52.65/api/status
-curl -s -u admin:oko-change-me -o /tmp/snap.jpg http://192.168.52.65/image.jpg
+curl -s -u admin:oko-change-me http://192.168.52.97/api/status
+curl -s -u admin:oko-change-me -o /tmp/snap.jpg http://192.168.52.97/image.jpg
 # OSD: time — bottom-right, telemetry (4 lines) — top-left, GPS — top-right,
 # msg — top-left below telemetry.
 # Смотреть в RTSP-потоке (кадры `/image.jpg` кодируются отдельным VENC-каналом
@@ -200,11 +254,35 @@ echo 'OKO MESSAGE 123' > /tmp/osd.fifo
 # через 60+ с reg3 гаснет: /tmp/osd-msg.txt пуст, /tmp/osd-msg.ts удалён
 ls -l /tmp/osd-dyn.txt /tmp/osd-msg.txt /tmp/osd.fifo
 # OSD с хоста: попарный диф регионов по RTSP, кадры и кропы в output/bench/
-bench/run.sh osd_check.py --ip 192.168.52.65 --seconds 17
+bench/run.sh osd_check.py --ip 192.168.52.97 --seconds 17
 # сообщение в reg2: сначала на DUT, затем повторить osd_check.py
 bench/run.sh serial_exec.py "echo 'OKO MSG TEST' > /tmp/osd.fifo"
 # RTSP-корень divinus — без /live/0:
-# ffprobe -rtsp_transport tcp rtsp://admin:oko-change-me@192.168.52.65:554/
+# ffprobe -rtsp_transport tcp rtsp://admin:oko-change-me@192.168.52.97:554/
+
+# I2C3-M1 (GPIO1_D2/GPIO1_D3, 100 кГц) включён по умолчанию
+ls -l /dev/i2c-3
+# шина должна быть доступна; отсутствие устройств на ней — норма
+# pinmux: оба вывода принадлежат ff460000.i2c, группа i2c3m1-xfer;
+# GPIO2_A6/GPIO2_A7 (I2C3-M0) в I2C3 не переведены
+mount -t debugfs none /sys/kernel/debug 2>/dev/null
+grep "function i2c3" /sys/kernel/debug/pinctrl/*/pinmux-pins
+
+# oko-ec: шина и три устройства (0x40 SHT21, 0x41 INA3221, 0x42 STM32 EC)
+# i2c-tools в образ не входит, список устройств даёт scan
+oko-ec scan
+oko-ec info          # device_type: 2, proto 2, cells 3
+oko-ec battery
+oko-ec ina226        # INA3221: показывает chip и канал 1 по умолчанию
+oko-ec --ina-channel 2 ina226   # при подключении нагрузки к каналу 2
+oko-ec sht21         # температура и влажность
+oko-ec sensors
+# демон и файлы состояния (OSD берёт из них реальные T/BAT)
+ps | grep oko-ec
+cat /tmp/oko-ec.json
+cat /tmp/oko-ec.osd
+/etc/init.d/S21oko-ec status
+# opt-out: touch /userdata/oko-ec.disable && reboot
 
 # сеть
 ifconfig eth0
@@ -234,6 +312,11 @@ dmesg | tail -50
 | Запущены и `divinus`, и `rkipc` | маркер появился после старта `rkipc`; перезагрузить DUT (ветки взаимоисключающие) |
 | Нет `/dev/video*` | `insmod_ko.sh` не выполнился или `sc230ai.ko` отсутствует |
 | `motor.ko` не грузится | ожидаемо: драйвер выключен в конфигурации |
+| `oko-ec scan` не находит `0x40`/`0x41`/`0x42` | нет внешних pull-up на `GPIO1_D2`/`GPIO1_D3`, неверный pinmux (I2C3-M1 вместо M0) или INA3221 с другой перемычкой `A0` (ожидается `0x41`) |
+| `oko-ec ina226` показывает нули | силовые входы INA3221 (`VIN+`/`VIN-`, `VBUS`) не подключены к нагрузке/шине; обмен по I2C при этом работает |
+| `oko-ec ina226` показывает не тот канал | нагрузка подключена к другому каналу INA3221: `--ina-channel 1..3` (по умолчанию 1) |
+| `oko-ec battery` пишет, что устройство в загрузчике | STM32 в режиме загрузчика (`device_type = 1`); выполнить `oko-ec reset` и повторить |
+| `/tmp/oko-ec.osd` не появляется | не запущен `S21oko-ec` (нет `/dev/i2c-3` или `/oem/usr/bin/oko-ec`), есть `/userdata/oko-ec.disable`, либо демон уже работает (см. `/tmp/oko-ec.log`) |
 
 ## 9. Известные особенности
 

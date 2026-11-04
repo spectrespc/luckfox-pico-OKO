@@ -25,11 +25,12 @@ BootROM → U-Boot → ядро Linux → busybox init → init-скрипты �
 | `RK_CHIP` | `rv1106` | RV1106 (Cortex-A7 + NPU + ISP) |
 | `RK_APP_TYPE` | `RKIPC_RV1106` | приложение rkipc |
 | `RK_BOOT_MEDIUM` | `spi_nand` | загрузка с SPI NAND |
-| `RK_KERNEL_DTS` | `rv1106g-luckfox-pico-pro-max.dts` | device tree платы |
+| `RK_KERNEL_DTS` | `rv1106g-luckfox-pico-pro-max-sc230ai.dts` | device tree активной платы; `&sc3336`/`&mis5001` выключены |
+| I2C3-M1 | `okay`, `100000` Гц, `pinctrl-0 = <&i2c3m1_xfer>` | включён в `rv1106g-luckfox-pico-pro-max-sc230ai.dts`; выводы `GPIO1_D2`/`GPIO1_D3`, узел `/dev/i2c-3` |
 | `RK_UBOOT_DEFCONFIG` | `luckfox_rv1106_uboot_defconfig` | конфигурация U-Boot |
 | `RK_UBOOT_DEFCONFIG_FRAGMENT` | `rk-sfc.config` | поддержка SPI flash controller |
 | `RK_KERNEL_DEFCONFIG` | `luckfox_rv1106_linux_defconfig` | базовая конфигурация ядра |
-| `RK_KERNEL_DEFCONFIG_FRAGMENT` | `rv1106-sc230ai.config` | сенсор SC230AI |
+| `RK_KERNEL_DEFCONFIG_FRAGMENT` | `rv1106-sc230ai.config` | `CONFIG_VIDEO_SC230AI=m`; SC3336/IMX415/MIS5001/MIA1321 явно выключены |
 | `RK_BOOTARGS_CMA_SIZE` | `66M` | в cmdline попадает как `rk_dma_heap_cma=66M` |
 | `RK_CAMERA_SENSOR_IQFILES` | `sc230ai_CMK-OT2115-PC1_30IRC-F16.json` | IQ-файл сенсора |
 | `RK_ENABLE_WIFI` | `y` | WiFi-модули собираются и копируются в `/oem/usr/ko` |
@@ -48,7 +49,7 @@ BootROM → U-Boot → ядро Linux → busybox init → init-скрипты �
 1. **BootROM** читает загрузчик из SPI NAND и передаёт управление TPL/SPL.
 2. **U-Boot** (`luckfox_rv1106_uboot_defconfig` + фрагмент `rk-sfc.config`) инициализирует
    SFC и загружает ядро из раздела `boot`: читается FIT-образ (ядро + DTB
-   `rv1106g-luckfox-pico-pro-max.dts`); корень — `root=ubi0:rootfs rootfstype=ubifs`.
+   `rv1106g-luckfox-pico-pro-max-sc230ai.dts`); корень — `root=ubi0:rootfs rootfstype=ubifs`.
 3. **Ядро Linux 5.10.160** монтирует корень и запускает `/sbin/init` — симлинк на
    `/bin/busybox` (в текущем rootfs отдельного `/init` нет, `init=` в cmdline не задан).
 4. **busybox init** читает `/etc/inittab` (раздел 3).
@@ -91,27 +92,28 @@ BootROM → U-Boot → ядро Linux → busybox init → init-скрипты �
 | 2 | `S01syslogd` | системный логгер | — |
 | 3 | `S02klogd` | логгер ядра | после `S01syslogd` |
 | 4 | `S02sysctl` | применение `/etc/sysctl.conf` | `/proc` уже смонтирован |
-| 5 | `S10udev` | eudev, создание узлов устройств | должен пройти до монтирования по `by-name` |
+| 5 | `S10udev` | eudev, создание узлов устройств; правило `60-oko-sdcard.rules` вызывает `oko-sdcard add/remove` и монтирует карту в `/mnt/sdcard` (состояние — `/run/oko-sd.state`) | должен пройти до монтирования по `by-name`; `&sdmmc` в DTS — съёмная карта с `sdmmc0_det` |
 | 6 | `S20linkmount` | симлинки `/dev/block/by-name`, монтирование `oem`/`userdata` | ключевой этап, см. ниже |
 | 7 | `S20oko-osd` | divinus по умолчанию (`/userdata/divinus.enable`, opt-out — `/userdata/rkipc.enable`), бутстрап OSD-конфига, запуск `oko-osd` | оверлей OKO; после `S20linkmount`, до `S21appinit` |
 | 8 | `S20urandom` | сохранение/восстановление seed urandom | — |
 | 9 | `S21appinit` | `sh /oem/usr/bin/RkLunch.sh` | **требует смонтированных `/oem` и `/userdata`** |
-| 10 | `S35iptables` | правила firewall | сеть ещё не обязательна |
-| 11 | `S40network` | базовая настройка сети | — |
-| 12 | `S41dhcpcd` | DHCP-клиент | после `S40network` |
-| 13 | `S49ntp` | синхронизация времени | требует рабочей сети |
-| 14 | `S50sshd` | SSH-сервер | сеть |
-| 15 | `S50telnet` | telnet-сервер | сеть |
-| 16 | `S50usbdevice` | настройка USB-режима (gadget) | — |
-| 17 | `S60micinit` | настройка микрофонного тракта через `amixer` | аудио-модули ядра |
-| 18 | `S99_auto_reboot` | скрипты rockchip_test (auto-reboot / power-lost) | `/oem/rockchip_test`, `/data/cfg` |
-| 19 | `S99hciinit` | `hciattach` для AIC8800 и поднятие `wlan0` | зависит от `aic8800_fdrv` |
-| 20 | `S99luckfoxconfigload` | `luckfox-config load` — восстановление настроек | `/userdata` |
-| 21 | `S99luckfoxcustomoverlay` | применение пользовательского DT-overlay из `/mnt/cfg` | `dtc`, `configfs` |
-| 22 | `S99oko-test` | тестовый маркер OKO: пишет `/tmp/oko-test-ok` и строку в `/dev/kmsg` | оверлей OKO, `MARKER` в скрипте |
-| 23 | `S99python` | запуск `/root/main.py` или `/root/boot.py` | `/usr/bin/python` |
-| 24 | `S99rtcinit` | калибровка RTC при «нулевом» времени | — |
-| 25 | `S99usb0config` | назначение IP `172.32.0.93` интерфейсу `usb0` | может перезапускать `S50usbdevice` |
+| 10 | `S21oko-ec` | запуск `oko-ec daemon` (телеметрия EC/INA/SHT21 в `/tmp/oko-ec.json` и `/tmp/oko-ec.osd`) | оверлей OKO; после `S20linkmount` и `S21appinit` (лексикографический порядок), требует `/dev/i2c-3` и `/oem/usr/bin/oko-ec`; opt-out — `/userdata/oko-ec.disable` |
+| 11 | `S35iptables` | правила firewall | сеть ещё не обязательна |
+| 12 | `S40network` | базовая настройка сети | — |
+| 13 | `S41dhcpcd` | заглушка OKO; DHCP управляется `/usr/bin/oko-net` | после `S40network` |
+| 14 | `S49ntp` | синхронизация времени | требует рабочей сети |
+| 15 | `S50sshd` | SSH-сервер | сеть |
+| 16 | `S50telnet` | telnet-сервер | сеть |
+| 17 | `S50usbdevice` | настройка USB-режима (gadget) | — |
+| 18 | `S60micinit` | настройка микрофонного тракта через `amixer` | аудио-модули ядра |
+| 19 | `S99_auto_reboot` | скрипты rockchip_test (auto-reboot / power-lost) | `/oem/rockchip_test`, `/data/cfg` |
+| 20 | `S99hciinit` | `hciattach` для AIC8800 и поднятие `wlan0` | зависит от `aic8800_fdrv` |
+| 21 | `S99luckfoxconfigload` | `luckfox-config load` — восстановление настроек | `/userdata` |
+| 22 | `S99luckfoxcustomoverlay` | применение пользовательского DT-overlay из `/mnt/cfg` | `dtc`, `configfs` |
+| 23 | `S99oko-test` | тестовый маркер OKO: пишет `/tmp/oko-test-ok` и строку в `/dev/kmsg` | оверлей OKO, `MARKER` в скрипте |
+| 24 | `S99python` | запуск `/root/main.py` или `/root/boot.py` | `/usr/bin/python` |
+| 25 | `S99rtcinit` | калибровка RTC при «нулевом» времени | — |
+| 26 | `S99usb0config` | назначение IP `172.32.0.93` интерфейсу `usb0` | может перезапускать `S50usbdevice` |
 
 `S20linkmount` генерируется в `project/build.sh` (при разборе таблицы разделов) в файл
 `$RK_PROJECT_OUTPUT/S20linkmount` с `bootmedium=$RK_BOOT_MEDIUM`. Для `spi_nand` он:
@@ -159,10 +161,43 @@ esac
 1. Ожидает монтирование `/userdata` (до 30 попыток по 0.1 с, т.е. ~3 с).
 2. Выбирает каталог модулей: `/oem/usr/ko`, если там есть `insmod_ko.sh`, иначе `/ko`,
    и выполняет `sh insmod_ko.sh` (раздел 6).
-3. Запускает `network_init &`: берёт MAC из `/data/ethaddr.txt` (при отсутствии —
-   сохраняет текущий), поднимает `eth0`, запускает `udhcpc -i eth0`.
+3. Запускает `network_init &`: если есть `/usr/bin/oko-net`, вызывает
+   `oko-net apply`. MAC и режим сети (`oko_mac`, `oko_net_mode`, `oko_ipaddr`,
+   `oko_netmask`, `oko_gateway`, `oko_dns`) читаются из env-раздела U-Boot
+   через `fw_printenv`; MAC при первом запуске выводится из
+   `/proc/device-tree/serial-number` и сохраняется в env. В режиме `dhcp`
+   запускается `dhcpcd -b eth0` (client ID = MAC, без DUID), в режиме
+   `static` — статический адрес/маршрут/DNS и DHCP-клиент не запускается.
+   Старый vendor-путь с `/data/ethaddr.txt` и `udhcpc` остаётся только
+   fallback-ом при отсутствии `oko-net`.
 4. Создаёт симлинки для веб-интерфейса: `/userdata → /oem/usr/www/userdata`,
-   `/media/usb0 → /oem/usr/www/usb0`, `/mnt/sdcard → /oem/usr/www/sdcard`.
+   `/media/usb0 → /oem/usr/www/usb0`, `/oem/usr/www/sdcard → /mnt/sdcard`.
+   Сам `/mnt/sdcard` — точка монтирования microSD: udev-правило
+   `lib/udev/rules.d/60-oko-sdcard.rules` и скрипт `usr/bin/oko-sdcard`
+   (оверлей OKO) монтируют первый раздел `mmcblk*` и снимают его при
+   извлечении, записывая состояние в `/run/oko-sd.state`
+   (`present`, `mounted`, `device`, `error`, `fs`, `total_kb`, `free_kb`).
+   Скрипт также выполняет команды WebUI:
+   - `oko-sdcard mount [device]` — смонтировать карту (устройство из state,
+     ровно один `mmcblk` с `device/type=SD` или явный `/dev/mmcblkX`;
+     `/sys/block/*/removable` в этом ядре всегда 0, поэтому тип карты
+     проверяется через `device/type`);
+   - `oko-sdcard unmount` — снять `/mnt/sdcard` (lazy, если занята);
+   - `oko-sdcard format [fat32] [device]` — `wipefs -a` при наличии,
+     `sfdisk` (MBR, раздел `0x0c`, метка `OKO`) + `mkfs.vfat -F 32`, затем
+     mount с `uid=1000,gid=1000,fmask=0133,dmask=0022`.
+   Формат разрешён только для `mmcblk` с `device/type=SD` (eMMC = `MMC`);
+   `/dev/mtd*`, `/dev/ubi*`, `/dev/root` и eMMC boot-разделы отвергаются.
+   eudev читает только `/lib/udev/rules.d`, поэтому правило лежит там, а не в
+   `/etc/udev/rules.d`. Вендорское `61-sd-cards-auto-mount.rules` заменено
+   заглушкой: его безусловный `ACTION=="remove"` размонтировал только что
+   отформатированную карту на stale-событиях `sfdisk`/`partprobe`. Монтажом и
+   состоянием управляет только `oko-sdcard`; stale-remove для ещё существующего
+   `mmcblkX` игнорируется. Все операции
+   (`add`/`remove`/`mount`/`unmount`/`format`) сериализуются lock-каталогом
+   `/run/oko-sd.lock`, чтобы udev не вмешался в форматирование. При активной
+   записи `/api/storage` блокирует `unmount`/`format`; при потере монтирования
+   recorder закрывает текущий сегмент и не пишет в NAND.
 5. Проверяет маркер `/userdata/divinus.enable` — переключатель стримера OpenIPC
    `divinus` (MIT, вендорен в `project/app/divinus/`). Маркер создаётся по
    умолчанию скриптом `S20oko-osd` (оверлей OKO, выполняется до `S21appinit`);
@@ -217,7 +252,7 @@ esac
 | 1 | остановка обработки udev-событий | `udevadm control --stop-exec-queue` |
 | 2 | DMA-буферы | `rk_dvbm.ko` |
 | 3 | подсистема V4L2 | `videobuf2-memops.ko`, `videobuf2-common.ko`, `videobuf2-v4l2.ko`, `videobuf2-vmalloc.ko`, `videobuf2-cma-sg.ko` |
-| 4 | драйверы сенсоров | `imx415`, `os04a10`, `sc4336`, `sc3336`, `sc530ai`, **`sc230ai`**, `gc2053`, `sc200ai`, `sc401ai`, `sc450ai`, `techpoint`, `mis5001`, `mia1321` |
+| 4 | драйверы сенсоров | в образе активной платы только **`sc230ai.ko`**; вендорские ветки `imx415`, `os04a10`, `sc4336`, `sc3336`, `sc530ai`, `gc2053`, `sc200ai`, `sc401ai`, `sc450ai`, `techpoint`, `mis5001`, `mia1321` остаются в общем `insmod_ko.sh`, но их `.ko` в oem отсутствуют и `__insmod` их пропускает |
 | 5 | захват/обработка видео | `video_rkcif.ko`, `video_rkisp.ko` |
 | 6 | MIPI CSI2 D-PHY | `phy-rockchip-csi2-dphy-hw.ko`, `phy-rockchip-csi2-dphy.ko` |
 | 7 | выгрузка неиспользуемых сенсоров | `__rmmod_camera_sensor`: `rmmod` для модулей с refcount 0 |
@@ -291,19 +326,63 @@ AIC8800 (`aic_load_fw` → `aic8800_fdrv`), AP6XXX (`bcmdhd`), RTL8723BS
   `regN_color: 0x07e0` (ярко-зелёный RGB565), контур — `regN_outl: 0x8000`
   (чёрный) толщиной `regN_thick: 1.0` в фабричном `divinus.yaml`;
   RGN использует один canvas, чтобы OSD не отставал на секунду;
+- `reg5` (`@/tmp/osd-ivs.txt`) — индикатор IVS `MOTION HH:MM:SS` под
+  сообщениями; файл пишет поток аналитики при `ivs.act_osd`, через 10 с без
+  движения регион гаснет;
+- второй H.26x-поток (`substream.enable`) публикуется как `/live/1`;
+  main остаётся `/live/0`. На RV1106 четыре VPSS-канала: при включённом IVS
+  заняты main/sub/JPEG, MJPEG должен быть выключен;
+- запись (`record.*`) разрешена только при реально смонтированной microSD
+  (`/mnt/sdcard`), пути `/oem` и `/userdata` отвергаются; `record.max_bytes`
+  и `record.min_free_mb` удаляют самые старые `.mp4` перед открытием
+  следующего сегмента; без карты `/api/record?enable=true` возвращает
+  `blocked`;
 - `divinus` использует пропатченный `compat.c` (libc `mmap` с 32-битным `off_t`),
   поэтому дополнительный `LD_PRELOAD` не нужен;
 - `divinus` и `rkipc` используют один rockit/ISP-конвейер, поэтому
   взаимоисключающие: одновременно не запускаются, выбор — маркерами
   `divinus.enable`/`rkipc.enable`.
 
+### Демон oko-ec
+
+`/oem/usr/bin/oko-ec daemon` запускается из `S21oko-ec` (после `S20linkmount`,
+`S20oko-osd` и `S21appinit`) и опрашивает три устройства на `/dev/i2c-3`:
+
+- `SHT21 0x40` — no-hold измерения температуры и влажности;
+- `INA3221 0x41` (или INA226) — bus/shunt-напряжение, ток и мощность канала
+  1..3 (определяется по `Die ID`; без калибровочного регистра; шунт 100 мОм по
+  умолчанию). Номер канала для демона задаёт `INA_CHANNEL` в `S21oko-ec`
+  (по умолчанию 1) или переменная `OKO_EC_INA_CHANNEL`;
+- `STM32 ACPI-EC 0x42` — `GET_BATTERY_DATA` (только при `device_type = 2`).
+
+Зависимости и условия:
+
+- `/dev/i2c-3` создаётся драйвером `i2c-rk3x` из узла `&i2c3` в DTS
+  (`status = "okay"`, 100 кГц, `i2c3m1_xfer`); без узла демон не стартует;
+- `/oem/usr/bin/oko-ec` собирается пакетом `project/app/oko-ec` и попадает в
+  образ через `RK_BUILD_APP_TO_OEM_PARTITION=y`;
+- opt-out — маркер `/userdata/oko-ec.disable` (демон не запускается, OSD
+  остаётся на симуляции);
+- `/userdata` должен быть смонтирован (`S21oko-ec` ждёт монтирования, как
+  `S20oko-osd`);
+- демон сам пишет `/tmp/oko-ec.pid`, `/tmp/oko-ec.json` и `/tmp/oko-ec.osd`;
+  init-скрипт только читает PID-файл для `stop`/`status`;
+- `oko-osd` использует `/tmp/oko-ec.osd`, пока он свежий (≤ 30 с) и `OK 1`:
+  выводит строки SHT21 (температура/влажность), STM32 (напряжение/ток/
+  температура/SOC/ячейки) и INA3221 (напряжение/ток/мощность); при ошибке
+  датчиков или остановленном демоне возвращается к симуляции `T`/`BAT`.
+
 ### Модули ядра
 
 - `video_rkisp` / `video_rkcif` зависят от `videobuf2-*` и модуля сенсора.
 - `rockit.ko` зависит от результата детекции высоты сенсора (`/proc/rkisp-vir0`) и
   прошивки MCU `hpmcu_wrap.bin` (путь `./hpmcu_wrap.bin`, адрес `0xff6fe000`).
-- `sc230ai.ko` активен в текущей конфигурации; остальные сенсорные модули
-  выгружаются на шаге 7, если их refcount равен 0.
+- `sc230ai.ko` — единственный сенсорный модуль в текущем образе; IQ-каталог
+  `/oem/usr/share/iqfiles` содержит только
+  `sc230ai_CMK-OT2115-PC1_30IRC-F16.json`. Остальные сенсорные `.ko`/IQ
+  удаляются из oem при сборке (`__RUN_POST_CLEAN_FILES`), поэтому шаг 4
+  `insmod_ko.sh` загружает только `sc230ai`, а шаг 7 не находит лишних
+  модулей. Вендорские исходники и DTS других плат не изменяются.
 - WiFi-модули зависят от `cfg80211`, а для RTL8723BS — ещё и от `mac80211` и
   крипто-модулей (`libarc4`, `aes_generic` и т.п.); состав определяется чипом.
 - **`motor.ko` — условный модуль.** Флаг `RK_ENABLE_MOTOR` в активной конфигурации не
@@ -318,8 +397,11 @@ AIC8800 (`aic_load_fw` → `aic8800_fdrv`), AP6XXX (`bcmdhd`), RTL8723BS
 
 ### Сеть
 
-- `RkLunch.sh` поднимает `eth0` и `udhcpc` в фоне параллельно с `S40network` /
-  `S41dhcpcd`. MAC-адрес фиксируется в `/data/ethaddr.txt`.
+- `RkLunch.sh` вызывает `oko-net apply`; `S41dhcpcd` заменён заглушкой.
+  MAC хранится в env (`oko_mac`), поэтому не зависит от `/userdata` и
+  переживает полную прошивку; DHCP-клиент один (`dhcpcd`), его client ID —
+  MAC, а не DUID из `/var/db/dhcpcd` (иначе после перепрошивки менялся бы
+  адрес). Настройки статического IP также лежат в env-разделе.
 - `S49ntp`, `S50sshd`, `S50telnet` рассчитывают на уже поднятую сеть.
 
 ## 8. Источники и проверка

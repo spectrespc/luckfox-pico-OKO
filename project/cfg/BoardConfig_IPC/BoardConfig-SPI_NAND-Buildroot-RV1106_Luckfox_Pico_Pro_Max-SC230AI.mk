@@ -14,7 +14,7 @@ export RK_APP_TYPE=RKIPC_RV1106
 export RK_BOOTARGS_CMA_SIZE="66M"
 
 # Kernel dts
-export RK_KERNEL_DTS=rv1106g-luckfox-pico-pro-max.dts
+export RK_KERNEL_DTS=rv1106g-luckfox-pico-pro-max-sc230ai.dts
 
 #################################################
 #	BOOT_MEDIUM
@@ -35,7 +35,7 @@ export RK_UBOOT_DEFCONFIG_FRAGMENT=rk-sfc.config
 #       <partdef> := <size>[@<offset>](part-name)
 # Note:
 #   If the first partition offset is not 0x0, it must be added. Otherwise, it needn't adding.
-export RK_PARTITION_CMD_IN_ENV="256K(env),256K@256K(idblock),512K(uboot),4M(boot),30M(oem),10M(userdata),210M(rootfs)"
+export RK_PARTITION_CMD_IN_ENV="256K(env),256K@256K(idblock),512K(uboot),6M(boot),40M(oem),10M(userdata),198M(rootfs)"
 
 # config partition's filesystem type (squashfs is readonly)
 # emmc:    squashfs/ext4
@@ -91,6 +91,10 @@ export RK_KERNEL_DEFCONFIG_FRAGMENT="rv1106-sc230ai.config"
 #     "iqfile1 iqfile2 iqfile3 ..."
 # ./build.sh media and copy <SDK root dir>/output/out/media_out/isp_iqfiles/$RK_CAMERA_SENSOR_IQFILES
 export RK_CAMERA_SENSOR_IQFILES="sc230ai_CMK-OT2115-PC1_30IRC-F16.json"
+
+# AIISP model matching the native 1920x1080 sensor mode; build.sh copies only
+# this model to /oem/usr/lib and removes the other rkmodel_*.aiisp files.
+export RK_AIISP_MODEL=rkmodel_1080_1920.aiisp
 
 # Config sensor lens CAC calibrattion bin files
 # No CAC calibration available for SC230AI in media/isp

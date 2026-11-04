@@ -41,6 +41,24 @@ typedef struct {
     rk_common_compr compress;
 } rk_vpss_grp;
 
+/* VPSS_CROP_INFO_S: RK_BOOL bEnable; VPSS_CROP_COORDINATE_E; RECT_S */
+typedef struct {
+    int enable;
+    int coordinate;         /* 0 ratio, 1 absolute */
+    rk_common_rect rect;
+} rk_vpss_crop;
+
+/* AIISP_ATTR_S: RK_BOOL; {cb, priv}; model path; frame buffer count */
+typedef struct {
+    int enable;
+    struct {
+        void *callback;
+        void *priv;
+    } func;
+    const char *model;
+    unsigned int bufCnt;
+} rk_vpss_aiisp;
+
 typedef struct {
     void *handle;
 
@@ -55,6 +73,15 @@ typedef struct {
     int (*fnDisableChannel)(int group, int channel);
     int (*fnEnableChannel)(int group, int channel);
     int (*fnSetChannelConfig)(int group, int channel, rk_vpss_chn *config);
+
+    /* Optional on RV1106: absent symbols are tolerated and reported by the
+     * callers as an unsupported feature instead of failing the HAL load. */
+    int (*fnSetChnCrop)(int group, int channel, const rk_vpss_crop *config);
+    int (*fnGetChnCrop)(int group, int channel, rk_vpss_crop *config);
+    int (*fnSetChnRotation)(int group, int channel, int rotation);
+    int (*fnGetChnRotation)(int group, int channel, int *rotation);
+    int (*fnSetGrpAIISPAttr)(int group, const rk_vpss_aiisp *config);
+    int (*fnGetGrpAIISPAttr)(int group, rk_vpss_aiisp *config);
 } rk_vpss_impl;
 
 static int rk_vpss_load(rk_vpss_impl *vpss_lib) {
@@ -100,6 +127,19 @@ static int rk_vpss_load(rk_vpss_impl *vpss_lib) {
     if (!(vpss_lib->fnSetChannelConfig = (int(*)(int group, int channel, rk_vpss_chn *config))
         hal_symbol_load("rk_vpss", vpss_lib->handle, "RK_MPI_VPSS_SetChnAttr")))
         return EXIT_FAILURE;
+
+    vpss_lib->fnSetChnCrop = (int(*)(int, int, const rk_vpss_crop*))
+        dlsym(vpss_lib->handle, "RK_MPI_VPSS_SetChnCrop");
+    vpss_lib->fnGetChnCrop = (int(*)(int, int, rk_vpss_crop*))
+        dlsym(vpss_lib->handle, "RK_MPI_VPSS_GetChnCrop");
+    vpss_lib->fnSetChnRotation = (int(*)(int, int, int))
+        dlsym(vpss_lib->handle, "RK_MPI_VPSS_SetChnRotation");
+    vpss_lib->fnGetChnRotation = (int(*)(int, int, int*))
+        dlsym(vpss_lib->handle, "RK_MPI_VPSS_GetChnRotation");
+    vpss_lib->fnSetGrpAIISPAttr = (int(*)(int, const rk_vpss_aiisp*))
+        dlsym(vpss_lib->handle, "RK_MPI_VPSS_SetGrpAIISPAttr");
+    vpss_lib->fnGetGrpAIISPAttr = (int(*)(int, rk_vpss_aiisp*))
+        dlsym(vpss_lib->handle, "RK_MPI_VPSS_GetGrpAIISPAttr");
 
     return EXIT_SUCCESS;
 }

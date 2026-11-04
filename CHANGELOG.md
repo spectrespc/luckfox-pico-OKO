@@ -26,6 +26,66 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Добавлено
 
+- I2C3-M1 переведён на 100 кГц (`clock-frequency = <100000>`) в активном
+  `rv1106g-luckfox-pico-pro-max-sc230ai.dts`; устройства SHT21/INA3221/
+  STM32 ACPI-EC на `/dev/i2c-3` работают на этой скорости.
+- I2C3-M1 runs at 100 kHz (`clock-frequency = <100000>`) in the active
+  `rv1106g-luckfox-pico-pro-max-sc230ai.dts`; the SHT21/INA3221/STM32
+  ACPI-EC devices on `/dev/i2c-3` use that bus speed.
+- WebUI/API: `/api/network` и секция **Network → Ethernet** переключают
+  DHCP/static IPv4. Настройки `oko_net_mode`, `oko_ipaddr`, `oko_netmask`,
+  `oko_gateway`, `oko_dns` и постоянный `oko_mac` хранятся в env-разделе
+  U-Boot (`fw_printenv`/`fw_setenv`, `/etc/fw_env.config`), а не в
+  `/userdata`, и переживают reboot и покомпонентную прошивку. Полный
+  `update.img` перезаписывает `env.img`, но MAC восстанавливается из serial;
+  статические настройки после полной прошивки задаются заново.
+- WebUI/API: `/api/network` and **Network → Ethernet** switch DHCP/static
+  IPv4. `oko_net_mode`, `oko_ipaddr`, `oko_netmask`, `oko_gateway`,
+  `oko_dns` and the persistent `oko_mac` live in the U-Boot env partition
+  (`fw_printenv`/`fw_setenv`, `/etc/fw_env.config`), not in `/userdata`, so
+  they survive a reboot and component flashing. A full `update.img` rewrites
+  `env.img`, but the MAC is re-derived from the serial number; static
+  settings must be re-applied after a full flash.
+- Buildroot: включены `BR2_PACKAGE_UBOOT_TOOLS=y` и
+  `BR2_PACKAGE_UBOOT_TOOLS_FWPRINTENV=y` (`/usr/sbin/fw_printenv`,
+  `fw_setenv`); добавлен `/etc/fw_env.config` для `/dev/mtd0`.
+- Buildroot: enabled `BR2_PACKAGE_UBOOT_TOOLS=y` and
+  `BR2_PACKAGE_UBOOT_TOOLS_FWPRINTENV=y` (`/usr/sbin/fw_printenv`,
+  `fw_setenv`); added `/etc/fw_env.config` for `/dev/mtd0`.
+- `divinus`: медиа-фичи этапа divinus-media-features — ePTZ (кроп VPSS),
+  поворот 90/180/270 (VENC), SmartP/SVC/motion deblur/QP, второй поток
+  `/live/1` (RTSP на путь), AIISP (`/api/aiisp`, модель
+  `rkmodel_1080_1920.aiisp`), IVS (`/api/ivs`: MD/OD, снимок, клип, OSD),
+  runtime IQ и HDR API; непроверенные комбинации блокируются `gating.c`
+  с причиной. WebUI получил секции Geometry, Encoding, Night image, Image,
+  Analytics, Sub stream, Streams и Storage. Результаты гейтов —
+  `project/app/divinus/source/doc/README.md`.
+- `divinus`: media feature set from the divinus-media-features stage — ePTZ
+  (VPSS crop), 90/180/270 rotation (VENC), SmartP/SVC/motion deblur/QP, a
+  second `/live/1` stream (per-path RTSP), AIISP (`/api/aiisp`, model
+  `rkmodel_1080_1920.aiisp`), IVS (`/api/ivs`: MD/OD, snapshot, clip, OSD),
+  runtime IQ and HDR APIs; unverified combinations are refused by `gating.c`
+  with a reason. The WebUI gained Geometry, Encoding, Night image, Image,
+  Analytics, Sub stream, Streams and Storage sections. Gate results are in
+  `project/app/divinus/source/doc/README.md`.
+- microSD: udev-скрипт `oko-sdcard` монтирует карту в `/mnt/sdcard` и пишет
+  `/run/oko-sd.state`; `record.source`, `record.max_bytes` и
+  `record.min_free_mb` выбирают поток и чистят старые сегменты. Запись в `/oem`
+  и `/userdata` запрещена, без реально смонтированной карты — отказ.
+  DTS `&sdmmc` переведён из `non-removable`/SDIO в режим съёмной карты.
+- microSD: the `oko-sdcard` udev helper mounts the card at `/mnt/sdcard` and
+  writes `/run/oko-sd.state`; `record.source`, `record.max_bytes` and
+  `record.min_free_mb` select the feed and prune the oldest segments. Writing
+  to `/oem` or `/userdata` is refused, and recording without a real mount is
+  blocked. The `&sdmmc` DTS node no longer uses `non-removable`/SDIO flags.
+- Сборка: `RK_AIISP_MODEL=rkmodel_1080_1920.aiisp` в BoardConfig копирует
+  выбранную модель в `/oem/usr/lib`; из oem удаляются стресс/AVS-демо
+  (`sample_*_stresstest`, `sample_*avs*`, `rk_mpi_avs_test`, `rkisp_demo`,
+  `j2s4b_dev`), чтобы уменьшить размер oem.
+- Build: `RK_AIISP_MODEL=rkmodel_1080_1920.aiisp` in the board config installs
+  the selected model in `/oem/usr/lib`; stress/AVS demos
+  (`sample_*_stresstest`, `sample_*avs*`, `rk_mpi_avs_test`, `rkisp_demo`,
+  `j2s4b_dev`) are pruned from oem to reduce its size.
 - `oko-osd`: в эмуляцию телеметрии добавлены LTE (RSRP, dBm + 1–5 полос) и
   WiFi (RSSI, dBm + 1–5 полос); значения меняются раз в 15 с вместе с
   GPS/температурой/батареей.
@@ -130,9 +190,141 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 - `project/app/divinus/tests/bmp_align_test.c`: host test for the OSD raster
   alignment (660x46 → 672x48, stride 672), not part of the package Makefile;
   the re-vendoring rules require running it after the HAL patch.
+- I2C3-M1 включён по умолчанию на 100 кГц:
+  `sysdrv/source/kernel/arch/arm/boot/dts/rv1106g-luckfox-pico-pro-max.dts`,
+  блок `&i2c3` — `status = "okay"`, `clock-frequency = <100000>`,
+  `pinctrl-0 = <&i2c3m1_xfer>` (выводы `GPIO1_D2`/`GPIO1_D3`). Устройство
+  `/dev/i2c-3` появляется при загрузке без вызова `luckfox-config`; группы
+  I2C3-M0 из общего dtsi больше не мультиплексируются.
+- I2C3-M1 enabled by default at 100 kHz:
+  `sysdrv/source/kernel/arch/arm/boot/dts/rv1106g-luckfox-pico-pro-max.dts`,
+  the `&i2c3` node — `status = "okay"`, `clock-frequency = <100000>`,
+  `pinctrl-0 = <&i2c3m1_xfer>` (`GPIO1_D2`/`GPIO1_D3` pins). `/dev/i2c-3` is
+  available at boot without running `luckfox-config`; the I2C3-M0 groups from
+  the shared dtsi are no longer muxed.
+- `project/app/oko-ec/`: утилита `/oem/usr/bin/oko-ec` для устройств на
+  `/dev/i2c-3` — SHT21 `0x40`, INA226 `0x41`, STM32 ACPI-EC `0x42`. Команды
+  `scan`, `info`, `status`, `battery`, `cells`, `temp`, `ina226`, `sht21`,
+  `sensors`, OTA STM32 (`flash`/`enter-update`/`reset`) и демон
+  `oko-ec daemon` (интервал 2 с, `/tmp/oko-ec.json`, `/tmp/oko-ec.osd`,
+  `/tmp/oko-ec.pid`). `oko-osd` берёт реальные `T`/`BAT` из свежего
+  `/tmp/oko-ec.osd` (≤ 30 с) и иначе работает на симуляции. Датчики читаются
+  через `i2c-dev` без драйверов ядра; INA226 — без калибровочного регистра
+  (шунт 100 мОм по умолчанию), SHT21 — no-hold с CRC8. Опция `--json`/`--quiet`,
+  адреса/шунт/тайминги переопределяются. Вендорен хостовый инструмент upstream
+  `spectrespc/stm32_acpi-ec` на коммите
+  `41728ddaf6936d49a5fb65676ca5203dd631b4f6` (файла `LICENSE` в upstream нет);
+  `S21oko-ec` запускает демон при наличии `/dev/i2c-3` и `/oem/usr/bin/oko-ec`,
+  opt-out — `/userdata/oko-ec.disable`.
+- `project/app/oko-ec/`: the `/oem/usr/bin/oko-ec` utility for devices on
+  `/dev/i2c-3` — SHT21 `0x40`, INA226 `0x41`, STM32 ACPI-EC `0x42`. Commands:
+  `scan`, `info`, `status`, `battery`, `cells`, `temp`, `ina226`, `sht21`,
+  `sensors`, STM32 OTA (`flash`/`enter-update`/`reset`) and the
+  `oko-ec daemon` loop (2 s interval, `/tmp/oko-ec.json`, `/tmp/oko-ec.osd`,
+  `/tmp/oko-ec.pid`). `oko-osd` uses real `T`/`BAT` from a fresh
+  `/tmp/oko-ec.osd` (≤ 30 s) and otherwise keeps simulating them. Sensors are
+  read through `i2c-dev` without kernel drivers; INA226 uses no calibration
+  register (100 mOhm shunt by default), SHT21 is no-hold with CRC8.
+  `--json`/`--quiet` are supported and addresses/shunt/timings are overridable.
+  The upstream host tool `spectrespc/stm32_acpi-ec` is vendored at commit
+  `41728ddaf6936d49a5fb65676ca5203dd631b4f6` (no `LICENSE` file in upstream);
+  `S21oko-ec` starts the daemon when `/dev/i2c-3` and `/oem/usr/bin/oko-ec`
+  exist, with `/userdata/oko-ec.disable` as opt-out.
+- `oko-ec`: поддержка INA3221 (die ID `0x3220`, три канала, 13-битные значения
+  `D15:D3`, LSB 40 мкВ/8 мВ) с автоопределением чипа по `0xFF` и выбором канала
+  `--ina-channel 1..3` (`OKO_EC_INA_CHANNEL`); INA226 (`0x2260`) продолжает
+  поддерживаться. OSD (reg1) выводит четыре строки: SHT21 (температура и
+  влажность), STM32 (напряжение/ток/температура/SOC/ячейки), INA3221
+  (напряжение/ток/мощность) и LTE/WiFi; при отсутствии источника — `--`, без
+  свежих данных — прежняя симуляция `T`/`BAT`. На стенде на `0x41` определён
+  INA3221 (силовые входы пока не подключены, показания 0).
+- `oko-ec`: INA3221 support (die ID `0x3220`, three channels, 13-bit values in
+  `D15:D3`, 40 uV/8 mV LSB) with chip auto-detection via register `0xFF` and
+  channel selection `--ina-channel 1..3` (`OKO_EC_INA_CHANNEL`); INA226
+  (`0x2260`) remains supported. The OSD region reg1 now shows four lines:
+  SHT21 (temperature and humidity), STM32 (voltage/current/temperature/SOC/
+  cells), INA3221 (voltage/current/power) and LTE/WiFi; a missing source is
+  shown as `--`, and stale data falls back to the previous `T`/`BAT`
+  simulation. The testbench device at `0x41` is an INA3221 (power inputs are
+  not connected yet, so the readings are zero).
+
+- Разметка SPI NAND: `boot` увеличен с 4 до 6 МБ, `oem` — с 30 до 40 МБ,
+  `rootfs` уменьшен с 210 до 198 МБ
+  (`256K(env),256K@256K(idblock),512K(uboot),6M(boot),40M(oem),10M(userdata),198M(rootfs)`,
+  всего 255 МБ). После этой сборки нужна **полная прошивка** `update.img`:
+  покомпонентная выкатка со старой таблицей несовместима, `/userdata` и данные
+  на NAND теряются.
+- SPI NAND layout: `boot` grows from 4 to 6 MiB, `oem` from 30 to 40 MiB and
+  `rootfs` shrinks from 210 to 198 MiB
+  (`256K(env),256K@256K(idblock),512K(uboot),6M(boot),40M(oem),10M(userdata),198M(rootfs)`,
+  255 MiB total). This build requires a **full `update.img` flash**: component
+  flashing with the old table is incompatible, and `/userdata` plus the data on
+  NAND are lost.
+- WebUI/API storage: `/api/storage` получил `mount`, `unmount` и `format`
+  (FAT32/MBR, метка `OKO`, один раздел), поля `device`, `fs`,
+  `format_supported`, `format_busy` и одноразовый `format_token`; формат
+  требует `confirm=FORMAT`, блокируется при записи и сериализован с udev через
+  `/run/oko-sd.lock`. Секция Storage получила `Mount`, `Unmount`, `Format card`
+  и скрытый токен.
+- WebUI/API storage: `/api/storage` gained `mount`, `unmount` and `format`
+  (FAT32/MBR, label `OKO`, one partition), plus `device`, `fs`,
+  `format_supported`, `format_busy` and a one-shot `format_token`; formatting
+  requires `confirm=FORMAT`, is refused while recording and is serialized with
+  udev through `/run/oko-sd.lock`. The Storage section gained `Mount`,
+  `Unmount`, `Format card` and a hidden token field.
+- `VERIFIED_FUNCTIONS.md`: реестр проверенных на стенде функций (дата, плата,
+  стенд `192.168.52.97`, доказательства, ограничения) и правила его ведения;
+  ссылки добавлены в `README_RU.md` и `STRUCTURE.md`. После прогона 2026-11-04
+  обновлены статусы разметки, формата, hotplug, AIISP, RTSP и записи.
+- `VERIFIED_FUNCTIONS.md`: a registry of functions verified on the bench (date,
+  board, `192.168.52.97` test stand, evidence and limitations) with maintenance
+  rules; linked from `README_RU.md` and `STRUCTURE.md`. The 2026-11-04 run
+  updated the statuses for the NAND layout, format, hotplug, AIISP, RTSP and
+  recording.
+- Buildroot: `sysdrv/tools/board/buildroot/luckfox_pico_defconfig` включает
+  `BR2_PACKAGE_UTIL_LINUX_BINARIES=y` и `BR2_PACKAGE_UTIL_LINUX_WIPEFS=y`,
+  поэтому в rootfs появляются `sfdisk`, `wipefs`, `fdisk` и другие утилиты
+  (нужны для форматирования microSD).
+- Buildroot: `sysdrv/tools/board/buildroot/luckfox_pico_defconfig` enables
+  `BR2_PACKAGE_UTIL_LINUX_BINARIES=y` and `BR2_PACKAGE_UTIL_LINUX_WIPEFS=y`, so
+  the rootfs contains `sfdisk`, `wipefs`, `fdisk` and the rest of the basic
+  util-linux set (needed to format the microSD card).
 
 ### Изменено
 
+- `project/app/divinus/source/src/record.c`: запись разрешена только ниже
+  реально смонтированного `/mnt/sdcard`; `/oem`, `/userdata`, `/tmp` и `/`
+  отвергаются. Добавлен `storageBusy`: во время формата/размонтирования новый
+  сегмент не открывается. Раз в секунду и перед ротацией проверяется
+  монтирование: при извлечении карты файл закрывается, запись останавливается,
+  NAND не используется. `start=1` при отказе возвращает `blocked` с причиной.
+- `project/app/divinus/source/src/record.c`: recording is allowed only below a
+  really mounted `/mnt/sdcard`; `/oem`, `/userdata`, `/tmp` and `/` are refused.
+  `storageBusy` prevents a new segment from opening during format/unmount. The
+  mount is checked once per second and before rotation: if the card disappears,
+  the file is closed, recording stops and SPI NAND is never used. A failed
+  `start=1` now returns `blocked` with a reason.
+- SC230AI DTS: новый `rv1106g-luckfox-pico-pro-max-sc230ai.dts` (копия Pro Max
+  DTS) выключает неиспользуемые `&sc3336` и `&mis5001`; активный BoardConfig
+  использует этот файл. Общий вендорский dtsi и DTS других плат не изменены.
+- SC230AI DTS: the new `rv1106g-luckfox-pico-pro-max-sc230ai.dts` (a copy of the
+  Pro Max DTS) disables the unused `&sc3336` and `&mis5001`; the active board
+  config points at this file. The shared vendor dtsi and other board DTS files
+  are unchanged.
+- `rv1106-sc230ai.config`: явно выключены `CONFIG_VIDEO_SC3336`,
+  `CONFIG_VIDEO_IMX415`, `CONFIG_VIDEO_MIS5001`, `CONFIG_VIDEO_MIA1321`;
+  собирается только `CONFIG_VIDEO_SC230AI=m`.
+- `rv1106-sc230ai.config`: `CONFIG_VIDEO_SC3336`, `CONFIG_VIDEO_IMX415`,
+  `CONFIG_VIDEO_MIS5001` and `CONFIG_VIDEO_MIA1321` are explicitly disabled;
+  only `CONFIG_VIDEO_SC230AI=m` is built.
+- `project/app/divinus/source/src/region.c`: буфер локального `@file`-провайдера
+  текста OSD увеличен с 80 до 256 байт (и `region_file_prev`), чтобы строка
+  телеметрии могла содержать SHT21/STM32/INA3221/LTE/WiFi; поведение для
+  коротких строк не меняется.
+- `project/app/divinus/source/src/region.c`: the local OSD `@file` text provider
+  buffer is increased from 80 to 256 bytes (including `region_file_prev`), so the
+  telemetry line can carry SHT21/STM32/INA3221/LTE/WiFi; short strings behave as
+  before.
 - `sc230ai`: режим 1920×1080 переведён с 25 на **30 fps** (`VTS = 0x0465`,
   HTS остаётся 2200, MIPI link 371.25 Мбит/с не менялся). Проверено на DUT:
   `v4l2-ctl` даёт стабильные **30.01–30.02 fps** на 300 кадрах, ошибок
@@ -330,6 +522,20 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Удалено
 
+- Из oem активной платы удалены `sample_*` и `simple_*` (включая прежние
+  стресс/AVS-демо); диагностические `rk_*_test`/`rk_mpi_*_test`, `rkipc`,
+  `rkaiq_*`, `divinus` и `oko-*` сохранены.
+- `sample_*` and `simple_*` (including the old stress/AVS demos) are removed
+  from the active board oem; diagnostic `rk_*_test`/`rk_mpi_*_test`, `rkipc`,
+  `rkaiq_*`, `divinus` and `oko-*` are kept.
+- Из oem удалены сенсорные модули и IQ других плат (`sc3336`, `mis5001`,
+  `imx415`, `mia1321` и другие сенсорные `.ko`); остаётся только `sc230ai.ko`
+  и `sc230ai_CMK-OT2115-PC1_30IRC-F16.json`. Вендорские исходники и DTS других
+  плат не тронуты.
+- Sensor modules and IQ files of the other boards (`sc3336`, `mis5001`,
+  `imx415`, `mia1321` and other sensor `.ko` files) are removed from oem; only
+  `sc230ai.ko` and `sc230ai_CMK-OT2115-PC1_30IRC-F16.json` remain. Vendor
+  sources and DTS files of the other boards are untouched.
 - Netboot-режим: файлы `BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-NETBOOT.mk`,
   `BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-NETBOOT-SC230AI.mk`,
   фрагмент ядра `sysdrv/source/kernel/arch/arm/configs/rv1106-netboot.config`,
@@ -352,6 +558,120 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Исправлено
 
+- DHCP: причина смены IP — MAC хранился в `/data/ethaddr.txt` (раздел
+  `/userdata`), а `dhcpcd` использовал DUID из `/var/db/dhcpcd`; оба
+  сбрасываются при полной прошивке. Дополнительно на `eth0` работали два
+  клиента (`S41dhcpcd` и `udhcpc` из `RkLunch.sh`). Теперь MAC выводится из
+  `/proc/device-tree/serial-number` и хранится в env (`oko_mac`), DHCP-клиент
+  один — `dhcpcd` с client ID по MAC (`clientid`, без `duid`),
+  `S41dhcpcd` заменён заглушкой, а `RkLunch.sh` вызывает `oko-net apply`.
+  Проверено: после reboot MAC `02:47:8d:05:67:56` и IP `192.168.52.97`
+  сохраняются; static `.220` также переживает reboot.
+- DHCP: the changing IP was caused by the MAC living in `/data/ethaddr.txt`
+  (`/userdata`) and `dhcpcd` using a DUID from `/var/db/dhcpcd`; both are
+  recreated by a full firmware update. Two clients also ran on `eth0`
+  (`S41dhcpcd` and `udhcpc` from `RkLunch.sh`). Now the MAC is derived from
+  `/proc/device-tree/serial-number` and stored in env (`oko_mac`), there is
+  one DHCP client (`dhcpcd` with `clientid` by MAC, no `duid`), `S41dhcpcd`
+  is a stub, and `RkLunch.sh` calls `oko-net apply`. Verified: after reboot
+  MAC `02:47:8d:05:67:56` and IP `192.168.52.97` are preserved; static
+  `.220` also survives a reboot.
+- WebUI/MP4: HTTP-поток `/video.mp4` больше не отдаёт пустой chunk и не рвёт
+  соединение. `send_mp4_to_client()` теперь, как и recorder, режет Annex B
+  через `nal_split()`: VPS/SPS/PPS HEVC приходят одним access unit, и старый
+  обход `pack->nalu[]` не находил их, поэтому `moov` не строился. Проверено:
+  PyAV декодирует 30 кадров hevc 1920x1080 с `http://<DUT>/video.mp4`.
+- WebUI/MP4: the `/video.mp4` HTTP stream no longer sends an empty chunk and
+  closes. `send_mp4_to_client()` now splits Annex B with `nal_split()` like the
+  recorder: HEVC VPS/SPS/PPS arrive in one access unit, and the old
+  `pack->nalu[]` walk missed them, so `moov` was never built. Verified: PyAV
+  decodes 30 hevc 1920x1080 frames from `http://<DUT>/video.mp4`.
+- WebUI: вкладки MP4/MJPEG показывают понятное сообщение, если поток выключен,
+  а для MP4 добавлена подсказка про H.265 и MJPEG. MJPEG при
+  `mjpeg.enable=true` отдаёт `multipart/x-mixed-replace` (проверено).
+- WebUI: the MP4/MJPEG tabs show a clear message when the stream is disabled,
+  and the MP4 tab hints at H.265 vs MJPEG. With `mjpeg.enable=true` the MJPEG
+  endpoint returns a `multipart/x-mixed-replace` stream (verified).
+- microSD/udev: eudev в образе читает только `/lib/udev/rules.d`, поэтому
+  правило `60-oko-sdcard.rules` перенесено из `/etc/udev/rules.d` в
+  `/lib/udev/rules.d`; теперь `oko-sdcard add/remove` действительно вызывается
+  и пишет `/run/oko-sd.state`. Вендорское `61-sd-cards-auto-mount.rules`
+  заменено заглушкой: его безусловный remove-`umount` снимал только что
+  отформатированную карту на stale-событиях `sfdisk`/`partprobe`; stale-remove
+  для ещё существующего `mmcblkX` теперь игнорируется. Проверено: format
+  создаёт один FAT32-раздел `OKO`, а unbind/bind `mmc1:aaaa` даёт `present=0`
+  → `present=1` и автомонтирование.
+- microSD/udev: eudev in this image reads only `/lib/udev/rules.d`, so
+  `60-oko-sdcard.rules` moved from `/etc/udev/rules.d` to `/lib/udev/rules.d`;
+  `oko-sdcard add/remove` is now actually invoked and writes
+  `/run/oko-sd.state`. The vendor `61-sd-cards-auto-mount.rules` is replaced by
+  a stub: its unconditional remove-`umount` detached the freshly formatted card
+  on stale `sfdisk`/`partprobe` events; stale remove events for an existing
+  `mmcblkX` are now ignored. Verified: format creates one FAT32 `OKO` partition
+  and unbinding/binding `mmc1:aaaa` changes `present=0` to `present=1` with
+  automount.
+- `oko-sdcard`: определение карты переведено с `/sys/block/*/removable`
+  (в этом 5.10-ядре всегда `0`) на `device/type=SD`; `unmount` снимает все
+  наложения `/mnt/sdcard`, включая старые p1+p2. VFAT монтируется с
+  `uid=1000,gid=1000,fmask=0133,dmask=0022`.
+- `oko-sdcard`: card detection now uses `device/type=SD` because
+  `/sys/block/*/removable` is always `0` in this 5.10 kernel; `unmount` drops
+  all stacked `/mnt/sdcard` mounts, including legacy p1+p2. VFAT mounts with
+  `uid=1000,gid=1000,fmask=0133,dmask=0022`.
+- Сборка: выбранная AIISP-модель копируется в oem **до** `build_mkimg oem`;
+  раньше `cp` из post-clean выполнялся после создания `oem.img`, и
+  `rkmodel_1080_1920.aiisp` отсутствовал в прошивке.
+- Build: the selected AIISP model is copied into oem **before**
+  `build_mkimg oem`; previously the post-clean `cp` ran after `oem.img` was
+  created, so `rkmodel_1080_1920.aiisp` was missing from the firmware.
+- `divinus/record`: H.265-запись больше не создаёт пустые `.mp4`. VENC-пак
+  для HEVC приходит одним NAL-элементом на весь access unit; `record.c` теперь
+  сам режет Annex B через `nal_split` и передаёт VPS/SPS/PPS/IDR/слайсы в
+  muxer. Проверено: 8-секундный клип декодируется как 222 кадра 1920x1080.
+  Заодно исправлено удаление старых сегментов: `recordPath` больше не
+  исключается из квоты, когда файл уже закрыт.
+- `divinus/record`: H.265 recording no longer produces empty `.mp4` files. The
+  VENC pack for HEVC arrives as one NAL entry for the whole access unit, so
+  `record.c` now splits Annex B with `nal_split` and passes
+  VPS/SPS/PPS/IDR/slices to the muxer. Verified: an 8 s clip decodes as 222
+  frames of 1920x1080. The quota prune was also fixed: a closed `recordPath`
+  is no longer skipped, so old segments are actually removed.
+- `divinus/rtsp`: `PLAY` больше не вызывает блокирующий геттер канала под уже
+  взятым мьютексом RTSP. Дедлок останавливал видео-поток, из-за чего
+  `RK_MPI_RGN_SetBitMap` начинал возвращать `0xfffffffe` и OSD пропадал.
+  Неизвестный или выключенный `/live/<n>` теперь возвращает 404, а не main.
+- `divinus/rtsp`: `PLAY` no longer calls the locking channel getter while the
+  RTSP mutex is already held. The deadlock stalled the video thread, which made
+  `RK_MPI_RGN_SetBitMap` return `0xfffffffe` and dropped the OSD. An unknown or
+  disabled `/live/<n>` now returns 404 instead of falling back to main.
+- `divinus`: второй поток при выключении делает soft-stop и оставляет канал
+  выделенным (повторное включение мгновенное); создание канала и смена
+  параметров энкодера применяются перезапуском в безопасном порядке
+  `main → sub → JPEG`. Это устраняет разрушение OSD на RV1106.
+- `divinus`: disabling the sub stream is now a soft stop that keeps the channel
+  allocated (re-enabling is immediate); creating the channel or changing
+  encoder parameters is applied by a restart in the safe
+  `main -> sub -> JPEG` order. This removes the RV1106 OSD corruption.
+- `divinus/hal/config.h`: `MAX_SECTIONS` увеличено с 16 до 40. Новые секции
+  (eptz/rotate/venc/substream/aiisp/ivs/iq/hdr) выводили файл за лимит
+  `find_sections()`, и после `app_config_save()` конфиг читался частично
+  (`Section 'osd' not found`, `Configuration error code: 1`).
+- `divinus/hal/config.h`: `MAX_SECTIONS` raised from 16 to 40. The new
+  sections (eptz/rotate/venc/substream/aiisp/ivs/iq/hdr) exceeded
+  `find_sections()`'s table, so after `app_config_save()` the configuration
+  was read partially (`Section 'osd' not found`, `Configuration error code: 1`).
+- `divinus/app_config.c`: сохранение OSD пишет `regX_*` с отступом в два
+  пробела, как фабричный YAML; раньше отступ 4 пробела ломал разбор `osd`
+  после рестарта и HDR-перезапуск терял регионы.
+- `divinus/app_config.c`: OSD save emits `regX_*` with the factory two-space
+  indentation; the previous four-space indent broke the `osd` section after a
+  restart, so the HDR restart lost the overlays.
+- `divinus/hal/plus/rk_hal.c`: `rk_video_destroy()` больше не прерывает
+  teardown при ошибке `UnBind` — вызывающий код уже отвязал пару, и повторная
+  отвязка оставляла VENC/VPSS канал неразрушенным.
+- `divinus/hal/plus/rk_hal.c`: `rk_video_destroy()` no longer aborts teardown
+  on an `UnBind` error; callers already unbound the pair, and the second
+  unbind left the VENC/VPSS channel alive.
 - OSD: RGN переведён на один canvas (`region.overlay.canvas = 1`). При двух
   canvas драйвер периодически отдавал кадр с OSD предыдущей секунды — время на
   видео шло не по порядку. Проверено 60 с: кадров со «старым» временем нет.

@@ -70,6 +70,72 @@ struct AppConfig {
     char record_path[128];
     int record_segment_duration;
     int record_segment_size;
+    bool record_sub;                    /* source: main (false) or sub (true) */
+    unsigned long long record_max_bytes; /* ring quota, 0 = unlimited */
+    unsigned int record_min_free_mb;
+
+    // [eptz]
+    bool eptz_enable;
+    unsigned char eptz_stream;          /* 0 main, 1 sub */
+    unsigned short eptz_x, eptz_y, eptz_w, eptz_h;
+
+    // [rotate]
+    bool rotate_enable;
+    unsigned char rotate_stream;
+    unsigned short rotate_angle;        /* 0, 90, 180, 270 */
+
+    // [venc]
+    bool venc_smartp;
+    unsigned char venc_vir_idr;
+    bool venc_svc;
+    bool venc_motion_deblur;
+    unsigned char venc_min_qp, venc_max_qp, venc_min_iqp, venc_max_iqp;
+
+    // [substream]
+    bool substream_enable;
+    bool substream_codecH265;
+    unsigned int substream_mode;
+    unsigned int substream_width;
+    unsigned int substream_height;
+    unsigned int substream_fps;
+    unsigned int substream_gop;
+    unsigned int substream_profile;
+    unsigned int substream_bitrate;
+    char substream_path[32];
+
+    // [aiisp]
+    int aiisp_enable;                   /* hal_aiisp_mode */
+    char aiisp_model_dir[128];
+    unsigned int aiisp_buf_cnt;
+    unsigned int aiisp_fps_enabled;
+    unsigned int aiisp_fps_disabled;
+
+    // [ivs]
+    bool ivs_enable;
+    unsigned int ivs_mode;
+    unsigned int ivs_width;
+    unsigned int ivs_height;
+    unsigned int ivs_sensitivity;
+    unsigned int ivs_md_interval;
+    unsigned int ivs_od_interval;
+    unsigned int ivs_od_percent;
+    bool ivs_act_http_post;
+    bool ivs_act_record;
+    bool ivs_act_osd;
+    unsigned int ivs_record_seconds;
+    bool ivs_record_sub;
+
+    // [iq]
+    char iq_main_scene[32];
+    char iq_sub_scene[32];
+    char iq_file[128];
+
+    // [hdr]
+    unsigned int hdr_mode;              /* 0 normal, 1 hdr2, 2 hdr3 */
+    unsigned int hdr_apply;             /* 0 auto, 1 dyn, 2 restart */
+
+    // [osd] extended
+    bool osd_scope_all;
 
     // [stream]
     bool stream_enable;

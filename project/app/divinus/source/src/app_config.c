@@ -144,6 +144,72 @@ int app_config_save(void) {
     fprintf(file, "  filename: %s\n", app_config.record_filename);
     fprintf(file, "  segment_duration: %d\n", app_config.record_segment_duration);
     fprintf(file, "  segment_size: %d\n", app_config.record_segment_size);
+    fprintf(file, "  source: %s\n", app_config.record_sub ? "sub" : "main");
+    fprintf(file, "  max_bytes: %llu\n", app_config.record_max_bytes);
+    fprintf(file, "  min_free_mb: %d\n", app_config.record_min_free_mb);
+
+    fprintf(file, "eptz:\n");
+    fprintf(file, "  enable: %s\n", app_config.eptz_enable ? "true" : "false");
+    fprintf(file, "  stream: %s\n", app_config.eptz_stream ? "sub" : "main");
+    fprintf(file, "  x: %d\n  y: %d\n  w: %d\n  h: %d\n",
+        app_config.eptz_x, app_config.eptz_y, app_config.eptz_w, app_config.eptz_h);
+
+    fprintf(file, "rotate:\n");
+    fprintf(file, "  enable: %s\n", app_config.rotate_enable ? "true" : "false");
+    fprintf(file, "  stream: %s\n", app_config.rotate_stream ? "sub" : "main");
+    fprintf(file, "  angle: %d\n", app_config.rotate_angle);
+
+    fprintf(file, "venc:\n");
+    fprintf(file, "  smartp: %s\n", app_config.venc_smartp ? "true" : "false");
+    fprintf(file, "  vir_idr_len: %d\n", app_config.venc_vir_idr);
+    fprintf(file, "  svc: %s\n", app_config.venc_svc ? "true" : "false");
+    fprintf(file, "  motion_deblur: %s\n", app_config.venc_motion_deblur ? "true" : "false");
+    fprintf(file, "  min_qp: %d\n  max_qp: %d\n  min_iqp: %d\n  max_iqp: %d\n",
+        app_config.venc_min_qp, app_config.venc_max_qp,
+        app_config.venc_min_iqp, app_config.venc_max_iqp);
+
+    fprintf(file, "substream:\n");
+    fprintf(file, "  enable: %s\n", app_config.substream_enable ? "true" : "false");
+    fprintf(file, "  path: %s\n", app_config.substream_path);
+    fprintf(file, "  codec: %s\n", app_config.substream_codecH265 ? "H.265" : "H.264");
+    fprintf(file, "  mode: %d\n", app_config.substream_mode);
+    fprintf(file, "  width: %d\n  height: %d\n  fps: %d\n  gop: %d\n",
+        app_config.substream_width, app_config.substream_height,
+        app_config.substream_fps, app_config.substream_gop);
+    fprintf(file, "  bitrate: %d\n  profile: %d\n",
+        app_config.substream_bitrate, app_config.substream_profile);
+
+    fprintf(file, "aiisp:\n");
+    fprintf(file, "  enable: %s\n", app_config.aiisp_enable == HAL_AIISP_OFF ? "off" :
+        (app_config.aiisp_enable == HAL_AIISP_AUTO ? "auto" : "on"));
+    fprintf(file, "  model_dir: %s\n", app_config.aiisp_model_dir);
+    fprintf(file, "  buf_cnt: %d\n", app_config.aiisp_buf_cnt);
+    fprintf(file, "  fps_enabled: %d\n  fps_disabled: %d\n",
+        app_config.aiisp_fps_enabled, app_config.aiisp_fps_disabled);
+
+    fprintf(file, "ivs:\n");
+    fprintf(file, "  enable: %s\n", app_config.ivs_enable ? "true" : "false");
+    fprintf(file, "  mode: %d\n", app_config.ivs_mode);
+    fprintf(file, "  width: %d\n  height: %d\n", app_config.ivs_width, app_config.ivs_height);
+    fprintf(file, "  sensitivity: %d\n  md_interval: %d\n  od_interval: %d\n  od_percent: %d\n",
+        app_config.ivs_sensitivity, app_config.ivs_md_interval,
+        app_config.ivs_od_interval, app_config.ivs_od_percent);
+    fprintf(file, "  act_http_post: %s\n", app_config.ivs_act_http_post ? "true" : "false");
+    fprintf(file, "  act_record: %s\n", app_config.ivs_act_record ? "true" : "false");
+    fprintf(file, "  act_osd: %s\n", app_config.ivs_act_osd ? "true" : "false");
+    fprintf(file, "  record_seconds: %d\n", app_config.ivs_record_seconds);
+    fprintf(file, "  record_source: %s\n", app_config.ivs_record_sub ? "sub" : "main");
+
+    fprintf(file, "iq:\n");
+    fprintf(file, "  main_scene: %s\n", app_config.iq_main_scene);
+    fprintf(file, "  sub_scene: %s\n", app_config.iq_sub_scene);
+    fprintf(file, "  file: %s\n", app_config.iq_file);
+
+    fprintf(file, "hdr:\n");
+    fprintf(file, "  mode: %s\n", app_config.hdr_mode == 1 ? "hdr2" :
+        (app_config.hdr_mode == 2 ? "hdr3" : "normal"));
+    fprintf(file, "  apply: %s\n", app_config.hdr_apply == 2 ? "restart" :
+        (app_config.hdr_apply == 1 ? "dyn" : "auto"));
 
     fprintf(file, "stream:\n");
     fprintf(file, "  enable: %s\n", app_config.stream_enable ? "true" : "false");
@@ -174,23 +240,24 @@ int app_config_save(void) {
 
     fprintf(file, "osd:\n");
     fprintf(file, "  enable: %s\n", app_config.osd_enable ? "true" : "false");
+    fprintf(file, "  scope: %s\n", app_config.osd_scope_all ? "all" : "main");
     for (char i = 0; i < MAX_OSD; i++) {
         char imgEmpty = EMPTY(osds[i].img);
         char textEmpty = EMPTY(osds[i].text);
         if (imgEmpty && textEmpty) continue;
 
         if (!imgEmpty)
-            fprintf(file, "    reg%d_img: %s\n", i, osds[i].img);
+            fprintf(file, "  reg%d_img: %s\n", i, osds[i].img);
         if (!textEmpty)
-            fprintf(file, "    reg%d_text: %s\n", i, osds[i].text);
-        fprintf(file, "    reg%d_font: %s\n", i, osds[i].font);
-        fprintf(file, "    reg%d_opal: %d\n", i, osds[i].opal);
-        fprintf(file, "    reg%d_posx: %d\n", i, osds[i].posx);
-        fprintf(file, "    reg%d_posy: %d\n", i, osds[i].posy);
-        fprintf(file, "    reg%d_size: %.1f\n", i, osds[i].size);
-        fprintf(file, "    reg%d_color: %#04x\n", i, osds[i].color);
-        fprintf(file, "    reg%d_outl: %#04x\n", i, osds[i].outl);
-        fprintf(file, "    reg%d_thick: %.1f\n", i, osds[i].thick);
+            fprintf(file, "  reg%d_text: %s\n", i, osds[i].text);
+        fprintf(file, "  reg%d_font: %s\n", i, osds[i].font);
+        fprintf(file, "  reg%d_opal: %d\n", i, osds[i].opal);
+        fprintf(file, "  reg%d_posx: %d\n", i, osds[i].posx);
+        fprintf(file, "  reg%d_posy: %d\n", i, osds[i].posy);
+        fprintf(file, "  reg%d_size: %.1f\n", i, osds[i].size);
+        fprintf(file, "  reg%d_color: %#04x\n", i, osds[i].color);
+        fprintf(file, "  reg%d_outl: %#04x\n", i, osds[i].outl);
+        fprintf(file, "  reg%d_thick: %.1f\n", i, osds[i].thick);
     }
 
     fprintf(file, "jpeg:\n");
@@ -258,6 +325,69 @@ enum ConfigError app_config_parse(void) {
     strcpy(app_config.record_path, "/mnt/sdcard/recordings");
     app_config.record_segment_duration = 0;
     app_config.record_segment_size = 0;
+    app_config.record_sub = false;
+    app_config.record_max_bytes = 0;
+    app_config.record_min_free_mb = 2;
+
+    app_config.eptz_enable = false;
+    app_config.eptz_stream = 0;
+    app_config.eptz_x = 0;
+    app_config.eptz_y = 0;
+    app_config.eptz_w = 1920;
+    app_config.eptz_h = 1080;
+
+    app_config.rotate_enable = false;
+    app_config.rotate_stream = 0;
+    app_config.rotate_angle = 0;
+
+    app_config.venc_smartp = false;
+    app_config.venc_vir_idr = 0;
+    app_config.venc_svc = false;
+    app_config.venc_motion_deblur = false;
+    app_config.venc_min_qp = 0;
+    app_config.venc_max_qp = 0;
+    app_config.venc_min_iqp = 0;
+    app_config.venc_max_iqp = 0;
+
+    app_config.substream_enable = false;
+    app_config.substream_codecH265 = true;
+    app_config.substream_mode = HAL_VIDMODE_CBR;
+    app_config.substream_width = 640;
+    app_config.substream_height = 360;
+    app_config.substream_fps = 10;
+    app_config.substream_gop = 20;
+    app_config.substream_profile = HAL_VIDPROFILE_MAIN;
+    app_config.substream_bitrate = 512;
+    strcpy(app_config.substream_path, "/live/1");
+
+    app_config.aiisp_enable = HAL_AIISP_OFF;
+    strcpy(app_config.aiisp_model_dir, "/oem/usr/lib");
+    app_config.aiisp_buf_cnt = 1;
+    app_config.aiisp_fps_enabled = 30;
+    app_config.aiisp_fps_disabled = 20;
+
+    app_config.ivs_enable = false;
+    app_config.ivs_mode = HAL_IVS_MD;
+    app_config.ivs_width = 640;
+    app_config.ivs_height = 360;
+    app_config.ivs_sensitivity = 2;
+    app_config.ivs_md_interval = 5;
+    app_config.ivs_od_interval = 1;
+    app_config.ivs_od_percent = 7;
+    app_config.ivs_act_http_post = false;
+    app_config.ivs_act_record = false;
+    app_config.ivs_act_osd = false;
+    app_config.ivs_record_seconds = 15;
+    app_config.ivs_record_sub = false;
+
+    app_config.iq_main_scene[0] = '\0';
+    app_config.iq_sub_scene[0] = '\0';
+    app_config.iq_file[0] = '\0';
+
+    app_config.hdr_mode = 0;
+    app_config.hdr_apply = 0;
+
+    app_config.osd_scope_all = false;
 
     app_config.stream_enable = false;
     app_config.stream_udp_srcport = 0;
@@ -416,6 +546,11 @@ enum ConfigError app_config_parse(void) {
     parse_bool(&ini, "mdns", "enable", &app_config.mdns_enable);
 
     parse_bool(&ini, "osd", "enable", &app_config.osd_enable);
+    {
+        char scope[16] = {0};
+        if (parse_param_value_n(&ini, "osd", "scope", scope, sizeof(scope)) == CONFIG_OK)
+            app_config.osd_scope_all = EQUALS(scope, "all");
+    }
     if (app_config.osd_enable) {
         for (char i = 0; i < MAX_OSD; i++) {
             char param[16];
@@ -467,6 +602,201 @@ enum ConfigError app_config_parse(void) {
         &app_config.record_segment_duration);
     parse_int(&ini, "record", "segment_size", 0, INT_MAX,
         &app_config.record_segment_size);
+    {
+        char val[16] = {0};
+        if (parse_param_value_n(&ini, "record", "source", val, sizeof(val)) == CONFIG_OK)
+            app_config.record_sub = EQUALS(val, "sub");
+        {
+            uint64_t bytes;
+            if (parse_uint64(&ini, "record", "max_bytes", 0, UINT64_MAX, &bytes) == CONFIG_OK)
+                app_config.record_max_bytes = (unsigned long long)bytes;
+        }
+        {
+            int free_mb = app_config.record_min_free_mb;
+            parse_int(&ini, "record", "min_free_mb", 0, INT_MAX, &free_mb);
+            app_config.record_min_free_mb = (unsigned int)free_mb;
+        }
+    }
+
+    {
+        int val;
+        parse_bool(&ini, "eptz", "enable", &app_config.eptz_enable);
+        {
+            char val[16] = {0};
+            if (parse_param_value_n(&ini, "eptz", "stream", val, sizeof(val)) == CONFIG_OK)
+                app_config.eptz_stream = EQUALS(val, "sub") ? 1 : 0;
+        }
+        val = app_config.eptz_x;
+        parse_int(&ini, "eptz", "x", 0, 65535, &val);
+        app_config.eptz_x = (unsigned short)val;
+        val = app_config.eptz_y;
+        parse_int(&ini, "eptz", "y", 0, 65535, &val);
+        app_config.eptz_y = (unsigned short)val;
+        val = app_config.eptz_w;
+        parse_int(&ini, "eptz", "w", 16, 65535, &val);
+        app_config.eptz_w = (unsigned short)val;
+        val = app_config.eptz_h;
+        parse_int(&ini, "eptz", "h", 16, 65535, &val);
+        app_config.eptz_h = (unsigned short)val;
+
+        parse_bool(&ini, "rotate", "enable", &app_config.rotate_enable);
+        {
+            char val[16] = {0};
+            if (parse_param_value_n(&ini, "rotate", "stream", val, sizeof(val)) == CONFIG_OK)
+                app_config.rotate_stream = EQUALS(val, "sub") ? 1 : 0;
+        }
+        {
+            int angle = app_config.rotate_angle;
+            if (parse_int(&ini, "rotate", "angle", 0, 270, &angle) == CONFIG_OK)
+                app_config.rotate_angle = (angle == 90 || angle == 180 ||
+                    angle == 270) ? angle : 0;
+        }
+    }
+
+    parse_bool(&ini, "venc", "smartp", &app_config.venc_smartp);
+    {
+        int val;
+        val = app_config.venc_vir_idr;
+        parse_int(&ini, "venc", "vir_idr_len", 0, 255, &val);
+        app_config.venc_vir_idr = (unsigned char)val;
+        val = app_config.venc_min_qp;
+        parse_int(&ini, "venc", "min_qp", 0, 51, &val);
+        app_config.venc_min_qp = (unsigned char)val;
+        val = app_config.venc_max_qp;
+        parse_int(&ini, "venc", "max_qp", 0, 51, &val);
+        app_config.venc_max_qp = (unsigned char)val;
+        val = app_config.venc_min_iqp;
+        parse_int(&ini, "venc", "min_iqp", 0, 51, &val);
+        app_config.venc_min_iqp = (unsigned char)val;
+        val = app_config.venc_max_iqp;
+        parse_int(&ini, "venc", "max_iqp", 0, 51, &val);
+        app_config.venc_max_iqp = (unsigned char)val;
+    }
+    parse_bool(&ini, "venc", "svc", &app_config.venc_svc);
+    parse_bool(&ini, "venc", "motion_deblur", &app_config.venc_motion_deblur);
+
+    parse_bool(&ini, "substream", "enable", &app_config.substream_enable);
+    if (app_config.substream_enable) {
+        char val[32] = {0};
+        parse_param_value_n(&ini, "substream", "path", val, sizeof(val));
+        if (val[0] == '/') {
+            strncpy(app_config.substream_path, val,
+                sizeof(app_config.substream_path) - 1);
+            app_config.substream_path[sizeof(app_config.substream_path) - 1] = 0;
+        }
+        if (parse_param_value_n(&ini, "substream", "codec", val, sizeof(val)) == CONFIG_OK)
+            app_config.substream_codecH265 = !(EQUALS(val, "H.264") ||
+                EQUALS(val, "H264") || EQUALS(val, "AVC"));
+        {
+            const char *modes[] = {"CBR", "VBR", "QP", "ABR", "AVBR"};
+            int v = (int)app_config.substream_mode;
+            parse_enum(&ini, "substream", "mode", (void *)&v, modes, 5, 0);
+            if (v >= 0 && v < HAL_VIDMODE_END)
+                app_config.substream_mode = (unsigned int)v;
+        }
+        {
+            int w = app_config.substream_width, h = app_config.substream_height;
+            int fps = app_config.substream_fps, gop = app_config.substream_gop;
+            int bitrate = app_config.substream_bitrate, profile = app_config.substream_profile;
+            parse_int(&ini, "substream", "width", 160, INT_MAX, &w);
+            parse_int(&ini, "substream", "height", 120, INT_MAX, &h);
+            parse_int(&ini, "substream", "fps", 1, 60, &fps);
+            parse_int(&ini, "substream", "gop", 1, INT_MAX, &gop);
+            parse_int(&ini, "substream", "bitrate", 32, INT_MAX, &bitrate);
+            parse_int(&ini, "substream", "profile", 0, 2, &profile);
+            app_config.substream_width = w;
+            app_config.substream_height = h;
+            app_config.substream_fps = fps;
+            app_config.substream_gop = gop;
+            app_config.substream_bitrate = bitrate;
+            app_config.substream_profile = profile;
+        }
+    }
+
+    {
+        char val[16] = {0};
+        if (parse_param_value_n(&ini, "aiisp", "enable", val, sizeof(val)) == CONFIG_OK) {
+            if (EQUALS_CASE(val, "on") || EQUALS(val, "true") || EQUALS(val, "1"))
+                app_config.aiisp_enable = HAL_AIISP_ON;
+            else if (EQUALS_CASE(val, "auto"))
+                app_config.aiisp_enable = HAL_AIISP_AUTO;
+            else
+                app_config.aiisp_enable = HAL_AIISP_OFF;
+        }
+        if (parse_param_value_n(&ini, "aiisp", "model_dir", val, sizeof(val)) == CONFIG_OK)
+            strncpy(app_config.aiisp_model_dir, val, sizeof(app_config.aiisp_model_dir) - 1);
+        {
+            int v = (int)app_config.aiisp_buf_cnt;
+            parse_int(&ini, "aiisp", "buf_cnt", 0, 16, &v);
+            app_config.aiisp_buf_cnt = (unsigned int)v;
+            v = (int)app_config.aiisp_fps_enabled;
+            parse_int(&ini, "aiisp", "fps_enabled", 1, 60, &v);
+            app_config.aiisp_fps_enabled = (unsigned int)v;
+            v = (int)app_config.aiisp_fps_disabled;
+            parse_int(&ini, "aiisp", "fps_disabled", 1, 60, &v);
+            app_config.aiisp_fps_disabled = (unsigned int)v;
+        }
+    }
+
+    parse_bool(&ini, "ivs", "enable", &app_config.ivs_enable);
+    if (app_config.ivs_enable) {
+        char val[16] = {0};
+        int mode = app_config.ivs_mode;
+        parse_int(&ini, "ivs", "mode", 1, 3, &mode);
+        if (parse_param_value_n(&ini, "ivs", "mode", val, sizeof(val)) == CONFIG_OK) {
+            if (EQUALS_CASE(val, "md")) mode = 1;
+            else if (EQUALS_CASE(val, "od")) mode = 2;
+            else if (EQUALS_CASE(val, "md_od")) mode = 3;
+        }
+        app_config.ivs_mode = (unsigned int)mode;
+        {
+            int w = (int)app_config.ivs_width, h = (int)app_config.ivs_height;
+            int sens = (int)app_config.ivs_sensitivity;
+            int md = (int)app_config.ivs_md_interval;
+            int od = (int)app_config.ivs_od_interval;
+            int pct = (int)app_config.ivs_od_percent;
+            int sec = (int)app_config.ivs_record_seconds;
+            parse_int(&ini, "ivs", "width", 160, INT_MAX, &w);
+            parse_int(&ini, "ivs", "height", 120, INT_MAX, &h);
+            parse_int(&ini, "ivs", "sensitivity", 1, 3, &sens);
+            parse_int(&ini, "ivs", "md_interval", 1, 100, &md);
+            parse_int(&ini, "ivs", "od_interval", 1, 100, &od);
+            parse_int(&ini, "ivs", "od_percent", 5, 8, &pct);
+            parse_int(&ini, "ivs", "record_seconds", 1, 600, &sec);
+            app_config.ivs_width = (unsigned int)w;
+            app_config.ivs_height = (unsigned int)h;
+            app_config.ivs_sensitivity = (unsigned int)sens;
+            app_config.ivs_md_interval = (unsigned int)md;
+            app_config.ivs_od_interval = (unsigned int)od;
+            app_config.ivs_od_percent = (unsigned int)pct;
+            app_config.ivs_record_seconds = (unsigned int)sec;
+        }
+        parse_bool(&ini, "ivs", "act_http_post", &app_config.ivs_act_http_post);
+        parse_bool(&ini, "ivs", "act_record", &app_config.ivs_act_record);
+        parse_bool(&ini, "ivs", "act_osd", &app_config.ivs_act_osd);
+        if (parse_param_value_n(&ini, "ivs", "record_source", val, sizeof(val)) == CONFIG_OK)
+            app_config.ivs_record_sub = EQUALS(val, "sub");
+    }
+
+    parse_param_value_n(&ini, "iq", "main_scene",
+        app_config.iq_main_scene, sizeof(app_config.iq_main_scene));
+    parse_param_value_n(&ini, "iq", "sub_scene",
+        app_config.iq_sub_scene, sizeof(app_config.iq_sub_scene));
+    parse_param_value_n(&ini, "iq", "file", app_config.iq_file, sizeof(app_config.iq_file));
+
+    {
+        char val[16] = {0};
+        if (parse_param_value_n(&ini, "hdr", "mode", val, sizeof(val)) == CONFIG_OK) {
+            if (EQUALS_CASE(val, "hdr2")) app_config.hdr_mode = 1;
+            else if (EQUALS_CASE(val, "hdr3")) app_config.hdr_mode = 2;
+            else app_config.hdr_mode = 0;
+        }
+        if (parse_param_value_n(&ini, "hdr", "apply", val, sizeof(val)) == CONFIG_OK) {
+            if (EQUALS_CASE(val, "dyn")) app_config.hdr_apply = 1;
+            else if (EQUALS_CASE(val, "restart")) app_config.hdr_apply = 2;
+            else app_config.hdr_apply = 0;
+        }
+    }
 
     parse_bool(&ini, "rtsp", "enable", &app_config.rtsp_enable);
     parse_int(&ini, "rtsp", "port", 0, USHRT_MAX, &app_config.rtsp_port);

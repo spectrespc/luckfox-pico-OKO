@@ -1,0 +1,5 @@
+# Disabled by OKO.  The vendor rule mounts /mnt/sdcard directly and its
+# unconditional ACTION=="remove" unmounts the freshly formatted card while
+# sfdisk/partprobe are still emitting remove events for the old partition.
+# Mounting, unmounting and /run/oko-sd.state are handled by
+# 60-oko-sdcard.rules and /usr/bin/oko-sdcard.

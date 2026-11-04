@@ -2,11 +2,17 @@
 #
 # OKO OSD sidecar for divinus.
 #
-# - every 15 s writes simulated telemetry to two files:
+# - every 15 s writes telemetry to two files:
 #     /tmp/osd-gps.txt  : "GPS <lat>N <lon>E"                (reg2, top-right)
-#     /tmp/osd-dyn.txt  : "T <t>C\nBAT <p>%\nLTE <bars>/5 <dbm>dBm\n
-#                          WiFi <bars>/5 <dbm>dBm"           (reg1, top-left,
-#                          literal backslash-n: divinus renders it as 4 lines)
+#     /tmp/osd-dyn.txt  : four lines                         (reg1, top-left,
+#         real: "SHT21 <t>C <rh>%RH\nSTM32 <v>V <a>A <t>C <soc>%
+#                <c0>/<c1>/<c2>V\nINA3221 <v>V <a>A <w>W\n
+#                LTE <bars>/5 <dbm>dBm WiFi <bars>/5 <dbm>dBm"
+#         fallback: "T <t>C\nBAT <p>%\nLTE ...\nWiFi ..."
+#       (literal backslash-n: divinus renders it as four lines)
+# - when /tmp/oko-ec.osd (written by "oko-ec daemon") is fresh (<= 30 s),
+#   OK=1 and has SHT/EC/INA lines, the SHT21, STM32 and INA3221 readings are
+#   real; otherwise the old simulated T/BAT telemetry is used.
 # - every 5 s writes real system stats to:
 #     /tmp/osd-sys.txt  : "CPU <usage>%\nMEM FREE <free>%\nT <temp>C"
 #                          (reg4, bottom-left, literal backslash-n: 3 lines)
@@ -16,6 +22,8 @@
 
 DYN=/tmp/osd-dyn.txt
 GPS=/tmp/osd-gps.txt
+REAL=/tmp/oko-ec.osd
+REAL_TTL=30
 SYS=/tmp/osd-sys.txt
 MSG=/tmp/osd-msg.txt
 STAMP=/tmp/osd-msg.ts
@@ -74,14 +82,85 @@ wifi_bars() {
 	fi
 }
 
+read_real() {
+	real_ok=0
+	real_sensor=0
+	real_t=""
+	real_bat=""
+	real_sht=""
+	real_ec=""
+	real_ina=""
+
+	[ -r "$REAL" ] || return 0
+
+	ts=0
+	ok=0
+	t=""
+	b=""
+	sht=""
+	ec=""
+	ina=""
+	while read -r key value; do
+		case "$key" in
+			TS) ts=$value ;;
+			OK) ok=$value ;;
+			T) t=$value ;;
+			BAT) b=$value ;;
+			SHT) sht=$value ;;
+			EC) ec=$value ;;
+			INA) ina=$value ;;
+		esac
+	done <"$REAL"
+
+	case "$ts" in '' | *[!0-9]*) return 0 ;; esac
+	[ "$ok" = 1 ] || return 0
+
+	now=$(date +%s)
+	[ $((now - ts)) -le "$REAL_TTL" ] || return 0
+
+	real_ok=1
+	real_t=$t
+	real_bat=$b
+	real_sht=$sht
+	real_ec=$ec
+	real_ina=$ina
+	if [ -n "$sht" ] || [ -n "$ec" ] || [ -n "$ina" ]; then
+		real_sensor=1
+	fi
+}
+
 write_dyn() {
 	printf 'GPS %s %s\n' \
 		"$(coord "$lat" N)" "$(coord "$lon" E)" >"$GPS.tmp"
 	mv -f "$GPS.tmp" "$GPS"
 
-	printf 'T %dC\\nBAT %d%%\\nLTE %s/5 %ddBm\\nWiFi %s/5 %ddBm\n' \
-		"$temp" "$bat" "$(lte_bars "$lte")" "$lte" \
-		"$(wifi_bars "$wifi")" "$wifi" >"$DYN.tmp"
+	read_real
+	lte_bars_now=$(lte_bars "$lte")
+	wifi_bars_now=$(wifi_bars "$wifi")
+
+	if [ "$real_ok" = 1 ] && [ "$real_sensor" = 1 ]; then
+		sht_str="$real_sht"
+		ec_str="$real_ec"
+		ina_str="$real_ina"
+		[ -n "$sht_str" ] || sht_str="SHT21 --"
+		[ -n "$ec_str" ] || ec_str="STM32 --"
+		[ -n "$ina_str" ] || ina_str="INA --"
+
+		printf '%s\\n%s\\n%s\\nLTE %s/5 %ddBm WiFi %s/5 %ddBm\n' \
+			"$sht_str" "$ec_str" "$ina_str" \
+			"$lte_bars_now" "$lte" "$wifi_bars_now" "$wifi" >"$DYN.tmp"
+	else
+		t_str="${temp}C"
+		b_str="${bat}%"
+		if [ "$real_ok" = 1 ]; then
+			[ -n "$real_t" ] && t_str="$real_t"
+			[ -n "$real_bat" ] && b_str="$real_bat"
+		fi
+
+		printf 'T %s\\nBAT %s\\nLTE %s/5 %ddBm\\nWiFi %s/5 %ddBm\n' \
+			"$t_str" "$b_str" "$lte_bars_now" "$lte" \
+			"$wifi_bars_now" "$wifi" >"$DYN.tmp"
+	fi
 	mv -f "$DYN.tmp" "$DYN"
 }
 

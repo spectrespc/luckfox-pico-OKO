@@ -49,6 +49,7 @@ typedef struct {
 
     int (*fnBind)(rk_sys_bind *source, rk_sys_bind *dest);
     int (*fnUnbind)(rk_sys_bind *source, rk_sys_bind *dest);
+    int (*fnWaitFreeMB)(void);
 } rk_sys_impl;
 
 static int rk_sys_load(rk_sys_impl *sys_lib) {
@@ -70,6 +71,9 @@ static int rk_sys_load(rk_sys_impl *sys_lib) {
     if (!(sys_lib->fnUnbind = (int(*)(rk_sys_bind *source, rk_sys_bind *dest))
         hal_symbol_load("rk_sys", sys_lib->handle, "RK_MPI_SYS_UnBind")))
         return EXIT_FAILURE;
+
+    sys_lib->fnWaitFreeMB = (int(*)(void))
+        dlsym(sys_lib->handle, "RK_MPI_SYS_WaitFreeMB");
 
     return EXIT_SUCCESS;
 }

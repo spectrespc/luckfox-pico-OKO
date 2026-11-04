@@ -24,12 +24,17 @@ isp:
 
 osd:
   enable: true
+  # main: OSD on the main stream only; all: also on sub and JPEG (needs the
+  # multi-attach gate G4 to pass on the target build).
+  scope: main
   # OSD regions (simsun_en.ttf is the only font available in /oem/usr/share).
   # reg0: time, bottom-right (1920x1080);
-  # reg1: T/BAT/LTE/WiFi, four lines, top-left;
+  # reg1: SHT21/STM32/INA3221/LTE+WiFi (or T/BAT fallback), four lines, top-left;
   # reg2: GPS, top-right;
   # reg3: external text from /tmp/osd.fifo, top-left below telemetry.
   # reg4: CPU load, free memory and CPU temperature, three lines, bottom-left.
+  # reg5: IVS motion indicator, below the message region (hidden when the
+  # /tmp/osd-ivs.txt file is empty or absent).
   # Font size 24 px; text color RGB565 0x07e0 (bright green);
   # black outline 0x8000, 1 px thick, for readability over video.
   reg0_text: "$t"
@@ -72,6 +77,14 @@ osd:
   reg4_thick: 1.0
   reg4_posx: 16
   reg4_posy: 960
+  reg5_text: "@/tmp/osd-ivs.txt"
+  reg5_font: simsun_en
+  reg5_size: 24.0
+  reg5_color: 0x07e0
+  reg5_outl: 0x8000
+  reg5_thick: 1.0
+  reg5_posx: 16
+  reg5_posy: 240
 
 mdns:
   enable: false
@@ -92,7 +105,12 @@ rtsp:
 record:
   enable: false
   continuous: false
+  # main or sub; the recorder only consumes the selected VENC channel
+  source: main
   path: /mnt/sdcard/recordings
+  # ring quota: delete the oldest .mp4 segments when the card gets full
+  max_bytes: 0
+  min_free_mb: 2
 
 stream:
   enable: false
@@ -155,3 +173,70 @@ mjpeg:
   fps: 30
   bitrate: 1024
   qfactor: 80
+
+# All features below default to off; absent keys use the same defaults.
+# eptz:
+#   enable: false
+#   stream: main          # main | sub
+#   x: 0
+#   y: 0
+#   w: 1920
+#   h: 1080
+#
+# rotate:
+#   enable: false
+#   stream: main
+#   angle: 0              # 0 | 90 | 180 | 270
+#
+# venc:
+#   smartp: false
+#   vir_idr_len: 0
+#   svc: false
+#   motion_deblur: false
+#   min_qp: 0
+#   max_qp: 0
+#   min_iqp: 0
+#   max_iqp: 0
+#
+# substream:
+#   enable: false
+#   path: /live/1
+#   codec: H.265
+#   mode: CBR
+#   width: 640
+#   height: 360
+#   fps: 10
+#   gop: 20
+#   bitrate: 512
+#   profile: 1
+#
+# aiisp:
+#   enable: off           # off | auto | on
+#   model_dir: /oem/usr/lib
+#   buf_cnt: 1
+#   fps_enabled: 30
+#   fps_disabled: 20
+#
+# ivs:
+#   enable: false
+#   mode: md              # md | od | md_od
+#   width: 640
+#   height: 360
+#   sensitivity: 2
+#   md_interval: 5
+#   od_interval: 1
+#   od_percent: 7
+#   act_http_post: false
+#   act_record: false
+#   act_osd: false
+#   record_seconds: 15
+#   record_source: main
+#
+# iq:
+#   main_scene: normal
+#   sub_scene: day
+#   file: ""
+#
+# hdr:
+#   mode: normal          # normal | hdr2 | hdr3
+#   apply: restart        # auto | dyn | restart

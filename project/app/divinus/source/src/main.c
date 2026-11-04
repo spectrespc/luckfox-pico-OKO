@@ -1,6 +1,8 @@
 #include "app_config.h"
+#include "gating.h"
 #include "hal/macros.h"
 #include "http_post.h"
+#include "ivs_events.h"
 #include "media.h"
 #include "network.h"
 #include "night.h"
@@ -64,9 +66,23 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "\033[0m\033[7m Divinus (rev %s) for %s \033[0m\n", GIT_REV, family);
     fprintf(stderr, "Chip ID: %s\n", chip);
 
-    if (app_config_parse() != CONFIG_OK)
-        HAL_ERROR("hal", "Can't load app config 'divinus.yaml'\n");
+    {
+        enum ConfigError configError = app_config_parse();
+        if (configError != CONFIG_OK) {
+            fprintf(stderr, "Configuration error code: %d\n", configError);
+            HAL_ERROR("hal", "Can't load app config 'divinus.yaml'\n");
+        }
+    }
 
+    /* Unsafe combinations are refused even when edited directly in the YAML. */
+    if (app_config.aiisp_enable != HAL_AIISP_OFF && app_config.hdr_mode != 0) {
+        HAL_WARNING("hal", "AIISP and HDR cannot run together; AIISP disabled\n");
+        app_config.aiisp_enable = HAL_AIISP_OFF;
+    }
+    if (app_config.hdr_mode != 0 && app_config.hdr_apply == 1) {
+        HAL_WARNING("hal", "Dynamic HDR is unavailable; restart mode used\n");
+        app_config.hdr_apply = 2;
+    }
     if (app_config.watchdog)
         watchdog_start(app_config.watchdog);
 
@@ -86,6 +102,8 @@ int main(int argc, char *argv[]) {
                 HAL_INFO("rtsp", "Authentication enabled!\n");
             }
         }
+        if (app_config.substream_enable)
+            rtsp_add_stream(rtspHandle, app_config.substream_path);
     }
 
     if (app_config.stream_enable)
@@ -93,6 +111,14 @@ int main(int argc, char *argv[]) {
 
     if (sdk_start())
         HAL_ERROR("hal", "Failed to start SDK!\n");
+
+    if (app_config.ivs_enable) {
+        gating_result gate = gating_check("ivs");
+        if (gate.ok)
+            ivs_events_start();
+        else
+            HAL_WARNING("ivs", "Analytics blocked: %s\n", gate.reason);
+    }
 
     if (app_config.night_mode_enable)
         night_enable();
@@ -123,6 +149,8 @@ int main(int argc, char *argv[]) {
 
     if (app_config.night_mode_enable)
         night_disable();
+
+    ivs_events_stop();
 
     sdk_stop();
 

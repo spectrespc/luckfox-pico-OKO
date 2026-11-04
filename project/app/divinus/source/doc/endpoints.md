@@ -66,11 +66,21 @@ Gets live system status information.
 **Response**
 ```json
 {
-  "chip": "GK7205V300",
+  "chip": "rv11xx",
   "loadavg": [0.05, 0.07, 0.06],
   "memory": "62/121MB",
-  "sensor": "imx335",
-  "uptime": "7 days, 14:08:57"
+  "sensor": "sc230ai",
+  "temp": "45.0°C",
+  "uptime": "7 days, 14:08:57",
+  "features": {
+    "eptz": true,
+    "rotate": true,
+    "substream": false,
+    "aiisp": true,
+    "ivs": true,
+    "hdr": false,
+    "sd": false
+  }
 }
 ```
 
@@ -287,9 +297,222 @@ Manages video recording operations.
   "path": "/mnt/sdcard/recordings",
   "filename": "Entrance.mp4",
   "segment_duration": 0,
-  "segment_size": 10485760
+  "segment_size": 10485760,
+  "source": "main",
+  "max_bytes": 0,
+  "min_free_mb": 2,
+  "sd": true
 }
 ```
+
+`source` selects the VENC channel, `max_bytes` enables the ring quota and
+`min_free_mb` reserves space. Recording is allowed only below the real
+`/mnt/sdcard` mount point; paths under `/oem`, `/userdata`, `/tmp` or `/` are
+refused, and `start=1` returns `blocked` with a reason when the card is missing.
+If the card disappears while recording, the current segment is closed and no
+further file is created on SPI NAND. Formatting or unmounting the card sets
+`storageBusy`, so a concurrent `start=1` is refused instead of opening a file
+that would be formatted.
+
+#### `/api/eptz`
+
+Digital zoom (VPSS crop).
+
+| Method | Parameters | Description |
+|--------|------------|-------------|
+| GET | `enable` | `true`/`false` |
+| GET | `stream` | `main`/`sub` |
+| GET | `x`, `y`, `w`, `h` | Crop rectangle in sensor pixels |
+| GET | `zoom` | Preset `1`, `2`, `4`, `8` (centered) |
+| GET | `reset` | Reset to the full frame |
+
+Blocked with `reason` when the HAL has no `RK_MPI_VPSS_SetChnCrop`.
+
+#### `/api/rotate`
+
+| Method | Parameters | Description |
+|--------|------------|-------------|
+| GET | `enable` | `true`/`false` |
+| GET | `stream` | `main`/`sub` |
+| GET | `angle` | `0`, `90`, `180`, `270` |
+
+Rotation is applied with `RK_MPI_VENC_SetChnRotation`; the encoded SPS
+dimensions change accordingly.
+
+#### `/api/venc`
+
+| Method | Parameters | Description |
+|--------|------------|-------------|
+| GET | `smartp` | SmartP GOP (next start) |
+| GET | `vir_idr_len` | Virtual IDR length |
+| GET | `svc` | SVC on/off |
+| GET | `motion_deblur` | Motion deblur on/off |
+| GET | `min_qp`, `max_qp`, `min_iqp`, `max_iqp` | QP window |
+
+SVC/deblur/QP are applied to the running channels; SmartP is stored for the
+next start. The response contains a `note` that says so.
+
+#### `/api/substream`
+
+Second H.26x stream served at `/live/1`.
+
+| Method | Parameters | Description |
+|--------|------------|-------------|
+| GET | `enable` | `true`/`false` |
+| GET | `path` | RTSP path |
+| GET | `codec` | `H.264`/`H.265` |
+| GET | `mode` | `CBR`/`VBR`/`QP`/`AVBR` |
+| GET | `width`, `height`, `fps`, `gop`, `bitrate`, `profile` | Encoder parameters |
+
+Disable keeps the encoder channel allocated (soft stop, `/live/1` returns 404)
+so re-enabling is immediate.  If the channel does not exist yet, or when
+encoder parameters change, the setting is saved and the application performs
+one graceful restart to create the channel in the RGN-safe
+`main -> sub -> JPEG` order.  With IVS running there are only three VENC slots.
+
+#### `/api/streams`
+
+```json
+{
+  "connections": 1,
+  "max_connections": 16,
+  "streams": [
+    {"id": 0, "path": "/live/0", "channel": 0, "codec": "H.265", "enabled": true},
+    {"id": 1, "path": "/live/1", "channel": 2, "codec": "H.265", "enabled": true}
+  ]
+}
+```
+
+#### `/api/aiisp`
+
+| Method | Parameters | Description |
+|--------|------------|-------------|
+| GET | `enable` | `off`/`auto`/`on` |
+| GET | `model_dir` | Directory with `rkmodel_1080_1920.aiisp` |
+| GET | `buf_cnt` | AIISP frame buffers |
+
+Blocked when the model is missing or the symbol is absent. The AINR callback
+throttles the encoder to `fps_enabled`/`fps_disabled`.
+
+#### `/api/ivs`
+
+| Method | Parameters | Description |
+|--------|------------|-------------|
+| GET | `enable` | Start/stop analytics |
+| GET | `mode` | `md`/`od`/`md_od` |
+| GET | `width`, `height`, `sensitivity` | Analytics input |
+| GET | `md_interval`, `od_interval`, `od_percent` | Detection tuning |
+| GET | `act_http_post`, `act_record`, `act_osd` | Motion actions |
+| GET | `record_seconds`, `record_source` | Clip settings |
+
+The response also contains `events`, the last 16 detections:
+```json
+{"events":[{"time":"2026-11-04T09:15:00Z","frame":1234,"rects":1,"bbox":[100,80,200,300]}]}
+```
+
+#### `/api/iq`
+
+| Method | Parameters | Description |
+|--------|------------|-------------|
+| GET | `main_scene`, `sub_scene` | `rk_aiq_uapi2_sysctl_switch_scene` |
+| GET | `file` | `rk_aiq_uapi2_sysctl_updateIq` |
+
+The response lists `scenes` (subdirectories) and `files` (`.json`/`.xml`) found
+in `/oem/usr/share/iqfiles`.
+
+#### `/api/hdr`
+
+| Method | Parameters | Description |
+|--------|------------|-------------|
+| GET | `mode` | `normal`, `hdr2`, `hdr3` |
+| GET | `apply` | `auto`, `dyn`, `restart` |
+
+On this SC230AI build HDR prepare fails; the endpoint is blocked with a reason
+and a hand-edited mode falls back to normal after a restart.
+
+#### `/api/network`
+
+Reads and writes the Ethernet configuration stored in the U-Boot env partition.
+The WebUI calls it from **Network → Ethernet**. `mode` is `dhcp` or `static`;
+`ipaddr`, `netmask`, `gateway` and `dns` are IPv4 dotted quads.
+
+| Method | Parameters | Description |
+|--------|------------|-------------|
+| GET | none | Current env settings plus live IP/MAC and DHCP state |
+| GET | `mode=dhcp` | Store DHCP mode; `oko-net apply` restarts `dhcpcd` |
+| GET | `mode=static&ipaddr=...&netmask=...&gateway=...&dns=...` | Store static settings, stop the DHCP client and apply them |
+
+**Response**
+
+```json
+{
+  "mode": "dhcp",
+  "ipaddr": "",
+  "netmask": "",
+  "gateway": "",
+  "dns": "",
+  "mac": "02:47:8d:05:67:56",
+  "current_ip": "192.168.52.97",
+  "current_mac": "02:47:8d:05:67:56",
+  "dhcp_running": true
+}
+```
+
+`mac` and the settings are persisted as `oko_*` variables in `/dev/mtd0`
+through `fw_printenv`/`fw_setenv`, so they survive a `/userdata` or rootfs
+reset. The MAC is derived once from `/proc/device-tree/serial-number`; DHCP
+uses the MAC as client ID (no DUID), which keeps the lease stable across
+firmware updates. Static mode returns after the response has been sent; the
+browser may need to reconnect to the new address.
+
+#### `/api/storage`
+
+Reports the microSD state and performs mount/unmount/format operations.
+
+| Method | Parameters | Description |
+|--------|------------|-------------|
+| GET | none | State plus a one-shot `format_token` |
+| GET | `action=mount` | Mount the detected card on `/mnt/sdcard` |
+| GET | `action=unmount&token=<format_token>` | Unmount the card; refused while recording |
+| GET | `action=format&fs=fat32&confirm=FORMAT&token=<format_token>` | Wipe the whole removable card, create one MBR/FAT32 partition labelled `OKO`, then mount it |
+
+**State response**
+
+```json
+{
+  "formatted": false,
+  "action": "",
+  "sd_mounted": true,
+  "total_mb": 30528,
+  "free_mb": 12000,
+  "path": "/mnt/sdcard/recordings",
+  "max_bytes": 0,
+  "min_free_mb": 2,
+  "recording": false,
+  "blocked": false,
+  "reason": "",
+  "device": "/dev/mmcblk0p1",
+  "fs": "vfat",
+  "format_supported": true,
+  "format_busy": false,
+  "format_token": "0123456789abcdef"
+}
+```
+
+`format_supported` is true only when `/usr/bin/oko-sdcard`, `sfdisk` and
+`mkfs.vfat` exist in the image; `wipefs` is used when present but is optional
+(`sfdisk` overwrites the partition table). `format_busy` is true while recording or
+while a format/unmount is running. `format_token` changes after every successful
+format; `confirm=FORMAT` and the current token are both required, so a CSRF or
+stale WebUI request cannot destroy the card.
+
+Failures return HTTP 200 with
+`{"error":"blocked"|"failed","reason":"...","hint":"..."}`; no partial state
+JSON is returned. Only an SD whole `mmcblk` disk (`device/type=SD`, not eMMC
+`MMC`) is accepted; `/dev/mtd*`,
+`/dev/ubi*`, `/dev/root` and eMMC boot partitions are rejected. `format` and
+`unmount` are refused with `reason":"stop recording first"` while a recording is
+active. The helper is `project/cfg/BoardConfig_IPC/overlay/overlay-luckfox-buildroot-init/usr/bin/oko-sdcard`.
 
 
 ## Content Streaming
@@ -309,13 +532,17 @@ Captures an instant JPEG image.
 
 ### `/mjpeg`
 
-Continuous MJPEG stream.
+Continuous MJPEG stream. Requires `mjpeg.enable=true`; when disabled the
+endpoint returns 404.
 
 **Response**: multipart/x-mixed-replace stream
 
 ### `/video.mp4`
 
-Continuous MP4 video stream.
+Continuous fragmented MP4 video stream. Requires `mp4.enable=true`. The muxer
+builds `moov` from the VPS/SPS/PPS carried in the Annex B payload; the preview
+works only if the browser can decode the selected codec (H.265 needs HEVC
+support, otherwise use `/mjpeg`).
 
 **Response**: Segmented MP4 video stream
 

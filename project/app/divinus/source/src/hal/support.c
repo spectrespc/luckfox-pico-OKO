@@ -12,6 +12,7 @@ char family[32] = {0};
 hal_platform plat = HAL_PLATFORM_UNK;
 char sensor[16] = "unidentified";
 int series = 0;
+unsigned int halCapabilities = 0;
 
 unsigned long long lastMillisTemp = 0;
 float lastReadTemp = 0.0 / 0.0;

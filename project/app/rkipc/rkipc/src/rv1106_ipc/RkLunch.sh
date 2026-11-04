@@ -28,6 +28,14 @@ check_linker() {
 }
 
 network_init() {
+	# OKO keeps the MAC and DHCP/static settings in the U-Boot env partition,
+	# so a full firmware update (which recreates /userdata) does not change the
+	# DHCP identity.  Fall back to the vendor logic if the helper is missing.
+	if [ -x /usr/bin/oko-net ]; then
+		/usr/bin/oko-net apply
+		return
+	fi
+
 	ethaddr1=$(ifconfig -a | grep "eth.*HWaddr" | awk '{print $5}')
 
 	if [ -f /data/ethaddr.txt ]; then

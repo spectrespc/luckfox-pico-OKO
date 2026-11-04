@@ -76,3 +76,7 @@ extern char timefmt[64];
 void region_defaults(osd *o, int id);
 int region_start();
 void region_stop();
+
+/* Drops every region on the next thread tick.  Called after VENC channels are
+ * recreated so the overlays are reattached to the new channels. */
+void region_invalidate(void);

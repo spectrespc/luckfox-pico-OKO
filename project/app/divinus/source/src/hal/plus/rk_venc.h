@@ -200,6 +200,36 @@ typedef struct {
     rk_venc_gop gop;
 } rk_venc_chn;
 
+/* VENC_RC_PARAM_S: first-frame QP followed by the per-codec QP window.
+ * The H.264 and H.265 parameter structs have the same layout. */
+typedef struct {
+    unsigned int stepQp;
+    unsigned int maxQp;
+    unsigned int minQp;
+    unsigned int maxIQp;
+    unsigned int minIQp;
+    int deltIpQp;
+    int maxReEncodeTimes;
+    unsigned int frmMaxQp;
+    unsigned int frmMinQp;
+    unsigned int frmMaxIQp;
+    unsigned int frmMinIQp;
+    unsigned int motionStaticSwitchFrmQp;
+} rk_venc_qp;
+
+typedef struct {
+    unsigned int firstFrameStartQp;
+    union {
+        rk_venc_qp h264;
+        rk_venc_qp h265;
+        struct {
+            unsigned int qfactor;
+            unsigned int maxQfactor;
+            unsigned int minQfactor;
+        } mjpg;
+    };
+} rk_venc_rc_param;
+
 typedef struct {
     unsigned int quality;
     unsigned char qtLuma[64];
@@ -374,6 +404,15 @@ typedef struct {
     int (*fnRequestIdr)(int channel, int instant);
     int (*fnStartReceivingEx)(int channel, int *count);
     int (*fnStopReceiving)(int channel);
+
+    /* Optional RV1106 extensions, resolved with dlsym so an older librockit
+     * only disables the corresponding feature. */
+    int (*fnEnableSvc)(int channel, int enable);
+    int (*fnEnableMotionDeblur)(int channel, int enable);
+    int (*fnSetRcParam)(int channel, const rk_venc_rc_param *param);
+    int (*fnGetRcParam)(int channel, rk_venc_rc_param *param);
+    int (*fnSetChnRotation)(int channel, int rotation);
+    int (*fnGetChnRotation)(int channel, int *rotation);
 } rk_venc_impl;
 
 static int rk_venc_load(rk_venc_impl *venc_lib) {
@@ -455,6 +494,19 @@ static int rk_venc_load(rk_venc_impl *venc_lib) {
     if (!(venc_lib->fnStopReceiving = (int(*)(int channel))
         hal_symbol_load("rk_venc", venc_lib->handle, "RK_MPI_VENC_StopRecvFrame")))
         return EXIT_FAILURE;
+
+    venc_lib->fnEnableSvc = (int(*)(int, int))
+        dlsym(venc_lib->handle, "RK_MPI_VENC_EnableSvc");
+    venc_lib->fnEnableMotionDeblur = (int(*)(int, int))
+        dlsym(venc_lib->handle, "RK_MPI_VENC_EnableMotionDeblur");
+    venc_lib->fnSetRcParam = (int(*)(int, const rk_venc_rc_param*))
+        dlsym(venc_lib->handle, "RK_MPI_VENC_SetRcParam");
+    venc_lib->fnGetRcParam = (int(*)(int, rk_venc_rc_param*))
+        dlsym(venc_lib->handle, "RK_MPI_VENC_GetRcParam");
+    venc_lib->fnSetChnRotation = (int(*)(int, int))
+        dlsym(venc_lib->handle, "RK_MPI_VENC_SetChnRotation");
+    venc_lib->fnGetChnRotation = (int(*)(int, int*))
+        dlsym(venc_lib->handle, "RK_MPI_VENC_GetChnRotation");
 
     return EXIT_SUCCESS;
 }

@@ -1,9 +1,11 @@
 #if defined(__ARM_PCS_VFP)
 
 #include "rk_hal.h"
+#include "../../app_config.h"
 
 rk_aiq_impl     rk_aiq;
 rk_aud_impl     rk_aud;
+rk_ivs_impl     rk_ivs;
 rk_mb_impl      rk_mb;
 rk_rgn_impl     rk_rgn;
 rk_sys_impl     rk_sys;
@@ -29,6 +31,7 @@ char _rk_vpss_grp = 0;
 
 void rk_hal_deinit(void)
 {
+    rk_ivs_unload(&rk_ivs);
     rk_vpss_unload(&rk_vpss);
     rk_vi_unload(&rk_vi);
     rk_venc_unload(&rk_venc);
@@ -59,6 +62,20 @@ int rk_hal_init(void)
         return ret;
     if (ret = rk_vpss_load(&rk_vpss))
         return ret;
+
+    /* IVS is optional: an older librockit simply disables analytics. */
+    if (rk_ivs_load(&rk_ivs))
+        HAL_DANGER("rk_hal", "IVS is unavailable, analytics disabled\n");
+
+    if (rk_vpss.fnSetChnCrop) halCapabilities |= HAL_CAP_EPTZ;
+    if (rk_vpss.fnSetChnRotation) halCapabilities |= HAL_CAP_ROTATE;
+    if (rk_venc.fnEnableSvc || rk_venc.fnSetRcParam)
+        halCapabilities |= HAL_CAP_VENC_EXTRA;
+    if (rk_vpss.fnSetGrpAIISPAttr) halCapabilities |= HAL_CAP_AIISP;
+    if (rk_ivs.fnCreateChn) halCapabilities |= HAL_CAP_IVS;
+    if (rk_aiq.fnSwitchScene || rk_aiq.fnUpdateIq)
+        halCapabilities |= HAL_CAP_IQ;
+    if (rk_aiq.fnSwWorkingModeDyn) halCapabilities |= HAL_CAP_HDR_DYN;
 
     return EXIT_SUCCESS;
 }
@@ -239,8 +256,25 @@ int rk_pipeline_create(short width, short height)
     if (!(_rk_aiq_ctx = rk_aiq.fnInit(snrEnt, "/oem/usr/share/iqfiles", NULL, NULL)))
         HAL_ERROR("rk_aiq", "Failed to initialize!\n");
 
-    if (ret = rk_aiq.fnPrepare(_rk_aiq_ctx, width, height, RK_AIQ_WORK_NORMAL))
-        HAL_ERROR("rk_aiq", "Failed to prepare device!\n");
+    {
+        rk_aiq_work work = RK_AIQ_WORK_NORMAL;
+        if (app_config.hdr_mode == 1) work = RK_AIQ_WORK_ISP_HDR2;
+        else if (app_config.hdr_mode == 2) work = RK_AIQ_WORK_ISP_HDR3;
+        ret = rk_aiq.fnPrepare(_rk_aiq_ctx, width, height, work);
+        if (ret && work != RK_AIQ_WORK_NORMAL) {
+            /* SC230AI HDR is experimental; never leave the camera dead. */
+            HAL_WARNING("rk_aiq", "HDR prepare failed (%#x), falling back to "
+                "normal mode\n", ret);
+            app_config.hdr_mode = 0;
+            /* Remember the fallback so the next boot does not retry an HDR
+             * mode this sensor/library combination cannot provide. */
+            app_config_save();
+            ret = rk_aiq.fnPrepare(_rk_aiq_ctx, width, height,
+                RK_AIQ_WORK_NORMAL);
+        }
+        if (ret)
+            HAL_ERROR("rk_aiq", "Failed to prepare device!\n");
+    }
 
     if (ret = rk_aiq.fnStart(_rk_aiq_ctx))
         HAL_ERROR("rk_aiq", "Failed to start device!\n");
@@ -335,51 +369,51 @@ void rk_pipeline_destroy(void)
     rk_aiq.fnDeinit(_rk_aiq_ctx);
 }
 
-int rk_region_create(char handle, hal_rect rect, short opacity)
+/* Collects the VENC channels an OSD region has to be attached to.  The main
+ * channel is mandatory (it is the RTSP stream); with osd.scope=all the sub
+ * and JPEG channels get their own attachment of the same region handle,
+ * following the rkipc pattern. */
+static int rk_region_targets(char *targets, int max)
+{
+    int main = 0, count = 0;
+
+    for (int i = 0; i < RK_VENC_CHN_NUM; i++) {
+        if (!rk_state[i].enable) continue;
+        if (rk_state[i].role == HAL_CHNROLE_MAIN) { main = i; break; }
+    }
+    if (max < 1) return 0;
+    targets[count++] = main;
+
+    if (app_config.osd_scope_all)
+        for (int i = 0; i < RK_VENC_CHN_NUM && count < max; i++) {
+            if (!rk_state[i].enable) continue;
+            if (rk_state[i].role != HAL_CHNROLE_SUB &&
+                rk_state[i].role != HAL_CHNROLE_JPEG) continue;
+            targets[count++] = i;
+        }
+
+    return count;
+}
+
+int rk_region_create2(char handle, hal_rect rect, short opacity,
+    int module, int device, int channel)
 {
     int ret;
 
-    rk_sys_bind channel = { .module = RK_SYS_MOD_VENC,
-        .device = _rk_venc_dev, .channel = 0 };
-    rk_rgn_cnf region, regionCurr;
+    rk_sys_bind target = { .module = module,
+        .device = device, .channel = channel };
     rk_rgn_chn attrib, attribCurr;
     // OKO: the RV1106 overlay requires 16-pixel aligned position and size and
     // accepts BGRA5551; text bitmaps are converted in rk_region_setbitmap.
     short px = rect.x & ~15, py = rect.y & ~15;
-    short pw = (rect.width + 15) & ~15, ph = (rect.height + 15) & ~15;
 
-    if (pw < 16) pw = 16;
-    if (ph < 16) ph = 16;
-
-    memset(&region, 0, sizeof(region));
-    region.type = RK_RGN_TYPE_OVERLAY;
-    region.overlay.pixFmt = RK_PIXFMT_BGRA5551;
-    region.overlay.size.width = pw;
-    region.overlay.size.height = ph;
-    // OKO: use a single canvas; double buffering can keep showing the previous
-    // second's OSD until the next update.
-    region.overlay.canvas = 1;
-
-    if (rk_rgn.fnGetRegionConfig(handle, &regionCurr)) {
-        HAL_INFO("rk_rgn", "Creating region %d...\n", handle);
-        if (ret = rk_rgn.fnCreateRegion(handle, &region))
-            return ret;
-    } else if (regionCurr.overlay.size.height != region.overlay.size.height ||
-        regionCurr.overlay.size.width != region.overlay.size.width) {
-        HAL_INFO("rk_rgn", "Parameters are different, recreating "
-            "region %d...\n", handle);
-        rk_rgn.fnDetachChannel(handle, &channel);
-        rk_rgn.fnDestroyRegion(handle);
-        if (ret = rk_rgn.fnCreateRegion(handle, &region))
-            return ret;
-    }
-
-    if (rk_rgn.fnGetChannelConfig(handle, &channel, &attribCurr)) {
-        HAL_INFO("rk_rgn", "Attaching region %d...\n", handle);
+    if (rk_rgn.fnGetChannelConfig(handle, &target, &attribCurr)) {
+        HAL_INFO("rk_rgn", "Attaching region %d to channel %d...\n",
+            handle, channel);
     } else if (attribCurr.overlay.point.x != px || attribCurr.overlay.point.y != py) {
         HAL_INFO("rk_rgn", "Position has changed, reattaching "
-            "region %d...\n", handle);
-        rk_rgn.fnDetachChannel(handle, &channel);
+            "region %d to channel %d...\n", handle, channel);
+        rk_rgn.fnDetachChannel(handle, &target);
     } else {
         // OKO: librockit rejects a second attach of the same region to the same
         // channel; position and size are unchanged, so there is nothing to do.
@@ -395,20 +429,72 @@ int rk_region_create(char handle, hal_rect rect, short opacity)
     attrib.overlay.point.y = py;
     attrib.overlay.layer = 7;
 
-    ret = rk_rgn.fnAttachChannel(handle, &channel, &attrib);
+    ret = rk_rgn.fnAttachChannel(handle, &target, &attrib);
     if (ret)
         HAL_DANGER("rk_rgn", "Attaching region %d to channel %d failed with %#x!\n",
-            handle, channel.channel, ret);
+            handle, channel, ret);
+
+    return ret;
+}
+
+int rk_region_create(char handle, hal_rect rect, short opacity)
+{
+    int ret, count;
+    char targets[3] = {0};
+    rk_rgn_cnf region, regionCurr;
+    // OKO: the RV1106 overlay requires 16-pixel aligned position and size and
+    // accepts BGRA5551; text bitmaps are converted in rk_region_setbitmap.
+    short pw = (rect.width + 15) & ~15, ph = (rect.height + 15) & ~15;
+
+    if (pw < 16) pw = 16;
+    if (ph < 16) ph = 16;
+
+    memset(&region, 0, sizeof(region));
+    region.type = RK_RGN_TYPE_OVERLAY;
+    region.overlay.pixFmt = RK_PIXFMT_BGRA5551;
+    region.overlay.size.width = pw;
+    region.overlay.size.height = ph;
+    // OKO: use a single canvas; double buffering can keep showing the previous
+    // second's OSD until the next update.
+    region.overlay.canvas = 1;
+
+    count = rk_region_targets(targets, sizeof(targets));
+    if (count < 1) return EXIT_SUCCESS;
+
+    if (rk_rgn.fnGetRegionConfig(handle, &regionCurr)) {
+        HAL_INFO("rk_rgn", "Creating region %d...\n", handle);
+        if (ret = rk_rgn.fnCreateRegion(handle, &region))
+            return ret;
+    } else if (regionCurr.overlay.size.height != region.overlay.size.height ||
+        regionCurr.overlay.size.width != region.overlay.size.width) {
+        HAL_INFO("rk_rgn", "Parameters are different, recreating "
+            "region %d...\n", handle);
+        /* The region may be attached to more than one channel; drop every
+         * attachment before destroying it. */
+        for (int i = 0; i < RK_VENC_CHN_NUM; i++) {
+            rk_sys_bind target = { .module = RK_SYS_MOD_VENC,
+                .device = _rk_venc_dev, .channel = i };
+            rk_rgn.fnDetachChannel(handle, &target);
+        }
+        rk_rgn.fnDestroyRegion(handle);
+        if (ret = rk_rgn.fnCreateRegion(handle, &region))
+            return ret;
+    }
+
+    for (int i = 0; i < count; i++)
+        rk_region_create2(handle, rect, opacity, RK_SYS_MOD_VENC,
+            _rk_venc_dev, targets[i]);
 
     return EXIT_SUCCESS;
 }
 
 void rk_region_destroy(char handle)
 {
-    rk_sys_bind channel = { .module = RK_SYS_MOD_VENC,
-        .device = _rk_venc_dev, .channel = 0 };
-
-    rk_rgn.fnDetachChannel(handle, &channel);
+    for (int i = 0; i < RK_VENC_CHN_NUM; i++) {
+        rk_sys_bind target = { .module = RK_SYS_MOD_VENC,
+            .device = _rk_venc_dev, .channel = i };
+        rk_rgn.fnDetachChannel(handle, &target);
+    }
     rk_rgn.fnDestroyRegion(handle);
 }
 
@@ -502,7 +588,11 @@ int rk_video_create(char index, hal_vidconfig *config)
     rk_venc_chn channel;
     memset(&channel, 0, sizeof(channel));
 
-    channel.gop.mode = RK_VENC_GOPMODE_NORMALP;
+    channel.gop.mode = config->smartp ?
+        RK_VENC_GOPMODE_SMARTP : RK_VENC_GOPMODE_NORMALP;
+    channel.gop.virIdrLen = config->virIdr ? config->virIdr : config->gop;
+    channel.gop.maxLtrCnt = config->smartp ? 0 : 1;
+    channel.gop.tsvcPreload = config->smartp ? 1 : 0;
     if (config->codec == HAL_VIDCODEC_JPG || config->codec == HAL_VIDCODEC_MJPG) {
         channel.attrib.codec = RK_VENC_CODEC_MJPG;
         switch (config->mode) {
@@ -626,6 +716,32 @@ int rk_video_create(char index, hal_vidconfig *config)
             return ret;
     }
 
+    /* Optional RV1106 encoder extensions.  Missing symbols leave the
+     * corresponding feature off; the API reports it as unavailable. */
+    if (config->svc && rk_venc.fnEnableSvc) {
+        if (ret = rk_venc.fnEnableSvc(index, 1))
+            HAL_DANGER("rk_venc", "Enabling SVC on channel %d failed with %#x!\n",
+                index, ret);
+    }
+    if (config->motionDeblur && rk_venc.fnEnableMotionDeblur) {
+        if (ret = rk_venc.fnEnableMotionDeblur(index, 1))
+            HAL_DANGER("rk_venc", "Enabling motion deblur on channel %d failed "
+                "with %#x!\n", index, ret);
+    }
+    if ((config->minQp || config->maxQp || config->minIQp || config->maxIQp) &&
+        rk_venc.fnSetRcParam) {
+        rk_venc_rc_param param;
+        memset(&param, 0, sizeof(param));
+        if (rk_venc.fnGetRcParam) rk_venc.fnGetRcParam(index, &param);
+        if (config->minQp) param.h264.minQp = config->minQp;
+        if (config->maxQp) param.h264.maxQp = config->maxQp;
+        if (config->minIQp) param.h264.minIQp = config->minIQp;
+        if (config->maxIQp) param.h264.maxIQp = config->maxIQp;
+        if (ret = rk_venc.fnSetRcParam(index, &param))
+            HAL_DANGER("rk_venc", "Setting the QP window on channel %d failed "
+                "with %#x!\n", index, ret);
+    }
+
     rk_state[index].payload = config->codec;
 
     return EXIT_SUCCESS;
@@ -636,6 +752,7 @@ int rk_video_destroy(char index)
     int ret;
 
     rk_state[index].enable = 0;
+    rk_state[index].role = HAL_CHNROLE_NONE;
     rk_state[index].payload = HAL_VIDCODEC_UNSPEC;
 
     rk_venc.fnStopReceiving(index);
@@ -645,8 +762,9 @@ int rk_video_destroy(char index)
             .device = _rk_vpss_grp, .channel = index };
         rk_sys_bind dest = { .module = RK_SYS_MOD_VENC,
             .device = _rk_venc_dev, .channel = index };
-        if (ret = rk_sys.fnUnbind(&source, &dest))
-            return ret;
+        /* Callers may already have unbound the pair; a failure here must not
+         * skip the channel teardown. */
+        rk_sys.fnUnbind(&source, &dest);
     }
 
     if (ret = rk_venc.fnDestroyChannel(index))
@@ -936,11 +1054,354 @@ int rk_system_identify(void)
     plat = HAL_PLATFORM_RK;
     strcpy(chip, "rv11xx");
     strcpy(family, "rockchip");
-    chnCount = RK_VENC_CHN_NUM;
+    /* One VENC channel is backed by the VPSS channel with the same index.
+     * RV1106 accepts VPSS channels 0..4, and 4 is reserved for IVS, so four
+     * VENC channels (main, sub, MJPEG, JPEG) are available. */
+    chnCount = HAL_CHN_COUNT;
     chnState = (hal_chnstate*)rk_state;
     aud_thread = rk_audio_thread;
     vid_thread = rk_video_thread;
     return 1;
+}
+
+int rk_vpss_set_chn_crop(char channel, hal_crop *crop)
+{
+    rk_vpss_crop cfg;
+
+    if (!rk_vpss.fnSetChnCrop) return EXIT_FAILURE;
+
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.enable = crop->enable ? 1 : 0;
+    cfg.coordinate = 1;         /* absolute pixels in the group input */
+    cfg.rect.x = crop->rect.x;
+    cfg.rect.y = crop->rect.y;
+    cfg.rect.width = crop->rect.width;
+    cfg.rect.height = crop->rect.height;
+
+    return rk_vpss.fnSetChnCrop(_rk_vpss_grp, channel, &cfg)
+        ? EXIT_FAILURE : EXIT_SUCCESS;
+}
+
+int rk_vpss_set_chn_rotation(char channel, hal_rotation rotation)
+{
+    int value = 0;
+
+    if (!rk_vpss.fnSetChnRotation) return EXIT_FAILURE;
+
+    switch (rotation) {
+        case HAL_ROTATE_90:  value = 1; break;
+        case HAL_ROTATE_180: value = 2; break;
+        case HAL_ROTATE_270: value = 3; break;
+        default:             value = 0; break;
+    }
+
+    return rk_vpss.fnSetChnRotation(_rk_vpss_grp, channel, value)
+        ? EXIT_FAILURE : EXIT_SUCCESS;
+}
+
+/* Applies the encoder extensions that support a running channel.  SmartP is
+ * deliberately absent: the GOP mode is part of the channel attribute and is
+ * picked up on the next start. */
+int rk_video_apply_extras(char channel, const hal_vidconfig *config)
+{
+    int ret = EXIT_SUCCESS;
+
+    if (rk_venc.fnEnableSvc) {
+        if (rk_venc.fnEnableSvc(channel, config->svc ? 1 : 0))
+            ret = EXIT_FAILURE;
+    } else if (config->svc) {
+        ret = EXIT_FAILURE;
+    }
+
+    if (rk_venc.fnEnableMotionDeblur) {
+        if (rk_venc.fnEnableMotionDeblur(channel, config->motionDeblur ? 1 : 0))
+            ret = EXIT_FAILURE;
+    } else if (config->motionDeblur) {
+        ret = EXIT_FAILURE;
+    }
+
+    if ((config->minQp || config->maxQp || config->minIQp || config->maxIQp) &&
+        rk_venc.fnSetRcParam) {
+        rk_venc_rc_param param;
+        memset(&param, 0, sizeof(param));
+        if (rk_venc.fnGetRcParam) rk_venc.fnGetRcParam(channel, &param);
+        if (config->minQp) param.h264.minQp = config->minQp;
+        if (config->maxQp) param.h264.maxQp = config->maxQp;
+        if (config->minIQp) param.h264.minIQp = config->minIQp;
+        if (config->maxIQp) param.h264.maxIQp = config->maxIQp;
+        if (rk_venc.fnSetRcParam(channel, &param))
+            ret = EXIT_FAILURE;
+    }
+
+    return ret;
+}
+
+int rk_video_set_rotation(char channel, hal_rotation rotation)
+{
+    int value = 0;
+
+    if (!rk_venc.fnSetChnRotation) return EXIT_FAILURE;
+
+    switch (rotation) {
+        case HAL_ROTATE_90:  value = 1; break;
+        case HAL_ROTATE_180: value = 2; break;
+        case HAL_ROTATE_270: value = 3; break;
+        default:             value = 0; break;
+    }
+
+    return rk_venc.fnSetChnRotation(channel, value)
+        ? EXIT_FAILURE : EXIT_SUCCESS;
+}
+
+int rk_vpss_get_chn_rotation(char channel, hal_rotation *rotation)
+{
+    int value = 0;
+
+    if (!rk_vpss.fnGetChnRotation) return EXIT_FAILURE;
+    if (rk_vpss.fnGetChnRotation(_rk_vpss_grp, channel, &value))
+        return EXIT_FAILURE;
+
+    *rotation = (hal_rotation)value;
+    return EXIT_SUCCESS;
+}
+
+/* AINR state change callback: the model is expensive, so while it is active
+ * the main/sub encoders are throttled to aiisp.fps_enabled and restored to
+ * aiisp.fps_disabled when the model is bypassed. */
+static int rk_aiisp_update(void *param, void *priv)
+{
+    rk_aiq_ainr *ainr = param;
+    int fps = (ainr && ainr->enable) ?
+        app_config.aiisp_fps_enabled : app_config.aiisp_fps_disabled;
+
+    (void)priv;
+    if (fps < 1) fps = 1;
+
+    for (int i = 0; i < RK_VENC_CHN_NUM; i++) {
+        rk_venc_para para;
+        if (!rk_state[i].enable) continue;
+        if (rk_state[i].role != HAL_CHNROLE_MAIN &&
+            rk_state[i].role != HAL_CHNROLE_SUB) continue;
+        memset(&para, 0, sizeof(para));
+        if (rk_venc.fnGetChannelParam(i, &para)) continue;
+        para.frateOn = 1;
+        para.srcFpsNum = fps;
+        para.srcFpsDen = 1;
+        para.dstFpsNum = fps;
+        para.dstFpsDen = 1;
+        rk_venc.fnSetChannelParam(i, &para);
+    }
+
+    return 0;
+}
+
+int rk_group_set_aiisp(hal_aiisp_config *config)
+{
+    rk_vpss_aiisp cfg;
+    /* librockit keeps pModelFilePath for later use, so it must outlive this
+     * call; the caller's config lives on the stack. */
+    static char modelPath[192];
+
+    if (!rk_vpss.fnSetGrpAIISPAttr) return EXIT_FAILURE;
+
+    snprintf(modelPath, sizeof(modelPath), "%s", config->model);
+
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.enable = config->mode != HAL_AIISP_OFF;
+    cfg.model = cfg.enable ? modelPath : NULL;
+    cfg.bufCnt = config->bufCnt ? config->bufCnt : 1;
+    cfg.func.callback = (void *)rk_aiisp_update;
+
+    {
+        int ret = rk_vpss.fnSetGrpAIISPAttr(_rk_vpss_grp, &cfg);
+        if (ret) {
+            HAL_DANGER("rk_aiisp", "SetGrpAIISPAttr failed with %#x!\n", ret);
+            return EXIT_FAILURE;
+        }
+    }
+    if (!cfg.enable) rk_aiisp_update(NULL, NULL);
+    return EXIT_SUCCESS;
+}
+
+int rk_aiq_switch_scene(const char *main, const char *sub)
+{
+    if (!_rk_aiq_ctx || !rk_aiq.fnSwitchScene) return EXIT_FAILURE;
+    return rk_aiq.fnSwitchScene(_rk_aiq_ctx, main, sub)
+        ? EXIT_FAILURE : EXIT_SUCCESS;
+}
+
+int rk_aiq_update_iq(const char *file)
+{
+    if (!_rk_aiq_ctx || !rk_aiq.fnUpdateIq || !file) return EXIT_FAILURE;
+    return rk_aiq.fnUpdateIq(_rk_aiq_ctx, (char *)file)
+        ? EXIT_FAILURE : EXIT_SUCCESS;
+}
+
+int rk_aiq_set_work_mode(int mode)
+{
+    rk_aiq_work_mode work;
+
+    if (!_rk_aiq_ctx || !rk_aiq.fnSwWorkingModeDyn) return EXIT_FAILURE;
+    work.mode = mode;
+    return rk_aiq.fnSwWorkingModeDyn(_rk_aiq_ctx, &work)
+        ? EXIT_FAILURE : EXIT_SUCCESS;
+}
+
+static char ivsCreated;
+static rk_ivs_result_info ivsResultInfo;
+
+int rk_ivs_create(hal_ivs_config *config)
+{
+    int ret;
+
+    if (!rk_ivs.fnCreateChn) return EXIT_FAILURE;
+    if (ivsCreated) return EXIT_SUCCESS;
+
+    {
+        rk_vpss_chn channel;
+        memset(&channel, 0, sizeof(channel));
+        channel.chnMode = RK_VPSS_CMODE_AUTO;
+        channel.dest.width = config->width;
+        channel.dest.height = config->height;
+        channel.pixFmt = RK_PIXFMT_YUV420SP;
+        channel.hdr = RK_HDR_SDR8;
+        channel.srcFps = -1;
+        channel.dstFps = -1;
+        channel.depth = 1;
+        channel.privFrmBufCnt = 1;
+        if (ret = rk_vpss.fnSetChannelConfig(_rk_vpss_grp, HAL_CHN_IVS, &channel)) {
+            HAL_DANGER("rk_ivs", "Configuring VPSS channel %d failed with %#x!\n",
+                HAL_CHN_IVS, ret);
+            return ret;
+        }
+        if (ret = rk_vpss.fnEnableChannel(_rk_vpss_grp, HAL_CHN_IVS)) {
+            HAL_DANGER("rk_ivs", "Enabling VPSS channel %d failed with %#x!\n",
+                HAL_CHN_IVS, ret);
+            return ret;
+        }
+    }
+
+    {
+        rk_ivs_chn_attr attr;
+        memset(&attr, 0, sizeof(attr));
+        attr.mode = (int)config->mode;
+        attr.width = config->width;
+        attr.height = config->height;
+        attr.pixFmt = 0;        /* RK_FMT_YUV420SP */
+        attr.gop = 30;
+        attr.mdEnable = (config->mode & HAL_IVS_MD) ? 1 : 0;
+        attr.mdInterval = config->mdInterval ? config->mdInterval : 5;
+        attr.mdNightMode = 1;
+        attr.mdSensitivity = config->sensitivity ? config->sensitivity : 2;
+        attr.odEnable = (config->mode & HAL_IVS_OD) ? 1 : 0;
+        attr.odInterval = config->odInterval ? config->odInterval : 1;
+        attr.odPercent = config->odPercent ? config->odPercent : 7;
+        attr.maxWidth = config->width;
+        attr.maxHeight = config->height;
+
+        if (ret = rk_ivs.fnCreateChn(0, &attr)) {
+            HAL_DANGER("rk_ivs", "Creating IVS channel failed with %#x!\n", ret);
+            rk_vpss.fnDisableChannel(_rk_vpss_grp, HAL_CHN_IVS);
+            return ret;
+        }
+    }
+
+    {
+        rk_sys_bind source = { .module = RK_SYS_MOD_VPSS,
+            .device = _rk_vpss_grp, .channel = HAL_CHN_IVS };
+        rk_sys_bind dest = { .module = RK_SYS_MOD_IVS,
+            .device = 0, .channel = 0 };
+        if (ret = rk_sys.fnBind(&source, &dest)) {
+            HAL_DANGER("rk_ivs", "Binding VPSS to IVS failed with %#x!\n", ret);
+            rk_ivs.fnDestroyChn(0);
+            rk_vpss.fnDisableChannel(_rk_vpss_grp, HAL_CHN_IVS);
+            return ret;
+        }
+    }
+
+    ivsCreated = 1;
+    HAL_INFO("rk_ivs", "IVS enabled (%s) on VPSS channel %d\n",
+        config->mode == HAL_IVS_MD ? "MD" :
+        config->mode == HAL_IVS_OD ? "OD" : "MD+OD", HAL_CHN_IVS);
+    return EXIT_SUCCESS;
+}
+
+int rk_ivs_set_config(hal_ivs_config *config)
+{
+    rk_ivs_chn_attr attr;
+
+    if (!ivsCreated || !rk_ivs.fnSetChnAttr) return EXIT_FAILURE;
+
+    memset(&attr, 0, sizeof(attr));
+    if (rk_ivs.fnGetChnAttr && !rk_ivs.fnGetChnAttr(0, &attr)) {
+        /* get succeeded, keep the rest */
+    }
+    attr.mode = (int)config->mode;
+    attr.mdEnable = (config->mode & HAL_IVS_MD) ? 1 : 0;
+    attr.mdInterval = config->mdInterval ? config->mdInterval : 5;
+    attr.mdSensitivity = config->sensitivity ? config->sensitivity : 2;
+    attr.odEnable = (config->mode & HAL_IVS_OD) ? 1 : 0;
+    attr.odInterval = config->odInterval ? config->odInterval : 1;
+    attr.odPercent = config->odPercent ? config->odPercent : 7;
+
+    return rk_ivs.fnSetChnAttr(0, &attr) ? EXIT_FAILURE : EXIT_SUCCESS;
+}
+
+int rk_ivs_get_results(hal_ivs_result *result, int timeoutMs)
+{
+    int count;
+
+    memset(result, 0, sizeof(*result));
+    if (!ivsCreated || !rk_ivs.fnGetResults) return EXIT_FAILURE;
+
+    memset(&ivsResultInfo, 0, sizeof(ivsResultInfo));
+    if (rk_ivs.fnGetResults(0, &ivsResultInfo, timeoutMs) != 0)
+        return EXIT_FAILURE;
+    if (!ivsResultInfo.results || ivsResultInfo.resultNum < 1) {
+        if (ivsResultInfo.results) rk_ivs_release_results();
+        return EXIT_FAILURE;
+    }
+
+    result->frameId = ivsResultInfo.results[0].md.frameId;
+    result->rectCount = ivsResultInfo.results[0].md.rectNum;
+    if (result->rectCount > sizeof(result->rect) / sizeof(result->rect[0]))
+        result->rectCount = sizeof(result->rect) / sizeof(result->rect[0]);
+    for (unsigned int i = 0; i < result->rectCount; i++) {
+        rk_common_rect *r = &ivsResultInfo.results[0].md.rect[i];
+        result->rect[i].x = r->x;
+        result->rect[i].y = r->y;
+        result->rect[i].width = r->width;
+        result->rect[i].height = r->height;
+    }
+    result->odPercent = ivsResultInfo.results[0].od.pixSum;
+    count = result->rectCount + (ivsResultInfo.results[0].od.flag ? 1 : 0);
+    return count > 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+}
+
+void rk_ivs_release_results(void)
+{
+    if (ivsCreated && rk_ivs.fnReleaseResults)
+        rk_ivs.fnReleaseResults(0, &ivsResultInfo);
+    memset(&ivsResultInfo, 0, sizeof(ivsResultInfo));
+}
+
+void rk_ivs_destroy(void)
+{
+    if (!ivsCreated) return;
+
+    {
+        rk_sys_bind source = { .module = RK_SYS_MOD_VPSS,
+            .device = _rk_vpss_grp, .channel = HAL_CHN_IVS };
+        rk_sys_bind dest = { .module = RK_SYS_MOD_IVS,
+            .device = 0, .channel = 0 };
+        rk_sys.fnUnbind(&source, &dest);
+    }
+    rk_ivs.fnDestroyChn(0);
+    rk_vpss.fnDisableChannel(_rk_vpss_grp, HAL_CHN_IVS);
+    if (rk_sys.fnWaitFreeMB) rk_sys.fnWaitFreeMB();
+
+    ivsCreated = 0;
+    HAL_INFO("rk_ivs", "IVS disabled\n");
 }
 
 #endif

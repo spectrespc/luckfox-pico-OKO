@@ -1,0 +1,104 @@
+#!/bin/sh
+#
+# OKO EC daemon: STM32 ACPI-EC (0x42), INA226 (0x41), SHT21 (0x40) on I2C3-M1.
+#
+# - /dev/i2c-3, /oem/usr/bin/oko-ec present and no /userdata/oko-ec.disable
+#   -> start "oko-ec daemon", which writes /tmp/oko-ec.json and
+#      /tmp/oko-ec.osd for oko-osd
+# - /userdata/oko-ec.disable -> opt-out (OSD falls back to simulated data)
+# - the daemon owns /tmp/oko-ec.pid; this script only reads it for stop/status
+#
+# Runs after S20oko-osd and S21appinit (lexicographic order).
+
+DAEMON=/oem/usr/bin/oko-ec
+DEV=/dev/i2c-3
+PIDFILE=/tmp/oko-ec.pid
+LOG=/tmp/oko-ec.log
+DISABLE=/userdata/oko-ec.disable
+
+# INA3221 channel used by the daemon (1..3); override with OKO_EC_INA_CHANNEL.
+INA_CHANNEL=${OKO_EC_INA_CHANNEL:-1}
+
+wait_userdata() {
+	i=0
+	while [ "$i" -lt 30 ]; do
+		mount | grep -qw /userdata && return 0
+		i=$((i + 1))
+		sleep 0.1
+	done
+	return 1
+}
+
+running_pid() {
+	[ -f "$PIDFILE" ] || return 1
+	pid=$(cat "$PIDFILE" 2>/dev/null)
+	[ -n "$pid" ] || return 1
+	kill -0 "$pid" 2>/dev/null || return 1
+	echo "$pid"
+}
+
+start_daemon() {
+	pid=$(running_pid) && return 0
+
+	if [ ! -e "$DEV" ]; then
+		echo "oko-ec: $DEV is missing, skipping"
+		return 0
+	fi
+	if [ ! -x "$DAEMON" ]; then
+		echo "oko-ec: $DAEMON is missing, skipping"
+		return 0
+	fi
+	if [ -f "$DISABLE" ]; then
+		echo "oko-ec: disabled by $DISABLE"
+		return 0
+	fi
+
+	setsid "$DAEMON" --ina-channel "$INA_CHANNEL" daemon >"$LOG" 2>&1 &
+}
+
+stop_daemon() {
+	pid=$(running_pid) || {
+		rm -f "$PIDFILE"
+		return 0
+	}
+
+	kill "$pid" 2>/dev/null
+
+	i=0
+	while [ "$i" -lt 30 ] && kill -0 "$pid" 2>/dev/null; do
+		i=$((i + 1))
+		sleep 0.1
+	done
+
+	kill -9 "$pid" 2>/dev/null
+	rm -f "$PIDFILE"
+}
+
+case "$1" in
+	start)
+		if ! wait_userdata; then
+			echo "oko-ec: /userdata is not mounted, skipping"
+			exit 0
+		fi
+		start_daemon
+		;;
+	stop)
+		stop_daemon
+		;;
+	restart)
+		stop_daemon
+		start_daemon
+		;;
+	status)
+		if pid=$(running_pid); then
+			echo "oko-ec: running (pid $pid)"
+			exit 0
+		fi
+		echo "oko-ec: not running"
+		exit 1
+		;;
+	*)
+		echo "Usage: $0 {start|stop|restart|status}"
+		exit 1
+		;;
+esac

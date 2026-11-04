@@ -32,7 +32,7 @@ bench/run.sh serial_exec.py --wait 5 'ps | grep -E "divinus|oko-osd|rkipc"' 'cat
 bench/run.sh dut.py 'mount | grep -w " / "' 'cat /userdata/divinus.yaml'
 
 # OSD: 17 с наблюдения; время меняется за 1 с, телеметрия и GPS — за 16 с
-bench/run.sh osd_check.py --ip 192.168.52.65 --seconds 17
+bench/run.sh osd_check.py --ip 192.168.52.97 --seconds 17
 
 # свои регионы (имя:x0,y0,x1,y1;...)
 bench/run.sh osd_check.py --regions 'telemetry:0,16,760,160;gps:1500,16,1920,64'
@@ -45,7 +45,7 @@ bench/run.sh osd_check.py --regions 'telemetry:0,16,760,160;gps:1500,16,1920,64'
 | `OKO_BENCH_OUT` | `output/bench` | каталог логов, кадров и кропов |
 | `OKO_BENCH_VENV` | `$OKO_BENCH_OUT/venv` | путь к virtualenv |
 | `OKO_SERIAL_PORT` | последний `/dev/ttyACM*` | UART-порт |
-| `OKO_DUT_HOST` | `192.168.52.65` | адрес DUT (SSH/RTSP; DHCP, см. TESTBENCH.md §5) |
+| `OKO_DUT_HOST` | `192.168.52.150` | адрес DUT по умолчанию (SSH/RTSP; текущий DHCP-адрес — `192.168.52.97`, см. TESTBENCH.md §5) |
 | `OKO_DUT_PASSWORD` | `luckfox` | пароль root (публичный вендорский дефолт) |
 | `OKO_RTSP_USER` / `OKO_RTSP_PASS` | `admin` / `oko-change-me` | учётка divinus (фабричный дефолт) |
 

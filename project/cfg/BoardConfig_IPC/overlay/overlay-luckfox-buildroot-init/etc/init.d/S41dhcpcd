@@ -1,0 +1,6 @@
+#!/bin/sh
+# OKO: DHCP is managed by /usr/bin/oko-net.  dhcpcd uses a DUID stored under
+# /var/db and that DUID is recreated by every full firmware update, which makes
+# the DHCP server hand out a new address.  Using BusyBox udhcpc with the stable
+# MAC from the U-Boot env avoids that.  This stub replaces the vendor script.
+exit 0

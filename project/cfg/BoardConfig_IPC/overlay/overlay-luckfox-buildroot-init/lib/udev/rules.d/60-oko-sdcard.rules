@@ -1,0 +1,9 @@
+# OKO: mount the microSD card at /mnt/sdcard as soon as a partition appears
+# and unmount it on removal.  The helper writes /run/oko-sd.state.
+#
+# eudev in this image is built with its rules directory set to
+# /lib/udev/rules.d and does not read /etc/udev/rules.d, so this file must stay
+# under lib/.  It is loaded before the vendor 61-sd-cards-auto-mount.rules.
+ACTION=="add", SUBSYSTEM=="block", KERNEL=="mmcblk[0-9]p[0-9]*", RUN+="/bin/sh /usr/bin/oko-sdcard add /dev/%k"
+ACTION=="add", SUBSYSTEM=="block", KERNEL=="mmcblk[0-9]", RUN+="/bin/sh /usr/bin/oko-sdcard add /dev/%k"
+ACTION=="remove", SUBSYSTEM=="block", KERNEL=="mmcblk[0-9]*", RUN+="/bin/sh /usr/bin/oko-sdcard remove /dev/%k"

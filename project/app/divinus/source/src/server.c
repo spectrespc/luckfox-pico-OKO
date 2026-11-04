@@ -1,5 +1,10 @@
 #include "server.h"
 
+#include <dirent.h>
+
+#include "gating.h"
+#include "ivs_events.h"
+
 #define HTTP_MAX_CLIENTS 50
 #define HTTP_MIN_BUF_SIZE 4096
 #define HTTP_MAX_BUF_SIZE (4 * 1024 * 1024)
@@ -73,6 +78,95 @@ static bool is_local_address(const char *client_ip) {
     return false;
 }
 
+static char storageFormatToken[17];
+static bool storageToolsChecked;
+static bool storageToolsAvailable;
+
+static void storage_token_generate(void) {
+    static const char hex[] = "0123456789abcdef";
+    unsigned char raw[8];
+    bool filled = false;
+    FILE *random = fopen("/dev/urandom", "rb");
+
+    if (random) {
+        filled = fread(raw, 1, sizeof(raw), random) == sizeof(raw);
+        fclose(random);
+    }
+    if (!filled) {
+        srand((unsigned)time(NULL) ^ (unsigned)getpid());
+        for (size_t i = 0; i < sizeof(raw); i++) raw[i] = (unsigned char)rand();
+    }
+
+    for (size_t i = 0; i < sizeof(raw); i++) {
+        storageFormatToken[i * 2] = hex[raw[i] >> 4];
+        storageFormatToken[i * 2 + 1] = hex[raw[i] & 0x0f];
+    }
+    storageFormatToken[16] = '\0';
+}
+
+static const char *storage_token_get(void) {
+    if (!storageFormatToken[0]) storage_token_generate();
+    return storageFormatToken;
+}
+
+static bool storage_tool_exists(const char *path) {
+    return access(path, X_OK) == 0;
+}
+
+static bool storage_format_supported(void) {
+    if (!storageToolsChecked) {
+        storageToolsAvailable =
+            storage_tool_exists("/usr/bin/oko-sdcard") &&
+            (storage_tool_exists("/sbin/sfdisk") ||
+                storage_tool_exists("/usr/sbin/sfdisk")) &&
+            (storage_tool_exists("/usr/sbin/mkfs.vfat") ||
+                storage_tool_exists("/sbin/mkfs.vfat"));
+        storageToolsChecked = true;
+    }
+    return storageToolsAvailable;
+}
+
+static void storage_read_state(char *device, size_t deviceSize,
+    char *fs, size_t fsSize) {
+    FILE *file;
+    char line[128];
+
+    if (deviceSize) device[0] = '\0';
+    if (fsSize) fs[0] = '\0';
+    file = fopen("/run/oko-sd.state", "r");
+    if (!file) return;
+
+    while (fgets(line, sizeof(line), file)) {
+        char *value = strchr(line, '=');
+        if (!value) continue;
+        *value++ = '\0';
+        value[strcspn(value, "\r\n")] = '\0';
+        if (!strcmp(line, "device") && deviceSize)
+            snprintf(device, deviceSize, "%s", value);
+        else if (!strcmp(line, "fs") && fsSize)
+            snprintf(fs, fsSize, "%s", value);
+    }
+    fclose(file);
+}
+
+static int capture_command(const char *command, char *output, size_t outputSize) {
+    FILE *pipe;
+    size_t length;
+
+    if (!output || outputSize == 0) return -1;
+    output[0] = '\0';
+    pipe = popen(command, "r");
+    if (!pipe) return -1;
+    length = fread(output, 1, outputSize - 1, pipe);
+    output[length] = '\0';
+    return pclose(pipe) == 0 ? 0 : -1;
+}
+
+static bool valid_ipv4(const char *value) {
+    struct in_addr address;
+    return value && *value && inet_pton(AF_INET, value, &address) == 1;
+}
+
 static void close_socket_fd(int sockFd) {
     shutdown(sockFd, SHUT_RDWR);
     close(sockFd);
@@ -88,6 +182,9 @@ void free_client(int i) {
 
 int send_to_fd(int fd, char *buf, ssize_t size) {
     if (fd < 0) return -1;
+    /* A zero-length chunk used to fall into send(fd, buf, 0) == 0 and be
+     * treated as a failure, which closed the MP4 client before moov/mdat. */
+    if (size == 0) return EXIT_SUCCESS;
 
     ssize_t total = 0;
     for (int attempts = 0; attempts < 4; attempts++) {
@@ -229,6 +326,56 @@ char any_http_audio(void) {
     return any;
 }
 
+/* Feed one Annex B NAL to the fMP4 muxer.
+ *
+ * The vendor pack metadata exposes the whole HEVC access unit as one NAL
+ * entry, so the per-entry type in pack->nalu[] cannot be used to find
+ * VPS/SPS/PPS.  The recorder already splits the payload with nal_split();
+ * the HTTP MP4 preview must do the same, otherwise the moov header never
+ * gets built and /video.mp4 sends an empty chunk and closes. */
+static void feed_mp4_nal(const unsigned char *data, size_t len,
+    unsigned int type, char isH265, char anyClient) {
+    if (!data || !len) return;
+
+    if (isH265) {
+        switch (type) {
+            case NalUnitType_VPS_HEVC:
+                mp4_set_vps((const char *)data, (uint32_t)len);
+                return;
+            case NalUnitType_SPS_HEVC:
+                mp4_set_sps((const char *)data, (uint32_t)len, 1);
+                return;
+            case NalUnitType_PPS_HEVC:
+                mp4_set_pps((const char *)data, (uint32_t)len, 1);
+                return;
+            default:
+                break;
+        }
+        if (!anyClient) return;
+        if (type == 19 || type == 20)       /* IDR_W_RADL / IDR_N_LP */
+            mp4_set_slice((const char *)data, (uint32_t)len, 1);
+        else if (type <= 9)                 /* TRAIL/TSA/STSA... */
+            mp4_set_slice((const char *)data, (uint32_t)len, 0);
+        return;
+    }
+
+    switch (type) {
+        case NalUnitType_SPS:
+            mp4_set_sps((const char *)data, (uint32_t)len, 0);
+            return;
+        case NalUnitType_PPS:
+            mp4_set_pps((const char *)data, (uint32_t)len, 0);
+            return;
+        default:
+            break;
+    }
+    if (!anyClient) return;
+    if (type == NalUnitType_CodedSliceIdr || type == NalUnitType_CodedSliceAux)
+        mp4_set_slice((const char *)data, (uint32_t)len, 1);
+    else if (type == NalUnitType_CodedSliceNonIdr)
+        mp4_set_slice((const char *)data, (uint32_t)len, 0);
+}
+
 void send_mp4_to_client(char index, hal_vidstream *stream, char isH265) {
     char anyClient = 0;
     pthread_mutex_lock(&client_fds_mutex);
@@ -238,29 +385,23 @@ void send_mp4_to_client(char index, hal_vidstream *stream, char isH265) {
 
     for (unsigned int i = 0; i < stream->count; ++i) {
         hal_vidpack *pack = &stream->pack[i];
-        unsigned char *pack_data = pack->data + pack->offset;
+        unsigned char *pack_data;
+        size_t pack_len;
+
+        if (pack->length <= pack->offset) continue;
+        pack_len = pack->length - pack->offset;
+        pack_data = pack->data + pack->offset;
 
         if (plat == HAL_PLATFORM_AK)
             mp4_set_timestamp(pack->timestamp);
 
-        for (char j = 0; j < pack->naluCnt; j++) {
-            /* nalu[].offset points at the start code, which is 3 or 4
-             * bytes depending on the encoder; the muxer wants the payload. */
-            unsigned int scLen = (pack_data[pack->nalu[j].offset + 2] == 1) ? 3 : 4;
-            if ((pack->nalu[j].type == NalUnitType_SPS || pack->nalu[j].type == NalUnitType_SPS_HEVC)
-                && pack->nalu[j].length > scLen && pack->nalu[j].length <= UINT16_MAX)
-                mp4_set_sps(pack_data + pack->nalu[j].offset + scLen, pack->nalu[j].length - scLen, isH265);
-            else if ((pack->nalu[j].type == NalUnitType_PPS || pack->nalu[j].type == NalUnitType_PPS_HEVC)
-                && pack->nalu[j].length <= UINT16_MAX)
-                mp4_set_pps(pack_data + pack->nalu[j].offset + scLen, pack->nalu[j].length - scLen, isH265);
-            else if (pack->nalu[j].type == NalUnitType_VPS_HEVC && pack->nalu[j].length <= UINT16_MAX)
-                mp4_set_vps(pack_data + pack->nalu[j].offset + scLen, pack->nalu[j].length - scLen);
-            else if (!anyClient)
-                continue;
-            else if (pack->nalu[j].type == NalUnitType_CodedSliceIdr || pack->nalu[j].type == NalUnitType_CodedSliceAux)
-                mp4_set_slice(pack_data + pack->nalu[j].offset + scLen, pack->nalu[j].length - scLen, 1);
-            else if (pack->nalu[j].type == NalUnitType_CodedSliceNonIdr)
-                mp4_set_slice(pack_data + pack->nalu[j].offset + scLen, pack->nalu[j].length - scLen, 0);
+        unsigned char *nalptr = pack_data;
+        size_t single_len = 0;
+        while (nal_split(pack_data, &nalptr, &single_len, pack_len) == 0) {
+            if (!single_len) continue;
+            unsigned int type = isH265 ?
+                ((nalptr[0] >> 1) & 0x3F) : (nalptr[0] & 0x1F);
+            feed_mp4_nal(nalptr, single_len, type, isH265, anyClient);
         }
         if (!anyClient) continue;
 
@@ -274,7 +415,8 @@ void send_mp4_to_client(char index, hal_vidstream *stream, char isH265) {
             if (!client_fds[i].mp4.header_sent) {
                 struct BitBuf header_buf;
                 err = mp4_get_header(&header_buf);
-                chk_err_continue ssize_t len_size =
+                if (err != BUF_OK || header_buf.offset == 0) continue;
+                ssize_t len_size =
                     sprintf(len_buf, "%zX\r\n", header_buf.offset);
                 if (send_to_client(i, len_buf, len_size) < 0)
                     continue;
@@ -303,7 +445,7 @@ void send_mp4_to_client(char index, hal_vidstream *stream, char isH265) {
             {
                 struct BitBuf moof_buf;
                 err = mp4_get_moof(&moof_buf);
-                if (err != BUF_OK) {
+                if (err != BUF_OK || moof_buf.offset == 0) {
                     pthread_mutex_unlock(&mp4_mtx);
                     continue;
                 }
@@ -326,7 +468,7 @@ void send_mp4_to_client(char index, hal_vidstream *stream, char isH265) {
             {
                 struct BitBuf mdat_buf;
                 err = mp4_get_mdat(&mdat_buf);
-                if (err != BUF_OK) {
+                if (err != BUF_OK || mdat_buf.offset == 0) {
                     pthread_mutex_unlock(&mp4_mtx);
                     continue;
                 }
@@ -586,6 +728,26 @@ grant_access:
     req->payload = req->input + req->header_len;
 }
 
+static int query_bool(const char *value)
+{
+    return EQUALS_CASE(value, "true") || EQUALS(value, "1") ||
+        EQUALS_CASE(value, "on") || EQUALS_CASE(value, "yes");
+}
+
+static void gating_block(http_request_t *req, gating_result gate)
+{
+    char response[512];
+    int len = sprintf(response,
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: application/json;charset=UTF-8\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+        "{\"error\":\"blocked\",\"reason\":\"%s\",\"hint\":\"%s\"}",
+        gate.reason ? gate.reason : "blocked",
+        gate.hint ? gate.hint : "");
+    send_and_close(req->clntFd, response, len);
+}
+
 void respond_request(http_request_t *req) {
     char response[8192] = {0};
     int respLen = 0;
@@ -752,7 +914,7 @@ void respond_request(http_request_t *req) {
 
     if ((!app_config.mp4_codecH265 && EQUALS(req->uri, "/video.264")) ||
         (app_config.mp4_codecH265 && EQUALS(req->uri, "/video.265"))) {
-        request_idr();
+        request_idr(channel_by_role(HAL_CHNROLE_MAIN));
         respLen = sprintf(response,
             "HTTP/1.1 200 OK\r\n"
             "Content-Type: application/octet-stream\r\n"
@@ -772,7 +934,7 @@ void respond_request(http_request_t *req) {
     }
 
     if (app_config.mp4_enable && EQUALS(req->uri, "/video.mp4")) {
-        request_idr();
+        request_idr(channel_by_role(HAL_CHNROLE_MAIN));
         respLen = sprintf(response,
             "HTTP/1.1 200 OK\r\n"
             "Content-Type: video/mp4\r\n"
@@ -1480,10 +1642,23 @@ void respond_request(http_request_t *req) {
                 char *key = split(&value, "=");
                 if (!key || !*key || !value || !*value) continue;
                 if (EQUALS(key, "enable")) {
-                    if (EQUALS_CASE(value, "true") || EQUALS(value, "1"))
+                    if (EQUALS_CASE(value, "true") || EQUALS(value, "1")) {
+                        gating_result gate = gating_check("record");
+                        if (!gate.ok) { gating_block(req, gate); return; }
                         app_config.record_enable = 1;
-                    else if (EQUALS_CASE(value, "false") || EQUALS(value, "0"))
+                    } else if (EQUALS_CASE(value, "false") || EQUALS(value, "0"))
                         app_config.record_enable = 0;
+                }
+                else if (EQUALS(key, "source")) {
+                    app_config.record_sub = EQUALS(value, "sub");
+                }
+                else if (EQUALS(key, "max_bytes")) {
+                    app_config.record_max_bytes = strtoull(value, &remain, 10);
+                }
+                else if (EQUALS(key, "min_free_mb")) {
+                    long result;
+                    if (parse_ranged(value, 0, 1048576, &result))
+                        app_config.record_min_free_mb = (unsigned int)result;
                 }
                 else if (EQUALS(key, "continuous")) {
                     if (EQUALS_CASE(value, "true") || EQUALS(value, "1"))
@@ -1508,9 +1683,30 @@ void respond_request(http_request_t *req) {
 
                 if (!app_config.record_enable) continue;
                 if (app_config.record_continuous) continue;
-                if (EQUALS(key, "start"))
-                    record_start();
-                else if (EQUALS(key, "stop"))
+                if (EQUALS(key, "start")) {
+                    int source = app_config.record_sub ?
+                        HAL_CHNROLE_SUB : HAL_CHNROLE_MAIN;
+                    if (channel_by_role(source) < 0) {
+                        gating_result gate = { false,
+                            "the selected recording source is not running",
+                            app_config.record_sub ?
+                                "enable the sub stream or set record.source=main" :
+                                "the main stream is disabled" };
+                        gating_block(req, gate);
+                        return;
+                    }
+                    if (!record_start()) {
+                        gating_result gate = { false,
+                            storageBusy ?
+                                "storage is busy with another operation" :
+                                "recording requires a mounted microSD card",
+                            storageBusy ?
+                                "wait for the format/unmount operation to finish" :
+                                "insert a card formatted as vfat; local storage is not used" };
+                        gating_block(req, gate);
+                        return;
+                    }
+                } else if (EQUALS(key, "stop"))
                     record_stop();
             }
         }
@@ -1527,10 +1723,897 @@ void respond_request(http_request_t *req) {
             "Connection: close\r\n"
             "\r\n"
             "{\"recording\":%s,\"start_time\":\"%s\",\"continuous\":%s,\"path\":\"%s\","
-            "\"filename\":\"%s\",\"segment_duration\":%d,\"segment_size\":%d}",
+            "\"filename\":\"%s\",\"segment_duration\":%d,\"segment_size\":%d,"
+            "\"source\":\"%s\",\"max_bytes\":%llu,\"min_free_mb\":%d,"
+            "\"sd\":%s}",
                 record_active() ? "true" : "false", start_time, app_config.record_continuous ? "true" : "false",
                 app_config.record_path, app_config.record_filename,
-                app_config.record_segment_duration, app_config.record_segment_size);
+                app_config.record_segment_duration, app_config.record_segment_size,
+                app_config.record_sub ? "sub" : "main", app_config.record_max_bytes,
+                app_config.record_min_free_mb,
+                gating_sd_mounted() ? "true" : "false");
+        send_and_close(req->clntFd, response, respLen);
+        return;
+    }
+
+    if (EQUALS(req->uri, "/api/eptz")) {
+        if (req->query) {
+            int enableReq = -1;
+            while (req->query) {
+                char *value = split(&req->query, "&");
+                if (!value || !*value) continue;
+                unescape_uri(value);
+                char *key = split(&value, "=");
+                if (!key || !*key || !value || !*value) continue;
+                if (EQUALS(key, "enable")) {
+                    enableReq = query_bool(value);
+                } else if (EQUALS(key, "stream")) {
+                    app_config.eptz_stream = EQUALS(value, "sub") ? 1 : 0;
+                } else if (EQUALS(key, "x")) {
+                    long v; if (parse_ranged(value, 0, 65535, &v)) app_config.eptz_x = (unsigned short)v;
+                } else if (EQUALS(key, "y")) {
+                    long v; if (parse_ranged(value, 0, 65535, &v)) app_config.eptz_y = (unsigned short)v;
+                } else if (EQUALS(key, "w")) {
+                    long v; if (parse_ranged(value, 16, 65535, &v)) app_config.eptz_w = (unsigned short)v;
+                } else if (EQUALS(key, "h")) {
+                    long v; if (parse_ranged(value, 16, 65535, &v)) app_config.eptz_h = (unsigned short)v;
+                } else if (EQUALS(key, "zoom")) {
+                    long zoom;
+                    if (parse_ranged(value, 1, 8, &zoom) && zoom > 0) {
+                        int width = app_config.mp4_width ? app_config.mp4_width : 1920;
+                        int height = app_config.mp4_height ? app_config.mp4_height : 1080;
+                        int w = width / zoom, h = height / zoom;
+                        int cx = app_config.eptz_x + app_config.eptz_w / 2;
+                        int cy = app_config.eptz_y + app_config.eptz_h / 2;
+                        if (w < 16) w = 16;
+                        if (h < 16) h = 16;
+                        app_config.eptz_w = (unsigned short)w;
+                        app_config.eptz_h = (unsigned short)h;
+                        app_config.eptz_x = (unsigned short)(cx - w / 2);
+                        app_config.eptz_y = (unsigned short)(cy - h / 2);
+                    }
+                } else if (EQUALS(key, "reset")) {
+                    app_config.eptz_x = 0;
+                    app_config.eptz_y = 0;
+                    app_config.eptz_w = app_config.mp4_width ? app_config.mp4_width : 1920;
+                    app_config.eptz_h = app_config.mp4_height ? app_config.mp4_height : 1080;
+                }
+            }
+
+            if (enableReq == 1) {
+                gating_result gate = gating_check("eptz");
+                if (!gate.ok) { gating_block(req, gate); return; }
+                app_config.eptz_enable = true;
+            } else if (enableReq == 0) {
+                app_config.eptz_enable = false;
+            }
+
+            /* Clamp the rectangle to the sensor frame. */
+            {
+                int width = app_config.mp4_width ? app_config.mp4_width : 1920;
+                int height = app_config.mp4_height ? app_config.mp4_height : 1080;
+                if (app_config.eptz_w > width) app_config.eptz_w = width;
+                if (app_config.eptz_h > height) app_config.eptz_h = height;
+                if (app_config.eptz_x + app_config.eptz_w > width)
+                    app_config.eptz_x = width - app_config.eptz_w;
+                if (app_config.eptz_y + app_config.eptz_h > height)
+                    app_config.eptz_y = height - app_config.eptz_h;
+            }
+
+            if (media_apply_eptz())
+                HAL_WARNING("server", "ePTZ could not be applied\n");
+        }
+
+        respLen = sprintf(response,
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: application/json;charset=UTF-8\r\n"
+            "Connection: close\r\n"
+            "\r\n"
+            "{\"enable\":%s,\"stream\":\"%s\",\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d}",
+            app_config.eptz_enable ? "true" : "false",
+            app_config.eptz_stream ? "sub" : "main",
+            app_config.eptz_x, app_config.eptz_y,
+            app_config.eptz_w, app_config.eptz_h);
+        send_and_close(req->clntFd, response, respLen);
+        return;
+    }
+
+    if (EQUALS(req->uri, "/api/rotate")) {
+        if (req->query) {
+            int enableReq = -1;
+            while (req->query) {
+                char *value = split(&req->query, "&");
+                if (!value || !*value) continue;
+                unescape_uri(value);
+                char *key = split(&value, "=");
+                if (!key || !*key || !value || !*value) continue;
+                if (EQUALS(key, "enable")) {
+                    enableReq = query_bool(value);
+                } else if (EQUALS(key, "stream")) {
+                    app_config.rotate_stream = EQUALS(value, "sub") ? 1 : 0;
+                } else if (EQUALS(key, "angle")) {
+                    long v;
+                    if (parse_ranged(value, 0, 270, &v) &&
+                        (v == 0 || v == 90 || v == 180 || v == 270))
+                        app_config.rotate_angle = (unsigned short)v;
+                }
+            }
+
+            if (enableReq == 1) {
+                gating_result gate = gating_check("rotate");
+                if (!gate.ok) { gating_block(req, gate); return; }
+                app_config.rotate_enable = true;
+            } else if (enableReq == 0) {
+                app_config.rotate_enable = false;
+            }
+
+            if (media_apply_rotation())
+                HAL_WARNING("server", "Rotation could not be applied\n");
+        }
+
+        respLen = sprintf(response,
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: application/json;charset=UTF-8\r\n"
+            "Connection: close\r\n"
+            "\r\n"
+            "{\"enable\":%s,\"stream\":\"%s\",\"angle\":%d}",
+            app_config.rotate_enable ? "true" : "false",
+            app_config.rotate_stream ? "sub" : "main",
+            app_config.rotate_angle);
+        send_and_close(req->clntFd, response, respLen);
+        return;
+    }
+
+    if (EQUALS(req->uri, "/api/venc")) {
+        if (req->query) {
+            int wantsExtra = 0;
+            while (req->query) {
+                char *value = split(&req->query, "&");
+                if (!value || !*value) continue;
+                unescape_uri(value);
+                char *key = split(&value, "=");
+                if (!key || !*key || !value || !*value) continue;
+                if (EQUALS(key, "smartp")) {
+                    app_config.venc_smartp = query_bool(value);
+                    wantsExtra |= app_config.venc_smartp;
+                } else if (EQUALS(key, "svc")) {
+                    app_config.venc_svc = query_bool(value);
+                    wantsExtra |= app_config.venc_svc;
+                } else if (EQUALS(key, "motion_deblur")) {
+                    app_config.venc_motion_deblur = query_bool(value);
+                    wantsExtra |= app_config.venc_motion_deblur;
+                } else if (EQUALS(key, "vir_idr_len")) {
+                    long v; if (parse_ranged(value, 0, 255, &v)) app_config.venc_vir_idr = (unsigned char)v;
+                } else if (EQUALS(key, "min_qp")) {
+                    long v; if (parse_ranged(value, 0, 51, &v)) { app_config.venc_min_qp = (unsigned char)v; wantsExtra = 1; }
+                } else if (EQUALS(key, "max_qp")) {
+                    long v; if (parse_ranged(value, 0, 51, &v)) { app_config.venc_max_qp = (unsigned char)v; wantsExtra = 1; }
+                } else if (EQUALS(key, "min_iqp")) {
+                    long v; if (parse_ranged(value, 0, 51, &v)) { app_config.venc_min_iqp = (unsigned char)v; wantsExtra = 1; }
+                } else if (EQUALS(key, "max_iqp")) {
+                    long v; if (parse_ranged(value, 0, 51, &v)) { app_config.venc_max_iqp = (unsigned char)v; wantsExtra = 1; }
+                }
+            }
+
+            if (wantsExtra) {
+                gating_result gate = gating_check("venc");
+                if (!gate.ok) { gating_block(req, gate); return; }
+            }
+
+            /* SVC, motion deblur and the QP window can be changed on a running
+             * channel; SmartP changes the GOP attribute and is applied by the
+             * next start without dropping the current viewers. */
+            if (media_apply_venc_extras())
+                HAL_WARNING("server", "Some encoder extensions were rejected\n");
+            request_idr(channel_by_role(HAL_CHNROLE_MAIN));
+        }
+
+        respLen = sprintf(response,
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: application/json;charset=UTF-8\r\n"
+            "Connection: close\r\n"
+            "\r\n"
+            "{\"smartp\":%s,\"vir_idr_len\":%d,\"svc\":%s,"
+            "\"motion_deblur\":%s,\"min_qp\":%d,\"max_qp\":%d,"
+            "\"min_iqp\":%d,\"max_iqp\":%d,"
+            "\"note\":\"SVC/deblur/QP applied live; SmartP is applied after restart\"}",
+            app_config.venc_smartp ? "true" : "false", app_config.venc_vir_idr,
+            app_config.venc_svc ? "true" : "false",
+            app_config.venc_motion_deblur ? "true" : "false",
+            app_config.venc_min_qp, app_config.venc_max_qp,
+            app_config.venc_min_iqp, app_config.venc_max_iqp);
+        send_and_close(req->clntFd, response, respLen);
+        return;
+    }
+
+    if (EQUALS(req->uri, "/api/substream")) {
+        int pathChanged = 0, paramsChanged = 0, restart = 0;
+        char oldPath[sizeof(app_config.substream_path)];
+        strncpy(oldPath, app_config.substream_path, sizeof(oldPath) - 1);
+        oldPath[sizeof(oldPath) - 1] = 0;
+
+        if (req->query) {
+            int enableReq = -1;
+            while (req->query) {
+                char *value = split(&req->query, "&");
+                if (!value || !*value) continue;
+                unescape_uri(value);
+                char *key = split(&value, "=");
+                if (!key || !*key || !value || !*value) continue;
+                if (EQUALS(key, "enable")) {
+                    enableReq = query_bool(value);
+                } else if (EQUALS(key, "path")) {
+                    if (value[0] == '/') {
+                        strncpy(app_config.substream_path, value,
+                            sizeof(app_config.substream_path) - 1);
+                        app_config.substream_path[sizeof(app_config.substream_path) - 1] = 0;
+                    }
+                } else if (EQUALS(key, "codec")) {
+                    app_config.substream_codecH265 = !(EQUALS(value, "H.264") ||
+                        EQUALS(value, "h264") || EQUALS(value, "AVC"));
+                    paramsChanged = 1;
+                } else if (EQUALS(key, "mode")) {
+                    if (EQUALS_CASE(value, "CBR")) app_config.substream_mode = HAL_VIDMODE_CBR;
+                    else if (EQUALS_CASE(value, "VBR")) app_config.substream_mode = HAL_VIDMODE_VBR;
+                    else if (EQUALS_CASE(value, "QP")) app_config.substream_mode = HAL_VIDMODE_QP;
+                    else if (EQUALS_CASE(value, "AVBR")) app_config.substream_mode = HAL_VIDMODE_AVBR;
+                    paramsChanged = 1;
+                } else if (EQUALS(key, "width")) {
+                    long v; if (parse_ranged(value, 160, 4096, &v)) { app_config.substream_width = (unsigned int)v; paramsChanged = 1; }
+                } else if (EQUALS(key, "height")) {
+                    long v; if (parse_ranged(value, 120, 4096, &v)) { app_config.substream_height = (unsigned int)v; paramsChanged = 1; }
+                } else if (EQUALS(key, "fps")) {
+                    long v; if (parse_ranged(value, 1, 60, &v)) { app_config.substream_fps = (unsigned int)v; paramsChanged = 1; }
+                } else if (EQUALS(key, "gop")) {
+                    long v; if (parse_ranged(value, 1, 600, &v)) { app_config.substream_gop = (unsigned int)v; paramsChanged = 1; }
+                } else if (EQUALS(key, "bitrate")) {
+                    long v; if (parse_ranged(value, 32, 65535, &v)) { app_config.substream_bitrate = (unsigned int)v; paramsChanged = 1; }
+                } else if (EQUALS(key, "profile")) {
+                    long v; if (parse_ranged(value, 0, 2, &v)) { app_config.substream_profile = (unsigned int)v; paramsChanged = 1; }
+                }
+            }
+
+            if (enableReq == 1) {
+                gating_result gate = gating_check("substream");
+                if (!gate.ok) { gating_block(req, gate); return; }
+                app_config.substream_enable = true;
+            } else if (enableReq == 0) {
+                app_config.substream_enable = false;
+            }
+
+            pathChanged = strcmp(oldPath, app_config.substream_path) != 0;
+            int existing = channel_by_role(HAL_CHNROLE_SUB);
+
+            if (rtspHandle && pathChanged)
+                rtsp_set_stream_path(rtspHandle, 1, app_config.substream_path);
+
+            if (enableReq == 0)
+                app_config.substream_enable = false;
+
+            if (app_config.substream_enable) {
+                if (rtspHandle) {
+                    int id = rtsp_add_stream(rtspHandle, app_config.substream_path);
+                    if (id < 0) app_config.substream_enable = false;
+                }
+                if (app_config.substream_enable) {
+                    if (existing < 0 && paramsChanged) {
+                        /* The channel does not exist yet; create it at boot so
+                         * the main/sub/JPEG order stays RGN-safe. */
+                        restart = 1;
+                    } else if (existing >= 0 && paramsChanged) {
+                        /* Encoder parameters are channel attributes; rebuilding
+                         * them live invalidates the RGN overlays, so apply the
+                         * saved config with a graceful restart. */
+                        restart = 1;
+                    } else if (existing < 0) {
+                        /* Creating a second VENC channel after the JPEG channel
+                         * broke the main OSD on RV1106 (SetBitmap 0xfffffffe).
+                         * Boot order main->sub->JPEG is safe, so restart. */
+                        restart = 1;
+                    } else if (media_substream_enable()) {
+                        app_config.substream_enable = false;
+                    }
+                }
+            } else {
+                media_substream_disable();
+            }
+        }
+
+        respLen = sprintf(response,
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: application/json;charset=UTF-8\r\n"
+            "Connection: close\r\n"
+            "\r\n"
+            "{\"enable\":%s,\"path\":\"%s\",\"codec\":\"%s\",\"mode\":%d,"
+            "\"width\":%d,\"height\":%d,\"fps\":%d,\"gop\":%d,\"bitrate\":%d,"
+            "\"profile\":%d,\"note\":\"%s\"}",
+            app_config.substream_enable ? "true" : "false",
+            app_config.substream_path,
+            app_config.substream_codecH265 ? "H.265" : "H.264",
+            app_config.substream_mode, app_config.substream_width,
+            app_config.substream_height, app_config.substream_fps,
+            app_config.substream_gop, app_config.substream_bitrate,
+            app_config.substream_profile,
+            restart ? "settings saved; restarting the application" :
+            (pathChanged ? "path applies to new connections" :
+                "sub stream updated"));
+        send_and_close(req->clntFd, response, respLen);
+        if (restart) {
+            app_config_save();
+            kill(getpid(), SIGHUP);
+        }
+        return;
+    }
+
+    if (EQUALS(req->uri, "/api/aiisp")) {
+        if (req->query) {
+            int enableReq = -1;
+            while (req->query) {
+                char *value = split(&req->query, "&");
+                if (!value || !*value) continue;
+                unescape_uri(value);
+                char *key = split(&value, "=");
+                if (!key || !*key || !value || !*value) continue;
+                if (EQUALS(key, "enable")) {
+                    if (EQUALS_CASE(value, "off")) { enableReq = 0; }
+                    else if (EQUALS_CASE(value, "auto")) { enableReq = 2; }
+                    else { enableReq = query_bool(value); }
+                } else if (EQUALS(key, "model_dir")) {
+                    strncpy(app_config.aiisp_model_dir, value,
+                        sizeof(app_config.aiisp_model_dir) - 1);
+                    app_config.aiisp_model_dir[sizeof(app_config.aiisp_model_dir) - 1] = 0;
+                } else if (EQUALS(key, "buf_cnt")) {
+                    long v; if (parse_ranged(value, 1, 8, &v)) app_config.aiisp_buf_cnt = (unsigned int)v;
+                }
+            }
+
+            if (enableReq != 0 && enableReq >= 0) {
+                gating_result gate = gating_check("aiisp");
+                if (!gate.ok) { gating_block(req, gate); return; }
+                app_config.aiisp_enable = enableReq == 2 ? HAL_AIISP_AUTO : HAL_AIISP_ON;
+            } else if (enableReq == 0) {
+                app_config.aiisp_enable = HAL_AIISP_OFF;
+            }
+
+            if (media_apply_aiisp())
+                HAL_WARNING("server", "AIISP could not be applied\n");
+        }
+
+        respLen = sprintf(response,
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: application/json;charset=UTF-8\r\n"
+            "Connection: close\r\n"
+            "\r\n"
+            "{\"enable\":\"%s\",\"model_dir\":\"%s\",\"buf_cnt\":%d,"
+            "\"fps_enabled\":%d,\"fps_disabled\":%d,"
+            "\"note\":\"AIISP lowers fps while the AINR model is active\"}",
+            app_config.aiisp_enable == HAL_AIISP_OFF ? "off" :
+                (app_config.aiisp_enable == HAL_AIISP_AUTO ? "auto" : "on"),
+            app_config.aiisp_model_dir, app_config.aiisp_buf_cnt,
+            app_config.aiisp_fps_enabled, app_config.aiisp_fps_disabled);
+        send_and_close(req->clntFd, response, respLen);
+        return;
+    }
+
+    if (EQUALS(req->uri, "/api/ivs")) {
+        if (req->query) {
+            int enableReq = -1;
+            while (req->query) {
+                char *value = split(&req->query, "&");
+                if (!value || !*value) continue;
+                unescape_uri(value);
+                char *key = split(&value, "=");
+                if (!key || !*key || !value || !*value) continue;
+                if (EQUALS(key, "enable")) {
+                    enableReq = query_bool(value);
+                } else if (EQUALS(key, "mode")) {
+                    if (EQUALS_CASE(value, "md")) app_config.ivs_mode = HAL_IVS_MD;
+                    else if (EQUALS_CASE(value, "od")) app_config.ivs_mode = HAL_IVS_OD;
+                    else if (EQUALS_CASE(value, "md_od")) app_config.ivs_mode = HAL_IVS_MD_OD;
+                } else if (EQUALS(key, "width")) {
+                    long v; if (parse_ranged(value, 160, 1920, &v)) app_config.ivs_width = (unsigned int)v;
+                } else if (EQUALS(key, "height")) {
+                    long v; if (parse_ranged(value, 120, 1080, &v)) app_config.ivs_height = (unsigned int)v;
+                } else if (EQUALS(key, "sensitivity")) {
+                    long v; if (parse_ranged(value, 1, 3, &v)) app_config.ivs_sensitivity = (unsigned int)v;
+                } else if (EQUALS(key, "md_interval")) {
+                    long v; if (parse_ranged(value, 1, 100, &v)) app_config.ivs_md_interval = (unsigned int)v;
+                } else if (EQUALS(key, "od_interval")) {
+                    long v; if (parse_ranged(value, 1, 100, &v)) app_config.ivs_od_interval = (unsigned int)v;
+                } else if (EQUALS(key, "od_percent")) {
+                    long v; if (parse_ranged(value, 5, 8, &v)) app_config.ivs_od_percent = (unsigned int)v;
+                } else if (EQUALS(key, "act_http_post")) {
+                    app_config.ivs_act_http_post = query_bool(value);
+                } else if (EQUALS(key, "act_record")) {
+                    if (query_bool(value)) {
+                        gating_result gate = gating_check("record");
+                        if (!gate.ok) { gating_block(req, gate); return; }
+                    }
+                    app_config.ivs_act_record = query_bool(value);
+                } else if (EQUALS(key, "act_osd")) {
+                    app_config.ivs_act_osd = query_bool(value);
+                } else if (EQUALS(key, "record_seconds")) {
+                    long v; if (parse_ranged(value, 1, 600, &v)) app_config.ivs_record_seconds = (unsigned int)v;
+                } else if (EQUALS(key, "record_source")) {
+                    app_config.ivs_record_sub = EQUALS(value, "sub");
+                }
+            }
+
+            if (enableReq == 1) {
+                gating_result gate = gating_check("ivs");
+                if (!gate.ok) { gating_block(req, gate); return; }
+            }
+
+            ivs_events_stop();
+            if (enableReq == 1) {
+                app_config.ivs_enable = true;
+                ivs_events_start();
+            } else if (enableReq == 0) {
+                app_config.ivs_enable = false;
+            } else if (app_config.ivs_enable) {
+                ivs_events_start();
+            }
+        }
+
+        char events[2048];
+        ivs_events_json(events, sizeof(events));
+        respLen = sprintf(response,
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: application/json;charset=UTF-8\r\n"
+            "Connection: close\r\n"
+            "\r\n"
+            "{\"enable\":%s,\"mode\":\"%s\",\"width\":%d,\"height\":%d,"
+            "\"sensitivity\":%d,\"md_interval\":%d,\"od_interval\":%d,"
+            "\"od_percent\":%d,\"act_http_post\":%s,\"act_record\":%s,"
+            "\"act_osd\":%s,\"record_seconds\":%d,\"record_source\":\"%s\","
+            "\"events\":%s}",
+            app_config.ivs_enable ? "true" : "false",
+            app_config.ivs_mode == HAL_IVS_OD ? "od" :
+                (app_config.ivs_mode == HAL_IVS_MD_OD ? "md_od" : "md"),
+            app_config.ivs_width, app_config.ivs_height,
+            app_config.ivs_sensitivity, app_config.ivs_md_interval,
+            app_config.ivs_od_interval, app_config.ivs_od_percent,
+            app_config.ivs_act_http_post ? "true" : "false",
+            app_config.ivs_act_record ? "true" : "false",
+            app_config.ivs_act_osd ? "true" : "false",
+            app_config.ivs_record_seconds,
+            app_config.ivs_record_sub ? "sub" : "main", events);
+        send_and_close(req->clntFd, response, respLen);
+        return;
+    }
+
+    if (EQUALS(req->uri, "/api/iq")) {
+        if (req->query) {
+            while (req->query) {
+                char *value = split(&req->query, "&");
+                if (!value || !*value) continue;
+                unescape_uri(value);
+                char *key = split(&value, "=");
+                if (!key || !*key || !value || !*value) continue;
+                if (EQUALS(key, "main_scene")) {
+                    strncpy(app_config.iq_main_scene, value, sizeof(app_config.iq_main_scene) - 1);
+                    app_config.iq_main_scene[sizeof(app_config.iq_main_scene) - 1] = 0;
+                } else if (EQUALS(key, "sub_scene")) {
+                    strncpy(app_config.iq_sub_scene, value, sizeof(app_config.iq_sub_scene) - 1);
+                    app_config.iq_sub_scene[sizeof(app_config.iq_sub_scene) - 1] = 0;
+                } else if (EQUALS(key, "file")) {
+                    strncpy(app_config.iq_file, value, sizeof(app_config.iq_file) - 1);
+                    app_config.iq_file[sizeof(app_config.iq_file) - 1] = 0;
+                }
+            }
+
+            if (*app_config.iq_file || *app_config.iq_main_scene) {
+                gating_result gate = gating_check("iq");
+                if (!gate.ok) { gating_block(req, gate); return; }
+            }
+
+            if (media_apply_iq(app_config.iq_main_scene, app_config.iq_sub_scene,
+                    app_config.iq_file))
+                HAL_WARNING("server", "IQ switch could not be applied\n");
+        }
+
+        {
+            char scenes[512] = "";
+            char files[1024] = "";
+            int sceneCount = 0, fileCount = 0;
+            DIR *dir = opendir("/oem/usr/share/iqfiles");
+            struct dirent *entry;
+            size_t used = 0;
+
+            if (dir) {
+                while ((entry = readdir(dir)) && sceneCount + fileCount < 32) {
+                    if (entry->d_name[0] == '.') continue;
+                    if (entry->d_type == DT_DIR && sceneCount < 8) {
+                        used += snprintf(scenes + used, sizeof(scenes) - used,
+                            "%s\"%s\"", sceneCount ? "," : "", entry->d_name);
+                        sceneCount++;
+                    } else if ((strstr(entry->d_name, ".xml") ||
+                        strstr(entry->d_name, ".json")) && fileCount < 16) {
+                        used = strlen(files);
+                        used += snprintf(files + used, sizeof(files) - used,
+                            "%s\"%s\"", fileCount ? "," : "", entry->d_name);
+                        fileCount++;
+                    }
+                }
+                closedir(dir);
+            }
+
+            respLen = sprintf(response,
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: application/json;charset=UTF-8\r\n"
+                "Connection: close\r\n"
+                "\r\n"
+                "{\"main_scene\":\"%s\",\"sub_scene\":\"%s\",\"file\":\"%s\","
+                "\"scenes\":[%s],\"files\":[%s]}",
+                app_config.iq_main_scene, app_config.iq_sub_scene,
+                app_config.iq_file, scenes, files);
+            send_and_close(req->clntFd, response, respLen);
+            return;
+        }
+    }
+
+    if (EQUALS(req->uri, "/api/hdr")) {
+        int restart = 0, applyRestart = 0;
+        unsigned int oldMode = app_config.hdr_mode;
+        if (req->query) {
+            while (req->query) {
+                char *value = split(&req->query, "&");
+                if (!value || !*value) continue;
+                unescape_uri(value);
+                char *key = split(&value, "=");
+                if (!key || !*key || !value || !*value) continue;
+                if (EQUALS(key, "mode")) {
+                    unsigned int mode = 0;
+                    if (EQUALS_CASE(value, "hdr2")) mode = 1;
+                    else if (EQUALS_CASE(value, "hdr3")) mode = 2;
+                    if (mode != 0) {
+                        gating_result gate = gating_check("hdr");
+                        if (!gate.ok) { gating_block(req, gate); return; }
+                    }
+                    app_config.hdr_mode = mode;
+                } else if (EQUALS(key, "apply")) {
+                    if (EQUALS_CASE(value, "restart")) {
+                        app_config.hdr_apply = 2;
+                        applyRestart = 1;
+                    } else if (EQUALS_CASE(value, "dyn")) {
+                        app_config.hdr_apply = 1;
+                    } else {
+                        app_config.hdr_apply = 0;
+                    }
+                }
+            }
+            restart = applyRestart || app_config.hdr_mode != oldMode;
+        }
+
+        respLen = sprintf(response,
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: application/json;charset=UTF-8\r\n"
+            "Connection: close\r\n"
+            "\r\n"
+            "{\"mode\":\"%s\",\"apply\":\"%s\",\"note\":\"HDR is applied by restarting the application\"}",
+            app_config.hdr_mode == 1 ? "hdr2" : (app_config.hdr_mode == 2 ? "hdr3" : "normal"),
+            app_config.hdr_apply == 2 ? "restart" :
+                (app_config.hdr_apply == 1 ? "dyn" : "auto"));
+        send_and_close(req->clntFd, response, respLen);
+        if (restart) {
+            /* The mode is part of the AIQ prepare call, so persist it before
+             * the graceful restart re-reads divinus.yaml. */
+            app_config_save();
+            kill(getpid(), SIGHUP);
+        }
+        return;
+    }
+
+    if (EQUALS(req->uri, "/api/streams")) {
+        int mainChn = rtspHandle ? rtsp_get_stream_channel(rtspHandle, 0) : -1;
+        int subChn = rtspHandle ? rtsp_get_stream_channel(rtspHandle, 1) : -1;
+        int subEnabled = app_config.substream_enable && subChn >= 0;
+        int connections = rtspHandle ? rtsp_get_connection_count(rtspHandle) : 0;
+        const char *mainCodec = "none", *subCodec = "none";
+
+        if (mainChn >= 0)
+            mainCodec = app_config.mp4_codecH265 ? "H.265" : "H.264";
+        if (subChn >= 0)
+            subCodec = app_config.substream_codecH265 ? "H.265" : "H.264";
+
+        respLen = sprintf(response,
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: application/json;charset=UTF-8\r\n"
+            "Connection: close\r\n"
+            "\r\n"
+            "{\"connections\":%d,\"max_connections\":%d,\"streams\":["
+            "{\"id\":0,\"path\":\"/live/0\",\"channel\":%d,\"codec\":\"%s\",\"enabled\":%s},"
+            "{\"id\":1,\"path\":\"%s\",\"channel\":%d,\"codec\":\"%s\",\"enabled\":%s}]}",
+            connections, RTSP_MAXIMUM_CONNECTIONS,
+            mainChn, mainCodec, mainChn >= 0 ? "true" : "false",
+            app_config.substream_path, subChn, subCodec,
+            subEnabled ? "true" : "false");
+        send_and_close(req->clntFd, response, respLen);
+        return;
+    }
+
+    if (EQUALS(req->uri, "/api/network")) {
+        char mode[8] = "", ipaddr[16] = "", netmask[16] = "";
+        char gateway[16] = "", dns[16] = "";
+        bool haveMode = false;
+        char fieldMode[8] = "dhcp", fieldIp[16] = "", fieldMask[16] = "";
+        char fieldGateway[16] = "", fieldDns[16] = "", fieldMac[18] = "";
+        char currentIp[16] = "", currentMac[18] = "", dhcpRunning[8] = "false";
+        char commandOut[1024];
+
+        if (req->query) {
+            while (req->query) {
+                char *value = split(&req->query, "&");
+                if (!value || !*value) continue;
+                unescape_uri(value);
+                char *key = split(&value, "=");
+                if (!key || !*key || !value) continue;
+                if (EQUALS(key, "mode")) {
+                    snprintf(mode, sizeof(mode), "%s", value);
+                    haveMode = true;
+                } else if (EQUALS(key, "ipaddr")) {
+                    snprintf(ipaddr, sizeof(ipaddr), "%s", value);
+                } else if (EQUALS(key, "netmask")) {
+                    snprintf(netmask, sizeof(netmask), "%s", value);
+                } else if (EQUALS(key, "gateway")) {
+                    snprintf(gateway, sizeof(gateway), "%s", value);
+                } else if (EQUALS(key, "dns")) {
+                    snprintf(dns, sizeof(dns), "%s", value);
+                }
+            }
+        }
+
+        if (haveMode) {
+            const char *error = NULL;
+            if (strcmp(mode, "dhcp") && strcmp(mode, "static")) {
+                error = "mode must be dhcp or static";
+            } else if (!strcmp(mode, "static") &&
+                (!valid_ipv4(ipaddr) || !valid_ipv4(netmask))) {
+                error = "static mode requires a valid IPv4 address and netmask";
+            } else if (*gateway && !valid_ipv4(gateway)) {
+                error = "invalid gateway address";
+            } else if (*dns && !valid_ipv4(dns)) {
+                error = "invalid DNS address";
+            }
+
+            if (error) {
+                char errorResponse[320];
+                int errorLen = sprintf(errorResponse,
+                    "HTTP/1.1 200 OK\r\n"
+                    "Content-Type: application/json;charset=UTF-8\r\n"
+                    "Connection: close\r\n"
+                    "\r\n"
+                    "{\"error\":\"blocked\",\"reason\":\"%s\"}", error);
+                send_and_close(req->clntFd, errorResponse, errorLen);
+                return;
+            }
+
+            snprintf(commandOut, sizeof(commandOut),
+                "/usr/bin/oko-net set '%s' '%s' '%s' '%s' '%s'",
+                mode, ipaddr, netmask, gateway, dns);
+            if (system(commandOut) != 0) {
+                char errorResponse[320];
+                int errorLen = sprintf(errorResponse,
+                    "HTTP/1.1 200 OK\r\n"
+                    "Content-Type: application/json;charset=UTF-8\r\n"
+                    "Connection: close\r\n"
+                    "\r\n"
+                    "{\"error\":\"failed\",\"reason\":\""
+                    "cannot write the U-Boot environment\"}");
+                send_and_close(req->clntFd, errorResponse, errorLen);
+                return;
+            }
+        }
+
+        if (capture_command("/usr/bin/oko-net env", commandOut,
+                sizeof(commandOut)) == 0) {
+            char *line = strtok(commandOut, "\n");
+            while (line) {
+                char *value = strchr(line, '=');
+                if (value) {
+                    *value++ = '\0';
+                    if (!strcmp(line, "mode"))
+                        snprintf(fieldMode, sizeof(fieldMode), "%s", value);
+                    else if (!strcmp(line, "ipaddr"))
+                        snprintf(fieldIp, sizeof(fieldIp), "%s", value);
+                    else if (!strcmp(line, "netmask"))
+                        snprintf(fieldMask, sizeof(fieldMask), "%s", value);
+                    else if (!strcmp(line, "gateway"))
+                        snprintf(fieldGateway, sizeof(fieldGateway), "%s", value);
+                    else if (!strcmp(line, "dns"))
+                        snprintf(fieldDns, sizeof(fieldDns), "%s", value);
+                    else if (!strcmp(line, "mac"))
+                        snprintf(fieldMac, sizeof(fieldMac), "%s", value);
+                    else if (!strcmp(line, "current_ip"))
+                        snprintf(currentIp, sizeof(currentIp), "%s", value);
+                    else if (!strcmp(line, "current_mac"))
+                        snprintf(currentMac, sizeof(currentMac), "%s", value);
+                    else if (!strcmp(line, "dhcp_running"))
+                        snprintf(dhcpRunning, sizeof(dhcpRunning), "%s", value);
+                }
+                line = strtok(NULL, "\n");
+            }
+        }
+
+        respLen = sprintf(response,
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: application/json;charset=UTF-8\r\n"
+            "Connection: close\r\n"
+            "\r\n"
+            "{\"mode\":\"%s\",\"ipaddr\":\"%s\",\"netmask\":\"%s\","
+            "\"gateway\":\"%s\",\"dns\":\"%s\",\"mac\":\"%s\","
+            "\"current_ip\":\"%s\",\"current_mac\":\"%s\","
+            "\"dhcp_running\":%s}",
+            fieldMode, fieldIp, fieldMask, fieldGateway, fieldDns, fieldMac,
+            currentIp, currentMac, dhcpRunning);
+        send_and_close(req->clntFd, response, respLen);
+
+        /* The static IP change can drop this TCP connection; apply after the
+         * response has been sent. */
+        if (haveMode)
+            system("(sleep 1; /usr/bin/oko-net apply) >/dev/null 2>&1 &");
+        return;
+    }
+
+if (EQUALS(req->uri, "/api/storage")) {
+        unsigned long long total = 0, freeBytes = 0;
+        char action[16] = "";
+        char formatFs[16] = "fat32";
+        char confirm[16] = "";
+        char requestToken[64] = "";
+        char device[64] = "";
+        char stateFs[16] = "";
+        const char *error = NULL, *reason = NULL, *hint = NULL;
+        bool formatted = false;
+        bool supported = storage_format_supported();
+        bool mounted;
+        bool space;
+
+        if (req->query) {
+            while (req->query) {
+                char *value = split(&req->query, "&");
+                if (!value || !*value) continue;
+                unescape_uri(value);
+                char *key = split(&value, "=");
+                if (!key || !*key || !value || !*value) continue;
+                if (EQUALS(key, "action"))
+                    snprintf(action, sizeof(action), "%s", value);
+                else if (EQUALS(key, "fs"))
+                    snprintf(formatFs, sizeof(formatFs), "%s", value);
+                else if (EQUALS(key, "confirm"))
+                    snprintf(confirm, sizeof(confirm), "%s", value);
+                else if (EQUALS(key, "token"))
+                    snprintf(requestToken, sizeof(requestToken), "%s", value);
+            }
+        }
+
+        if (action[0]) {
+            if (EQUALS(action, "format")) {
+                if (!supported) {
+                    error = "blocked";
+                    reason = "format tools are missing from the image";
+                    hint = "rebuild rootfs with util-linux (sfdisk, wipefs)";
+                } else if (!EQUALS(confirm, "FORMAT") ||
+                    strcmp(requestToken, storage_token_get())) {
+                    error = "blocked";
+                    reason = "format confirmation or token is invalid";
+                    hint = "reload the Storage section and try again";
+                } else if (!EQUALS(formatFs, "fat32")) {
+                    error = "blocked";
+                    reason = "only FAT32 formatting is supported";
+                    hint = "use fs=fat32";
+                } else if (record_active()) {
+                    error = "blocked";
+                    reason = "stop recording first";
+                    hint = "the microSD cannot be formatted while recording";
+                } else {
+                    int rc;
+
+                    /* Close the start=1 race: record_open_locked() refuses to
+                     * open a segment while storageBusy is set. */
+                    storageBusy = 1;
+                    if (record_active()) {
+                        storageBusy = 0;
+                        error = "blocked";
+                        reason = "stop recording first";
+                        hint = "the microSD cannot be formatted while recording";
+                    } else {
+                        rc = system("/usr/bin/oko-sdcard format fat32");
+                        storageBusy = 0;
+                        if (rc != 0) {
+                            error = "failed";
+                            reason = "microSD format failed";
+                            hint = "check /tmp/oko-sdcard.log";
+                        } else {
+                            formatted = true;
+                            storage_token_generate();
+                        }
+                    }
+                }
+            } else if (EQUALS(action, "mount")) {
+                int rc = system("/usr/bin/oko-sdcard mount");
+                if (rc != 0) {
+                    error = "failed";
+                    reason = "microSD mount failed";
+                    hint = "insert a FAT32/exFAT/ext4 card and check /tmp/oko-sdcard.log";
+                }
+            } else if (EQUALS(action, "unmount")) {
+                if (strcmp(requestToken, storage_token_get())) {
+                    error = "blocked";
+                    reason = "unmount token is invalid";
+                    hint = "reload the Storage section and try again";
+                } else if (record_active()) {
+                    error = "blocked";
+                    reason = "stop recording first";
+                    hint = "the microSD cannot be unmounted while recording";
+                } else {
+                    int rc;
+
+                    storageBusy = 1;
+                    if (record_active()) {
+                        storageBusy = 0;
+                        error = "blocked";
+                        reason = "stop recording first";
+                        hint = "the microSD cannot be unmounted while recording";
+                    } else {
+                        rc = system("/usr/bin/oko-sdcard unmount");
+                        storageBusy = 0;
+                        if (rc != 0) {
+                            error = "failed";
+                            reason = "microSD unmount failed";
+                            hint = "check /tmp/oko-sdcard.log";
+                        }
+                    }
+                }
+            } else {
+                error = "blocked";
+                reason = "unknown storage action";
+                hint = "use format, mount or unmount";
+            }
+        }
+
+        if (error) {
+            char errorResponse[640];
+            int errorLen = sprintf(errorResponse,
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: application/json;charset=UTF-8\r\n"
+                "Connection: close\r\n"
+                "\r\n"
+                "{\"error\":\"%s\",\"reason\":\"%s\",\"hint\":\"%s\"}",
+                error, reason ? reason : "", hint ? hint : "");
+            send_and_close(req->clntFd, errorResponse, errorLen);
+            return;
+        }
+
+        storage_read_state(device, sizeof(device), stateFs, sizeof(stateFs));
+        mounted = gating_sd_mounted();
+        space = gating_sd_space(&total, &freeBytes);
+
+        respLen = sprintf(response,
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: application/json;charset=UTF-8\r\n"
+            "Connection: close\r\n"
+            "\r\n"
+            "{\"formatted\":%s,\"action\":\"%s\","
+            "\"sd_mounted\":%s,\"total_mb\":%llu,\"free_mb\":%llu,"
+            "\"path\":\"%s\",\"max_bytes\":%llu,\"min_free_mb\":%d,"
+            "\"recording\":%s,\"blocked\":%s,\"reason\":\"%s\","
+            "\"device\":\"%s\",\"fs\":\"%s\","
+            "\"format_supported\":%s,\"format_busy\":%s,"
+            "\"format_token\":\"%s\"}",
+            formatted ? "true" : "false", action,
+            mounted ? "true" : "false",
+            space ? total / (1024 * 1024) : 0,
+            space ? freeBytes / (1024 * 1024) : 0,
+            app_config.record_path, app_config.record_max_bytes,
+            app_config.record_min_free_mb,
+            record_active() ? "true" : "false",
+            mounted ? "false" : "true",
+            mounted ? "" : "recording requires a mounted microSD card",
+            device, stateFs,
+            supported ? "true" : "false",
+            (record_active() || storageBusy) ? "true" : "false",
+            storage_token_get());
         send_and_close(req->clntFd, response, respLen);
         return;
     }
@@ -1554,9 +2637,18 @@ void respond_request(http_request_t *req) {
             "Connection: close\r\n"
             "\r\n"
             "{\"chip\":\"%s\",\"loadavg\":[%.2f,%.2f,%.2f],\"memory\":\"%s\","
-            "\"sensor\":\"%s\",\"temp\":\"%.1f\u00B0C\",\"uptime\":\"%s\"}",
+            "\"sensor\":\"%s\",\"temp\":\"%.1f\u00B0C\",\"uptime\":\"%s\","
+            "\"features\":{\"eptz\":%s,\"rotate\":%s,\"substream\":%s,"
+            "\"aiisp\":%s,\"ivs\":%s,\"hdr\":%s,\"sd\":%s}}",
             chip, si.loads[0] / 65536.0, si.loads[1] / 65536.0, si.loads[2] / 65536.0,
-            memory, sensor, hal_temperature_read(), uptime);
+            memory, sensor, hal_temperature_read(), uptime,
+            (halCapabilities & HAL_CAP_EPTZ) ? "true" : "false",
+            (halCapabilities & HAL_CAP_ROTATE) ? "true" : "false",
+            app_config.substream_enable ? "true" : "false",
+            (halCapabilities & HAL_CAP_AIISP) ? "true" : "false",
+            (halCapabilities & HAL_CAP_IVS) ? "true" : "false",
+            app_config.hdr_mode ? "true" : "false",
+            gating_sd_mounted() ? "true" : "false");
         send_and_close(req->clntFd, response, respLen);
         return;
     }
