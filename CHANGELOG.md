@@ -26,6 +26,16 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Добавлено
 
+- `FEATURES.md` в корне: сводка поддерживаемого функционала — платформа и состав
+  образа, видео/стриминг и статусы гейтов, WebUI/API, сеть, `oko-ec`, microSD,
+  известные ограничения и команды проверки; продублировано краткой
+  English-сводкой. Ссылки добавлены в `README_RU.md`, `STRUCTURE.md` и
+  `AGENTS.md`.
+- `FEATURES.md` in the repository root: a summary of supported functionality —
+  platform and image contents, video/streaming and gate statuses, WebUI/API,
+  networking, `oko-ec`, microSD, known limitations and verification commands,
+  with a short English digest. Links added to `README_RU.md`, `STRUCTURE.md`
+  and `AGENTS.md`.
 - I2C3-M1 переведён на 100 кГц (`clock-frequency = <100000>`) в активном
   `rv1106g-luckfox-pico-pro-max-sc230ai.dts`; устройства SHT21/INA3221/
   STM32 ACPI-EC на `/dev/i2c-3` работают на этой скорости.
