@@ -61,13 +61,24 @@
   `component` (общие компоненты).
 - `app/divinus/` — пакет `divinus`: `source/` (вендорские `src/`, `res/`, `doc/`,
   лицензии, пин коммита и локальные патчи — `compat.c` (ABI `mmap`), `region.c`
-  (`@file`-провайдер текста OSD), `hal/plus/rk_hal.c`/`rk_rgn.h` (RGN OSD на
-  RV1106) и OKO-модуль `ntp.c` (NTP-клиент WebUI); переработанный WebUI —
+  (`@file`-провайдер текста OSD), `hal/plus/rk_hal.c`/`rk_rgn.h`/
+  `rk_rgn_pack.c`/`rk_rgn_pack.h` (RGN OSD на RV1106: canvas-обновление с
+  fallback на `SetBitmap`, `SetDisplayAttr`, упаковка `ARGB1555 → BGRA5551`),
+  OKO-модуль `ntp.c` (NTP-клиент WebUI) и NPU-аналитика:
+  `analytics/yolo.c` (тред детекции, кольцо кадров, событие),
+  `analytics/yolo_postprocess.c` (декод YOLOv5 и NMS),
+  `analytics/models.c` (модели в `/userdata/models`), `hal/plus/rk_rknn.h`
+  (`dlopen` `librknnmrt.so`); NV12→RGB888 считается на CPU в `yolo.c`;
+  переработанный WebUI —
   `res/index.html` + `doc/WEBUI_REORG.md`; описание патчей — в `README.md`),
   `files/divinus.yaml` (фабричный
   конфиг с OSD-регионами), `Makefile` (кросс-сборка и стейджинг в
   `/oem/usr/bin` и `/oem/usr/share/divinus`), `tests/bmp_align_test.c`
-  (хостовый тест выравнивания растра OSD, в сборку не входит). Сборка входит в
+  (хостовый тест выравнивания растра OSD, в сборку не входит),
+  `tests/rk_rgn_pack_test.c` (хостовый тест упаковки `ARGB1555 → BGRA5551`,
+  в сборку не входит) и
+  `tests/yolo_postprocess_test.c` (хостовый тест декода/NMS, в сборку не
+  входит). Сборка входит в
   общий цикл `project/app/Makefile`.
 - `app/oko-ec/` — пакет `oko-ec`: `source/` (вендоренный хостовый инструмент
   `spectrespc/stm32_acpi-ec` на пине `41728ddaf6936d49a5fb65676ca5203dd631b4f6`

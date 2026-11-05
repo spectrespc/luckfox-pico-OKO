@@ -102,7 +102,12 @@ typedef struct {
     int dstFps;
     rk_vi_buf bufType;
     rk_vi_oisp ispOpts;
-    int shrChn;
+    /* MPP_CHN_S: source channel for VI_ALLOC_BUF_TYPE_CHN_SHARE. */
+    struct {
+        int modId;
+        int devId;
+        int chnId;
+    } shrChn;
 } rk_vi_chn;
 
 typedef struct {
@@ -142,7 +147,10 @@ typedef struct {
 
     int (*fnDisableChannel)(int pipe, int channel);
     int (*fnEnableChannel)(int pipe, int channel);
+    int (*fnGetChnFrame)(int pipe, int channel, rk_common_frame_info *frame,
+        int timeoutMs);
     int (*fnSetChannelConfig)(int pipe, int channel, rk_vi_chn *config);
+    int (*fnReleaseChnFrame)(int pipe, int channel, const rk_common_frame_info *frame);
 
     int (*fnBindPipe)(int device, rk_vi_bind *config);
     int (*fnCreatePipe)(int pipe, rk_vi_pipe *config);
@@ -181,6 +189,16 @@ static int rk_vi_load(rk_vi_impl *vi_lib) {
 
     if (!(vi_lib->fnSetChannelConfig = (int(*)(int pipe, int channel, rk_vi_chn *config))
         hal_symbol_load("rk_vi", vi_lib->handle, "RK_MPI_VI_SetChnAttr")))
+        return EXIT_FAILURE;
+
+    if (!(vi_lib->fnGetChnFrame = (int(*)(int pipe, int channel,
+            rk_common_frame_info *frame, int timeoutMs))
+        hal_symbol_load("rk_vi", vi_lib->handle, "RK_MPI_VI_GetChnFrame")))
+        return EXIT_FAILURE;
+
+    if (!(vi_lib->fnReleaseChnFrame = (int(*)(int pipe, int channel,
+            const rk_common_frame_info *frame))
+        hal_symbol_load("rk_vi", vi_lib->handle, "RK_MPI_VI_ReleaseChnFrame")))
         return EXIT_FAILURE;
 
 

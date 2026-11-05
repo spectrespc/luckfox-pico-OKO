@@ -72,6 +72,10 @@ typedef struct {
 
     int (*fnDisableChannel)(int group, int channel);
     int (*fnEnableChannel)(int group, int channel);
+    int (*fnGetChnFrame)(int group, int channel, rk_common_frame_info *frame,
+        int timeoutMs);
+    int (*fnReleaseChnFrame)(int group, int channel,
+        const rk_common_frame_info *frame);
     int (*fnSetChannelConfig)(int group, int channel, rk_vpss_chn *config);
 
     /* Optional on RV1106: absent symbols are tolerated and reported by the
@@ -126,6 +130,16 @@ static int rk_vpss_load(rk_vpss_impl *vpss_lib) {
 
     if (!(vpss_lib->fnSetChannelConfig = (int(*)(int group, int channel, rk_vpss_chn *config))
         hal_symbol_load("rk_vpss", vpss_lib->handle, "RK_MPI_VPSS_SetChnAttr")))
+        return EXIT_FAILURE;
+
+    if (!(vpss_lib->fnGetChnFrame = (int(*)(int group, int channel,
+            rk_common_frame_info *frame, int timeoutMs))
+        hal_symbol_load("rk_vpss", vpss_lib->handle, "RK_MPI_VPSS_GetChnFrame")))
+        return EXIT_FAILURE;
+
+    if (!(vpss_lib->fnReleaseChnFrame = (int(*)(int group, int channel,
+            const rk_common_frame_info *frame))
+        hal_symbol_load("rk_vpss", vpss_lib->handle, "RK_MPI_VPSS_ReleaseChnFrame")))
         return EXIT_FAILURE;
 
     vpss_lib->fnSetChnCrop = (int(*)(int, int, const rk_vpss_crop*))

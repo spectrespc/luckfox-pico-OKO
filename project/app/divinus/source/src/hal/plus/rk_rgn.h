@@ -29,6 +29,23 @@ typedef struct {
     void *data;
 } rk_rgn_bmp;
 
+/* OKO: mirror of the vendor RGN_CANVAS_INFO_S from rk_comm_rgn.h.  librockit
+ * writes the whole structure through the pointer, so the field order and
+ * types must match exactly. */
+typedef struct {
+    void *canvasBlk;                /* MB_BLK */
+    unsigned long long virAddr;     /* RK_U64 */
+    rk_common_dim size;             /* SIZE_S */
+    unsigned int virWidth;          /* RK_U32 */
+    unsigned int virHeight;         /* RK_U32 */
+    rk_common_pixfmt pixFmt;        /* PIXEL_FORMAT_E */
+} rk_rgn_canvas;
+
+/* OKO: RK_NOTICE_RGN_BUFFER_CHANGE from the vendor rk_comm_rgn.h.  It is a
+ * notice, not an error: the canvas mapping must be fetched again.  The value
+ * is RK_DEF_ERR(RK_ID_RGN=3, RK_ERR_LEVEL_NOTICE=2, RK_SUCCESS=0). */
+#define RK_NOTICE_RGN_BUFFER_CHANGE ((int)0xA0034000u)
+
 typedef struct {
     rk_common_pnt point;
     unsigned int fgAlpha;
@@ -106,6 +123,11 @@ typedef struct {
     int (*fnSetChannelConfig)(unsigned int handle, rk_sys_bind *dest, rk_rgn_chn *config);
 
     int (*fnSetBitmap)(unsigned int handle, rk_rgn_bmp *bitmap);
+
+    /* OKO: optional canvas interface used for cheap OSD updates.  When the
+     * symbols are missing both pointers stay NULL and SetBitmap is used. */
+    int (*fnGetCanvasInfo)(unsigned int handle, rk_rgn_canvas *info);
+    int (*fnUpdateCanvas)(unsigned int handle);
 } rk_rgn_impl;
 
 static int rk_rgn_load(rk_rgn_impl *rgn_lib) {
@@ -147,6 +169,14 @@ static int rk_rgn_load(rk_rgn_impl *rgn_lib) {
     if (!(rgn_lib->fnSetBitmap = (int(*)(unsigned int handle, rk_rgn_bmp *bitmap))
         hal_symbol_load("rk_rgn", rgn_lib->handle, "RK_MPI_RGN_SetBitMap")))
         return EXIT_FAILURE;
+
+    /* OKO: the canvas interface is optional.  A missing symbol only disables
+     * the canvas update path; rk_region_setbitmap() falls back to SetBitmap.
+     * hal_symbol_load() already logs the missing name. */
+    rgn_lib->fnGetCanvasInfo = (int(*)(unsigned int handle, rk_rgn_canvas *info))
+        hal_symbol_load("rk_rgn", rgn_lib->handle, "RK_MPI_RGN_GetCanvasInfo");
+    rgn_lib->fnUpdateCanvas = (int(*)(unsigned int handle))
+        hal_symbol_load("rk_rgn", rgn_lib->handle, "RK_MPI_RGN_UpdateCanvas");
 
     return EXIT_SUCCESS;
 }

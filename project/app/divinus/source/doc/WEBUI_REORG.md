@@ -81,7 +81,7 @@ System**. Мобильная раскладка (<40em) превращает sid
 | Live | `/api/record` (пуск/стоп), `/api/eptz`, `/api/rotate`, `/api/ivs` (журнал), `/api/telemetry` |
 | Image | `/api/isp`, `/api/night`, `/api/aiisp`, `/api/hdr`, `/api/iq` |
 | Streams | `/api/mp4`, `/api/substream`, `/api/mjpeg`, `/api/jpeg`, `/api/audio`, `/api/venc`, `/api/rtsp`, `/api/onvif`, `/api/streams` |
-| Events | `/api/ivs` (настройки и журнал) |
+| Events | `/api/ivs` (настройки и журнал), `/api/yolo` (NPU-детекция), `/api/models` (список, загрузка, активация, удаление) |
 | Storage | `/api/storage`, `/api/record`, `/api/recordings`, `/api/recordings/file`, `/api/recordings/delete` |
 | Network | `/api/network`, `/api/time` (`ntp`, `ntp_server`) |
 | OSD | `/api/osd/{0..9}` (текст или картинка) |

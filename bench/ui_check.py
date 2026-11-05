@@ -61,6 +61,54 @@ def main():
             page.screenshot(path=os.path.join(SHOTS, "%s.png" % sec), full_page=True)
             print("section %-8s visible=%s" % (sec, visible))
 
+        # Events: the NPU settings card and the model table are rendered.
+        page.click('#sidebar button[data-sec="events"]')
+        page.wait_for_timeout(1500)
+        if not page.is_visible("#yolo_enable"):
+            failures.append("YOLO settings card is missing in Events")
+        options = page.eval_on_selector_all("#yolo_source option",
+            "els => els.map(e => e.value)")
+        print("yolo source options:", options)
+        if "vi1" in options:
+            failures.append("the UI still offers yolo.source=vi1")
+        if page.locator("#models_table").count() == 0:
+            failures.append("model table is missing in Events")
+        else:
+            print("models table text:", page.inner_text("#models_table")[:100].replace("\n", " "))
+        page.screenshot(path=os.path.join(SHOTS, "events-models.png"), full_page=True)
+
+        # Model upload/activate/delete through the UI.  The synthetic file is
+        # stored but cannot be loaded by rknn_init: the error toast must show
+        # the server reason and the row must still be deletable.
+        fake = os.path.join(SHOTS, "ui-test.rknn")
+        with open(fake, "wb") as fh:
+            fh.write(b"not a real rknn model" * 64)
+        page.set_input_files("#model_file", fake)
+        page.click("button[onclick='uploadModel()']")
+        page.wait_for_timeout(1800)
+        table = page.inner_text("#models_table")
+        if "ui-test.rknn" not in table:
+            failures.append("model upload through the UI did not list ui-test.rknn")
+        row = page.locator("#models_table div").filter(has_text="ui-test.rknn").first
+        if row.count():
+            row.locator("button").first.click()
+            page.wait_for_timeout(1800)
+            toast = page.inner_text("#toasts") if page.locator("#toasts .toast").count() else ""
+            print("activation error toast:", toast.replace("\n", " ")[:100])
+            if "rknn_init failed" not in toast:
+                failures.append("activation error toast is missing the rknn_init reason")
+            page.once("dialog", lambda dialog: dialog.accept())
+            row = page.locator("#models_table div").filter(has_text="ui-test.rknn").first
+            if row.count():
+                row.locator("button").nth(1).click()
+                page.wait_for_timeout(1500)
+            if "ui-test.rknn" in page.inner_text("#models_table"):
+                failures.append("model delete through the UI did not remove ui-test.rknn")
+        else:
+            failures.append("uploaded model row is missing")
+        os.unlink(fake)
+        page.screenshot(path=os.path.join(SHOTS, "events-models.png"), full_page=True)
+
         # Telemetry renders tiles when the daemon writes fresh data.
         page.click('#sidebar button[data-sec="live"]')
         page.wait_for_timeout(2500)

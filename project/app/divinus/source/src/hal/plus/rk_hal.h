@@ -6,6 +6,7 @@
 #include "rk_ivs.h"
 #include "rk_mb.h"
 #include "rk_rgn.h"
+#include "rk_rknn.h"
 #include "rk_sys.h"
 #include "rk_venc.h"
 #include "rk_vi.h"
@@ -23,6 +24,29 @@
 extern hal_chnstate rk_state[RK_VENC_CHN_NUM];
 extern int (*rk_aud_cb)(hal_audframe*);
 extern int (*rk_vid_cb)(char, hal_vidstream*);
+extern rk_mb_impl rk_mb;
+extern rk_rknn_impl rk_rknn;
+
+/* YOLO frame source: the capture thread pulls NV12 frames from the channel
+ * selected by yolo.source.  VI chn1 (selfpath) is the default; VPSS chn3 is
+ * the AIISP-processed alternative and VI chn0 is the emergency fallback. */
+typedef enum {
+    RK_YOLO_SRC_VI1 = 0,
+    RK_YOLO_SRC_VPSS3 = 1,
+    RK_YOLO_SRC_VI0 = 2
+} rk_yolo_source;
+
+int rk_yolo_source_open(rk_yolo_source source, short width, short height);
+int rk_yolo_source_frame(rk_common_frame_info *frame, int timeoutMs);
+void rk_yolo_source_release(rk_common_frame_info *frame);
+void rk_yolo_source_close(void);
+
+/* Dedicated JPEG encoder used for event frames.  It is not bound to a VPSS
+ * channel: buffered NV12 frames are pushed with RK_MPI_VENC_SendFrame, which
+ * keeps the OSD/region path of the streaming channels untouched. */
+int rk_yolo_jpeg_open(short width, short height, int qfactor);
+int rk_yolo_jpeg_encode(const void *nv12, hal_jpegdata *jpeg);
+void rk_yolo_jpeg_close(void);
 
 void rk_hal_deinit(void);
 int rk_hal_init(void);

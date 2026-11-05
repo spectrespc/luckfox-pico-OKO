@@ -404,6 +404,8 @@ typedef struct {
     int (*fnRequestIdr)(int channel, int instant);
     int (*fnStartReceivingEx)(int channel, int *count);
     int (*fnStopReceiving)(int channel);
+    int (*fnSendFrame)(int channel, const rk_common_frame_info *frame,
+        int timeoutMs);
 
     /* Optional RV1106 extensions, resolved with dlsym so an older librockit
      * only disables the corresponding feature. */
@@ -493,6 +495,11 @@ static int rk_venc_load(rk_venc_impl *venc_lib) {
 
     if (!(venc_lib->fnStopReceiving = (int(*)(int channel))
         hal_symbol_load("rk_venc", venc_lib->handle, "RK_MPI_VENC_StopRecvFrame")))
+        return EXIT_FAILURE;
+
+    if (!(venc_lib->fnSendFrame = (int(*)(int channel,
+            const rk_common_frame_info *frame, int timeoutMs))
+        hal_symbol_load("rk_venc", venc_lib->handle, "RK_MPI_VENC_SendFrame")))
         return EXIT_FAILURE;
 
     venc_lib->fnEnableSvc = (int(*)(int, int))

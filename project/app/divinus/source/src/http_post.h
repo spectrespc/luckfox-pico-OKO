@@ -15,5 +15,9 @@
 #include "jpeg.h"
 
 int http_post_send(hal_jpegdata *jpeg);
+/* Sends one frame of an event package with the X-Event-* headers. */
+int http_post_event(hal_jpegdata *jpeg, const char *eventId, int index,
+    int total, unsigned long long timestampMs, const char *cause,
+    const char *model);
 void http_post_start();
 void http_post_stop();

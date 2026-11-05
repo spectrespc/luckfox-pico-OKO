@@ -13,7 +13,7 @@
 | Прошивка | `output/image/update.img`, полная прошивка SPI NAND |
 | Стенд | `192.168.52.97` (DHCP, SSH), UART `/dev/ttyACM0` 115200 |
 | Методы | SSH, RTSP (PyAV), HTTP API (`curl`, `bench/api_check.py`), WebUI (`bench/ui_check.py`, headless Chromium), скриншоты в `output/bench/ui/` |
-| Примечание | Проверки WebUI/API 2026-11-05 выполнены на бинарнике из `output/image/oem.img` (md5 совпадает), установленном в `/oem/usr/bin` по SSH; покомпонентная прошивка `oem.img` не выполнялась — `reboot loader` не перевёл DUT в Maskrom (см. `TESTBENCH.md` §7B) |
+| Примечание | 2026-11-05 выполнен полный `./rkflash.sh update` образа с разметкой `userdata` 40 МБ / `rootfs` 168 МБ; вход в Maskrom — `download` из U-Boot по UART (см. `TESTBENCH.md` §7A) |
 | Сборка | Docker, активный BoardConfig `BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI.mk` |
 
 ## 2. Функции
@@ -27,13 +27,16 @@
 | SVC, motion deblur, QP live | работает | `GET /api/venc?svc=true&motion_deblur=true&min_qp=20&max_qp=45`; поток hevc 1920x1080, 30 кадров без рестарта | Параметры действуют на работающий канал |
 | SmartP после рестарта | не перепроверялся в этой прошивке | Ранее проверялось: `GET /api/venc?smartp=true`, рестарт, меняется GOP | Применяется только при следующем старте |
 | AIISP с моделью | работает | В образе есть `rkmodel_1080_1920.aiisp` и `librkpostisp.so`; `GET /api/aiisp?enable=on` → `enable=on`, в `/proc/<pid>/maps` загружен `librkpostisp.so`, открыт `/dev/mpi/aiisp`, поток hevc 1920x1080 декодируется | Нужен `rkmodel_1080_1920.aiisp`; несовместим с HDR |
+| YOLO (NPU) | работает (`vpss3`; `vi1` отклоняется) | 2026-11-05, YOLOv5n 640×640, 3 fps: NPU 28–33%; событие = 6 JPEG 640×640 с `X-Event-*` (42 кадра на приёмнике), `/api/yolo` live enable/disable (NPU 0↔33%), `/api/models` upload/hash/activate-rollback/delete, `api_check.py` 80/80 (включая HTTP 400 для `source=vi1` и `bogus`), RTSP/OSD 20 кадров без регрессии; лог атрибутов: `input 640x640 NHWC stride 640 px, 3 4D outputs` | `vi1` (selfpath) вешает плату и отклоняется `gating.c`/API/UI; модель обязана быть INT8 `.rknn` 1.6.0, 4D-NHWC и совпадать с `yolo.input_*`; librga непригодна — CPU-конверсия ~28% ядра на 3 fps; браузерный `ui_check` проходит |
+| Разметка `userdata`/`rootfs` | работает | 2026-11-05: `/proc/cmdline` и `/proc/mtd` показывают `40M(userdata),168M(rootfs)`; `df -h /userdata` — 29.1 МиБ, `ubi5_0/data_bytes` = 35045376; загрузка `.rknn` ровно 3 МиБ через `/api/models` → HTTP 200, затем delete | Нужна полная прошивка `update.img`; `userdata` пересоздаётся |
 | IVS MD: старт/стоп | работает | `GET /api/ivs?enable=true&mode=md`, затем `enable=false`; `/api/ivs` отвечает, процесс не падает | Событие движения на статичной сцене не наблюдалось — детекция ограничена сценой/настройками |
 | OSD main + IVS + AIISP | работает (ранее) | OSD-регионы видны в RTSP main; в текущей сессии `SetBitmap`-ошибок в `logread` не найдено | `osd.scope=all` заблокирован; JPEG-снимок OSD не содержит |
 | Запись H.265 + квота | работает | `GET /api/record?enable=true&start=1`, 6 с записи; файл в `/mnt/sdcard/recordings` содержит 150 кадров, 5.0 с, hevc 1920x1080, успешно декодируется | Нужна смонтированная microSD; текущий сегмент может превысить `max_bytes` до ротации |
 | microSD: mount/read, `/api/storage` | работает | `GET /api/storage` → `sd_mounted=true`, `device=/dev/mmcblk1p1`, `fs=vfat`, `total_mb=15177`; `/run/oko-sd.state` создан udev-правилом | Запись разрешена только ниже `/mnt/sdcard` |
+| WebUI: модели через браузер | работает | `bench/ui_check.py` с новым `oem`: список источников YOLO — только `vpss3`/`vi0`; файл `ui-test.rknn` загружается из карточки Models, активация показывает `rknn_init failed (-1): the model was probably built by an incompatible rknn-toolkit2`, удаление убирает строку; скриншоты в `output/bench/ui/` | Chromium требует `libasound.so.2`; без root он распаковывается из `apt-get download libasound2t64` |
 | WebUI: разделы и API | работает | `GET /` → HTTP 200 (`<title>Divinus</title>`); `/api/status`, `/api/streams`, `/api/record`, `/api/storage` отвечают | Аутентификация — по настройкам `web_*` |
 | WebUI 2026-11-05: 8 разделов, EN/RU, dirty-state | работает | `bench/ui_check.py`: все восемь разделов открываются, `#isp_mirror` включает `Apply` и точку в меню, после применения кнопка снова выключена, переключение на RU даёт «Видео», 9 плиток телеметрии, 10 OSD-регионов, нет горизонтальной прокрутки на 1440 и 390 px, нет ошибок консоли | Playwright + Chromium; установка браузера — см. `bench/README.md` |
-| API-матрица 2026-11-05 | работает | `bench/api_check.py`: 74 проверки — 34 GET, 30 POST no-op, export/log, три 404 на статику, отказы delete (`..`, `x.txt`, пусто) и NTP (`bad..host`); 0 ошибок | Нужны учётные данные стенда |
+| API-матрица 2026-11-05 | работает | `bench/api_check.py`: 80 проверок — 34 GET, 30 POST no-op, export/log, три 404 на статику, HTTP 400 для `yolo.source=vi1` и `bogus`, отказы delete (`..`, `x.txt`, пусто) и NTP (`bad..host`); 0 ошибок | Нужны учётные данные стенда |
 | NTP через API | работает | `POST /api/time` с `ntp=off` останавливает `ntpd`; `ntp=on&ntp_server=pool.ntp.org` запускает `ntpd -g -c /tmp/divinus-ntp.conf -p /tmp/divinus-ntpd.pid`; пустой `ntp_server` возвращает вендорский `/usr/sbin/ntpd -g -p /var/run/ntpd.pid`; `bad..host` → `{"error":"blocked"}` | Не сохраняется без `/api/cmd?save` |
 | NTP после перезагрузки | работает | Три reboot с сохранённым конфигом: `ntp_enable=false` → `pidof ntpd` пуст и `ntp_running=false`; `ntp_enable=true` + пустой сервер → `ntpd -g -p /var/run/ntpd.pid`; `ntp_server=pool.ntp.org` → `ntpd -g -c /tmp/divinus-ntp.conf -p /tmp/divinus-ntpd.pid`, файл содержит `server pool.ntp.org iburst` | Применяется через 10 с после старта (после `S49ntp`); `/api/time` и `date +%s` совпадают после `ts=` |
 | Смена пароля спецсимволами | работает | Пароль `P@ss w=rd%1` (пробел, `=`, `%`, `@`): `POST /api/web-auth` → `ok`, старый 401, новый 200, в YAML `web_auth_pass: P@ss w=rd%1`; возврат к `oko-change-me` → 200 | Проверяет порядок `url_decode` после `split` |
@@ -120,7 +123,7 @@ bench/run.sh api_check.py
 # WebUI в headless Chromium: разделы, EN/RU, Apply/dirty, мобильная раскладка
 python3 -m venv /tmp/pw && /tmp/pw/bin/pip install playwright
 /tmp/pw/bin/playwright install chromium
-/tmp/pw/bin/python bench/ui_check.py
+LD_LIBRARY_PATH=/tmp/kilo/libasound/usr/lib/x86_64-linux-gnu bench/run.sh ui_check.py
 
 # скриншоты разделов и мобильной версии
 ls output/bench/ui/

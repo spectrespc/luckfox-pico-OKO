@@ -31,4 +31,5 @@ extern int series;
 #define HAL_CAP_IQ          (1u << 5)
 #define HAL_CAP_HDR_DYN     (1u << 6)
 #define HAL_CAP_OSD_MULTI   (1u << 7)
+#define HAL_CAP_RKNN        (1u << 8)
 extern unsigned int halCapabilities;

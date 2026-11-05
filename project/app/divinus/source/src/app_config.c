@@ -250,6 +250,21 @@ void app_config_dump(FILE *file) {
     fprintf(file, "  record_seconds: %d\n", app_config.ivs_record_seconds);
     fprintf(file, "  record_source: %s\n", app_config.ivs_record_sub ? "sub" : "main");
 
+    fprintf(file, "yolo:\n");
+    fprintf(file, "  enable: %s\n", app_config.yolo_enable ? "true" : "false");
+    fprintf(file, "  source: %s\n", app_config.yolo_source == 2 ? "vi0" :
+        (app_config.yolo_source == 1 ? "vpss3" : "vi1"));
+    fprintf(file, "  model: %s\n", app_config.yolo_model);
+    fprintf(file, "  input_width: %d\n  input_height: %d\n",
+        app_config.yolo_input_width, app_config.yolo_input_height);
+    fprintf(file, "  fps: %d\n", app_config.yolo_fps);
+    fprintf(file, "  conf_threshold: %.2f\n", app_config.yolo_conf_threshold);
+    fprintf(file, "  nms_threshold: %.2f\n", app_config.yolo_nms_threshold);
+    fprintf(file, "  classes: %d\n", app_config.yolo_classes);
+    fprintf(file, "  pre_seconds: %d\n  post_seconds: %d\n  max_frames: %d\n",
+        app_config.yolo_pre_seconds, app_config.yolo_post_seconds,
+        app_config.yolo_max_frames);
+
     fprintf(file, "iq:\n");
     fprintf(file, "  main_scene: %s\n", app_config.iq_main_scene);
     fprintf(file, "  sub_scene: %s\n", app_config.iq_sub_scene);
@@ -428,6 +443,19 @@ enum ConfigError app_config_parse(void) {
     app_config.ivs_act_osd = false;
     app_config.ivs_record_seconds = 15;
     app_config.ivs_record_sub = false;
+
+    app_config.yolo_enable = false;
+    app_config.yolo_source = 1;   /* vpss3: VI selfpath hung the board in M0 */
+    strcpy(app_config.yolo_model, "/userdata/models/yolov5n.rknn");
+    app_config.yolo_input_width = 640;
+    app_config.yolo_input_height = 384;
+    app_config.yolo_fps = 5;
+    app_config.yolo_conf_threshold = 0.35;
+    app_config.yolo_nms_threshold = 0.45;
+    app_config.yolo_classes = 80;
+    app_config.yolo_pre_seconds = 3;
+    app_config.yolo_post_seconds = 2;
+    app_config.yolo_max_frames = 20;
 
     app_config.iq_main_scene[0] = '\0';
     app_config.iq_sub_scene[0] = '\0';
@@ -828,6 +856,48 @@ enum ConfigError app_config_parse(void) {
         parse_bool(&ini, "ivs", "act_osd", &app_config.ivs_act_osd);
         if (parse_param_value_n(&ini, "ivs", "record_source", val, sizeof(val)) == CONFIG_OK)
             app_config.ivs_record_sub = EQUALS(val, "sub");
+    }
+
+    /* [yolo] is parsed even while disabled: the WebUI has to be able to edit
+     * and Save the settings before the model is installed. */
+    parse_bool(&ini, "yolo", "enable", &app_config.yolo_enable);
+    {
+        char val[32] = {0};
+        if (parse_param_value_n(&ini, "yolo", "source", val, sizeof(val)) == CONFIG_OK) {
+            if (EQUALS(val, "vpss3")) app_config.yolo_source = 1;
+            else if (EQUALS(val, "vi0")) app_config.yolo_source = 2;
+            else app_config.yolo_source = 0;
+        }
+        parse_param_value_n(&ini, "yolo", "model", app_config.yolo_model,
+            sizeof(app_config.yolo_model));
+        {
+            int v;
+            v = (int)app_config.yolo_input_width;
+            parse_int(&ini, "yolo", "input_width", 64, 4096, &v);
+            app_config.yolo_input_width = (unsigned int)v;
+            v = (int)app_config.yolo_input_height;
+            parse_int(&ini, "yolo", "input_height", 64, 4096, &v);
+            app_config.yolo_input_height = (unsigned int)v;
+            v = (int)app_config.yolo_fps;
+            parse_int(&ini, "yolo", "fps", 1, 30, &v);
+            app_config.yolo_fps = (unsigned int)v;
+            v = (int)app_config.yolo_classes;
+            parse_int(&ini, "yolo", "classes", 1, 255, &v);
+            app_config.yolo_classes = (unsigned int)v;
+            v = (int)app_config.yolo_pre_seconds;
+            parse_int(&ini, "yolo", "pre_seconds", 0, 30, &v);
+            app_config.yolo_pre_seconds = (unsigned int)v;
+            v = (int)app_config.yolo_post_seconds;
+            parse_int(&ini, "yolo", "post_seconds", 0, 30, &v);
+            app_config.yolo_post_seconds = (unsigned int)v;
+            v = (int)app_config.yolo_max_frames;
+            parse_int(&ini, "yolo", "max_frames", 1, 60, &v);
+            app_config.yolo_max_frames = (unsigned int)v;
+        }
+        parse_double(&ini, "yolo", "conf_threshold", 0.01, 0.99,
+            &app_config.yolo_conf_threshold);
+        parse_double(&ini, "yolo", "nms_threshold", 0.01, 0.99,
+            &app_config.yolo_nms_threshold);
     }
 
     parse_param_value_n(&ini, "iq", "main_scene",

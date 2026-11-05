@@ -25,6 +25,12 @@
 - `files/divinus.yaml` — фабричный конфиг для платы Pico Pro Max / SC230AI.
 - `tests/bmp_align_test.c` — хостовый тест выравнивания растра OSD (не входит в
   сборку пакета, см. правило 5 ниже).
+- `tests/rk_rgn_pack_test.c` — хостовый тест упаковки `ARGB1555 → BGRA5551` и
+  выравнивания на 16 (не входит в сборку пакета).
+- `tests/yolo_postprocess_test.c` — хостовый тест декода/NMS YOLOv5 (не входит
+  в сборку пакета).
+- `source/src/analytics/` — OKO-модуль NPU-аналитики (`yolo.c`,
+  `yolo_postprocess.c`, `models.c`).
 - `source/` — вендорские исходники без `.git`; `build.sh` и `remote.sh` upstream не
   копируются: кросс-тулчейн берётся из SDK. В `source/src/` внесены три локальных
   патча (`compat.c`, `region.c`, `hal/plus/rk_hal.c`, см. ниже).
@@ -101,22 +107,40 @@ Upstream-код OSD для RK-платформ рассчитан на друг�
 не учитывает ограничения RV1106:
 
 - оверлей принимает только `BGRA5551`, а текстовый растр создаётся в
-  `ARGB1555` — в `rk_region_setbitmap()` выполняется преобразование каналов;
+  `ARGB1555` — упаковка каналов вынесена в `hal/plus/rk_rgn_pack.c`
+  (`rk_rgn_pack_bgra5551()`), её используют и HAL, и хостовые тесты;
 - позиция и размер региона должны быть выровнены на 16 пикселей —
   `rk_region_create()` выравнивает `x`/`y`/ширину/высоту, растр дополняется
-  прозрачными пикселями до того же размера;
+  прозрачными пикселями до того же размера (`rk_rgn_pad16()`);
 - структура `BITMAP_S` в используемом `librockit.so` содержит 32-битное поле
   между размером и указателем (`pData` на смещении 16); вендорный
   `rk_rgn_bmp` без этого поля передаёт `pData` не туда, и
   `RK_MPI_RGN_SetBitMap` возвращает «Bitmap data is NULL»;
 - `librockit` выделяет canvas региона только при явно заданном
-  `u32CanvasNum` — в патче выставляется значение по умолчанию (2);
-- повторный `RK_MPI_RGN_AttachToChn()` уже прикреплённого региона RV1106
-  отклоняет (и может привести к oops в `mpi_obj_ref`), поэтому при неизменных
-  позиции и размере повторное прикрепление пропускается.
+  `u32CanvasNum` — в патче выставляется `region.overlay.canvas = 1`: один
+  canvas, как у OSD в `rkipc`; двойная буферизация может показывать текст
+  предыдущей секунды до следующего обновления;
+- при неизменных позиции и прозрачности повторный
+  `RK_MPI_RGN_AttachToChn()` не вызывается: RV1106 отклоняет повторное
+  прикрепление (и может привести к oops в `mpi_obj_ref`).
 
-Патч затрагивает только RK-ветку HAL (`hal/plus/rk_hal.c`) и не меняет
-поведение других платформ.
+Обновление региона: если `librockit.so` экспортирует
+`RK_MPI_RGN_GetCanvasInfo`/`RK_MPI_RGN_UpdateCanvas`, `rk_region_setbitmap()`
+пишет растр прямо в canvas региона (`u64VirAddr`) и вызывает `UpdateCanvas` —
+без `calloc` и копии на каждый кадр. Символы грузятся `dlsym` как
+необязательные: если их нет, `GetCanvasInfo` вернул ошибку или размер/stride
+canvas не совпал с выровненным растром, остаётся прежний путь
+`RK_MPI_RGN_SetBitMap` (с одним предупреждением на handle). Ошибка canvas не
+роняет приложение.
+
+Позиция и `fgAlpha` меняются через `RK_MPI_RGN_GetDisplayAttr`/
+`RK_MPI_RGN_SetDisplayAttr`; detach/attach остаётся только для первого
+подключения и как fallback, если `SetDisplayAttr` вернул ошибку. Побочно
+исправлено: смена `opal` через `/api/osd/<id>` при неизменной позиции раньше
+игнорировалась.
+
+Патч затрагивает только RK-ветку HAL (`hal/plus/rk_hal.c`, `rk_rgn.h`,
+`rk_rgn_pack.c/.h`) и не меняет поведение других платформ.
 
 ## Медиа-фичи OKO (этап divinus-media-features)
 
@@ -201,6 +225,26 @@ Upstream-код OSD для RK-платформ рассчитан на друг�
   Квота проверяется при открытии сегмента (текущий может временно превысить
   `max_bytes` до следующей ротации).
 
+## OKO: NPU-аналитика YOLOv5 (`analytics/`)
+
+`[yolo] enable: true` запускает детекцию после `sdk_start()`:
+`analytics/yolo.c` держит кольцо NV12-кадров, раз в `fps` делает
+NV12→RGB888 на CPU, вызывает `librknnmrt.so` через `dlopen`
+(`hal/plus/rk_rknn.h`, `hal/plus/rknn_api.h` 1.6.0) и декодирует три выхода
+`analytics/yolo_postprocess.c`. Событие = индикатор в `/tmp/osd-ivs.txt` +
+`pre_seconds`/`post_seconds` кадров, которые отдельный VENC-канал **MJPG 4**
+кодирует и отправляет N `PUT` с `X-Event-*` (`http_post.c`).
+
+RGA не используется: на этом образе легаси `c_RkRgaBlit` падает SIGSEGV,
+im2d `importbuffer_fd` не импортирует MMZ/dma-heap fd, а блит по куче вешал
+плату. CPU-конверсия стоит ~28% одного ядра на 3 fps при 640×640. Кольцо
+лежит в MMZ и отображается через `mmap(fd)`: `MB_Handle2VirAddr` для
+MMZ-блока валиден только на первые 4 КиБ. `yolo.source=vi1` (selfpath) вешает
+плату и отклоняется `gating.c`, `/api/yolo` и WebUI; дефолт — `vpss3`
+(при IVS/MJPEG — `vi0`). Модели: `/userdata/models`,
+активация через `POST /api/models/activate` с откатом; INT8 `.rknn` 1.6.0,
+вход должен совпадать с `yolo.input_width/height`.
+
 ## Правила обновления
 
 1. Клонировать upstream с `--depth 1`, заменить `source/src`, `source/res`, `source/doc`,
@@ -212,10 +256,11 @@ Upstream-код OSD для RK-платформ рассчитан на друг�
      (см. раздел выше), иначе вернётся `mmap part 1 failed!`;
    - `region.c`: `@file`-провайдер текста OSD (см. раздел выше), иначе
      телеметрия и сообщения `oko-osd` не отображаются;
-   - `hal/plus/rk_hal.c` + `hal/plus/rk_rgn.h`: BGRA5551, выравнивание на 16,
-     поле `BITMAP_S` перед указателем данных, canvas и однократное прикрепление
-     региона для RV1106 (см. раздел выше), иначе OSD не отображается или
-     приводит к oops.
+   - `hal/plus/rk_hal.c`, `hal/plus/rk_rgn.h`, `hal/plus/rk_rgn_pack.c/.h`:
+     BGRA5551, выравнивание на 16, поле `BITMAP_S` перед указателем данных,
+     canvas-обновление с fallback на `SetBitmap`, `SetDisplayAttr` для
+     позиции/прозрачности и однократное прикрепление региона для RV1106
+     (см. раздел выше), иначе OSD не отображается или приводит к oops.
    - `hal/types.h`, `hal/globals.h`, `hal/support.c`, `hal/plus/rk_vpss.h`,
      `hal/plus/rk_venc.h`, `hal/plus/rk_aiq.h`, `hal/plus/rk_ivs.h`,
      `hal/plus/rk_sys.h`: типы и обёртки ePTZ/поворота/VENC/AIISP/IVS; новые
@@ -225,6 +270,9 @@ Upstream-код OSD для RK-платформ рассчитан на друг�
      поворота, AIISP, IQ и VENC-расширений.
    - `rtsp/`: `rtsp_stream_t` на путь, `/live/0` и `/live/1`, SDP/sprop/
      timestamp/IDR на поток.
+   - `source/src/analytics/` и правки `rk_hal.c`/`http_post.*`/`server.c`/
+     `gating.c`/`app_config.*`/`res/index.html`: NPU-аналитика (см. раздел
+     «OKO: NPU-аналитика»), иначе сборка потеряет YOLO-модуль.
    - `app_config.*` + `hal/config.h`: новые секции и `MAX_SECTIONS=40`
      (иначе сохранённый конфиг обрезается на 16 секциях).
    - `server.c`, `gating.*`, `ivs_events.*`, `record.*`, `res/index.html`:
@@ -232,11 +280,17 @@ Upstream-код OSD для RK-платформ рассчитан на друг�
    - `files/divinus.yaml`: регион `reg5` для индикатора IVS и новые секции.
 5. Перед коммитом пересобрать (`./build.sh` в Docker) и проверить наличие
    `output/out/oem/usr/bin/divinus` — цикл сборки приложений не прерывается на ошибке
-   отдельного пакета. После применения HAL-патча прогнать хостовый тест
-   выравнивания растра и дождаться `ok 660x46 rows placed at stride 672`:
+   отдельного пакета. После применения HAL-патча прогнать хостовые тесты и
+   дождаться `ok 660x46 rows placed at stride 672` и `ok rk_rgn_pack`:
    ```sh
-   gcc -Wall -Wextra -O2 -o /tmp/bmp_align_test \
-       project/app/divinus/tests/bmp_align_test.c && /tmp/bmp_align_test
+   gcc -std=c99 -Wall -Wextra -O2 -Iproject/app/divinus/source/src/hal/plus \
+       project/app/divinus/source/src/hal/plus/rk_rgn_pack.c \
+       project/app/divinus/tests/bmp_align_test.c -o /tmp/bmp_align_test &&
+       /tmp/bmp_align_test
+   gcc -std=c99 -Wall -Wextra \
+       project/app/divinus/source/src/hal/plus/rk_rgn_pack.c \
+       project/app/divinus/tests/rk_rgn_pack_test.c -o /tmp/rk_rgn_pack_test &&
+       /tmp/rk_rgn_pack_test
    ```
 6. Другие правки upstream-файлов — только для сборки/запуска на плате, с явным диффом
    и комментарием в коммите.

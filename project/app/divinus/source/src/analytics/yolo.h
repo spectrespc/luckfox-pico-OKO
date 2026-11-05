@@ -1,0 +1,25 @@
+#pragma once
+
+#include <stddef.h>
+
+/* Metadata read back from a .rknn model. */
+typedef struct {
+    int width;
+    int height;
+    int classes;
+    char sdk[64];
+} yolo_model_info;
+
+/* Start/stop the capture + detection threads.  yolo_start() fails when the
+ * configured model cannot be loaded; the caller keeps the camera running. */
+int yolo_start(void);
+void yolo_stop(void);
+int yolo_running(void);
+
+/* Load a model for validation without touching the active context. */
+int yolo_model_probe(const char *path, yolo_model_info *info,
+    char *error, size_t error_size);
+
+/* Atomically replace the active model.  On failure the previous context is
+ * kept and `error` describes the reason (incompatible toolkit, bad tensors). */
+int yolo_model_swap(const char *path, char *error, size_t error_size);

@@ -390,8 +390,12 @@ void set_grayscale(bool active) {
 int take_next_free_channel(bool mainLoop) {
     pthread_mutex_lock(&chnMtx);
     for (int i = 0; i < chnCount; i++) {
-        /* Index 5 belongs to the IVS feed and must never be a VENC channel. */
-        if (i == HAL_CHN_IVS && app_config.ivs_enable) continue;
+        /* The last VPSS channel belongs to IVS or to yolo.source=vpss3 and
+         * must never be handed to a VENC stream at the same time. */
+        if (i == HAL_CHN_IVS &&
+            (app_config.ivs_enable ||
+             (app_config.yolo_enable && app_config.yolo_source == 1)))
+            continue;
         if (chnState[i].enable) continue;
         chnState[i].enable = true;
         chnState[i].mainLoop = mainLoop;

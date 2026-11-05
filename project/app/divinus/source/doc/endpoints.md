@@ -555,6 +555,66 @@ The response also contains `events`, the last 16 detections:
 {"events":[{"time":"2026-11-04T09:15:00Z","frame":1234,"rects":1,"bbox":[100,80,200,300]}]}
 ```
 
+#### `/api/yolo`
+
+NPU object detection settings (the `[yolo]` section of `divinus.yaml`).
+
+| Method | Parameters | Description |
+|--------|------------|-------------|
+| GET | – | Current settings and `running` |
+| POST | `enable` | Start/stop the detector immediately |
+| POST | `source` | `vpss3` (default) or `vi0`; `vi1` and unknown values are rejected with HTTP 400 |
+| POST | `input_width`, `input_height` | Must match the active model |
+| POST | `fps`, `conf_threshold`, `nms_threshold`, `classes` | Detection tuning |
+| POST | `pre_seconds`, `post_seconds`, `max_frames` | Event package bounds |
+
+The model path itself is changed by `/api/models/activate`, not here. A response
+carrying `"note":"restart required..."` means that only the listed fields need a
+restart; `enable` is applied live. Example:
+
+```json
+{"enable":true,"source":"vpss3","model":"/userdata/models/yolov5n.rknn",
+ "input_width":640,"input_height":384,"fps":5,"conf_threshold":0.35,
+ "nms_threshold":0.45,"classes":80,"pre_seconds":3,"post_seconds":2,
+ "max_frames":20,"running":true}
+```
+
+Enabling is refused with `{"error":"blocked","reason":...}` when the NPU
+runtime, the model file or VPSS channel 3 is unavailable. Setting
+`source=vi1` (VI selfpath hangs the RV1106 board) or any unknown value is
+rejected with HTTP 400 and `{"error":"invalid",...}`.
+
+#### `/api/models`
+
+Precompiled `.rknn` models in `/userdata/models`. Uploads are limited to
+3 MiB because the HTTP request is buffered in RAM; a larger body would close
+the socket without a response.
+
+| Method | Path | Parameters | Description |
+|--------|------|------------|-------------|
+| GET | `/api/models` | – | List, quota, free space, active model |
+| POST | `/api/models` | multipart field `file` | Store `*.rknn.part` → `fsync` → atomic rename |
+| POST | `/api/models/activate` | `name` | Validate (`rknn_init`, shapes, test run), swap the context, save `yolo.model` |
+| POST | `/api/models/delete` | `name` | Remove a model; the active one is refused |
+
+```json
+{"dir":"/userdata/models","quota":3145728,"free":1417216,
+ "active":"yolov5n.rknn","models":[
+  {"name":"yolov5n.rknn","size":1990000,"sha256":"…","classes":80,
+   "width":640,"height":384,"active":true}]}
+```
+
+`models.json` stores the size, SHA-256 and tensor metadata; it is rewritten
+atomically. Activation errors keep the previous model and return
+`{"error":"blocked","reason":"rknn_init failed (…): the model was probably
+built by an incompatible rknn-toolkit2"}`.
+
+Each event frame is a separate `PUT` to `http_post.url` (`http_post.host` may
+include a port, e.g. `192.168.52.200:8080`) with
+`Content-Type: image/jpeg` and the headers `X-Event-Id`, `X-Frame-Index`,
+`X-Frame-Total`, `X-Frame-Ts` (monotonic milliseconds at capture),
+`X-Event-Cause` (`yolo`) and `X-Model`.
+
 #### `/api/iq`
 
 | Method | Parameters | Description |

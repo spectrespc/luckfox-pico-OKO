@@ -10,6 +10,8 @@
 #include "rtsp/rtsp_server.h"
 #include "server.h"
 #include "watchdog.h"
+#include "analytics/models.h"
+#include "analytics/yolo.h"
 
 #include <getopt.h>
 #include <signal.h>
@@ -93,6 +95,22 @@ int main(int argc, char *argv[]) {
         HAL_WARNING("hal", "Dynamic HDR is unavailable; restart mode used\n");
         app_config.hdr_apply = 2;
     }
+    /* VI channel 1 (selfpath) is wired up in the ISP topology but enabling it
+     * hangs this board, so a hand-edited YAML must not reach the HAL. */
+    if (app_config.yolo_source == 0) {
+        HAL_WARNING("hal", "yolo.source=vi1 hangs the RV1106 board; "
+            "falling back to vpss3\n");
+        app_config.yolo_source = 1;
+    }
+    /* VPSS channel 3 is shared by IVS and yolo.source=vpss3; a hand-edited
+     * YAML must not leave the analytics without a frame source. */
+    if (app_config.yolo_enable && app_config.yolo_source == 1 &&
+        (app_config.ivs_enable || app_config.mjpeg_enable)) {
+        HAL_WARNING("hal", "yolo.source=vpss3 conflicts with IVS/MJPEG; "
+            "falling back to vi0\n");
+        app_config.yolo_source = 2;
+    }
+    models_start();
     if (app_config.watchdog)
         watchdog_start(app_config.watchdog);
 
@@ -133,6 +151,17 @@ int main(int argc, char *argv[]) {
             HAL_WARNING("ivs", "Analytics blocked: %s\n", gate.reason);
     }
 
+    if (app_config.yolo_enable) {
+        gating_result gate = gating_check("yolo");
+        if (gate.ok) {
+            if (yolo_start())
+                HAL_WARNING("yolo", "Detection could not be started\n");
+        } else {
+            HAL_WARNING("yolo", "Analytics blocked: %s (%s)\n",
+                gate.reason, gate.hint ? gate.hint : "no hint");
+        }
+    }
+
     if (app_config.night_mode_enable)
         night_enable();
 
@@ -162,6 +191,8 @@ int main(int argc, char *argv[]) {
 
     if (app_config.night_mode_enable)
         night_disable();
+
+    yolo_stop();
 
     ivs_events_stop();
 

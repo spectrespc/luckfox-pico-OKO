@@ -45,6 +45,8 @@ GET_JSON = [
     "/api/recordings",
     "/api/storage",
     "/api/ivs",
+    "/api/yolo",
+    "/api/models",
     "/api/streams",
 ] + ["/api/osd/%d" % i for i in range(10)]
 
@@ -66,6 +68,8 @@ POST_NOOP = [
     "/api/rotate",
     "/api/record",
     "/api/ivs",
+    "/api/yolo",
+    "/api/models",
     "/api/network",
     "/api/storage",
     "/api/time",
@@ -144,6 +148,21 @@ def main():
         if status != expected:
             failures.append("GET %s: expected %d, got %s" % (path, expected, status))
         print("GET  %-18s %s (expected %d)" % (path, status, expected))
+
+    # yolo.source=vi1 hangs the RV1106 board and unknown values must not be
+    # silently mapped to it; both are refused with HTTP 400.
+    for value in ("vi1", "bogus"):
+        checks += 1
+        path = "/api/yolo?source=" + value
+        status, _headers, body = request(path)
+        try:
+            dec = json.loads(body.decode())
+        except Exception:                          # noqa: BLE001
+            dec = {}
+        if not 400 <= status < 500 or dec.get("error") != "invalid":
+            failures.append("GET %s: expected 400 invalid, got HTTP %s %r" %
+                (path, status, dec))
+        print("GET  %-18s %s %s" % (path, status, dec.get("error", "?")))
 
     for name in ("../../etc/passwd", "x.txt", "..", ""):
         checks += 1

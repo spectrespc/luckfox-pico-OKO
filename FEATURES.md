@@ -19,7 +19,7 @@ Buildroot) с сенсором SC230AI: паспорт платформы и о�
 | Сенсор | SC230AI, режимы 1080p30 и 480p120 |
 | Загрузка | SPI NAND 256 МБ, U-Boot → ядро 5.10.160 → busybox init |
 | Корневая ФС | Buildroot |
-| Разделы | `env` 256K, `idblock` 256K, `uboot` 512K, `boot` 6M, `oem` 40M, `userdata` 10M, `rootfs` 198M |
+| Разделы | `env` 256K, `idblock` 256K, `uboot` 512K, `boot` 6M, `oem` 40M, `userdata` 40M, `rootfs` 168M |
 | Активный DTS | `rv1106g-luckfox-pico-pro-max-sc230ai.dts` |
 | Медиастек | `divinus` (OpenIPC), H.265/H.264, JPEG, RTSP, WebUI |
 | Сборка | Docker (`./start.sh`), результат — `output/image/update.img` |
@@ -28,7 +28,7 @@ Buildroot) с сенсором SC230AI: паспорт платформы и о�
 
 | Группа | Функционал | Описание | Управление (API, секция YAML) | Что добавлено (OKO vs вендорский V1.4) | Проверено и работает |
 |---|---|---|---|---|---|
-| Платформа и образ | Разметка SPI NAND | `boot` 6M, `oem` 40M, `userdata` 10M, `rootfs` 198M; нужна полная прошивка `update.img` | `update.img`, BoardConfig | `boot` 4→6M, `oem` 30→40M, `rootfs` 210→198M | **работает** — `/proc/mtd`: `00600000`, `02800000`, `0c600000` |
+| Платформа и образ | Разметка SPI NAND | `boot` 6M, `oem` 40M, `userdata` 40M, `rootfs` 168M; нужна полная прошивка `update.img` | `update.img`, BoardConfig | `boot` 4→6M, `oem` 30→40M, `userdata` 10→40M, `rootfs` 198→168M | **работает** — `/proc/mtd`: `00600000`, `02800000`, `02800000`, `0a800000`; `df -h /userdata` — 29.1 МиБ; загрузка `.rknn` 3 МиБ проходит |
 | Платформа и образ | Сенсоры SC230AI-only | В образе только `sc230ai.ko` и IQ SC230AI; DTS выключает `sc3336`/`mis5001` | BoardConfig, `rv1106-sc230ai.config`, активный DTS | DTS `rv1106g-...-sc230ai.dts`, фрагмент ядра, `insmod_ko.sh` | **работает** — в `/oem/usr/ko` только `sc230ai.ko` |
 | Платформа и образ | Состав `oem` | Удалены `sample_*`/`simple_*`; диагностические `rk_*_test`/`rk_mpi_*_test` сохранены | `make oem`, BoardConfig | список удаления в сборке oem | **работает** — `sample_*`/`simple_*` отсутствуют |
 | Платформа и образ | AIISP-модель | В `/oem/usr/lib` только модель из `RK_AIISP_MODEL` | `RK_AIISP_MODEL=rkmodel_1080_1920.aiisp` | копирование модели до `build_mkimg oem` | **работает** — модель и `librkpostisp.so` в образе |
@@ -45,6 +45,7 @@ Buildroot) с сенсором SC230AI: паспорт платформы и о�
 | Видео и стриминг | SmartP | Настройка GOP | `/api/venc`, `[venc]` | SmartP stage `divinus` | **ограничено** — применяется со следующего старта, не перепроверялся |
 | Видео и стриминг | AIISP | Ночная шумоподавка по модели в `/oem/usr/lib` | `/api/aiisp`, `[aiisp]` | модель в oem, API stage `divinus` | **работает** — `librkpostisp.so` загружен, поток идёт |
 | Видео и стриминг | IVS | Детекция движения/объектов, снимок, клип, OSD | `/api/ivs`, `[ivs]` | IVS stage `divinus` + `gating.c` | **ограничено** — MD проверен; OD и событие на статичной сцене не подтверждены |
+| Видео и стриминг | YOLO-детекция (NPU) | YOLOv5n на NPU, событие = индикатор OSD + пачка чистых JPEG до/после детекции; модели `.rknn` в `/userdata/models` | `/api/yolo`, `/api/models`, `[yolo]`, `POST /api/models*` | `analytics/yolo.c`, `yolo_postprocess.c`, `models.c`; `dlopen` `librknnmrt.so`; CPU-конверсия NV12→RGB; отдельный VENC-канал MJPG 4 | **работает** (`vi1` — нет) — на стенде `vpss3`: NPU 28–33%, 3 fps, событие = 6 JPEG 640×640 с `X-Event-*`, `api_check` 80/80, RTSP/OSD без регрессии; `vi1` завис и теперь отклоняется (`gating`, API, UI); браузерный `ui_check` (8 разделов, upload/activate/delete модели) проходит |
 | Видео и стриминг | Runtime IQ | `switch_scene`, `updateIq` | `/api/iq`, `[iq]` | runtime IQ stage `divinus` | **ограничено** — сцена принята; `updateIq` не проверялся |
 | Видео и стриминг | Запись | H.265 на смонтированную microSD с квотой и чисткой сегментов; сегмент может превысить квоту до ротации | `/api/record`, `[record]`, `record.max_bytes`, `record.min_free_mb` | `record.c`: `nal_split`, квота, `storageBusy` | **работает** — 150 кадров hevc 1080p декодируются |
 | Видео и стриминг | OSD | Время, GPS, T/BAT/LTE/WiFi, система, сообщения | `/api/osd/{id}`, `[osd]`, `oko-osd`, `/tmp/osd.fifo` | `reg0`–`reg4`, `region.c` `@file`, HAL-патч RV1106, `S20oko-osd` | **работает** — регионы видны в RTSP main |
@@ -80,6 +81,24 @@ Buildroot) с сенсором SC230AI: паспорт платформы и о�
   (субпоток выключен) работают вместе; комбинация sub + MJPEG + IVS не
   проверялась. Неподтверждённые комбинации `gating.c` отклоняет с причиной и
   подсказкой.
+- YOLO/NPU: `librknnmrt.so` — 1.6.0 (не 1.5.2, как предполагал план), драйвер
+  `rknpu` 0.9.2 совместим. Модель обязана быть INT8 `.rknn`, вход — ровно
+  `yolo.input_width`×`yolo.input_height`; иначе активация отклоняется. Кадры
+  кольца — 640×384 NV12, `max_frames` — жёсткий потолок пакета; квота загрузки
+  3 МиБ. `source: vpss3` занимает последний VPSS-канал и потому несовместим с
+  IVS/MJPEG/четвёртым потоком — санитайзер переводит на `vi0`. `source: vi1`
+  (selfpath) на этой сборке привёл к зависанию платы; значение заблокировано
+  в `gating.c`, `/api/yolo` (HTTP 400) и WebUI, используйте `vpss3` или `vi0`. Ящики в поток/JPEG не рисуются.
+  librga на образе непригодна (легаси `c_RkRgaBlit` — SIGSEGV, im2d
+  `importbuffer_fd` не импортирует ни MMZ-, ни dma-heap-fd, RGA по куче
+  вешала плату), поэтому NV12→RGB888 считается на CPU: ~28% одного ядра на
+  3 fps для 640×640, для 640×384 дешевле. Кольцо кадров живёт в MMZ и
+  отображается через `mmap(fd)` (виртуальный адрес `MB_Handle2VirAddr` для
+  MMZ-блока валиден только на первые 4 КиБ).
+- `/userdata` после переразметки — UBIFS-том `ubi5_0` около 29 МиБ (свободно
+  ~28 МиБ): квота загрузки 3 МиБ на модель достижима, помещается несколько
+  моделей. Раздел `userdata` расширен с 10 до 40 МБ за счёт `rootfs`
+  (198→168 МБ); прошивка — только полным `update.img`.
 - Ручная правка YAML санитизируется при старте: HDR откатывается,
   `osd.scope=all` приводится к `main`.
 - Шрифт OSD — ASCII без кириллицы; текст OSD пишется латиницей.
@@ -129,6 +148,12 @@ ffprobe -v error -rtsp_transport tcp \
 i2cdetect -y 3
 oko-ec sensors
 cat /tmp/oko-ec.osd
+
+# NPU-аналитика
+curl -u admin:oko-change-me http://192.168.52.97/api/yolo
+curl -u admin:oko-change-me http://192.168.52.97/api/models
+cat /proc/rknpu/load
+df -h /userdata
 ```
 
 Подробные доказательства, снимки экрана и команды воспроизведения — в
@@ -142,18 +167,19 @@ kernel 5.10.160. Status as of 2026-11-05. Markers: **works**, **limited**,
 
 | Feature | What was added | Verified & works |
 |---|---|---|
-| Platform, image and build | Partitions `boot` 6M, `oem` 40M, `userdata` 10M, `rootfs` 198M; SC230AI-only driver/IQ, demos pruned, one AIISP model, `fw_printenv`/util-linux; Docker build | **works** — `/proc/mtd` and `/oem` checks |
+| Platform, image and build | Partitions `boot` 6M, `oem` 40M, `userdata` 40M, `rootfs` 168M; SC230AI-only driver/IQ, demos pruned, one AIISP model, `fw_printenv`/util-linux; Docker build | **works** — `/proc/mtd` shows `00600000`, `02800000`, `02800000`, `0a800000`; `/userdata` is 29.1 MiB and a 3 MiB `.rknn` upload succeeds |
 | Video streams | `divinus` instead of `rkipc`: RTSP `/live/0` 1080p H.265 and `/live/1` 640x360, MJPEG `/mjpeg`, MP4 `/video.mp4`, JPEG snapshot | **works** — PyAV and HTTP checks |
 | ePTZ and rotation | VPSS crop 1x/2x; 90/180/270 rotation via VENC | **limited** — 90° verified, 180/270 not separately |
 | Encoder tuning | SVC, motion deblur, QP on a live channel | **works** — stream keeps running |
 | SmartP | GOP change | **limited** — applies on next start, not re-verified |
 | AIISP | Night denoise with `rkmodel_1080_1920.aiisp` | **works** — `librkpostisp.so` loaded |
 | IVS | MD/OD, snapshot, clip, OSD | **limited** — MD verified, OD and static-scene events unconfirmed |
+| YOLO detection (NPU) | YOLOv5n on the NPU; an event is an OSD indicator plus a package of clean JPEGs before/after the detection; `.rknn` models in `/userdata/models` | **works** (`vi1` does not) — on `vpss3`: NPU 28–33%, 3 fps, 6 JPEG 640×640 per event with `X-Event-*`, `api_check` 80/80, RTSP/OSD regression clean; `vi1` hung the board and is now rejected (`gating`, API, WebUI); the browser `ui_check` (8 sections, model upload/activate/delete) passes |
 | Runtime IQ | `switch_scene`, `updateIq` | **limited** — scene switch accepted, `updateIq` untested |
 | OSD | Time, GPS, T/BAT/LTE/WiFi, system, messages; ASCII font only, no Cyrillic | **works** — regions visible in RTSP main |
 | Recording | H.265 to microSD with quota and old-segment pruning | **works** — 150 frames decode as hevc 1080p |
 | Blocked features | HDR2/HDR3 on SC230AI and `osd.scope=all`; VPSS has four channels, so some stream combinations are refused. IVS + MJPEG worked with the sub stream off (2026-11-05); sub + MJPEG + IVS was not tested | **blocked** — refused with a reason |
-| WebUI and API | Eight sections (Live, Image, Streams, Events, Storage, Network, OSD, System), sticky status bar, EN/RU switch, per-card Apply with error toasts; `POST` form bodies; WebUI/RTSP authentication and `/api/web-auth`; NTP control; recording archive; telemetry card; config export/import; log download | **works (2026-11-05)** — `bench/api_check.py` 74 checks, `bench/ui_check.py` renders all sections without console errors; static files are limited to `/mnt/sdcard/` |
+| WebUI and API | Eight sections (Live, Image, Streams, Events, Storage, Network, OSD, System), sticky status bar, EN/RU switch, per-card Apply with error toasts; `POST` form bodies; WebUI/RTSP authentication and `/api/web-auth`; NTP control; recording archive; telemetry card; config export/import; log download | **works (2026-11-05)** — `bench/api_check.py` 80 checks, `bench/ui_check.py` renders all sections without console errors; static files are limited to `/mnt/sdcard/` |
 | Network (Ethernet) | DHCP or static IPv4, one `dhcpcd` client (client ID by MAC, no DUID), persistent `oko_mac` and settings in U-Boot env; AIC8800 modules built | **works** — survives reboot; WiFi stack unverified |
 | Telemetry (`oko-ec`) | SHT21 `0x40`, INA3221/INA226 `0x41`, STM32 ACPI-EC `0x42` on I2C3-M1 at 100 kHz; CLI, 2 s daemon, opt-out | **works** — daemon and `/tmp/oko-ec.osd` |
 | microSD | udev automount at `/mnt/sdcard`, FAT32/MBR format with a one-time token, unmount, mount-only recording with quota and old-segment pruning | **limited** — hotplug verified by unbind/bind only |

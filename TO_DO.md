@@ -492,10 +492,10 @@ i2ctransfer -y 3 w2@0x60 0x05 0x00 r1         # статус focus
 
 #### Фаза 0. Стендовая проверка платформы
 
-- [ ] `dmesg | grep -i rknpu` — версия и режим (non-IOMMU);
-- [ ] `cat /proc/rknpu/load` — счётчик загрузки NPU (procfs включён);
-- [ ] `media-ctl -p` — наличие `rkisp_mainpath` и `rkisp_selfpath`;
-- [ ] `df -h /userdata`, `/proc/meminfo`, `/proc/media-mem` — свободные RAM/CMA;
+- [x] `dmesg | grep -i rknpu` — версия и режим (non-IOMMU);
+- [x] `cat /proc/rknpu/load` — счётчик загрузки NPU (procfs включён);
+- [x] `media-ctl -p` — наличие `rkisp_mainpath` и `rkisp_selfpath`;
+- [x] `df -h /userdata`, `/proc/meminfo`, `/proc/media-mem` — свободные RAM/CMA;
 - [ ] собрать `luckfox_pico_yolov5` под uclibc (`LUCKFOX_SDK_PATH` = корень OKO),
       прогнать после `RkLunch-stop.sh`, замерить FPS и точность на сцене стенда;
 - [ ] проверить лимиты VI/VPSS: `VI_MAX_PHY_CHN_NUM`, `VPSS_MAX_CHN_NUM`.
@@ -512,48 +512,48 @@ i2ctransfer -y 3 w2@0x60 0x05 0x00 r1         # статус focus
 
 - [ ] `fnSetChannelConfig(pipe, 1, …)` + `fnEnableChannel`: `aEntityName="rkisp_selfpath"`,
       `depth=1`, `bufCount=2–3`, размер 640×384;
-- [ ] тред: `VI_GetChnFrame` → RGA NV12→RGB888 в буфер RKNN → `ReleaseChnFrame`
+- [x] тред: `VI_GetChnFrame` → NV12→RGB888 (CPU, RGA непригодна) в буфер RKNN → `ReleaseChnFrame`
       (до инференса!) → `rknn_run` → декод якорей + NMS;
-- [ ] буферы — dma-heap/MMZ (`RK_MPI_SYS_MmzAlloc`), не malloc (NPU без IOMMU);
-- [ ] троттлинг `npu_fps`, пропуск кадров, таймауты, деградация при сбое init;
-- [ ] проверка, что основной поток и OSD не деградируют.
+- [x] буферы — dma-heap/MMZ (`RK_MPI_SYS_MmzAlloc`), не malloc (NPU без IOMMU);
+- [x] троттлинг `npu_fps`, пропуск кадров, таймауты, деградация при сбое init;
+- [x] проверка, что основной поток и OSD не деградируют.
 
 #### Фаза 3. События и кадры до/после
 
-- [ ] триггер по детекции с дебаунсом (кулдаун как в `ivs_events.c`);
-- [ ] индикатор в `/tmp/osd-ivs.txt` (виден только на RTSP main);
-- [ ] одиночный снимок `jpeg_get()` → `http_post_send()` — базовый сценарий (как сейчас);
-- [ ] кольцо пре-ролла в RAM (640×384 NV12 ≈ 0.35 MB/кадр; 3 с @10 fps ≈ 10.5 MB);
-- [ ] пост-ролл по таймеру, мерж повторных событий в окне;
-- [ ] кодирование буферизованных кадров: `RK_MPI_VENC_SendFrame`
+- [x] триггер по детекции с дебаунсом (кулдаун как в `ivs_events.c`);
+- [x] индикатор в `/tmp/osd-ivs.txt` (виден только на RTSP main);
+- [x] одиночный снимок `jpeg_get()` → `http_post_send()` — базовый сценарий (как сейчас);
+- [x] кольцо пре-ролла в RAM (640×384 NV12 ≈ 0.35 MB/кадр; 3 с @10 fps ≈ 10.5 MB);
+- [x] пост-ролл по таймеру, мерж повторных событий в окне;
+- [x] кодирование буферизованных кадров: `RK_MPI_VENC_SendFrame`
       (`rk_mpi_venc.h:41`) в несвязанный JPEG-канал + один MMZ-блок;
-- [ ] расширить `http_post` на пакет кадров (N PUT или multipart), таймстемпы
+- [x] расширить `http_post` на пакет кадров (N PUT или multipart), таймстемпы
       фиксировать при захвате;
-- [ ] ограничить объём (`max_frames`), отбрасывать старые, не блокировать `/api/jpeg`.
+- [x] ограничить объём (`max_frames`), отбрасывать старые, не блокировать `/api/jpeg`.
 
 #### Фаза 4. WebUI: добавление/удаление/активация моделей
 
-- [ ] `GET /api/models` (список, размер, дата, активная), `POST /api/models`
+- [x] `GET /api/models` (список, размер, дата, активная), `POST /api/models`
       (multipart-загрузка `.rknn`), `POST /api/models/activate`,
       `POST /api/models/delete`;
-- [ ] загрузка потоковая в `*.part` + `fsync` + atomic `rename` (лимит буфера
+- [x] загрузка потоковая в `*.part` + `fsync` + atomic `rename` (лимит буфера
       запроса 4 MB не должен становиться потолком размера модели);
-- [ ] хранение `/userdata/models/<name>.rknn` + `models.json` (имя, классы, input size);
-- [ ] активация: `rknn_init` → `rknn_query` (shapes, версия runtime) → пробный
+- [x] хранение `/userdata/models/<name>.rknn` + `models.json` (имя, классы, input size);
+- [x] активация: `rknn_init` → `rknn_query` (shapes, версия runtime) → пробный
       инференс → swap контекста → сохранение пути в `divinus.yaml`
       (`app_config_save()`); при ошибке — откат на предыдущую модель;
-- [ ] запрет удаления активной модели; защита от path traversal; проверка размера;
-- [ ] UI в секции Analytics (`res/index.html`): таблица, upload, activate, delete,
+- [x] запрет удаления активной модели; защита от path traversal; проверка размера;
+- [x] UI в секции Analytics (`res/index.html`): таблица, upload, activate, delete,
       вывод ошибки `rknn_init` (например, «модель собрана несовместимым toolkit»).
 
 #### Фаза 5. Проверки и документация
 
-- [ ] RTSP `/live/0` — OSD на месте и обновляется (`bench/run.sh osd_check.py`);
-- [ ] `/api/jpeg` и событийный JPEG — без OSD (сравнение зон reg1…reg5);
-- [ ] событие — N кадров до/после, корректный порядок и таймстемпы;
+- [x] RTSP `/live/0` — OSD на месте и обновляется (`bench/run.sh osd_check.py`);
+- [x] `/api/jpeg` и событийный JPEG — без OSD (сравнение зон reg1…reg5);
+- [x] событие — N кадров до/после, корректный порядок и таймстемпы;
 - [ ] AIISP off/on + YOLO: fps, загрузка NPU, отсутствие пропусков в main;
-- [ ] перезагрузка: активная модель сохраняется, конфиг не теряется;
-- [ ] `FEATURES.md` §2/§3, `CHANGELOG.md`, `project/app/divinus/source/doc/endpoints.md`,
+- [x] перезагрузка: активная модель сохраняется, конфиг не теряется;
+- [x] `FEATURES.md` §2/§3, `CHANGELOG.md`, `project/app/divinus/source/doc/endpoints.md`,
       `bench/README.md` (если добавляются скрипты).
 
 ### 11.5. Ограничения и риски
@@ -598,8 +598,50 @@ i2ctransfer -y 3 w2@0x60 0x05 0x00 r1         # статус focus
   `files/divinus.yaml`, `source/doc/endpoints.md`
 - Референс NPU-пути: `project/app/rkipc/rkipc/src/rv1106_ipc/video/video.c`
   (`:537-566`, `:1889-1998`, `:2057-2068`), `common/rockiva/rockiva.c`
-- Демо и конвертация: <https://github.com/LuckfoxTECH/luckfox_pico_rknn_example>
-  (ветка `kernel-5.10.160`, uclibc), `scripts/luckfox_onnx_to_rknn`
-- Модели/ROCKIVA: `media/iva/iva/doc/Rockchip_Developer_Guide_ROCKIVA_SDK_CN.pdf`
-- Документация проекта: `FEATURES.md`, `TESTBENCH.md`, `INIT_ORDER.md`,
-  `bench/README.md`
+
+### 11.7. Статус реализации (2026-11-05)
+
+M1–M5 реализованы и проверены на стенде в конфигурации `yolo.source=vpss3`,
+модель YOLOv5n 640×640 (runtime 1.6.0), 3 fps: детекция идёт, NPU 28–33%,
+событие отдаёт 6 JPEG 640×640 с `X-Event-Id/Index/Total/Ts/Cause/Model`,
+`api_check.py` — 80/80, RTSP/OSD — 20 кадров без регрессии, загрузка и
+активация модели (с откатом при `rknn_init`) проверены. Сборка
+`make -C project/app/divinus` и `./build.sh app` + `firmware` проходят.
+
+После плана 2026-11-05 закрыты P1, P3 и P4: `vi1` отклоняется на всех слоях,
+zero-copy учитывает `w_stride` и требует 4D-NHWC, разметка переведена на
+`userdata` 40 МБ / `rootfs` 168 МБ и прошита полным `update.img`.
+
+Ключевые уточнения к плану:
+
+- Runtime в образе — **`librknnmrt.so` 1.6.0**, не 1.5.2; драйвер `rknpu`
+  0.9.2 с ним работает, модель в примере собрана toolkit 1.6.0.
+- **RGA не используется.** Легаси `c_RkRgaBlit` падает с SIGSEGV даже с
+  корректным `rga_info_t`; im2d `importbuffer_fd` не импортирует ни MMZ-, ни
+  dma-heap-дескрипторы; RGA-блит по буферу в куче (первая реализация)
+  **вешал плату**. NV12→RGB888 считается на CPU, кольцо кадров — в MMZ с
+  отображением через `mmap(fd)` (`MB_Handle2VirAddr` для MMZ валиден только
+  на 4 КиБ). Это отклонение от §M1 плана; цена — ~28% одного ядра на 3 fps
+  при 640×640.
+- `media-ctl` показывает `rkisp_selfpath`, но включение VI chn1 через
+  librockit **вешает плату**; дефолт `yolo.source` — `vpss3`, при
+  IVS/MJPEG/четвёртом потоке санитайзер переводит на `vi0`. `vi1` теперь
+  заблокирован в `gating.c`, `/api/yolo` (HTTP 400) и WebUI, сохранённый
+  `vi1` при старте заменяется на `vpss3`.
+- Zero-copy: вход пишется с учётом `w_stride`, для модели обязательны 4D-NHWC
+  выходы и одинаковое число каналов во всех ветвях (3D/NC1HWC2 отклоняются
+  при активации). На стенде лог подтвердил `input 640x640 stride 640 px, 3 4D
+  outputs (80x80x255, 40x40x255, 20x20x255)`; раскладка NHWC без паддинга
+  до 16 проверена хост-тестом на 80 классах (C = 255).
+- `/userdata` после переразметки — UBIFS-том `ubi5_0` 29.1 МиБ (свободно
+  ~28 МиБ); загрузка `.rknn` 3 МиБ через `/api/models` проверена, квота
+  достижима. Полный `update.img` прошит 2026-11-05; `rootfs` 168 МБ при
+  образе ~54 МиБ. Для поставки по-прежнему нужна модель 640×384 INT8
+  (~2 МиБ, P2) — точность ещё не измерена.
+- Событийный канал — отдельный VENC MJPG 4; `RK_MPI_VENC_SendFrame` работает
+  только с MJPG (still-JPEG кодек 15 не выдаёт поток на этой сборке).
+- Браузерный `ui_check.py` проходит: Chromium запущен с локально
+  распакованным `libasound.so.2` (`apt-get download libasound2t64`), проверены
+  8 разделов, отсутствие `vi1` в списке источников, загрузка, ошибка активации
+  и удаление модели, i18n EN/RU и мобильная раскладка; скриншоты —
+  `output/bench/ui/`.

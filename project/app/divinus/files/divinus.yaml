@@ -237,6 +237,20 @@ mjpeg:
 #   record_seconds: 15
 #   record_source: main
 #
+# yolo:
+#   enable: false
+#   source: vpss3         # vpss3 (default) | vi1 | vi0; vi1 hung a board in M0
+#   model: /userdata/models/yolov5n.rknn
+#   input_width: 640
+#   input_height: 384
+#   fps: 5
+#   conf_threshold: 0.35
+#   nms_threshold: 0.45
+#   classes: 80
+#   pre_seconds: 3
+#   post_seconds: 2
+#   max_frames: 20
+#
 # iq:
 #   main_scene: normal
 #   sub_scene: day

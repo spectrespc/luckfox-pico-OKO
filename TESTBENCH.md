@@ -93,11 +93,19 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
 4. Прошить: `./rkflash.sh` или `tools/linux/Linux_Upgrade_Tool/upgrade_tool`.
 5. Перезагрузить; загрузка пойдёт из SPI NAND без хоста.
 
-> **С 2026-11-04 разметка изменена** (`boot` 6 МБ, `oem` 40 МБ, `rootfs`
-> 198 МБ). Первая прошивка такой сборки — **только полный `update.img`**;
-> покомпонентная выкатка со старой таблицей несовместима. Сохраните нужное из
-> `/userdata` и с microSD: раздел `userdata` будет пересоздан. Проверка после
-> загрузки: `cat /proc/cmdline` и `cat /proc/mtd` (см. §8).
+> **С 2026-11-05 разметка изменена** (`boot` 6 МБ, `oem` 40 МБ, `userdata`
+> 40 МБ, `rootfs` 168 МБ). Первая прошивка такой сборки — **только полный
+> `update.img`**; покомпонентная выкатка со старой таблицей несовместима.
+> Сохраните нужное из `/userdata` и с microSD: раздел `userdata` будет
+> пересоздан. Проверка после загрузки: `cat /proc/cmdline` и `cat /proc/mtd`
+> (см. §8); том `ubi5_0` должен быть около 29 МиБ (`df -h /userdata`).
+>
+> Если `reboot loader` на DUT не переводит плату в loader-режим (проверено
+> 2026-11-05: обычная перезагрузка), остановите U-Boot по UART
+> (`<Ctrl+C>` в окне `Hit key to stop autoboot`) и выполните `download`:
+> команда отвечает `Enter rockusb failed, fallback to bootrom...`, после чего
+> `upgrade_tool ld` видит устройство в режиме `Maskrom`. Дальше — обычный
+> `./rkflash.sh update`; кнопка/перемычка Maskrom не нужна.
 
 ### B. Покомпонентная прошивка изменённых разделов
 
@@ -106,11 +114,11 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
 с MAC-адресом) не трогаются. Уменьшает износ NAND и исключает сброс U-Boot env.
 
 > **Только после переразметки.** Текущая таблица (`boot` 6 МБ, `oem` 40 МБ,
-> `userdata` 10 МБ, `rootfs` 198 МБ) сначала выкатывается полным
+> `userdata` 40 МБ, `rootfs` 168 МБ) сначала выкатывается полным
 > `./rkflash.sh update` / `upgrade_tool uf update.img`. Покомпонентная запись
 > ниже применима только к устройству, уже прошитому этой таблицей; LBA и
-> размеры из старых заметок (`oem 0x2800`, `rootfs 0x16800`/`0x69000`)
-> недействительны.
+> размеры из старых заметок (`oem 0x2800`, `userdata 0x5000`,
+> `rootfs 0x16800`/`0x63000`/`0x69000`) недействительны.
 
 **Маппинг исходников на разделы** (`output/image/*.img` собирает
 `./build.sh firmware`):
@@ -143,17 +151,17 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
    проверить через `upgrade_tool pl`):
    ```sh
    ./tools/linux/Linux_Upgrade_Tool/upgrade_tool wl 0x3800 0x14000 output/image/oem.img
-   ./tools/linux/Linux_Upgrade_Tool/upgrade_tool wl 0x1C800 0x63000 output/image/rootfs.img
+   ./tools/linux/Linux_Upgrade_Tool/upgrade_tool wl 0x2B800 0x54000 output/image/rootfs.img
    ./tools/linux/Linux_Upgrade_Tool/upgrade_tool rd
    ```
    Второй аргумент `wl` — размер **всего раздела** в секторах (oem 40M =
-   `0x14000`, rootfs 198M = `0x63000`), а не длина файла: tool стирает этот
+   `0x14000`, rootfs 168M = `0x54000`), а не длина файла: tool стирает этот
    диапазон и пишет образ. Если передать длину образа (oem `0x9D00`, rootfs
    `0x1A500`), в хвосте останутся старые UBI-PEB с другим `image_seq`, и ядро
    упадёт с `ubi0 error: ubi_attach: bad image sequence number …` (panic).
    Maskrom нужен один раз: после `db` устройство остаётся в loader-режиме,
    поэтому следующие разделы прошиваются без повторного входа.
-   `userdata` (LBA `0x17800`, 10M = `0x5000`) — только если менялось фабричное
+   `userdata` (LBA `0x17800`, 40M = `0x14000`) — только если менялось фабричное
    содержимое раздела.
 4. `boot`, `idblock`, `uboot` и `env` этой фичей не менялись. При необходимости
    прошивайте их полным `./rkflash.sh update` (§7A) или отдельной проверенной
@@ -203,11 +211,11 @@ media-ctl -p | grep -A6 'sc230ai 4-0032' | grep fmt
 # проверка потока (divinus должен быть остановлен): ожидается 30.0 fps
 v4l2-ctl -d /dev/video0 --stream-mmap --stream-count=60 --stream-poll
 
-# WebUI и API после прошивки: 74 проверки API и headless-проверка разделов
+# WebUI и API после прошивки: 80 проверок API и headless-проверка разделов
 bench/run.sh api_check.py
 /tmp/pw/bin/python bench/ui_check.py   # нужен Playwright, см. VERIFIED_FUNCTIONS.md §3
 
-# новая разметка: boot 0x600000, oem 0x2800000, userdata 0xA00000, rootfs 0xC600000
+# новая разметка: boot 0x600000, oem 0x2800000, userdata 0x2800000, rootfs 0xA800000
 cat /proc/cmdline
 cat /proc/mtd
 

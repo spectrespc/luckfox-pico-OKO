@@ -129,6 +129,20 @@ struct AppConfig {
     unsigned int ivs_record_seconds;
     bool ivs_record_sub;
 
+    // [yolo]
+    bool yolo_enable;
+    unsigned int yolo_source;           /* 0 vi1, 1 vpss3, 2 vi0 */
+    char yolo_model[192];
+    unsigned int yolo_input_width;
+    unsigned int yolo_input_height;
+    unsigned int yolo_fps;
+    double yolo_conf_threshold;
+    double yolo_nms_threshold;
+    unsigned int yolo_classes;
+    unsigned int yolo_pre_seconds;
+    unsigned int yolo_post_seconds;
+    unsigned int yolo_max_frames;
+
     // [iq]
     char iq_main_scene[32];
     char iq_sub_scene[32];

@@ -114,6 +114,31 @@ gating_result gating_check(const char *feature)
         if (chnState[HAL_CHN_IVS].enable)
             return blocked("no free VPSS channel for analytics",
                 "disable MJPEG and restart the stream");
+        if (app_config.yolo_enable && app_config.yolo_source == 1)
+            return blocked("VPSS channel 3 is reserved by YOLO",
+                "set yolo.source to vi0 or disable YOLO first");
+        return allowed;
+    }
+
+    if (!strcmp(feature, "yolo")) {
+        if (!(halCapabilities & HAL_CAP_RKNN))
+            return blocked("the NPU runtime is not available",
+                "librknnmrt.so is missing; reflash the oem partition");
+        /* VI channel 1 (selfpath) is exposed by the ISP topology but enabling
+         * it locks the RV1106 board until power-cycled or reflashed (M0). */
+        if (app_config.yolo_source == 0)
+            return blocked("VI selfpath (vi1) hangs the board on RV1106",
+                "set yolo.source to vpss3");
+        /* VPSS has four output channels.  Channel 3 is the last one, so any
+         * fourth stream, IVS or another detector user owns it on RV1106. */
+        if (app_config.yolo_source == 1 &&
+            (app_config.ivs_enable || app_config.mjpeg_enable ||
+             chnState[HAL_CHN_IVS].enable))
+            return blocked("VPSS channel 3 is already used",
+                "set yolo.source to vi0 or disable IVS/MJPEG");
+        if (access(app_config.yolo_model, R_OK))
+            return blocked("the configured model is missing",
+                "upload a .rknn model in the Events section");
         return allowed;
     }
 

@@ -56,7 +56,13 @@ python3 -m venv /tmp/pw && /tmp/pw/bin/pip install playwright
 `ui_check.py` не входит в `requirements.txt`: Playwright тянет браузер (~120 МБ),
 а `api_check.py` использует только стандартную библиотеку. Если Chromium не
 стартует с `libasound.so.2: cannot open shared object file`, поставьте
-`libasound2`/`libasound2t64` или распакуйте пакет и задайте `LD_LIBRARY_PATH`.
+`libasound2`/`libasound2t64` либо без root распакуйте пакет:
+
+```sh
+cd /tmp/kilo && apt-get download libasound2t64
+mkdir -p libasound && dpkg-deb -x libasound2t64_*.deb libasound
+LD_LIBRARY_PATH=/tmp/kilo/libasound/usr/lib/x86_64-linux-gnu bench/run.sh ui_check.py
+```
 
 ## Переменные окружения
 

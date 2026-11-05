@@ -168,3 +168,29 @@ typedef struct {
     unsigned int width;
     unsigned int height;
 } rk_common_rect;
+
+/* Layout of the vendor VIDEO_FRAME_S, shared by VI, VPSS and VENC.  The field
+ * order and types must match rk_comm_video.h; librockit reads the whole
+ * structure through the pointer. */
+typedef struct {
+    void *mbBlk;
+    unsigned int width;
+    unsigned int height;
+    unsigned int virWidth;
+    unsigned int virHeight;
+    int field;
+    int pixelFormat;
+    int videoFormat;
+    int compressMode;
+    int dynamicRange;
+    int colorGamut;
+    void *virAddr[2];   /* RK_MAX_COLOR_COMPONENT */
+    unsigned int timeRef;
+    unsigned long long pts;
+    unsigned long long privateData;
+    unsigned int frameFlag;
+} rk_common_frame;
+
+typedef struct {
+    rk_common_frame frame;
+} rk_common_frame_info;

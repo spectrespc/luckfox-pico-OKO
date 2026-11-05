@@ -9,6 +9,8 @@
 #include "gating.h"
 #include "ivs_events.h"
 #include "ntp.h"
+#include "analytics/models.h"
+#include "analytics/yolo.h"
 
 #define HTTP_MAX_CLIENTS 50
 #define HTTP_MIN_BUF_SIZE 4096
@@ -214,6 +216,24 @@ static void reply_error(int fd, const char *code, const char *reason,
         "{\"error\":\"%s\",\"reason\":\"%s\",\"hint\":\"%s\"}",
         code ? code : "failed", reason ? reason : "", hint ? hint : "");
     reply_json(fd, body, len);
+}
+
+/* Validation failures of an API argument use a real 4xx status; the rest of
+ * the legacy endpoints keep their JSON error with HTTP 200. */
+static void reply_bad_request(int fd, const char *reason, const char *hint) {
+    char body[640];
+    int bodyLen = snprintf(body, sizeof(body),
+        "{\"error\":\"invalid\",\"reason\":\"%s\",\"hint\":\"%s\"}",
+        reason ? reason : "", hint ? hint : "");
+    char header[192];
+    int headerLen = snprintf(header, sizeof(header),
+        "HTTP/1.1 400 Bad Request\r\n"
+        "Content-Type: application/json;charset=UTF-8\r\n"
+        "Content-Length: %d\r\n"
+        "Connection: close\r\n\r\n", bodyLen);
+    send_to_fd(fd, header, headerLen);
+    send_to_fd(fd, body, bodyLen);
+    close_socket_fd(fd);
 }
 
 /* Streams a regular file with a proper MIME type and Content-Length.
@@ -1453,6 +1473,191 @@ void respond_request(http_request_t *req) {
         return;
     }
 
+    /* OKO: model management for the NPU analytics.
+     *   GET  /api/models            — list, free space, active model
+     *   POST /api/models            — multipart upload (*.rknn)
+     *   POST /api/models/activate   — load and persist ?name=
+     *   POST /api/models/delete     — remove ?name= (active model refused) */
+    if (STARTS_WITH(req->uri, "/api/models")) {
+        if (EQUALS(req->uri, "/api/models")) {
+            if (EQUALS(req->method, "GET")) {
+                char body[4096];
+                size_t len = models_list_json(body, sizeof(body));
+                reply_json(req->clntFd, body, len);
+                return;
+            }
+
+            if (!EQUALS(req->method, "POST")) {
+                send_http_error(req->clntFd, 405);
+                return;
+            }
+
+            {
+                char *type = request_header("Content-Type");
+                int body_len = req->total - req->header_len;
+                char *payload = req->payload;
+                char bound[96], marker[104];
+                char *boundary, *start, *stop, *fnStart, *fnEnd;
+                char filename[96] = {0};
+                size_t uploaded_len;
+                char error[192];
+
+                if (!type || !STARTS_WITH(type, "multipart/form-data") ||
+                    body_len <= 0) {
+                    reply_error(req->clntFd, "unsupported",
+                        "the upload must be multipart/form-data",
+                        "send the model as the 'file' field");
+                    return;
+                }
+                boundary = strstr(type, "boundary=");
+                if (!boundary) {
+                    reply_error(req->clntFd, "unsupported",
+                        "the multipart boundary is missing", "");
+                    return;
+                }
+                boundary += strlen("boundary=");
+                {
+                    size_t bound_len = strcspn(boundary, ";\r\n");
+                    if (bound_len >= 2 && boundary[0] == '"' &&
+                        boundary[bound_len - 1] == '"') {
+                        boundary++;
+                        bound_len -= 2;
+                    }
+                    if (bound_len == 0 || bound_len >= sizeof(bound)) {
+                        reply_error(req->clntFd, "unsupported",
+                            "the multipart boundary is invalid", "");
+                        return;
+                    }
+                    snprintf(bound, sizeof(bound), "%.*s", (int)bound_len,
+                        boundary);
+                }
+
+                start = memstr(payload, "\r\n\r\n", body_len, 4);
+                if (!start) {
+                    reply_error(req->clntFd, "unsupported",
+                        "the multipart body has no part header", "");
+                    return;
+                }
+
+                fnStart = memstr(payload, "filename=\"",
+                    (int)(start - payload), 10);
+                if (fnStart) {
+                    fnStart += 10;
+                    fnEnd = strchr(fnStart, '"');
+                    if (fnEnd && fnEnd < start) {
+                        char *base = fnStart;
+                        for (char *p = fnStart; p < fnEnd; p++)
+                            if (*p == '/' || *p == '\\') base = p + 1;
+                        if ((size_t)(fnEnd - base) < sizeof(filename))
+                            snprintf(filename, sizeof(filename), "%.*s",
+                                (int)(fnEnd - base), base);
+                    }
+                }
+                if (!filename[0]) {
+                    reply_error(req->clntFd, "unsupported",
+                        "the upload has no file name",
+                        "select a .rknn file in the Events section");
+                    return;
+                }
+
+                start += 4;
+                snprintf(marker, sizeof(marker), "--%s", bound);
+                stop = memstr(start, marker,
+                    body_len - (int)(start - payload), (char)strlen(marker));
+                if (stop) {
+                    if (stop - start >= 2)
+                        stop -= 2;
+                    else
+                        stop = start;
+                } else {
+                    stop = payload + body_len;
+                }
+                uploaded_len = (size_t)(stop - start);
+
+                if (models_upload(filename, start, uploaded_len, error,
+                        sizeof(error))) {
+                    reply_error(req->clntFd, "blocked", error,
+                        "the limit is 3 MiB and the model must be .rknn");
+                    return;
+                }
+
+                {
+                    /* Names are restricted to [A-Za-z0-9._-] by
+                     * models_upload(), so no JSON escaping is needed. */
+                    char body[320];
+                    int len = snprintf(body, sizeof(body),
+                        "{\"uploaded\":true,\"name\":\"%s\",\"bytes\":%zu,"
+                        "\"note\":\"activate the model to load it\"}",
+                        filename, uploaded_len);
+                    reply_json(req->clntFd, body, len);
+                }
+                return;
+            }
+        }
+
+        if (EQUALS(req->uri, "/api/models/activate") ||
+            EQUALS(req->uri, "/api/models/delete")) {
+            char name[96] = {0};
+            char error[192];
+            int activate = EQUALS(req->uri, "/api/models/activate");
+
+            if (!EQUALS(req->method, "POST")) {
+                send_http_error(req->clntFd, 405);
+                return;
+            }
+
+            while (req->query) {
+                char *value = split(&req->query, "&");
+                char *key;
+                if (!value || !*value) continue;
+                key = split(&value, "=");
+                if (!key || !*key || !value || !*value) continue;
+                unescape_uri(value);
+                if (EQUALS(key, "name")) {
+                    strncpy(name, value, sizeof(name) - 1);
+                    name[sizeof(name) - 1] = 0;
+                }
+            }
+            if (!name[0]) {
+                reply_error(req->clntFd, "unsupported",
+                    "the 'name' parameter is missing", "");
+                return;
+            }
+
+            if (activate) {
+                if (models_activate(name, error, sizeof(error))) {
+                    reply_error(req->clntFd, "blocked", error,
+                        "the previous model stays active");
+                    return;
+                }
+                {
+                    char body[320];
+                    int len = snprintf(body, sizeof(body),
+                        "{\"activated\":true,\"name\":\"%s\","
+                        "\"note\":\"yolo.model saved; no restart needed\"}",
+                        name);
+                    reply_json(req->clntFd, body, len);
+                }
+            } else {
+                if (models_delete(name, error, sizeof(error))) {
+                    reply_error(req->clntFd, "blocked", error,
+                        "activate another model before deleting this one");
+                    return;
+                }
+                {
+                    char body[256];
+                    int len = snprintf(body, sizeof(body),
+                        "{\"deleted\":true,\"name\":\"%s\"}", name);
+                    reply_json(req->clntFd, body, len);
+                }
+            }
+            return;
+        }
+
+        send_http_error(req->clntFd, 404);
+        return;
+    }
+
     if (EQUALS(req->uri, "/api/isp")) {
         if (req->query) {
             char *remain;
@@ -2478,6 +2683,169 @@ void respond_request(http_request_t *req) {
         return;
     }
 
+    if (EQUALS(req->uri, "/api/yolo")) {
+        int restartNeeded = 0;
+        int liveOk = 1;
+
+        if (req->query) {
+            int enableReq = -1;
+            while (req->query) {
+                char *value = split(&req->query, "&");
+                char *key;
+                if (!value || !*value) continue;
+                key = split(&value, "=");
+                if (!key || !*key || !value || !*value) continue;
+                unescape_uri(value);
+
+                if (EQUALS(key, "enable")) {
+                    enableReq = query_bool(value);
+                } else if (EQUALS(key, "source")) {
+                    unsigned int source;
+                    if (EQUALS_CASE(value, "vpss3")) {
+                        source = 1;
+                    } else if (EQUALS_CASE(value, "vi0")) {
+                        source = 2;
+                    } else if (EQUALS_CASE(value, "vi1")) {
+                        /* Enabling VI channel 1 locks the RV1106 board until
+                         * a power cycle, so it is never accepted over HTTP. */
+                        reply_bad_request(req->clntFd,
+                            "yolo.source=vi1 is not supported",
+                            "VI selfpath hangs RV1106; use vpss3 or vi0");
+                        return;
+                    } else {
+                        reply_bad_request(req->clntFd,
+                            "unknown yolo.source value",
+                            "use vpss3 (default) or vi0");
+                        return;
+                    }
+                    if (source != app_config.yolo_source) {
+                        app_config.yolo_source = source;
+                        restartNeeded = 1;
+                        liveOk = 0;
+                    }
+                } else if (EQUALS(key, "input_width")) {
+                    long v;
+                    if (parse_ranged(value, 64, 4096, &v) &&
+                        (unsigned int)v != app_config.yolo_input_width) {
+                        app_config.yolo_input_width = (unsigned int)v;
+                        restartNeeded = 1;
+                        liveOk = 0;
+                    }
+                } else if (EQUALS(key, "input_height")) {
+                    long v;
+                    if (parse_ranged(value, 64, 4096, &v) &&
+                        (unsigned int)v != app_config.yolo_input_height) {
+                        app_config.yolo_input_height = (unsigned int)v;
+                        restartNeeded = 1;
+                        liveOk = 0;
+                    }
+                } else if (EQUALS(key, "fps")) {
+                    long v;
+                    if (parse_ranged(value, 1, 30, &v) &&
+                        (unsigned int)v != app_config.yolo_fps) {
+                        app_config.yolo_fps = (unsigned int)v;
+                        restartNeeded = 1;
+                        liveOk = 0;
+                    }
+                } else if (EQUALS(key, "conf_threshold")) {
+                    double d = strtod(value, NULL);
+                    if (d >= 0.01 && d <= 0.99)
+                        app_config.yolo_conf_threshold = d;
+                } else if (EQUALS(key, "nms_threshold")) {
+                    double d = strtod(value, NULL);
+                    if (d >= 0.01 && d <= 0.99)
+                        app_config.yolo_nms_threshold = d;
+                } else if (EQUALS(key, "classes")) {
+                    long v;
+                    if (parse_ranged(value, 1, 255, &v) &&
+                        (unsigned int)v != app_config.yolo_classes) {
+                        app_config.yolo_classes = (unsigned int)v;
+                        restartNeeded = 1;
+                        liveOk = 0;
+                    }
+                } else if (EQUALS(key, "pre_seconds")) {
+                    long v;
+                    if (parse_ranged(value, 0, 30, &v) &&
+                        (unsigned int)v != app_config.yolo_pre_seconds) {
+                        app_config.yolo_pre_seconds = (unsigned int)v;
+                        restartNeeded = 1;
+                        liveOk = 0;
+                    }
+                } else if (EQUALS(key, "post_seconds")) {
+                    long v;
+                    if (parse_ranged(value, 0, 30, &v) &&
+                        (unsigned int)v != app_config.yolo_post_seconds) {
+                        app_config.yolo_post_seconds = (unsigned int)v;
+                        restartNeeded = 1;
+                        liveOk = 0;
+                    }
+                } else if (EQUALS(key, "max_frames")) {
+                    long v;
+                    if (parse_ranged(value, 1, 60, &v) &&
+                        (unsigned int)v != app_config.yolo_max_frames) {
+                        app_config.yolo_max_frames = (unsigned int)v;
+                        restartNeeded = 1;
+                        liveOk = 0;
+                    }
+                }
+            }
+
+            if (enableReq >= 0) {
+                if (enableReq != app_config.yolo_enable) {
+                    app_config.yolo_enable = enableReq;
+                    restartNeeded = 1;
+                }
+                /* Structural changes are applied by the next start: the
+                 * frame source, ring buffers and model context are already
+                 * allocated with the old values. */
+                if (!liveOk && app_config.yolo_enable &&
+                    !yolo_running()) {
+                    restartNeeded = 1;
+                } else if (app_config.yolo_enable && !yolo_running()) {
+                    gating_result gate = gating_check("yolo");
+                    if (!gate.ok) {
+                        app_config.yolo_enable = false;
+                        gating_block(req, gate);
+                        return;
+                    }
+                    if (yolo_start()) {
+                        app_config.yolo_enable = false;
+                        reply_error(req->clntFd, "blocked",
+                            "the detector could not be started",
+                            "check the model and the kernel log");
+                        return;
+                    }
+                } else if (!app_config.yolo_enable) {
+                    yolo_stop();
+                }
+            }
+        }
+
+        respLen = sprintf(response,
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: application/json;charset=UTF-8\r\n"
+            "Connection: close\r\n"
+            "\r\n"
+            "{\"enable\":%s,\"source\":\"%s\",\"model\":\"%s\","
+            "\"input_width\":%d,\"input_height\":%d,\"fps\":%d,"
+            "\"conf_threshold\":%.2f,\"nms_threshold\":%.2f,"
+            "\"classes\":%d,\"pre_seconds\":%d,\"post_seconds\":%d,"
+            "\"max_frames\":%d,\"running\":%s%s}",
+            app_config.yolo_enable ? "true" : "false",
+            app_config.yolo_source == 2 ? "vi0" :
+                (app_config.yolo_source == 1 ? "vpss3" : "vi1"),
+            app_config.yolo_model,
+            app_config.yolo_input_width, app_config.yolo_input_height,
+            app_config.yolo_fps, app_config.yolo_conf_threshold,
+            app_config.yolo_nms_threshold, app_config.yolo_classes,
+            app_config.yolo_pre_seconds, app_config.yolo_post_seconds,
+            app_config.yolo_max_frames, yolo_running() ? "true" : "false",
+            restartNeeded ? ",\"note\":\"restart required for the new settings\""
+                : "");
+        send_and_close(req->clntFd, response, respLen);
+        return;
+    }
+
     if (EQUALS(req->uri, "/api/ivs")) {
         if (req->query) {
             int enableReq = -1;
@@ -3305,7 +3673,8 @@ if (EQUALS(req->uri, "/api/storage")) {
             "\"sensor\":\"%s\",\"temp\":\"%.1f\u00B0C\",\"uptime\":\"%s\","
             "\"ip\":\"%s\",\"sd_free_mb\":%llu,\"sd_total_mb\":%llu,"
             "\"features\":{\"eptz\":%s,\"rotate\":%s,\"substream\":%s,"
-            "\"aiisp\":%s,\"ivs\":%s,\"hdr\":%s,\"sd\":%s}}",
+            "\"aiisp\":%s,\"ivs\":%s,\"hdr\":%s,\"sd\":%s,"
+            "\"yolo\":%s}}",
             chip, si.loads[0] / 65536.0, si.loads[1] / 65536.0, si.loads[2] / 65536.0,
             memory, sensor, hal_temperature_read(), uptime,
             ipaddr,
@@ -3317,7 +3686,8 @@ if (EQUALS(req->uri, "/api/storage")) {
             (halCapabilities & HAL_CAP_AIISP) ? "true" : "false",
             (halCapabilities & HAL_CAP_IVS) ? "true" : "false",
             app_config.hdr_mode ? "true" : "false",
-            gating_sd_mounted() ? "true" : "false");
+            gating_sd_mounted() ? "true" : "false",
+            (halCapabilities & HAL_CAP_RKNN) ? "true" : "false");
         send_and_close(req->clntFd, response, respLen);
         return;
     }

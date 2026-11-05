@@ -614,6 +614,48 @@
 			</div>
 
 			<div class="card">
+				<h3><span data-i18n="yolo">Object detection (NPU)</span></h3>
+				<div class="field"><label data-i18n="enabled">Enabled</label>
+					<div class="ctl"><select id="yolo_enable" data-group="yolo" data-k="enable"><option value="false">OFF</option><option value="true">ON</option></select></div></div>
+				<div class="field"><label data-i18n="yolo_source">Frame source</label>
+					<div class="ctl"><select id="yolo_source" data-group="yolo" data-k="source">
+						<option value="vpss3" data-i18n="yolo_src_vpss3">VPSS channel 3 (default)</option>
+						<option value="vi0" data-i18n="yolo_src_vi0">Main channel (vi0, fallback)</option></select></div></div>
+				<div class="field"><label data-i18n="fps">Framerate</label>
+					<div class="ctl"><input type="number" id="yolo_fps" data-group="yolo" data-k="fps" min="1" max="30"></div></div>
+				<div class="field"><label data-i18n="conf_threshold">Confidence threshold</label>
+					<div class="ctl"><input type="number" id="yolo_conf_threshold" data-group="yolo" data-k="conf_threshold" min="0.01" max="0.99" step="0.01"></div></div>
+				<div class="field"><label data-i18n="nms_threshold">NMS threshold</label>
+					<div class="ctl"><input type="number" id="yolo_nms_threshold" data-group="yolo" data-k="nms_threshold" min="0.01" max="0.99" step="0.01"></div></div>
+				<div class="field"><label data-i18n="classes">Classes</label>
+					<div class="ctl"><input type="number" id="yolo_classes" data-group="yolo" data-k="classes" min="1" max="255"></div></div>
+				<div class="field"><label data-i18n="input_size">Model input (W x H)</label>
+					<div class="ctl"><input type="number" id="yolo_input_width" data-group="yolo" data-k="input_width" min="64" max="4096">&nbsp;x&nbsp;<input type="number" id="yolo_input_height" data-group="yolo" data-k="input_height" min="64" max="4096"></div></div>
+				<div class="field"><label data-i18n="pre_seconds">Pre-roll (s)</label>
+					<div class="ctl"><input type="number" id="yolo_pre_seconds" data-group="yolo" data-k="pre_seconds" min="0" max="30"></div></div>
+				<div class="field"><label data-i18n="post_seconds">Post-roll (s)</label>
+					<div class="ctl"><input type="number" id="yolo_post_seconds" data-group="yolo" data-k="post_seconds" min="0" max="30"></div></div>
+				<div class="field"><label data-i18n="max_frames">Maximum frames per event</label>
+					<div class="ctl"><input type="number" id="yolo_max_frames" data-group="yolo" data-k="max_frames" min="1" max="60"></div></div>
+				<div class="actions">
+					<button type="button" class="btn primary" data-apply="yolo" data-ep="yolo" disabled data-i18n="apply">Apply</button>
+				</div>
+				<p class="note" data-i18n="yolo_note">Frames are stored before and after a detection and sent as a package by HTTP; bounding boxes are not drawn. VPSS channel 3 conflicts with IVS/MJPEG.</p>
+			</div>
+
+			<div class="card">
+				<h3><span data-i18n="models">Models</span> <span class="hint" id="models_free"></span></h3>
+				<div class="log" id="models_table"><div class="hint" data-i18n="no_models">No models installed.</div></div>
+				<div class="field"><label data-i18n="model_file">Model file</label>
+					<div class="ctl"><input type="file" id="model_file" accept=".rknn"></div></div>
+				<div class="actions">
+					<button type="button" class="btn primary" onclick="uploadModel()" data-i18n="upload">Upload</button>
+					<button type="button" class="btn" onclick="loadModels()" data-i18n="refresh">Refresh</button>
+				</div>
+				<p class="note" data-i18n="models_note">Only .rknn models up to 3 MiB can be uploaded. Activation checks the input size and runs one inference; the previous model is kept on failure.</p>
+			</div>
+
+			<div class="card">
 				<h3><span data-i18n="events_journal">Event log</span></h3>
 				<div class="log" id="ivs_events_events"><div class="hint" data-i18n="no_events">No motion events yet.</div></div>
 				<div class="actions">
@@ -874,6 +916,21 @@ var I18N = {
 		aiisp: "Night image (AIISP)", mode: "Mode", model_dir: "Model directory",
 		buf_cnt: "Frame buffers",
 		aiisp_note: "AIISP and HDR cannot run together; AIISP lowers the frame rate while the model is active.",
+		yolo: "Object detection (NPU)", yolo_source: "Frame source",
+		yolo_src_vpss3: "VPSS channel 3 (default)",
+		yolo_src_vi0: "Main channel (vi0, fallback)",
+		conf_threshold: "Confidence threshold", nms_threshold: "NMS threshold",
+		classes: "Classes", input_size: "Model input (W x H)",
+		pre_seconds: "Pre-roll (s)", post_seconds: "Post-roll (s)",
+		max_frames: "Maximum frames per event",
+		yolo_note: "Frames before and after a detection are stored and sent by HTTP; boxes are not drawn on the stream. VPSS channel 3 conflicts with IVS/MJPEG. VI selfpath (vi1) is not offered because it hangs the board.",
+		models: "Models", model_file: "Model file", upload: "Upload",
+		no_models: "No models installed.", active: "active",
+		activate: "Activate", models_unavailable: "The model list is unavailable.",
+		models_note: "Only .rknn models up to 3 MiB are accepted. Activation checks the input size and runs one inference; on failure the previous model stays active.",
+		model_delete_confirm: "Delete this model?", model_activated: "Model activated",
+		model_deleted: "Model deleted", model_choose_file: "Choose a .rknn file first.",
+		model_too_big: "The model is larger than 3 MiB.", model_uploaded: "Model uploaded",
 		hdr_iq: "HDR and IQ", hdr_apply: "Apply mode", iq_main: "IQ main scene",
 		iq_sub: "IQ sub scene", iq_file: "IQ file", apply_hdr: "Apply HDR",
 		apply_iq: "Apply IQ", hdr_note: "HDR requires a restart; it is refused while AIISP is on.",
@@ -991,6 +1048,21 @@ var I18N = {
 		aiisp: "Ночное изображение (AIISP)", mode: "Режим", model_dir: "Каталог модели",
 		buf_cnt: "Буферы кадров",
 		aiisp_note: "AIISP и HDR несовместимы; при активной модели AIISP снижает частоту кадров.",
+		yolo: "Детекция объектов (NPU)", yolo_source: "Источник кадров",
+		yolo_src_vpss3: "Канал VPSS 3 (по умолчанию)",
+		yolo_src_vi0: "Основной канал (vi0, резервный)",
+		conf_threshold: "Порог уверенности", nms_threshold: "Порог NMS",
+		classes: "Классы", input_size: "Вход модели (Ш x В)",
+		pre_seconds: "Пре-ролл (с)", post_seconds: "Пост-ролл (с)",
+		max_frames: "Максимум кадров на событие",
+		yolo_note: "Кадры до и после детекции сохраняются и отправляются по HTTP; рамки на поток не рисуются. Канал VPSS 3 конфликтует с IVS/MJPEG. VI selfpath (vi1) не предлагается, так как вешает плату.",
+		models: "Модели", model_file: "Файл модели", upload: "Загрузить",
+		no_models: "Модели не установлены.", active: "активна",
+		activate: "Активировать", models_unavailable: "Список моделей недоступен.",
+		models_note: "Принимаются только .rknn до 3 МиБ. Активация проверяет размер входа и выполняет один инференс; при ошибке прежняя модель остаётся активной.",
+		model_delete_confirm: "Удалить эту модель?", model_activated: "Модель активирована",
+		model_deleted: "Модель удалена", model_choose_file: "Сначала выберите файл .rknn.",
+		model_too_big: "Модель больше 3 МиБ.", model_uploaded: "Модель загружена",
 		hdr_iq: "HDR и IQ", hdr_apply: "Способ применения", iq_main: "IQ-сцена основного",
 		iq_sub: "IQ-сцена субпотока", iq_file: "Файл IQ", apply_hdr: "Применить HDR",
 		apply_iq: "Применить IQ", hdr_note: "HDR требует перезапуска; отключается при включённом AIISP.",
@@ -1388,6 +1460,85 @@ function eptzReset() {
 		snapshotEndpoint('eptz');
 		toast('ok', t('applied'));
 	});
+}
+
+function loadModels() {
+	getJson('/api/models', function (dec) {
+		var box = $('models_table');
+		if (!box) return;
+		box.innerHTML = '';
+		if (!dec || dec.error) {
+			var err = document.createElement('div');
+			err.className = 'hint';
+			err.textContent = (dec && dec.reason) || t('models_unavailable');
+			box.appendChild(err);
+			return;
+		}
+		if ($('models_free') && dec.free !== undefined)
+			$('models_free').textContent = Math.floor(dec.free / 1024) + ' KiB';
+		if (!dec.models || !dec.models.length) {
+			var empty = document.createElement('div');
+			empty.className = 'hint';
+			empty.textContent = t('no_models');
+			box.appendChild(empty);
+			return;
+		}
+		for (var i = 0; i < dec.models.length; i++) {
+			var m = dec.models[i];
+			var row = document.createElement('div');
+			var label = document.createElement('span');
+			label.textContent = m.name + ' — ' + Math.round(m.size / 1024) + ' KiB' +
+				(m.active ? ' [' + t('active') + ']' : '');
+			row.appendChild(label);
+			if (!m.active) {
+				var act = document.createElement('button');
+				act.type = 'button';
+				act.className = 'btn';
+				act.textContent = t('activate');
+				act.onclick = (function (name) { return function () { modelAction('activate', name); }; })(m.name);
+				row.appendChild(act);
+				var del = document.createElement('button');
+				del.type = 'button';
+				del.className = 'btn danger';
+				del.textContent = t('delete');
+				del.onclick = (function (name) { return function () { modelAction('delete', name); }; })(m.name);
+				row.appendChild(del);
+			}
+			box.appendChild(row);
+		}
+	});
+}
+
+function modelAction(action, name) {
+	if (action === 'delete' && !confirm(t('model_delete_confirm'))) return;
+	request('POST', '/api/models/' + action + '?name=' + encodeURIComponent(name), '',
+		'application/x-www-form-urlencoded', function (dec) {
+			if (!dec || dec.error) { toastError(dec); loadModels(); return; }
+			toast('ok', action === 'activate' ? t('model_activated') : t('model_deleted'));
+			loadModels();
+			apiRead('yolo');
+		});
+}
+
+function uploadModel() {
+	var input = $('model_file');
+	var file = input && input.files && input.files[0];
+	if (!file) { toast('err', t('model_choose_file')); return; }
+	if (file.size > 3 * 1024 * 1024) { toast('err', t('model_too_big')); input.value = ''; return; }
+	var form = new FormData();
+	form.append('file', file);
+	var req = new XMLHttpRequest();
+	req.open('POST', '/api/models');
+	req.onreadystatechange = function () {
+		if (req.readyState !== 4) return;
+		var dec = null;
+		try { dec = JSON.parse(req.responseText); } catch (e) {}
+		if (!dec || dec.error) toastError(dec);
+		else toast('ok', t('model_uploaded'));
+		input.value = '';
+		loadModels();
+	};
+	req.send(form);
 }
 
 function loadIvsEvents() {
@@ -1809,7 +1960,7 @@ var SECTION_LOAD = {
 	live: ['record', 'eptz', 'rotate'],
 	image: ['isp', 'night', 'aiisp', 'hdr', 'iq'],
 	streams: ['mp4', 'substream', 'mjpeg', 'jpeg', 'audio', 'venc', 'rtsp', 'onvif'],
-	events: ['ivs'],
+	events: ['ivs', 'yolo'],
 	storage: ['storage', 'record'],
 	network: ['network', 'time'],
 	osd: ['osd/0', 'osd/1', 'osd/2', 'osd/3', 'osd/4', 'osd/5', 'osd/6', 'osd/7', 'osd/8', 'osd/9'],
@@ -1821,6 +1972,7 @@ function loadSection(name) {
 	for (var i = 0; i < eps.length; i++) apiRead(eps[i]);
 	if (name === 'storage') refreshRecordings();
 	if (name === 'streams') loadStreams();
+	if (name === 'events') loadModels();
 }
 
 function showSection(name) {

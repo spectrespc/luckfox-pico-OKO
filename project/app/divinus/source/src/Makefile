@@ -9,7 +9,7 @@ $(OBJ): $(SRC:%.c=%.o)
 	$(CC) $^ -rdynamic $(OPT) -DGIT_REV=\"$(GIT_REV)\" -o $@
 
 %.o: %.c Makefile
-	$(CC) -c $< $(OPT) -DGIT_REV=\"$(GIT_REV)\" -o $@
+	$(CC) -c $< $(OPT) -I. -DGIT_REV=\"$(GIT_REV)\" -o $@
 
 clean:
 	rm -rf $(SRC:%.c=%.o) $(OBJ)

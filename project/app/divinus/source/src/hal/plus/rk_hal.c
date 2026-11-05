@@ -1,6 +1,9 @@
 #if defined(__ARM_PCS_VFP)
 
+#include <stdint.h>
+
 #include "rk_hal.h"
+#include "rk_rgn_pack.h"
 #include "../../app_config.h"
 
 rk_aiq_impl     rk_aiq;
@@ -8,6 +11,7 @@ rk_aud_impl     rk_aud;
 rk_ivs_impl     rk_ivs;
 rk_mb_impl      rk_mb;
 rk_rgn_impl     rk_rgn;
+rk_rknn_impl    rk_rknn;
 rk_sys_impl     rk_sys;
 rk_venc_impl    rk_venc;
 rk_vi_impl      rk_vi;
@@ -29,12 +33,25 @@ char _rk_vi_pipe = 0;
 char _rk_vpss_chn = 0;
 char _rk_vpss_grp = 0;
 
+/* YOLO capture source and the dedicated event JPEG encoder (VENC chn 4, the
+ * channel rkipc uses for snapshots).  These are independent of the VENC pool
+ * in rk_state[] because they are never bound to a VPSS channel. */
+#define RK_YOLO_JPEG_CHN 4
+static int _rk_yolo_source = -1;
+static int _rk_vi_depth = 0;
+static int _rk_yolo_chn = -1;
+static unsigned short _rk_yolo_width = 0, _rk_yolo_height = 0;
+static void *_rk_yolo_jpeg_blk = NULL;
+static int _rk_yolo_jpeg_ready = 0;
+static unsigned short _rk_yolo_jpeg_width = 0, _rk_yolo_jpeg_height = 0;
+
 void rk_hal_deinit(void)
 {
     rk_ivs_unload(&rk_ivs);
     rk_vpss_unload(&rk_vpss);
     rk_vi_unload(&rk_vi);
     rk_venc_unload(&rk_venc);
+    rk_rknn_unload(&rk_rknn);
     rk_rgn_unload(&rk_rgn);
     rk_mb_unload(&rk_mb);
     rk_aud_unload(&rk_aud);
@@ -66,6 +83,14 @@ int rk_hal_init(void)
     /* IVS is optional: an older librockit simply disables analytics. */
     if (rk_ivs_load(&rk_ivs))
         HAL_DANGER("rk_hal", "IVS is unavailable, analytics disabled\n");
+
+    /* NPU analytics is optional as well: the image may not carry the mini
+     * runtime, and a missing librknnmrt must not stop the camera. */
+    if (rk_rknn_load(&rk_rknn))
+        HAL_DANGER("rk_hal", "RKNN is unavailable, YOLO detection disabled\n");
+    else
+        halCapabilities |= HAL_CAP_RKNN;
+
 
     if (rk_vpss.fnSetChnCrop) halCapabilities |= HAL_CAP_EPTZ;
     if (rk_vpss.fnSetChnRotation) halCapabilities |= HAL_CAP_ROTATE;
@@ -298,7 +323,11 @@ int rk_pipeline_create(short width, short height)
         channel.size.height = height;
         channel.pixFmt = RK_PIXFMT_YUV420SP;
         channel.compress = RK_COMPR_NONE;
-        channel.depth = 0;
+        /* yolo.source=vi0 is the emergency fallback: it reads the same main
+         * channel, so the user frame queue has to be non-zero. */
+        channel.depth = (app_config.yolo_enable && app_config.yolo_source == 2)
+            ? 2 : 0;
+        _rk_vi_depth = (int)channel.depth;
         channel.srcFps = -1;
         channel.dstFps = -1;
         channel.ispOpts.bufCount = 2;
@@ -395,6 +424,17 @@ static int rk_region_targets(char *targets, int max)
     return count;
 }
 
+/* OSD handles are small region ids, but the once-per-handle logging below
+ * uses a 32-bit mask: silently skip the log for out-of-range values instead
+ * of shifting by an unbound amount. */
+static int rk_region_log_once(unsigned int *mask, int handle)
+{
+    if (handle < 0 || handle >= 32) return 0;
+    if (*mask & (1u << (unsigned int)handle)) return 0;
+    *mask |= 1u << (unsigned int)handle;
+    return 1;
+}
+
 int rk_region_create2(char handle, hal_rect rect, short opacity,
     int module, int device, int channel)
 {
@@ -410,14 +450,36 @@ int rk_region_create2(char handle, hal_rect rect, short opacity,
     if (rk_rgn.fnGetChannelConfig(handle, &target, &attribCurr)) {
         HAL_INFO("rk_rgn", "Attaching region %d to channel %d...\n",
             handle, channel);
-    } else if (attribCurr.overlay.point.x != px || attribCurr.overlay.point.y != py) {
-        HAL_INFO("rk_rgn", "Position has changed, reattaching "
-            "region %d to channel %d...\n", handle, channel);
-        rk_rgn.fnDetachChannel(handle, &target);
     } else {
-        // OKO: librockit rejects a second attach of the same region to the same
-        // channel; position and size are unchanged, so there is nothing to do.
-        return EXIT_SUCCESS;
+        if (attribCurr.overlay.point.x == px &&
+            attribCurr.overlay.point.y == py &&
+            attribCurr.overlay.fgAlpha == (unsigned int)opacity) {
+            // OKO: librockit rejects a second attach of the same region to the
+            // same channel; position, size and opacity are unchanged, so there
+            // is nothing to do.
+            return EXIT_SUCCESS;
+        }
+
+        /* OKO: change only the display attributes instead of detaching and
+         * reattaching the region.  This is also what applies a new opacity
+         * when the position stays the same (previously ignored).  Everything
+         * else (layer, show, color LUT) is preserved from GetDisplayAttr. */
+        attrib = attribCurr;
+        attrib.overlay.point.x = px;
+        attrib.overlay.point.y = py;
+        attrib.overlay.fgAlpha = (unsigned int)opacity;
+        attrib.overlay.bgAlpha = 0;
+
+        ret = rk_rgn.fnSetChannelConfig(handle, &target, &attrib);
+        if (!ret || ret == RK_NOTICE_RGN_BUFFER_CHANGE) {
+            HAL_INFO("rk_rgn", "Updated display attributes of region %d on "
+                "channel %d.\n", handle, channel);
+            return EXIT_SUCCESS;
+        }
+
+        HAL_WARNING("rk_rgn", "SetDisplayAttr on region %d channel %d failed "
+            "with %#x, reattaching\n", handle, channel, ret);
+        rk_rgn.fnDetachChannel(handle, &target);
     }
 
     memset(&attrib, 0, sizeof(attrib));
@@ -500,38 +562,76 @@ void rk_region_destroy(char handle)
 
 int rk_region_setbitmap(int handle, hal_bitmap *bitmap)
 {
-// OKO: RV1106 RGN accepts BGRA5551. The alpha bit position differs between
+    // OKO: RV1106 RGN accepts BGRA5551. The alpha bit position differs between
     // librockit builds (bit 0 vs bit 15), so set both; this keeps non-white
-    // text visible. Sizes are padded to the required 16-pixel alignment;
-    // padding stays transparent so the visible text does not move.
-    unsigned short w = bitmap->dim.width, h = bitmap->dim.height;
-    unsigned short aw = (w + 15) & ~15, ah = (h + 15) & ~15;
-    unsigned short *src = bitmap->data, *dst;
-    size_t i, count;
-    unsigned int painted = 0;
-    static unsigned int logged;
+    // text visible.  The region canvas is updated in place through the canvas
+    // interface when librockit provides it; SetBitmap remains the fallback.
+    // Sizes are padded to the required 16-pixel alignment; padding stays
+    // transparent so the visible text does not move.
+    unsigned int w = bitmap->dim.width, h = bitmap->dim.height;
+    unsigned int aw = rk_rgn_pad16(w), ah = rk_rgn_pad16(h);
+    unsigned short *src = bitmap->data;
+    uint16_t *dst;
+    unsigned int stride = aw, painted = 0;
+    static unsigned int logged, canvasFailed;
     rk_rgn_bmp nativeBmp;
     int ret;
 
-    if (aw < 16) aw = 16;
-    if (ah < 16) ah = 16;
+    if (!src || !w || !h)
+        return EXIT_FAILURE;
 
-    count = (size_t)aw * ah;
-    dst = calloc(count, sizeof(*dst));
+    if (rk_rgn.fnGetCanvasInfo && rk_rgn.fnUpdateCanvas) {
+        rk_rgn_canvas cv;
+        int tries = 0;
+        ret = EXIT_FAILURE;
+
+        do {
+            memset(&cv, 0, sizeof(cv));
+            ret = rk_rgn.fnGetCanvasInfo(handle, &cv);
+            if (ret) break;
+
+            /* Never trust the cached pointer: rk_region_create() may have
+             * recreated the region, and a SetDisplayAttr can remap the
+             * ping-pong buffer.  The stride comes from the canvas, not from
+             * the requested size.  The pixel format and the virtual height
+             * are checked as well: a mismatched canvas (stale region from a
+             * previous process, wrong format) is smaller than the area the
+             * packer writes.  The upper bound mirrors the vendor
+             * RGN_OVERLAY_MAX_* limits and keeps a broken ABI from turning
+             * into an unbounded memset. */
+            stride = cv.virWidth ? cv.virWidth : cv.size.width;
+            if (cv.pixFmt != RK_PIXFMT_BGRA5551 || !cv.virAddr ||
+                !cv.virHeight || cv.virHeight < ah ||
+                cv.size.width < aw || cv.size.height < ah || stride < aw ||
+                cv.size.width > 8192 || cv.size.height > 8192 || stride > 8192) {
+                ret = EXIT_FAILURE;
+                break;
+            }
+
+            dst = (uint16_t *)(uintptr_t)cv.virAddr;
+            memset(dst, 0, (size_t)stride * cv.virHeight * sizeof(*dst));
+            painted = rk_rgn_pack_bgra5551(src, w, h, dst, stride);
+            ret = rk_rgn.fnUpdateCanvas(handle);
+        } while (ret == RK_NOTICE_RGN_BUFFER_CHANGE && ++tries < 2);
+
+        if (!ret) {
+            if (rk_region_log_once(&logged, handle))
+                HAL_INFO("rk_rgn", "Region %d bitmap (canvas): %ux%u -> %ux%u, "
+                    "stride %u, %u px\n", handle, w, h, aw, ah, stride, painted);
+            return EXIT_SUCCESS;
+        }
+
+        if (rk_region_log_once(&canvasFailed, handle))
+            HAL_WARNING("rk_rgn", "Canvas update on region %d failed with %#x, "
+                "using the SetBitmap fallback\n", handle, ret);
+    }
+
+    stride = aw;
+    dst = calloc((size_t)aw * ah, sizeof(*dst));
     if (!dst)
         return EXIT_FAILURE;
 
-    for (i = 0; i < (size_t)w * h; i++) {
-        unsigned short s = src[i];
-        unsigned int r, g, b;
-        size_t row = i / w, col = i % w;
-        if (!(s & 0x8000)) continue;
-        r = (s >> 10) & 0x1F;
-        g = (s >> 5) & 0x1F;
-        b = s & 0x1F;
-        dst[row * aw + col] = (b << 11) | (g << 6) | (r << 1) | 1 | 0x8000;
-        painted++;
-    }
+    painted = rk_rgn_pack_bgra5551(src, w, h, dst, stride);
 
     nativeBmp.data = dst;
     nativeBmp.pixFmt = RK_PIXFMT_BGRA5551;
@@ -539,11 +639,9 @@ int rk_region_setbitmap(int handle, hal_bitmap *bitmap)
     nativeBmp.size.height = ah;
     nativeBmp.stride = aw;
 
-    if (!(logged & (1u << handle))) {
-        logged |= 1u << handle;
-        HAL_INFO("rk_rgn", "Region %d bitmap: %ux%u -> %ux%u, %u px\n",
-            handle, w, h, aw, ah, painted);
-    }
+    if (rk_region_log_once(&logged, handle))
+        HAL_INFO("rk_rgn", "Region %d bitmap (setbitmap): %ux%u -> %ux%u, "
+            "%u px\n", handle, w, h, aw, ah, painted);
 
     ret = rk_rgn.fnSetBitmap(handle, &nativeBmp);
     if (ret)
@@ -890,6 +988,270 @@ int rk_video_snapshot_grab(char index, hal_jpegdata *jpeg)
     rk_venc.fnStopReceiving(index);
 
     return ret;
+}
+
+int rk_yolo_source_open(rk_yolo_source source, short width, short height)
+{
+    int ret;
+
+    if (_rk_yolo_source >= 0) return EXIT_SUCCESS;
+    if (width <= 0 || height <= 0) return EXIT_FAILURE;
+
+    _rk_yolo_width = (unsigned short)width;
+    _rk_yolo_height = (unsigned short)height;
+
+    switch (source) {
+        case RK_YOLO_SRC_VI1: {
+            rk_vi_chn channel;
+            memset(&channel, 0, sizeof(channel));
+            channel.size.width = width;
+            channel.size.height = height;
+            channel.pixFmt = RK_PIXFMT_YUV420SP;
+            channel.compress = RK_COMPR_NONE;
+            /* Match the rkipc reference: one queued frame, two ISP buffers
+             * and an explicit maximum size.  stMaxSize = 0 on the selfpath
+             * has not been exercised by any vendor sample. */
+            channel.depth = 1;
+            channel.srcFps = -1;
+            channel.dstFps = -1;
+            channel.ispOpts.bufCount = 2;
+            channel.ispOpts.bufSize = width * height * 3 / 2;
+            channel.ispOpts.maxSize.width = width;
+            channel.ispOpts.maxSize.height = height;
+            channel.ispOpts.vidCap = RK_VI_VCAP_VIDEO_MPLANE;
+            channel.ispOpts.vidMem = RK_VI_VMEM_DMABUF;
+            strcpy(channel.ispOpts.entityName, "rkisp_selfpath");
+            if (ret = rk_vi.fnSetChannelConfig(_rk_vi_pipe, 1, &channel)) {
+                HAL_DANGER("rk_yolo", "Configuring VI chn1 failed with %#x\n", ret);
+                return EXIT_FAILURE;
+            }
+            if (ret = rk_vi.fnEnableChannel(_rk_vi_pipe, 1)) {
+                HAL_DANGER("rk_yolo", "Enabling VI chn1 failed with %#x\n", ret);
+                return EXIT_FAILURE;
+            }
+            _rk_yolo_chn = 1;
+            break;
+        }
+        case RK_YOLO_SRC_VPSS3: {
+            rk_vpss_chn channel;
+            if (chnState[HAL_CHN_IVS].enable) {
+                HAL_DANGER("rk_yolo", "VPSS channel 3 is already used by a stream\n");
+                return EXIT_FAILURE;
+            }
+            memset(&channel, 0, sizeof(channel));
+            channel.dest.width = width;
+            channel.dest.height = height;
+            channel.pixFmt = RK_PIXFMT_YUV420SP;
+            channel.hdr = RK_HDR_SDR8;
+            channel.compress = RK_COMPR_NONE;
+            channel.srcFps = -1;
+            channel.dstFps = -1;
+            channel.depth = 2;
+            if (ret = rk_vpss.fnSetChannelConfig(_rk_vpss_grp, 3, &channel)) {
+                HAL_DANGER("rk_yolo", "Configuring VPSS chn3 failed with %#x\n", ret);
+                return EXIT_FAILURE;
+            }
+            if (ret = rk_vpss.fnEnableChannel(_rk_vpss_grp, 3)) {
+                HAL_DANGER("rk_yolo", "Enabling VPSS chn3 failed with %#x\n", ret);
+                return EXIT_FAILURE;
+            }
+            _rk_yolo_chn = 3;
+            break;
+        }
+        case RK_YOLO_SRC_VI0:
+            /* The depth is applied in rk_pipeline_create() before the channel
+             * is enabled; the frame is shared with the VPSS bind.  A detector
+             * enabled at runtime after a start with yolo.enable=false cannot
+             * use this source until the pipeline is recreated. */
+            if (_rk_vi_depth < 1) {
+                HAL_DANGER("rk_yolo", "vi0 needs a restart with yolo.enable=true\n");
+                return EXIT_FAILURE;
+            }
+            _rk_yolo_chn = 0;
+            break;
+        default:
+            return EXIT_FAILURE;
+    }
+
+    _rk_yolo_source = source;
+    HAL_INFO("rk_yolo", "Frame source %s (%dx%d)\n",
+        source == RK_YOLO_SRC_VI1 ? "vi1" :
+        (source == RK_YOLO_SRC_VPSS3 ? "vpss3" : "vi0"), width, height);
+    return EXIT_SUCCESS;
+}
+
+int rk_yolo_source_frame(rk_common_frame_info *frame, int timeoutMs)
+{
+    int ret;
+
+    if (_rk_yolo_source < 0 || !frame) return EXIT_FAILURE;
+
+    if (_rk_yolo_source == RK_YOLO_SRC_VPSS3)
+        ret = rk_vpss.fnGetChnFrame(_rk_vpss_grp, _rk_yolo_chn, frame, timeoutMs);
+    else
+        ret = rk_vi.fnGetChnFrame(_rk_vi_pipe, _rk_yolo_chn, frame, timeoutMs);
+
+    return ret ? EXIT_FAILURE : EXIT_SUCCESS;
+}
+
+void rk_yolo_source_release(rk_common_frame_info *frame)
+{
+    if (_rk_yolo_source < 0 || !frame) return;
+
+    if (_rk_yolo_source == RK_YOLO_SRC_VPSS3)
+        rk_vpss.fnReleaseChnFrame(_rk_vpss_grp, _rk_yolo_chn, frame);
+    else
+        rk_vi.fnReleaseChnFrame(_rk_vi_pipe, _rk_yolo_chn, frame);
+}
+
+void rk_yolo_source_close(void)
+{
+    if (_rk_yolo_source == RK_YOLO_SRC_VI1)
+        rk_vi.fnDisableChannel(_rk_vi_pipe, 1);
+    else if (_rk_yolo_source == RK_YOLO_SRC_VPSS3)
+        rk_vpss.fnDisableChannel(_rk_vpss_grp, 3);
+
+    /* vi0 belongs to the main pipeline and stays enabled. */
+    _rk_yolo_source = -1;
+    _rk_yolo_chn = -1;
+}
+
+int rk_yolo_jpeg_open(short width, short height, int qfactor)
+{
+    int ret;
+    rk_venc_chn channel;
+    rk_venc_jpg param;
+
+    if (_rk_yolo_jpeg_ready) return EXIT_SUCCESS;
+    if (width <= 0 || height <= 0) return EXIT_FAILURE;
+
+    memset(&channel, 0, sizeof(channel));
+    /* MJPG (not the still-JPEG codec): this is the combination the snapshot
+     * channel already uses successfully on this image. */
+    channel.attrib.codec = RK_VENC_CODEC_MJPG;
+    channel.attrib.maxPic.width = width;
+    channel.attrib.maxPic.height = height;
+    channel.attrib.pixFmt = RK_PIXFMT_YUV420SP;
+    channel.attrib.bufSize = 204800;
+    channel.attrib.byFrame = 1;
+    channel.attrib.pic.width = width;
+    channel.attrib.pic.height = height;
+    channel.attrib.vir.width = width;
+    channel.attrib.vir.height = height;
+    channel.attrib.strmBufCnt = 2;
+    channel.rate.mode = RK_VENC_RATEMODE_MJPGQP;
+    channel.rate.mjpgQp = (rk_venc_rate_mjpgqp){ .srcFpsNum = 10,
+        .srcFpsDen = 1, .dstFpsNum = 10, .dstFpsDen = 1,
+        .quality = qfactor ? (unsigned int)qfactor : 80 };
+    channel.gop.mode = RK_VENC_GOPMODE_NORMALP;
+    channel.gop.maxLtrCnt = 1;
+
+    if (ret = rk_venc.fnCreateChannel(RK_YOLO_JPEG_CHN, &channel)) {
+        HAL_DANGER("rk_yolo", "Creating the event JPEG channel failed with %#x\n", ret);
+        return EXIT_FAILURE;
+    }
+
+    memset(&param, 0, sizeof(param));
+    param.quality = qfactor ? (unsigned int)qfactor : 80;
+    rk_venc.fnSetJpegParam(RK_YOLO_JPEG_CHN, &param);
+
+    {
+        int count = -1;
+        if (ret = rk_venc.fnStartReceivingEx(RK_YOLO_JPEG_CHN, &count)) {
+            HAL_DANGER("rk_yolo", "Starting the event JPEG channel failed with %#x\n", ret);
+            rk_venc.fnDestroyChannel(RK_YOLO_JPEG_CHN);
+            return EXIT_FAILURE;
+        }
+    }
+
+    if (ret = rk_mb.fnAlloc(&_rk_yolo_jpeg_blk, NULL, NULL,
+            (unsigned int)width * height * 3 / 2)) {
+        HAL_DANGER("rk_yolo", "Allocating the JPEG frame buffer failed with %#x\n", ret);
+        _rk_yolo_jpeg_blk = NULL;
+        rk_venc.fnStopReceiving(RK_YOLO_JPEG_CHN);
+        rk_venc.fnDestroyChannel(RK_YOLO_JPEG_CHN);
+        return EXIT_FAILURE;
+    }
+
+    _rk_yolo_jpeg_width = (unsigned short)width;
+    _rk_yolo_jpeg_height = (unsigned short)height;
+    _rk_yolo_jpeg_ready = 1;
+    return EXIT_SUCCESS;
+}
+
+int rk_yolo_jpeg_encode(const void *nv12, hal_jpegdata *jpeg)
+{
+    int ret;
+    rk_common_frame_info info;
+    rk_venc_strm strm;
+    rk_venc_pack packs[32];
+
+    if (!_rk_yolo_jpeg_ready || !nv12 || !jpeg) return EXIT_FAILURE;
+
+    {
+        unsigned int size = _rk_yolo_jpeg_width * _rk_yolo_jpeg_height * 3 / 2;
+        memcpy(rk_mb.fnGetData(_rk_yolo_jpeg_blk), nv12, size);
+    }
+
+    memset(&info, 0, sizeof(info));
+    info.frame.mbBlk = _rk_yolo_jpeg_blk;
+    info.frame.width = _rk_yolo_jpeg_width;
+    info.frame.height = _rk_yolo_jpeg_height;
+    info.frame.virWidth = _rk_yolo_jpeg_width;
+    info.frame.virHeight = _rk_yolo_jpeg_height;
+    info.frame.pixelFormat = RK_PIXFMT_YUV420SP;
+    info.frame.compressMode = RK_COMPR_NONE;
+
+    if (ret = rk_venc.fnSendFrame(RK_YOLO_JPEG_CHN, &info, 1000)) {
+        HAL_DANGER("rk_yolo", "Sending a frame to the event encoder failed with %#x\n", ret);
+        return EXIT_FAILURE;
+    }
+
+    memset(&strm, 0, sizeof(strm));
+    memset(packs, 0, sizeof(packs));
+    strm.packet = packs;
+    strm.count = sizeof(packs) / sizeof(packs[0]);
+
+    if (ret = rk_venc.fnGetStream(RK_YOLO_JPEG_CHN, &strm, 1000)) {
+        HAL_DANGER("rk_yolo", "Getting the event JPEG failed with %#x\n", ret);
+        return EXIT_FAILURE;
+    }
+
+    jpeg->jpegSize = 0;
+    for (unsigned int i = 0; i < strm.count; i++) {
+        unsigned int len = strm.packet[i].length;
+        unsigned char *data = (unsigned char *)rk_mb.fnGetData(
+            strm.packet[i].mbBlk);
+        unsigned int total = jpeg->jpegSize + len;
+
+        if (total > jpeg->length) {
+            unsigned char *grown = realloc(jpeg->data, total);
+            if (!grown) {
+                rk_venc.fnFreeStream(RK_YOLO_JPEG_CHN, &strm);
+                return EXIT_FAILURE;
+            }
+            jpeg->data = grown;
+            jpeg->length = total;
+        }
+        if (data) memcpy(jpeg->data + jpeg->jpegSize, data, len);
+        jpeg->jpegSize += len;
+    }
+
+    rk_venc.fnFreeStream(RK_YOLO_JPEG_CHN, &strm);
+    return EXIT_SUCCESS;
+}
+
+void rk_yolo_jpeg_close(void)
+{
+    if (!_rk_yolo_jpeg_ready) return;
+
+    _rk_yolo_jpeg_ready = 0;
+    rk_venc.fnStopReceiving(RK_YOLO_JPEG_CHN);
+    rk_venc.fnDestroyChannel(RK_YOLO_JPEG_CHN);
+    if (_rk_yolo_jpeg_blk) {
+        rk_mb.fnFree(_rk_yolo_jpeg_blk);
+        _rk_yolo_jpeg_blk = NULL;
+    }
 }
 
 void *rk_video_thread(void)

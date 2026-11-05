@@ -357,6 +357,71 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   `TESTBENCH.md` (§1, §7B, §8), `STRUCTURE.md`, `bench/README.md`,
   `FEATURES.md`, `VERIFIED_FUNCTIONS.md`; `doc/webui.png` is replaced and the
   previous screen is kept as `doc/webui-before.png`.
+- `divinus`: NPU-аналитика YOLOv5n. RKNN подключается через `dlopen`
+  `librknnmrt.so` (`hal/plus/rk_rknn.h`, копия `rknn_api.h` 1.6.0), конверсия
+  NV12→RGB888 — на CPU (`yolo_convert_nv12_rgb`): librga на этом образе
+  непригодна, легаси `c_RkRgaBlit` падает с SIGSEGV, а im2d
+  `importbuffer_fd` не импортирует ни MMZ-, ни dma-heap-дескрипторы; эта же
+  RGA-операция на куче и вешала плату. Новые модули:
+  `analytics/yolo.c` (тред захвата, кольцо пре-ролла, событие, отправитель),
+  `analytics/yolo_postprocess.c` (декод трёх ветвей и NMS),
+  `analytics/models.c` (каталог `/userdata/models`, атомарная загрузка,
+  активация с откатом). Секция `[yolo]` (`enable`, `source`, `model`,
+  `input_width/height`, `fps`, `conf_threshold`, `nms_threshold`, `classes`,
+  `pre_seconds`, `post_seconds`, `max_frames`) добавлена в разбор и печать
+  конфига; API — `GET/POST /api/yolo`, `GET /api/models`,
+  `POST /api/models`, `/api/models/activate`, `/api/models/delete`; WebUI —
+  карточки «Object detection (NPU)» и «Models» в разделе Events.
+  Событие отправляется N последовательными `PUT` с `X-Event-Id`,
+  `X-Frame-Index`, `X-Frame-Total`, `X-Frame-Ts`, `X-Event-Cause`, `X-Model`;
+  `http_post.host` теперь принимает `host:port`. Гейт `yolo` в `gating.c`
+  проверяет runtime, модель и занятость канала VPSS 3; RGA не используется
+  (препроцессинг на CPU). `yolo.source` по умолчанию `vpss3`, при IVS/MJPEG
+  санитайзер переводит на `vi0`.
+  Замер M0 на стенде: `librknnmrt.so` — **1.6.0** (не 1.5.2), драйвер 0.9.2
+  совместим, `/proc/rknpu/load` = 77% на YOLOv5n 640×640, ~9 кадр/с,
+  `MemAvailable` −8.7 МБ; включение VI selfpath (chn1) в этой сборке
+  привело к зависанию платы, поэтому `source: vi1` заблокирован.
+  Проверено на стенде (`source: vpss3`, YOLOv5n 640×640, 3 fps): детекция
+  идёт, NPU 28–33%, событие отдаёт 6 JPEG 640×640 с заголовками
+  `X-Event-*`, модель из `/tmp`; `api_check.py` — 78/78, RTSP/OSD — 20
+  кадров без регрессии; загрузка/активация/удаление модели и откат при
+  `rknn_init` проверены. CPU-конверсия добавляет ~28% одного ядра на 3 fps
+  при 640×640 (для целевых 640×384 дешевле). Загрузка модели 3 МиБ на стенде
+  не проходит по свободному месту `/userdata` (~1.5 МиБ).
+- `divinus`: YOLOv5n NPU analytics. The RKNN runtime is loaded with
+  `dlopen("librknnmrt.so")` (`hal/plus/rk_rknn.h`, a copy of the 1.6.0
+  `rknn_api.h`), and NV12→RGB888 conversion runs on the CPU
+  (`yolo_convert_nv12_rgb`): librga is unusable on this image, the legacy
+  `c_RkRgaBlit` segfaults and im2d `importbuffer_fd` imports neither MMZ nor
+  dma-heap descriptors; the same RGA operation on heap memory also hung the
+  board. New modules: `analytics/yolo.c` (capture thread,
+  pre-roll ring, event assembly, sender), `analytics/yolo_postprocess.c`
+  (three-branch decode and NMS), `analytics/models.c` (`/userdata/models`,
+  atomic upload, activation with rollback). The `[yolo]` section (`enable`,
+  `source`, `model`, `input_width/height`, `fps`, `conf_threshold`,
+  `nms_threshold`, `classes`, `pre_seconds`, `post_seconds`, `max_frames`) is
+  parsed and dumped; the API adds `GET/POST /api/yolo`, `GET /api/models`,
+  `POST /api/models`, `/api/models/activate`, `/api/models/delete`; the WebUI
+  adds the "Object detection (NPU)" and "Models" cards to Events. An event is
+  sent as N `PUT` requests carrying `X-Event-Id`, `X-Frame-Index`,
+  `X-Frame-Total`, `X-Frame-Ts`, `X-Event-Cause`, `X-Model`;
+  `http_post.host` now accepts `host:port`. The `yolo` gate in `gating.c`
+  checks the runtime, the model file and VPSS channel 3; RGA is not used
+  (pre-processing runs on the CPU). `yolo.source` defaults to `vpss3`, and the
+  sanitiser switches to `vi0` when IVS or MJPEG owns the channel. M0 bench measurements: `librknnmrt.so` is **1.6.0** (not
+  1.5.2), driver 0.9.2 is compatible, `/proc/rknpu/load` is 77% on YOLOv5n
+  640×640 at ~9 fps with `MemAvailable` down 8.7 MB; enabling VI selfpath
+  (chn1) hung this board, so `source: vi1` is blocked.
+  Verified on the bench (`source: vpss3`, YOLOv5n 640×640, 3 fps): detection
+  runs, NPU 28–33%, an event delivers 6 JPEGs at 640×640 with the
+  `X-Event-*` headers from a model in `/tmp`; `api_check.py` is 78/78 and
+  RTSP/OSD captured 20 frames without regressions; model upload, activation,
+  deletion and the `rknn_init` rollback were exercised. The CPU conversion
+  costs about 28% of one core at 3 fps for 640×640 (cheaper at the target
+  640×384). A 3 MiB model upload does not fit the ~1.5 MiB free in
+  `/userdata` on this bench.
+
 
 ### Изменено
 
@@ -628,6 +693,58 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 - `unescape_uri()` now runs after the `key=value` split, so an encoded `%3D` in
   a value no longer affects parsing, and `NULL` for a parameter without a value
   is safe.
+- `divinus`: OSD на RV1106 обновляется через canvas
+  (`RK_MPI_RGN_GetCanvasInfo`/`RK_MPI_RGN_UpdateCanvas`): растр пишется прямо
+  в память региона, без `calloc` и копии на каждый кадр. Если символы
+  отсутствуют, `GetCanvasInfo` вернул ошибку или размер/stride canvas не
+  совпал, остаётся прежний путь `RK_MPI_RGN_SetBitMap` с однократным
+  предупреждением на handle. Позиция и `fgAlpha` меняются через
+  `RK_MPI_RGN_SetDisplayAttr` вместо detach/attach, поэтому `opal` из
+  `/api/osd/<id>` применяется и при неизменной позиции. Упаковка
+  `ARGB1555 → BGRA5551` вынесена в `hal/plus/rk_rgn_pack.c`, добавлен хостовый
+  тест `tests/rk_rgn_pack_test.c`, `tests/bmp_align_test.c` переведён на общий
+  helper. `u32CanvasNum` остаётся равным 1.
+- `divinus`: the RV1106 OSD is updated through the canvas interface
+  (`RK_MPI_RGN_GetCanvasInfo`/`RK_MPI_RGN_UpdateCanvas`) — the raster is
+  written directly into the region memory, without a `calloc` and a copy per
+  frame. If the symbols are missing, `GetCanvasInfo` fails or the canvas
+  size/stride does not match, the previous `RK_MPI_RGN_SetBitMap` path is used
+  with a single warning per handle. Position and `fgAlpha` are changed with
+  `RK_MPI_RGN_SetDisplayAttr` instead of detach/attach, so `opal` from
+  `/api/osd/<id>` is applied even when the position is unchanged. The
+  `ARGB1555 → BGRA5551` packing moved to `hal/plus/rk_rgn_pack.c`, a host test
+  `tests/rk_rgn_pack_test.c` was added, and `tests/bmp_align_test.c` now uses
+  the shared helper. `u32CanvasNum` stays at 1.
+
+- Разметка SPI NAND: `userdata` расширен с 10 до 40 МБ за счёт `rootfs`
+  (198→168 МБ), сумма `userdata`+`rootfs` сохранена (208 МБ). После прошивки
+  полным `update.img` том `ubi5_0` — 29.1 МиБ (свободно ~28 МиБ), загрузка
+  модели 3 МиБ через `/api/models` проверена; `rootfs` занимает ~54 МиБ из
+  168 МБ. Обновлены `BoardConfig`, `TESTBENCH.md` (LBA/размеры),
+  `INIT_ORDER.md` и `FEATURES.md`. Если `reboot loader` не переводит плату в
+  loader-режим, U-Boot на UART останавливается `<Ctrl+C>` и команда
+  `download` уводит её в `Maskrom`.
+- SPI NAND layout: `userdata` grew from 10 to 40 MB by shrinking `rootfs`
+  (198→168 MB); the combined size stays 208 MB. After flashing the full
+  `update.img` the `ubi5_0` volume is 29.1 MiB (~28 MiB free), and a 3 MiB
+  model upload through `/api/models` was verified; `rootfs` uses ~54 MiB of
+  its 168 MB. `BoardConfig`, `TESTBENCH.md` (LBA/sizes), `INIT_ORDER.md` and
+  `FEATURES.md` were updated. When `reboot loader` does not enter loader mode,
+  stopping U-Boot on UART with `<Ctrl+C>` and issuing `download` switches the
+  board to `Maskrom`.
+
+- `bench/ui_check.py`: добавлена браузерная проверка раздела Events — список
+  источников YOLO не содержит `vi1`, модель загружается через карточку
+  Models, ошибка `rknn_init` показывается в тосте, удаление убирает строку.
+  Прогон выполнен в headless Chromium (без root `libasound.so.2` распакован
+  из `libasound2t64`), итог — `UI check passed`, скриншоты в
+  `output/bench/ui/`; способ запуска описан в `bench/README.md`.
+- `bench/ui_check.py`: added a browser check of the Events section — the YOLO
+  source list has no `vi1`, a model is uploaded from the Models card, the
+  `rknn_init` error appears in a toast, and deleting the row removes it. The
+  run used headless Chromium (without root, `libasound.so.2` was unpacked from
+  `libasound2t64`) and ended with `UI check passed`; screenshots are in
+  `output/bench/ui/`, and the command is documented in `bench/README.md`.
 
 ### Удалено
 
@@ -664,9 +781,42 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   from SPI NAND (ubifs).
 - Netboot branch in `RkLunch.sh`: static networking from `ip=` is no longer
   supported; `network_init` always configures the MAC and starts DHCP.
+- `divinus`: приведены к вендорскому ABI структуры HAL, которые передаются в
+  librockit: `VIDEO_FRAME_S` (`pVirAddr` — 2 элемента, а не 3) и хвост
+  `VI_CHN_ATTR_S` (`stShareBufChn` — три `int`, а не один). Прежние размеры
+  приводили к чтению за границей структуры при `RK_MPI_VI_SetChnAttr` и
+  сдвигу `u64PTS`. Проверено `_Static_assert` по заголовкам SDK для
+  VI/VPSS/VENC/VIDEO_FRAME.
+- `divinus`: HAL structures passed to librockit now match the vendor ABI:
+  `VIDEO_FRAME_S` (`pVirAddr` holds two elements, not three) and the
+  `VI_CHN_ATTR_S` tail (`stShareBufChn` is three `int`s, not one). The old
+  sizes made `RK_MPI_VI_SetChnAttr` read past the object and shifted
+  `u64PTS`. Verified with `_Static_assert` against the SDK headers for
+  VI/VPSS/VENC/VIDEO_FRAME.
+
 
 ### Исправлено
 
+- `divinus`: `yolo.source=vi1` закрыт на всех уровнях — `gating.c` блокирует
+  его с причиной, `GET`/`POST /api/yolo?source=vi1` и неизвестные значения
+  возвращают HTTP 400 `{"error":"invalid"}`, из WebUI опция удалена, а
+  стартовый санитайзер переводит сохранённый `vi1` в `vpss3`. В zero-copy
+  входе учитывается `w_stride` (строки пишутся с шагом тензора), при
+  активации проверяются 4D-NHWC выходы и одинаковая размерность каналов всех
+  ветвей, атрибуты входа/выходов пишутся в лог. Хостовый
+  `yolo_postprocess_test` покрывает 80 классов (C = 255, `C % 16 != 0`) и
+  проверяет, что каналы NHWC не выравниваются до 16; `bench/api_check.py`
+  проверяет отказ для `vi1` и неизвестного значения.
+- `divinus`: `yolo.source=vi1` is closed at every level — `gating.c` blocks it
+  with a reason, `GET`/`POST /api/yolo?source=vi1` and unknown values return
+  HTTP 400 `{"error":"invalid"}`, the WebUI option is removed, and the startup
+  sanitiser turns a saved `vi1` into `vpss3`. The zero-copy input honours
+  `w_stride` (rows are written at the tensor stride), activation validates
+  4D-NHWC outputs and identical channel counts in all branches, and the input
+  and output attributes are logged. The host `yolo_postprocess_test` covers 80
+  classes (C = 255, `C % 16 != 0`) and verifies that NHWC channels are not
+  padded to 16; `bench/api_check.py` checks the rejection of `vi1` and of an
+  unknown value.
 - DHCP: причина смены IP — MAC хранился в `/data/ethaddr.txt` (раздел
   `/userdata`), а `dhcpcd` использовал DUID из `/var/db/dhcpcd`; оба
   сбрасываются при полной прошивке. Дополнительно на `eth0` работали два
