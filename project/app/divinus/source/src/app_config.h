@@ -25,6 +25,10 @@ struct AppConfig {
     unsigned int venc_stream_thread_stack_size;
     unsigned int web_server_thread_stack_size;
     unsigned int watchdog;
+    /* OKO: NTP control (WebUI Network section).  An empty server means "use
+     * the distribution configuration" (usually /etc/ntp.conf). */
+    bool ntp_enable;
+    char ntp_server[128];
 
     // [night_mode]
     bool night_mode_enable;
@@ -190,3 +194,11 @@ extern struct AppConfig app_config;
 enum ConfigError app_config_parse(void);
 void app_config_restore(void);
 int app_config_save(void);
+/* OKO: path of the config file that app_config_open() would use right now. */
+void app_config_path(char *out, size_t size);
+/* OKO: write the in-memory configuration as YAML to an already open stream. */
+void app_config_dump(FILE *file);
+/* OKO: replace the configuration file with an uploaded copy.  The current
+ * file is rotated to divinus.yaml.bak exactly like app_config_save() does,
+ * so a file that no longer parses can be rolled back at startup. */
+int app_config_replace(const char *data, size_t len);

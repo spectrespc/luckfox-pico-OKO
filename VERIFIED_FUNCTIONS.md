@@ -8,11 +8,12 @@
 
 | Поле | Значение |
 |---|---|
-| Дата | `2026-11-04` |
+| Дата | `2026-11-05` |
 | Плата | Luckfox Pico Pro Max (RV1106), сенсор SC230AI |
 | Прошивка | `output/image/update.img`, полная прошивка SPI NAND |
 | Стенд | `192.168.52.97` (DHCP, SSH), UART `/dev/ttyACM0` 115200 |
-| Методы | SSH, RTSP (PyAV), HTTP API (`curl`), WebUI (`/` → HTTP 200) |
+| Методы | SSH, RTSP (PyAV), HTTP API (`curl`, `bench/api_check.py`), WebUI (`bench/ui_check.py`, headless Chromium), скриншоты в `output/bench/ui/` |
+| Примечание | Проверки WebUI/API 2026-11-05 выполнены на бинарнике из `output/image/oem.img` (md5 совпадает), установленном в `/oem/usr/bin` по SSH; покомпонентная прошивка `oem.img` не выполнялась — `reboot loader` не перевёл DUT в Maskrom (см. `TESTBENCH.md` §7B) |
 | Сборка | Docker, активный BoardConfig `BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI.mk` |
 
 ## 2. Функции
@@ -31,6 +32,21 @@
 | Запись H.265 + квота | работает | `GET /api/record?enable=true&start=1`, 6 с записи; файл в `/mnt/sdcard/recordings` содержит 150 кадров, 5.0 с, hevc 1920x1080, успешно декодируется | Нужна смонтированная microSD; текущий сегмент может превысить `max_bytes` до ротации |
 | microSD: mount/read, `/api/storage` | работает | `GET /api/storage` → `sd_mounted=true`, `device=/dev/mmcblk1p1`, `fs=vfat`, `total_mb=15177`; `/run/oko-sd.state` создан udev-правилом | Запись разрешена только ниже `/mnt/sdcard` |
 | WebUI: разделы и API | работает | `GET /` → HTTP 200 (`<title>Divinus</title>`); `/api/status`, `/api/streams`, `/api/record`, `/api/storage` отвечают | Аутентификация — по настройкам `web_*` |
+| WebUI 2026-11-05: 8 разделов, EN/RU, dirty-state | работает | `bench/ui_check.py`: все восемь разделов открываются, `#isp_mirror` включает `Apply` и точку в меню, после применения кнопка снова выключена, переключение на RU даёт «Видео», 9 плиток телеметрии, 10 OSD-регионов, нет горизонтальной прокрутки на 1440 и 390 px, нет ошибок консоли | Playwright + Chromium; установка браузера — см. `bench/README.md` |
+| API-матрица 2026-11-05 | работает | `bench/api_check.py`: 74 проверки — 34 GET, 30 POST no-op, export/log, три 404 на статику, отказы delete (`..`, `x.txt`, пусто) и NTP (`bad..host`); 0 ошибок | Нужны учётные данные стенда |
+| NTP через API | работает | `POST /api/time` с `ntp=off` останавливает `ntpd`; `ntp=on&ntp_server=pool.ntp.org` запускает `ntpd -g -c /tmp/divinus-ntp.conf -p /tmp/divinus-ntpd.pid`; пустой `ntp_server` возвращает вендорский `/usr/sbin/ntpd -g -p /var/run/ntpd.pid`; `bad..host` → `{"error":"blocked"}` | Не сохраняется без `/api/cmd?save` |
+| NTP после перезагрузки | работает | Три reboot с сохранённым конфигом: `ntp_enable=false` → `pidof ntpd` пуст и `ntp_running=false`; `ntp_enable=true` + пустой сервер → `ntpd -g -p /var/run/ntpd.pid`; `ntp_server=pool.ntp.org` → `ntpd -g -c /tmp/divinus-ntp.conf -p /tmp/divinus-ntpd.pid`, файл содержит `server pool.ntp.org iburst` | Применяется через 10 с после старта (после `S49ntp`); `/api/time` и `date +%s` совпадают после `ts=` |
+| Смена пароля спецсимволами | работает | Пароль `P@ss w=rd%1` (пробел, `=`, `%`, `@`): `POST /api/web-auth` → `ok`, старый 401, новый 200, в YAML `web_auth_pass: P@ss w=rd%1`; возврат к `oko-change-me` → 200 | Проверяет порядок `url_decode` после `split` |
+| Запись и архив без карты | работает | `action=unmount` → `sd_mounted=false`; `/api/record?enable=true&start=1` → `blocked` «recording requires a mounted microSD card»; `/api/recordings` → `unavailable`; `action=mount` → `sd_mounted=true`, 15175 МБ свободно | Карта возвращена в строй без перезагрузки |
+| Формат с неверным токеном | работает | `action=format&fs=fat32&confirm=FORMAT&token=deadbeef…` → `{"error":"blocked","reason":"format confirmation or token is invalid"}` | Разрушающий успешный прогон выполнялся ранее (см. строку «Формат microSD») |
+| Телеметрия offline/online | работает | `S21oko-ec stop`, через 45 с `/api/telemetry` → `{"available":false,"age":45}`; `S21oko-ec start` → `available=true, age=1`, 9 плиток в UI | Порог — 30 с |
+| MJPEG-предпросмотр | работает | `POST /api/mjpeg enable=true`, в headless Chromium клик MJPEG → `#preview img.naturalWidth > 0`; `bench/ui_check.py` сообщает `mjpeg preview painted: True` | При `enable=false` кнопка показывает сообщение; после теста MJPEG возвращён в `false` |
+| MJPEG вместе с IVS | работает (частный случай) | `POST /api/ivs enable=true&mode=md` и `POST /api/mjpeg enable=true`, субпоток выключен: `/mjpeg` отдал 693 КБ за 4 с, предпросмотр в Chromium окрашен | Комбинация sub + MJPEG + IVS не проверялась; после теста IVS и MJPEG выключены |
+| Архив записей и удаление | работает | `GET /api/recordings` → 1 файл; удаление тестового `zz_test_01.mp4` → `deleted`; повтор → `notfound`; `../../etc/passwd`, `x.txt`, пустое имя → `blocked`; активный сегмент → `blocked` | Активный сегмент защищён `record_active_path()` |
+| Экспорт/импорт конфигурации | работает | `GET /api/cmd?export` → YAML 3399 байт с `ntp_*`; повторный импорт → `imported`; после `restart` файл на месте; импорт `web_port: bogus` → при старте `Configuration error 3; restoring the backup`, `web_port` снова 80, `/api/status` 200 | Откат одноразовый; битый `.bak` тоже приведёт к остановке |
+| Смена пароля WebUI | работает | `POST /api/web-auth` со старым паролем → `ok`, старый пароль после этого 401, новый 200; `grep web_auth_pass /userdata/divinus.yaml` показывает новый; обратная смена возвращает 200 | HTTP Basic, сессии нет; страницу нужно перезагрузить |
+| Телеметрия через API/WebUI | работает | `GET /api/telemetry` → `available=true`, `age=1`, поля `ec`/`ina226`/`sht21`; в UI 9 плиток | Данные старше 30 с → `available=false` |
+| Статика только с microSD | работает | `GET //etc/passwd` → 404, `/tmp/divinus.yaml` → 404, `/mnt/sdcard/recordings/recording_20261104-153241.mp4` → 200 (2014174 байта), отсутствующий файл → 404 | **Ломающее** ограничение для сторонних скриптов |
 | WebUI: MP4 preview `/video.mp4` | работает | `mp4.enable=true`; raw-ответ начинается с `ftyp`/`moov`, PyAV декодирует 30 кадров hevc 1920x1080 через `http://<DUT>/video.mp4` | Браузер должен поддерживать HEVC; иначе использовать MJPEG |
 | WebUI: MJPEG preview `/mjpeg` | работает | `mjpeg.enable=true`; ответ `multipart/x-mixed-replace; boundary=boundarydonotcross`, 1.3 МБ JPEG-кадров за 4 с | При выключенном MJPEG endpoint отдаёт 404, вкладка показывает сообщение |
 | HDR2/HDR3 | заблокировано | `GET /api/hdr?mode=hdr2` → `{"error":"blocked","reason":"HDR is not supported by the SC230AI build"}` | Не включать вручную в конфиге |
@@ -94,6 +110,25 @@ STATUS=$(curl -s 'http://<DUT_IP>/api/storage')
 TOKEN=$(printf '%s' "$STATUS" | sed -n 's/.*"format_token":"\([0-9a-f]*\)".*/\1/p')
 curl -s "http://<DUT_IP>/api/storage?action=format&fs=fat32&confirm=FORMAT&token=$TOKEN"
 ```
+
+### WebUI и API-матрица (2026-11-05)
+
+```sh
+# 74 проверки: GET, POST no-op, вложения, негативные случаи
+bench/run.sh api_check.py
+
+# WebUI в headless Chromium: разделы, EN/RU, Apply/dirty, мобильная раскладка
+python3 -m venv /tmp/pw && /tmp/pw/bin/pip install playwright
+/tmp/pw/bin/playwright install chromium
+/tmp/pw/bin/python bench/ui_check.py
+
+# скриншоты разделов и мобильной версии
+ls output/bench/ui/
+```
+
+Если Chromium не стартует с `libasound.so.2: cannot open shared object file`,
+поставьте пакет `libasound2t64`/`libasound2` или распакуйте его в каталог и
+запустите с `LD_LIBRARY_PATH`.
 
 ### Образ и разделы
 

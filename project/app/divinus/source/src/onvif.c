@@ -146,7 +146,12 @@ char* onvif_extract_soap_action(const char* soap_data) {
     if (!body_start) return NULL;
     body_start++;
 
-    while (*body_start && isspace(*body_start)) body_start++;
+    /* OKO: ASCII whitespace test instead of isspace(): compat.c exports a
+     * function named __ctype_b, which interposes the uClibc ctype table
+     * pointer and makes every ctype macro crash (see compat.c). */
+    while (*body_start && (*body_start == ' ' || *body_start == '\t' ||
+            *body_start == '\r' || *body_start == '\n'))
+        body_start++;
 
     if (*body_start != '<') return NULL;
     body_start++;

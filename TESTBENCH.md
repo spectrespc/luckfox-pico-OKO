@@ -8,7 +8,7 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
 
 | Поле | Значение |
 |---|---|
-| Дата обновления | `2026-11-04` |
+| Дата обновления | `2026-11-05` |
 | Ответственный | `<ФИО>` |
 | Статус | активен |
 | Назначение | сборка прошивки и прошивка SPI NAND для отладки IPC |
@@ -128,7 +128,9 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
 
 1. Перевести устройство в Maskrom (`<кнопка / перемычка>`) либо выполнить на DUT
    `reboot loader` (Rockchip RESTART2); наличие устройства проверить
-   `upgrade_tool ld`.
+   `upgrade_tool ld`. На прошивке 2026-11-05 `reboot loader` завершился обычной
+   перезагрузкой (`upgrade_tool ld` → `List of rockusb connected(0)`), поэтому
+   без кнопки Maskrom покомпонентная запись недоступна.
 2. Загрузить loader в RAM и проверить таблицу разделов:
    ```sh
    ./tools/linux/Linux_Upgrade_Tool/upgrade_tool db output/image/download.bin
@@ -200,6 +202,10 @@ media-ctl -p | grep -A6 'sc230ai 4-0032' | grep fmt
 
 # проверка потока (divinus должен быть остановлен): ожидается 30.0 fps
 v4l2-ctl -d /dev/video0 --stream-mmap --stream-count=60 --stream-poll
+
+# WebUI и API после прошивки: 74 проверки API и headless-проверка разделов
+bench/run.sh api_check.py
+/tmp/pw/bin/python bench/ui_check.py   # нужен Playwright, см. VERIFIED_FUNCTIONS.md §3
 
 # новая разметка: boot 0x600000, oem 0x2800000, userdata 0xA00000, rootfs 0xC600000
 cat /proc/cmdline

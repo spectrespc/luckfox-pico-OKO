@@ -1,1448 +1,1912 @@
-<html>
+<!DOCTYPE html>
+<html lang="en">
 <head>
-	<title>Divinus</title>
-	<meta name="viewport" content="width=device-width, initial-scale=1.0">
-	<style>
-		/* Variables */
-		:root {
-			--bg-color: #f4f5f7;
-			--text-color: #1f2937;
-			--accent: #0284c7;
-			--accent-hover: #0369a1;
-			--menu-bg: #1e293b;
-			--card-bg: #ffffff;
-			--border: #e5e7eb;
-			--border-focus: #9ca3af;
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Divinus</title>
+<style>
+	:root {
+		--bg: #f1f3f6;
+		--panel: #ffffff;
+		--ink: #1f2937;
+		--muted: #6b7280;
+		--line: #dfe3e8;
+		--accent: #0b6e99;
+		--accent-2: #0e86ba;
+		--nav: #16202c;
+		--ok: #15803d;
+		--warn: #b45309;
+		--err: #b91c1c;
+	}
+	* { box-sizing: border-box; }
+	body {
+		margin: 0; background: var(--bg); color: var(--ink);
+		font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+	}
+	h1, h2, h3 { margin: 0 0 .4em; font-weight: 600; }
+	a { color: var(--accent); }
+
+	/* top bar */
+	#topbar {
+		display: flex; align-items: center; gap: 1em; flex-wrap: wrap;
+		background: var(--nav); color: #e5edf5; padding: .55em 1em;
+		position: sticky; top: 0; z-index: 30;
+	}
+	#topbar .brand { font-weight: 700; letter-spacing: .04em; }
+	#statusline { display: flex; gap: 1.1em; flex-wrap: wrap; font-size: 12px; color: #cbd6e2; flex: 1; }
+	#statusline b { color: #fff; font-weight: 600; }
+	#langs { display: flex; gap: .3em; }
+	#langs button {
+		background: transparent; color: #cbd6e2; border: 1px solid #3d4c5c;
+		border-radius: 4px; padding: .2em .55em; cursor: pointer; font-size: 12px;
+	}
+	#langs button.on { background: var(--accent-2); border-color: var(--accent-2); color: #fff; }
+
+	#restart-banner {
+		display: none; background: #fff7ed; border-bottom: 1px solid #fed7aa;
+		color: #9a3412; padding: .5em 1em; font-size: 13px;
+	}
+	#restart-banner.show { display: flex; gap: .8em; align-items: center; }
+	#restart-banner button { margin-left: auto; }
+
+	/* layout */
+	#layout { display: flex; min-height: calc(100vh - 44px); }
+	#sidebar {
+		width: 176px; flex: 0 0 176px; background: var(--nav);
+		padding: .6em .5em; display: flex; flex-direction: column; gap: .2em;
+	}
+	#sidebar button {
+		text-align: left; background: transparent; border: 0; color: #cbd6e2;
+		padding: .55em .8em; border-radius: 5px; cursor: pointer;
+		font: inherit; display: flex; align-items: center; gap: .5em;
+	}
+	#sidebar button:hover { background: #22303f; }
+	#sidebar button.active { background: var(--accent); color: #fff; }
+	#sidebar .dot { width: 7px; height: 7px; border-radius: 50%; background: #fbbf24; margin-left: auto; display: none; }
+	#sidebar button.dirty .dot { display: block; }
+
+	#content { flex: 1; padding: 1em; min-width: 0; }
+	.sec { display: none; }
+	.sec.active { display: block; }
+	.sec > h2 { margin-bottom: .7em; }
+
+	.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1em; align-items: start; }
+	.card {
+		background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+		padding: .9em 1em; box-shadow: 0 1px 2px rgba(15, 23, 42, .05);
+	}
+	.card.wide { grid-column: 1 / -1; }
+	.card h3 {
+		font-size: 15px; margin: 0 0 .7em; padding-bottom: .45em;
+		border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: .5em;
+	}
+	.card h3 .badge { margin-left: auto; font-size: 11px; font-weight: 600; color: #92400e; background: #fef3c7; border-radius: 99px; padding: .1em .55em; display: none; }
+	.card h3 .badge.show { display: inline-block; }
+
+	.field { display: flex; align-items: center; gap: .6em; margin: .35em 0; }
+	.field > label { flex: 1 1 45%; color: #374151; font-size: 13px; }
+	.field > .ctl { flex: 1 1 55%; display: flex; gap: .35em; align-items: center; }
+	input[type=text], input[type=number], input[type=password], select {
+		width: 100%; padding: .38em .55em; font: inherit; font-size: 13px;
+		border: 1px solid #cbd5e1; border-radius: 5px; background: #fff; color: var(--ink);
+	}
+	input:focus, select:focus { outline: 0; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(11, 110, 153, .18); }
+	input[readonly] { background: #f8fafc; color: var(--muted); }
+	input[type=color] { padding: 0; height: 2em; border: 1px solid #cbd5e1; border-radius: 5px; width: 100%; }
+	input[type=range] { width: 100%; }
+	.field input[type=number] { width: 4.6em; }
+	.val { min-width: 2.4em; font-weight: 700; font-size: 12px; }
+
+	.row2 { display: flex; gap: .4em; }
+	.actions { display: flex; gap: .45em; flex-wrap: wrap; margin-top: .8em; align-items: center; }
+	.btn {
+		font: inherit; font-size: 12px; font-weight: 600; text-transform: uppercase;
+		padding: .45em .9em; border-radius: 5px; border: 1px solid #cbd5e1;
+		background: #fff; color: var(--ink); cursor: pointer; text-decoration: none;
+		display: inline-block;
+	}
+	.btn:hover { border-color: #94a3b8; background: #f8fafc; }
+	.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+	.btn.primary:hover { background: var(--accent-2); }
+	.btn.danger { border-color: #fca5a5; color: var(--err); }
+	.btn.danger:hover { background: #fef2f2; }
+	.btn:disabled { opacity: .45; cursor: default; }
+	.note { font-size: 12px; color: var(--muted); margin: .5em 0 0; }
+	.hint { font-size: 12px; color: var(--muted); }
+
+	.badge-state { font-size: 12px; font-weight: 600; padding: .1em .55em; border-radius: 99px; }
+	.badge-state.on { background: #dcfce7; color: var(--ok); }
+	.badge-state.off { background: #f1f5f9; color: var(--muted); }
+	.badge-state.warn { background: #fef3c7; color: #92400e; }
+
+	#preview { background: #0b1219; border-radius: 6px; min-height: 210px; display: flex; align-items: center; justify-content: center; color: #94a3b8; overflow: hidden; }
+	#preview video, #preview img { width: 100%; display: block; }
+	#preview p { padding: 1em; text-align: center; }
+
+	table { border-collapse: collapse; width: 100%; font-size: 13px; }
+	th, td { text-align: left; padding: .38em .4em; border-bottom: 1px solid #eef2f7; }
+	th { color: var(--muted); font-weight: 600; font-size: 12px; }
+	td.num { text-align: right; white-space: nowrap; }
+	tr:last-child td { border-bottom: 0; }
+
+	.bar { height: 10px; background: #e2e8f0; border-radius: 99px; overflow: hidden; margin: .5em 0; }
+	.bar > div { height: 100%; background: var(--accent); width: 0; }
+
+	.log { max-height: 190px; overflow: auto; font-size: 12px; background: #f8fafc; border: 1px solid var(--line); border-radius: 6px; padding: .5em; }
+	.log div { padding: .1em 0; border-bottom: 1px dashed #e2e8f0; }
+
+	.tel-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: .5em; }
+	.tel { background: #f8fafc; border: 1px solid var(--line); border-radius: 6px; padding: .5em .6em; }
+	.tel span { display: block; font-size: 11px; color: var(--muted); }
+	.tel b { font-size: 15px; font-weight: 600; }
+
+	.chips { display: flex; flex-wrap: wrap; gap: .35em; margin-top: .5em; }
+	.chip { font-size: 11px; border-radius: 99px; padding: .12em .55em; background: #eef2f7; color: var(--muted); }
+	.chip.on { background: #dcfce7; color: var(--ok); }
+
+	.osd-region { border: 1px solid var(--line); border-radius: 7px; background: var(--panel); margin-bottom: .6em; }
+	.osd-head { display: flex; align-items: center; gap: .6em; padding: .5em .7em; cursor: pointer; }
+	.osd-head .title { flex: 1; font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.osd-body { display: none; padding: 0 .7em .7em; border-top: 1px solid var(--line); }
+	.osd-region.open .osd-body { display: block; }
+	.osd-region .caret { width: 1.25em; text-align: center; font-weight: 700; color: var(--muted); }
+	.osd-head .badge { display: none; font-size: 11px; font-weight: 600; color: #b45309; background: #fef3c7; border-radius: 99px; padding: .05em .5em; }
+	.osd-head .badge.show { display: inline-block; }
+
+	#toasts { position: fixed; right: 1em; bottom: 1em; z-index: 60; display: flex; flex-direction: column; gap: .5em; max-width: 22em; }
+	.toast { border-radius: 6px; padding: .55em .8em; font-size: 13px; color: #fff; box-shadow: 0 6px 20px rgba(15,23,42,.25); }
+	.toast.ok { background: #166534; }
+	.toast.err { background: #991b1b; }
+	.toast.info { background: #1e40af; }
+	.toast small { display: block; opacity: .85; }
+
+	@media (max-width: 40em) {
+		#topbar { padding: .45em .6em; }
+		#statusline { order: 3; flex-basis: 100%; gap: .6em; font-size: 11px; }
+		#layout { display: block; }
+		#sidebar {
+			width: auto; flex-direction: row; overflow-x: auto; padding: .4em;
+			position: sticky; top: 44px; z-index: 20;
 		}
-
-		/* Reset & base */
-		* { box-sizing: border-box; }
-		* + * { margin: .5em 0; }
-		body { background: var(--bg-color); color: var(--text-color); font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; }
-
-		/* Typography */
-		h1 { font: 600 2.5em inherit; } h2 { font: 600 1.8em inherit; margin-top: 0; } h3 { font: 600 2em inherit; } h4 { font: 600 1.5em inherit; } h5 { font: 600 1.2em inherit; } h6 { font: 600 1em inherit; }
-		a { color: var(--accent); text-decoration: none; transition: color 0.2s; } a:hover { color: var(--accent-hover); }
-		pre { overflow: auto; padding: 1em; background: var(--card-bg); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
-
-		/* Layout & grid */
-		.row, .w-100 { width: 100%; }
-		.vh-100 { height: 100vh; }
-		.tc { text-align: center; }
-		.tr { text-align: right; }
-		.vm { vertical-align: middle; }
-		.c { padding: 1em; margin: auto; font: 14px/1.5 system-ui, -apple-system, sans-serif; }
-		.cont { max-width: 64em; }
-		.gapless { border-spacing: 0; }
-		.vc { position: relative; top: 40%; transform: perspective(1px) translateY(-45%); }
-		.box { vertical-align: top; }
-		.box td { padding: .5em; }
-
-		/* UI components */
-		.card { padding: 1em; background: var(--card-bg); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
-		.card:focus, hr { outline: 0; border: 1px solid var(--accent); }
-		fieldset { border: 1px solid var(--border); border-radius: 6px; padding: 1.5em; background: var(--card-bg); margin-bottom: 1em; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
-		legend { font-weight: 600; color: var(--accent); padding: 0 0.5em; font-size: 1.1em; }
-		details { border: 1px solid var(--border); border-radius: 6px; background: var(--card-bg); margin-bottom: 1em; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
-		summary { font-weight: 600; cursor: pointer; outline: none; list-style: none; }
-		summary::-webkit-details-marker { display: none; }
-		details[open] summary { border-bottom: 1px solid var(--border); }
-		.osd_sect { border: 1px solid var(--border); border-radius: 6px; background: var(--card-bg); margin-bottom: 1em; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
-		.osd_head { font-weight: 600; cursor: pointer; outline: none; }
-		.caret { display: inline-block; width: 1.2em; height: 1.2em; line-height: 0.9em; text-align: center; border-radius: 50%; border: 2px solid var(--text-color); color: var(--text-color); margin-right: 0.5em; font-weight: bold; font-family: monospace; font-size: 1.1em; vertical-align: middle; transition: all 0.2s; padding-bottom: 0.1em; }
-		.caret::before { content: "+"; }
-		.osd_sect.open .caret { background: var(--text-color); color: var(--card-bg); }
-		.osd_sect.open .caret::before { content: "-"; }
-		.osd_sect.open .osd_head { border-bottom: 1px solid var(--border); }
-		.osd_body { display: none; }
-		.osd_sect.open .osd_body { display: block; }
-
-		/* Buttons */
-		.btn { padding: 0.6em 1.2em; text-transform: uppercase; background: var(--card-bg); border: 1px solid var(--border); border-radius: 4px; font-size: 12px; font-weight: 600; color: var(--text-color); cursor: pointer; transition: all 0.2s; }
-		.btn:hover { background: #f9fafb; border-color: var(--border-focus); }
-		.btn.primary { color: #fff; background: var(--accent); border-color: var(--accent); }
-		.btn.primary:hover { background: var(--accent-hover); }
-		a.btn { display: inline-block; }
-		.btn.cell { display: table-cell; width: 1%; }
-
-		/* Form inputs */
-		input, select { font-family: inherit; padding: 0.4em 0.6em; border: 1px solid var(--border); border-radius: 4px; background: #fff; color: var(--text-color); transition: border-color 0.2s; }
-		input:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(2,132,199,0.2); }
-		.box input, .box select { width: 100%; }
-		input[type=checkbox] { position: absolute; opacity: 0; }
-		input[type=checkbox]:checked + .modal { display: block; z-index: 14; }
-		.color-input { height: 2em; border: none; }
-		.range-wrap { display: table; width: 100%; }
-		.range-val { display: table-cell; width: 3em; padding-right: 0.5em; text-align: left; vertical-align: middle; font-weight: 700; }
-		.range-input { display: table-cell; width: 100%; vertical-align: middle; }
-
-		/* Tables */
-		table { border-collapse: collapse; }
-		th { text-align: left; font-weight: 600; padding-bottom: 0.5em; border-bottom: 2px solid var(--border); }
-		.osd-table tbody { border-bottom: 2px solid var(--border); }
-		.osd-table tbody:last-child { border-bottom: none; }
-
-		/* Modals & navigation */
-		.modal { display: none; background: var(--bg-color); position: fixed; bottom: 0; left: 0; right: 0; top: 0; margin: 0; padding: 0; z-index: 10; }
-		.lbl-modal:focus, .lbl-modal:hover { cursor: pointer; opacity: .8; }
-		.menu .col { display: inline; }
-		.menu .btn { margin: -1em 0; padding: .75em; }
-		.close { position: absolute; right: 2em; top: 1.5em; }
-
-		/* Utilities */
-		.right { float: right; }
-		.inline { display: inline-block; }
-		.nope { display: none; }
-		.hide { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); clip-path: inset(50%); white-space: nowrap; border: 0; }
-		.pill { border-radius: 9999px; }
-		.rounded { border-radius: 4px; }
-		.scrollx { overflow-x: auto; padding-bottom: .5em; }
-		.scrollx::-webkit-scrollbar { height: 10px; }
-		.scrollx::-webkit-scrollbar-track { background: var(--card-bg); border-radius: 4px; }
-		.scrollx::-webkit-scrollbar-thumb { background: var(--border-focus); border-radius: 4px; border: 2px solid var(--card-bg); }
-		.scrollx::-webkit-scrollbar-thumb:hover { background: var(--accent); }
-		.scrolly { overflow-y: auto; }
-		.caps { text-transform: uppercase; }
-		.tracked { letter-spacing: .1em; }
-		.unl { border-bottom: 2px solid var(--border); padding-bottom: 0.3em; color: #111827; }
-		.dim { opacity: 1; transition: opacity .15s ease-in; }
-		.dim:focus, .dim:hover { opacity: .5; transition: opacity .15s ease-in; }
-		.pe-auto { pointer-events: auto; }
-		.osd-lbl { padding: 0.4em 0.8em; border-radius: 4px; }
-
-		/* Typography utilities */
-		.mega { font-size: 3em; } .large { font-size: 1.5em; } .small { font-size: .8em; }
-		.bold { font-weight: 700; } .normal { font-weight: 400; } .light { font-weight: 300; }
-
-		/* Spacing utilities */
-		.m0 { margin: 0; } .m1 { margin: .5em; } .m2 { margin: 1em; } .m3 { margin: 2em; } .m4 { margin: 4em; }
-		.mt0 { margin-top: 0; } .mt1 { margin-top: .5em; } .mt2 { margin-top: 1em; } .mt3 { margin-top: 2em; } .mt4 { margin-top: 4em; }
-		.mr0 { margin-right: 0; } .mr1 { margin-right: .5em; } .mr2 { margin-right: 1em; } .mr3 { margin-right: 2em; } .mr4 { margin-right: 4em; }
-		.mb0 { margin-bottom: 0; } .mb1 { margin-bottom: .5em; } .mb2 { margin-bottom: 1em; } .mb3 { margin-bottom: 2em; } .mb4 { margin-bottom: 4em; }
-		.ml0 { margin-left: 0; } .ml1 { margin-left: .5em; } .ml2 { margin-left: 1em; } .ml3 { margin-left: 2em; } .ml4 { margin-left: 4em; }
-		.p0 { padding: 0; } .p1 { padding: .5em; } .p2 { padding: 1em; } .p3 { padding: 2em; } .p4 { padding: 4em; }
-		.pv0 { padding-top: 0; padding-bottom: 0; } .pv1 { padding-top: .5em; padding-bottom: .5em; } .pv2 { padding-top: 1em; padding-bottom: 1em; } .pv3 { padding-top: 2em; padding-bottom: 2em; } .pv4 { padding-top: 4em; padding-bottom: 4em; }
-		.ph0 { padding-right: 0; padding-left: 0; } .ph1 { padding-right: .5em; padding-left: .5em; } .ph2 { padding-right: 1em; padding-left: 1em; } .ph3 { padding-right: 2em; padding-left: 2em; } .ph4 { padding-right: 4em; padding-left: 4em; }
-
-		/* Color utilities */
-		.white { color: #fff; } .bg-white { background-color: #fff; } .b-white { border-color: #fff; }
-		.gray { color: #9ca3af; } .bg-gray { background-color: #9ca3af; } .b-gray { border-color: #9ca3af; }
-		.black { color: #000; } .bg-black { background-color: var(--menu-bg); } .b-black { border-color: var(--menu-bg); }
-		.accent { color: var(--accent); } .bg-accent { background-color: var(--accent); } .b-accent { border-color: var(--accent); }
-		.info { color: #0ea5e9; } .bg-info { background-color: #0ea5e9; } .b-info { border-color: #0ea5e9; }
-		.error { color: #ef4444; } .bg-error { background-color: #ef4444; } .b-error { border-color: #ef4444; }
-		.warning { color: #f59e0b; } .bg-warning { background-color: #f59e0b; } .b-warning { border-color: #f59e0b; }
-		.success { color: #10b981; } .bg-success { background-color: #10b981; } .b-success { border-color: #10b981; }
-
-		/* Media queries */
-		@media (min-width: 50em) {
-			.col { display: table-cell; }
-			.\31 { width: 5%; } .\32 { width: 15%; } .\33 { width: 22%; } .\34 { width: 30%; } .\35 { width: 40%; } .\36 { width: 50%; }
-			.row { display: table; border-spacing: 1em 0; height: fit-content; }
-			.box > fieldset { height: 100%; margin: 0; }
-			.close { right: 4em; }
-		}
-
-		@media (max-width: 40em) {
-			.menu { position: relative; padding: .5em 0; min-height: 3em; cursor: pointer; -webkit-tap-highlight-color: rgba(0,0,0,0); tap-highlight-color: rgba(0,0,0,0); outline: none; tabindex: 0; }
-			.modal .menu.row { display: block; position: sticky; top: 0; z-index: 30; }
-			.menu b { display: block; text-align: center; padding: .5em 0; background: inherit; }
-			.menu .col * { padding: .75em 1.5em; }
-			.menu .col *:hover { background: rgba(255,255,255,0.1); }
-			.menu .col { display: block; overflow: hidden; position: absolute; height: 0; width: 100%; left: 0; top: 100%; margin: 0; background: var(--menu-bg); border: 0; border-top: 1px solid rgba(255,255,255,0.1); transition: height .3s; z-index: 20; }
-			.menu .col a { display: block; margin-top: .5em; }
-			.menu .col .lbl-modal { display: block; margin-top: .5em; }
-			.modal .menu .col { position: static; height: auto; border: 0; display: table; width: 100%; table-layout: fixed; padding: 0; border-spacing: 0.5em 0; margin-top: 0.5em; }
-			.modal .menu .col a { display: table-cell; text-align: center; vertical-align: middle; width: auto; padding: 0.6em 0; border-radius: 4px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); margin: 0; }
-			.menu:after { content: "\2261"; position: absolute; right: .225em; top: -.275em; color: #fff; font-size: 3em; z-index: 23; }
-			.menu:focus:after, .menu:active:after { content: "\2715"; right: .375em; top: .125em; font-size: 2em; }
-			.menu:focus .col, .menu:active .col { height: auto; border-top: 1px solid rgba(255,255,255,0.1); }
-			.modal .menu:after { display: none; }
-			.modal .btn.primary.close { position: static; display: table-cell; text-align: center; vertical-align: middle; width: auto; padding: 0.6em 0; margin: 0; border-radius: 4px; }
-			.unl { margin-top: .25em; }
-		}
-	</style>
-	<script>
-		var ua = window.navigator.userAgent;
-		var isIe = ua.indexOf('MSIE ') > -1 || ua.indexOf('Trident/') > -1;
-		window.XMLHttpRequest = window.XMLHttpRequest || new ActiveXObject("Msxml2.XMLHTTP") || new ActiveXObject("Microsoft.XMLHTTP");
-
-		function apiApply(endp) {
-			var dest = "/api/" + endp + "?", req = new XMLHttpRequest();
-			var elems = document.getElementsByTagName('*');
-			for (var i = 0; i < elems.length; i++) {
-				if (!elems[i].id || elems[i].id.lastIndexOf(endp + '_', 0)) continue;
-				if (elems[i].tagName != 'INPUT' && elems[i].tagName != 'SELECT') continue;
-				if (elems[i].type && elems[i].type == "file") continue;
-					dest += elems[i].id.substring(endp.length + 1) +
-						'=' + encodeURIComponent(elems[i].value) + '&';
-			}
-			dest = dest.slice(0, -1);
-			req.onreadystatechange = function() {
-				if (this.readyState != 4 || this.status != 200) return;
-				try {
-					var dec = JSON.parse(req.responseText);
-					if (dec.error)
-						alert(dec.reason + (dec.hint ? '\n' + dec.hint : ''));
-				} catch (e) {}
-			};
-			req.open('GET', dest);
-			req.send();
-		}
-
-		function loadStreams() {
-			var req = new XMLHttpRequest();
-			req.onreadystatechange = function() {
-				if (this.readyState != 4 || this.status != 200) return;
-				var dec = JSON.parse(req.responseText);
-				var out = '<table class="w-100"><tr><th>Path</th><th>Codec</th><th>Channel</th><th>Active</th></tr>';
-				for (var i = 0; i < dec.streams.length; i++) {
-					var s = dec.streams[i];
-					out += '<tr><td>' + s.path + '</td><td>' + s.codec + '</td><td>' +
-						s.channel + '</td><td>' + (s.enabled ? 'yes' : 'no') + '</td></tr>';
-				}
-				out += '</table><div class="small gray">Connections: ' + dec.connections +
-					' / ' + dec.max_connections + '</div>';
-				document.getElementById('streams_table').innerHTML = out;
-			};
-			req.open('GET', '/api/streams');
-			req.send();
-		}
-
-		function loadIvsEvents() {
-			var req = new XMLHttpRequest();
-			req.onreadystatechange = function() {
-				if (this.readyState != 4 || this.status != 200) return;
-				var dec = JSON.parse(req.responseText);
-				var out = '';
-				for (var i = dec.events ? dec.events.length - 1 : -1; i >= 0; i--) {
-					var e = dec.events[i];
-					out += e.time + ' &mdash; ' + e.rects + ' region(s) ' +
-						'[' + e.bbox.join(',') + ']<br>';
-				}
-				if (!out) out = 'No motion events yet.';
-				document.getElementById('ivs_events').innerHTML = out;
-			};
-			req.open('GET', '/api/ivs');
-			req.send();
-		}
-
-		function apiRead(endp) {
-			var req = new XMLHttpRequest();
-			req.onreadystatechange = function() {
-				if (this.readyState != 4 || this.status != 200) return false;
-				var dec = JSON.parse(req.responseText);
-				for (var key in dec) {
-					if (!dec.hasOwnProperty(key)) continue;
-					if (dec[key] !== null && typeof dec[key] === 'object') continue;
-
-					var elem = document.getElementById(endp + '_' + key);
-					if (elem && elem.type && elem.type == "file") {
-						var lbls = document.getElementsByTagName('LABEL');
-						for (var i = 0; i < lbls.length; i++) {
-							if (lbls[i].htmlFor != endp + '_' + key) continue;
-							lbls[i].innerHTML = 'Region ' + dec[key];
-							break;
-						}
-						continue;
-					} else if (!elem) continue;
-
-					if (elem.tagName == 'INPUT') {
-						elem.value = dec[key];
-						if (elem.type == 'range') {
-							var valElem = document.getElementById(elem.id + '_val');
-							if (valElem) valElem.innerHTML = dec[key];
-						}
-						if (typeof updateOsdSummary === 'function' && (elem.id.indexOf('_text') > -1 || elem.id.indexOf('_img') > -1))
-							updateOsdSummary(elem.id);
-					} else if (elem.tagName == 'SELECT') {
-						for (var i = 0; i < elem.options.length; i++) {
-							if (elem.options[i].value == dec[key] + '') {
-								elem.selectedIndex = i;
-								break;
-							}
-						}
-					} else {
-						elem.innerHTML = dec[key];
-					}
-				}
-				if (endp == 'storage' && typeof updateStorageButtons === 'function')
-					updateStorageButtons();
-				if (endp == 'network' && typeof updateNetworkFields === 'function')
-					updateNetworkFields();
-			}
-			req.open('GET', '/api/' + endp);
-			req.send();
-			return true;
-		}
-
-		function storageAction(action) {
-			var url = '/api/storage?action=' + encodeURIComponent(action);
-			if (action == 'unmount')
-				url += '&token=' + encodeURIComponent(
-					document.getElementById('storage_format_token').value);
-			var req = new XMLHttpRequest();
-			req.onreadystatechange = function() {
-				if (this.readyState != 4 || this.status != 200) return;
-				var dec = JSON.parse(this.responseText);
-				if (dec.error) alert(dec.reason || dec.error);
-				apiRead('storage');
-			};
-			req.open('GET', url);
-			req.send();
-		}
-
-		function formatSd() {
-			if (!confirm('ALL DATA ON microSD WILL BE LOST. Continue?')) return;
-			var req = new XMLHttpRequest();
-			req.onreadystatechange = function() {
-				if (this.readyState != 4 || this.status != 200) return;
-				var dec = JSON.parse(this.responseText);
-				if (dec.error) alert(dec.reason || dec.error);
-				apiRead('storage');
-			};
-			var token = document.getElementById('storage_format_token').value;
-			req.open('GET', '/api/storage?action=format&fs=fat32&confirm=FORMAT&token=' +
-				encodeURIComponent(token));
-			req.send();
-		}
-
-		function updateStorageButtons() {
-			var supported = document.getElementById('storage_format_supported');
-			var busy = document.getElementById('storage_format_busy');
-			var button = document.getElementById('storage_format_btn');
-			if (!button) return;
-			var canFormat = supported && supported.innerHTML == 'true';
-			var isBusy = busy && busy.innerHTML == 'true';
-			button.disabled = !canFormat || isBusy;
-		}
-
-		function updateNetworkFields() {
-			var mode = document.getElementById('network_mode');
-			var disabled = !mode || mode.value != 'static';
-			var ids = ['network_ipaddr', 'network_netmask',
-				'network_gateway', 'network_dns'];
-			for (var i = 0; i < ids.length; i++) {
-				var elem = document.getElementById(ids[i]);
-				if (elem) elem.disabled = disabled;
-			}
-		}
-
-		function applyNetwork() {
-			var mode = document.getElementById('network_mode');
-			if (mode && mode.value == 'static') {
-				var ip = document.getElementById('network_ipaddr');
-				var mask = document.getElementById('network_netmask');
-				if (!ip || !ip.value || !mask || !mask.value) {
-					alert('Static mode requires IP address and netmask.');
-					return;
-				}
-			}
-			if (!confirm('Changing Ethernet settings can disconnect this page. Continue?'))
-				return;
-			apiApply('network');
-			setTimeout(function() {
-				alert('Network settings saved. Reconnect to the new address if it changed.');
-			}, 2000);
-		}
-
-		function duplicateRows(row, num) {
-			var tpl = document.getElementById(row + '_tpl');
-			for (var i = 0; i < num; i++) {
-				var clone = tpl.cloneNode(true);
-				clone.id = row + '/' + i;
-				clone.style.display = '';
-				var elems = clone.getElementsByTagName('*');
-				for (var j = 0; j < elems.length; j++) {
-					if (elems[j].action)
-						elems[j].action = elems[j].action.replace(row, row + '/' + i);
-					if (elems[j].htmlFor)
-						elems[j].htmlFor = elems[j].htmlFor.replace(row, row + '/' + i);
-					if (elems[j].href)
-						elems[j].href = elems[j].href.replace(row, row + '/' + i);
-					if (elems[j].id)
-						elems[j].id = elems[j].id.replace(row, row + '/' + i);
-					if (elems[j].name)
-						elems[j].name = elems[j].name.replace(row, row + '/' + i);
-					if (elems[j].target)
-						elems[j].target = elems[j].target.replace(row, row + '/' + i);
-					if (elems[j].type == 'range') {
-						elems[j].value = elems[j].defaultValue || 0; // reset default
-					}
-				}
-				for (var j = 0; j < elems.length; j++) {
-					if (elems[j].className && elems[j].className.indexOf('range-val') > -1) {
-						var inputId = elems[j].id.replace('_val', '');
-						var inputElem = clone.querySelector('#' + inputId.replace('/', '\\/'));
-						if (inputElem) elems[j].innerHTML = inputElem.value;
-					}
-				}
-				tpl.parentNode.appendChild(clone);
-			}
-		}
-
-		function restartApp() {
-			var req = new XMLHttpRequest();
-			req.onreadystatechange = function() {
-				if (this.readyState != 4 || this.status != 200) return;
-				var dec = JSON.parse(req.responseText);
-				for (var key in dec) {
-					if (!dec.hasOwnProperty(key)) continue;
-					if (key == 'code' && dec[key] !== 0)
-						return alert('Failed to restart streamer!');
-				}
-			}
-			req.open('GET', '/api/cmd?restart');
-			req.send();
-		}
-
-		function saveConfig() {
-			var req = new XMLHttpRequest();
-			req.onreadystatechange = function() {
-				if (this.readyState != 4 || this.status != 200) return;
-				var dec = JSON.parse(req.responseText);
-				for (var key in dec) {
-					if (!dec.hasOwnProperty(key)) continue;
-					if (key == 'code' && dec[key] !== 0)
-						return alert('Failed to save configuration!');
-				}
-			}
-			req.open('GET', '/api/cmd?save');
-			req.send();
-		}
-
-		function saveOsds() {
-			for (var i = 0; i < 10; i++)
-				apiApply('osd/' + i);
-		}
-
-		function setFormatTime() {
-			var fmt = document.getElementById('time_fmt').value;
-			apiRead('time');
-			document.getElementById('time_fmt').value = fmt;
-			apiApply('time');
-		}
-
-		function setLocalTime() {
-			var ts = Math.floor(new Date().getTime() / 1000);
-			document.getElementById('time_ts').value = ts;
-			apiApply('time');
-			apiRead('time');
-		}
-
-		function featureEnabled(id) {
-			var elem = document.getElementById(id);
-			return elem && elem.value == 'true';
-		}
-
-		function setSource(id, src) {
-			var frame = document.getElementById(id), ext = '.mp4';
-			if (frame.firstChild) frame.firstChild.src = "#";
-			if (src === 'video.mp4' && !featureEnabled('mp4_enable')) {
-				frame.innerHTML = '<p class="ph2">MP4 is disabled. Enable it in Media &rarr; MP4 and press Apply.</p>';
-				return;
-			}
-			if (src === 'mjpeg' && !featureEnabled('mjpeg_enable')) {
-				frame.innerHTML = '<p class="ph2">MJPEG is disabled. Enable it in Media &rarr; MJPEG and press Apply.</p>';
-				return;
-			}
-			if (src.indexOf(ext, src.length - ext.length) > -1)
-				frame.innerHTML = '<video id="player" width="100%" autoplay controls> \
-					<source src="' + src + '" type="video/mp4"> \
-					<p>Please update your browser to view this content.</p> \
-					</video> \
-					<p class="ph2">MP4 uses H.265; if the picture stays blank, use MJPEG.</p>';
-			else if (src)
-				frame.innerHTML = '<img src="' + src + '" width="100%">';
-			else
-				while (frame.firstChild) frame.removeChild(frame.firstChild);
-		}
-
-		function toggleRecord(btn) {
-			if (!btn) return;
-
-			var req = new XMLHttpRequest(), act = '';
-			req.onreadystatechange = function() {
-				if (this.readyState != 4 || this.status != 200) return;
-				var dec = JSON.parse(req.responseText);
-				for (var key in dec) {
-					if (!dec.hasOwnProperty(key)) continue;
-					if (key != 'recording') continue;
-					if (dec[key] == true) {
-						btn.innerHTML = 'Stop';
-						btn.className = 'btn error';
-					} else {
-						btn.innerHTML = 'Start';
-						btn.className = 'btn primary';
-					}
-				}
-			}
-			switch (btn.innerHTML) {
-				case 'Start': act = '?start'; break;
-				case 'Stop':  act = '?stop';  break;
-			}
-			req.open('GET', '/api/record' + act);
-			req.send();
-		}
-
-		function updateOsdSummary(id) {
-			if (!id || id.indexOf('osd/') !== 0) return;
-			var base = id.substring(0, id.lastIndexOf('_'));
-			var textElem = document.getElementById(base + '_text');
-			var imgElem = document.getElementById(base + '_img');
-			var titleElem = document.getElementById(base + '_title');
-			if (textElem && imgElem && titleElem) {
-				titleElem.innerHTML = imgElem.value ? imgElem.value : textElem.value;
-			}
-		}
-
-		function every5Sec() {
-			apiRead('status');
-		}
-
-		function onLoad() {
-			apiRead('audio');
-			apiRead('jpeg');
-			apiRead('mjpeg');
-			apiRead('mp4');
-			apiRead('night');
-			apiRead('onvif');
-			apiRead('record');
-			apiRead('rtsp');
-			apiRead('eptz');
-			apiRead('rotate');
-			apiRead('venc');
-			apiRead('substream');
-			apiRead('aiisp');
-			apiRead('iq');
-			apiRead('hdr');
-			apiRead('ivs');
-			apiRead('network');
-			apiRead('storage');
-			loadStreams();
-			loadIvsEvents();
-			setInterval(loadIvsEvents, 2000);
-			toggleRecord(document.getElementById('record_state'));
-			apiRead('time');
-
-			duplicateRows('osd', 10);
-			for (var i = 0; i < 10; i++)
-				apiRead('osd/' + i);
-
-			every5Sec();
-			setInterval(every5Sec, 5000);
-		}
-	</script>
+		#sidebar button { white-space: nowrap; padding: .45em .7em; }
+		#content { padding: .7em; }
+		.field > label { flex-basis: 100%; }
+		.field { flex-wrap: wrap; }
+		.field > .ctl { flex-basis: 100%; }
+	}
+</style>
 </head>
-<body class="m0" onload="onLoad()">
-	<svg id="backdrop" width="100%" height="100%" viewBox="0 0 1920 1080" aria-hidden="true"
-     style="position:fixed;top:0;left:0;z-index:-1;pointer-events:none">
-		<defs>
-			<linearGradient id="winggrad" x1="0" y1="0" x2="1" y2="1">
-				<stop offset="0%" stop-color="#555" stop-opacity="0.10"/>
-				<stop offset="100%" stop-color="#fff" stop-opacity="0.03"/>
-			</linearGradient>
-  		</defs>
-		<g>
-			<path d="M200,900 Q600,400 1200,300 Q1700,250 1800,900 Q1200,700 800,1000 Q400,1200 200,900 Z" fill="url(#winggrad)" />
-    		<path d="M400,950 Q700,500 1300,400 Q1600,350 1700,850 Q1200,750 900,1050 Q600,1200 400,950 Z" fill="url(#winggrad)" opacity="0.5"/>
-		</g>
-	</svg>
-	<noscript>
-		<div class="tc vh-100 bg-info">
-			<div class="vc c white">
-				<h1 class="mega mb0">Divinus</h1>
-				<p class="large mb2">Error: JavaScript is required to access this page!</p>
-			</div>
-		</div>
-	</noscript>
-	<input type="checkbox" id="live-modal">
-	<div class="c modal vh-100 w-100 scrolly">
-		<div class="c bg-black menu pv2 row" tabindex="0">
-			<b><label for="live-modal" class="lbl-modal ph2 gray">Divinus</label></b>
-			<div class="col">
-				<a href="javascript:setSource('preview', 'video.mp4')" class="ph2">MP4</a>
-				<a href="javascript:setSource('preview', 'mjpeg')" class="ph2">MJPEG</a>
-				<a href="javascript:setSource('preview', '')" class="ph2">Stop</a>
-				<label for="live-modal" class="btn primary close">Close</label>
-			</div>
-		</div>
-		<div class="c cont">
-			<h2 class="unl">Live</h2>
-			<div id="preview" width="100%"></div>
-		</div>
+<body>
+
+<noscript>
+	<div style="padding:3em;text-align:center">
+		<h1>Divinus</h1>
+		<p>JavaScript is required to use this page.</p>
 	</div>
-	<input type="checkbox" id="media-modal">
-	<div class="c modal vh-100 w-100 scrolly">
-		<div class="c bg-black menu pv2 row" tabindex="0">
-			<b><label for="media-modal" class="lbl-modal ph2 gray">Divinus</label></b>
-			<div class="col">
-				<a href="javascript:saveConfig()" class="ph2">Save</a>
-				<a href="javascript:restartApp()" class="ph2">Restart</a>
-				<label for="media-modal" class="btn primary close">Close</label>
-			</div>
-		</div>
-		<div class="c cont">
-			<h2 class="unl">Media</h2>
-			<div class="row">
-    			<div class="6 col box">
-    				<fieldset>
-    					<legend>ISP adjustments</legend>
-    					<table class="w-100">
-    						<tr>
-    							<td><label for="isp_mirror">Mirror</label></td>
-    							<td><select id="isp_mirror">
-    								<option value="false">OFF</option>
-    								<option value="true">ON</option>
-    							</select></td>
-    						</tr>
-    						<tr>
-    							<td><label for="isp_flip">Flip</label></td>
-    							<td><select id="isp_flip">
-    								<option value="false">OFF</option>
-    								<option value="true">ON</option>
-    							</select></td>
-    						</tr>
-    						<tr>
-    							<td><label for="isp_antiflicker">Anti-flicker</label></td>
-    							<td><select id="isp_antiflicker">
-    								<option value="0">Disabled</option>
-    								<option value="50">50 Hz</option>
-    								<option value="60">60 Hz</option>
-    							</select></td>
-    						</tr>
-    					</table>
-    					<a href="javascript:apiApply('isp')" class="btn right">Apply</a>
-    				</fieldset>
-    			</div>
-				<div class="6 col box">
-					<fieldset>
-						<legend>Recordings</legend>
-						<table class="w-100">
-							<tr>
-								<td><label for="record_enable">Enabled</label></td>
-								<td><select id="record_enable">
-									<option value="false">OFF</option>
-									<option value="true">ON</option>
-								</select></td>
-							</tr>
-							<tr>
-								<td><label for="record_continuous">Continuous</label></td>
-								<td><select id="record_continuous">
-									<option value="false">OFF</option>
-									<option value="true">ON</option>
-								</select></td>
-							</tr>
-							<tr>
-								<td><label for="record_path">Path</label></td>
-								<td><input type="text" id="record_path"></td>
-							</tr>
-							<tr>
-								<td><label for="record_filename">Filename</label></td>
-								<td><input type="text" id="record_filename"></td>
-							</tr>
-							<tr>
-								<td><label for="record_segment_duration">Segment duration&nbsp;(s)</label></td>
-								<td><input type="number" id="record_segment_duration"></td>
-							</tr>
-							<tr>
-								<td><label for="record_segment_size">Segment size&nbsp;(bytes)</label></td>
-								<td><input type="number" id="record_segment_size"></td>
-							</tr>
-						</table>
-						<button id="record_state" class="btn" onclick="toggleRecord(this)"></button>
-						<a href="javascript:apiApply('record')" class="btn right">Apply</a>
-					</fieldset>
-				</div>
-			</div>
-			<div class="row">
-				<div class="6 col box">
-					<fieldset>
-						<legend>Audio</legend>
-						<table class="w-100">
-							<tr>
-								<td><label for="audio_enable">Enabled</label></td>
-								<td><select id="audio_enable">
-									<option value="false">OFF</option>
-									<option value="true">ON</option>
-								</select></td>
-							</tr>
-							<tr>
-								<td><label for="audio_bitrate">Bitrate&nbsp;(kbps)</label></td>
-								<td><input type="number" id="audio_bitrate"></td>
-							</tr>
-							<tr>
-								<td><label for="audio_gain">Gain&nbsp;(dB)</label></td>
-								<td><input type="number" id="audio_gain"></td>
-							</tr>
-							<tr>
-								<td><label for="audio_srate">Sample&nbsp;rate</label></td>
-								<td><input type="number" id="audio_srate"></td>
-							</tr>
-						</table>
-						<a href="javascript:apiApply('audio')" class="btn right">Apply</a>
-					</fieldset>
-				</div>
-				<div class="6 col box">
-					<fieldset>
-						<legend>JPEG snapshots</legend>
-						<table class="w-100">
-							<tr>
-								<td><label for="jpeg_enable">Enabled</label></td>
-								<td><select id="jpeg_enable">
-									<option value="false">OFF</option>
-									<option value="true">ON</option>
-								</select></td>
-							</tr>
-							<tr>
-								<td><label for="jpeg_width">Width</label></td>
-								<td><input type="number" id="jpeg_width"></td>
-							</tr>
-							<tr>
-								<td><label for="jpeg_height">Height</label></td>
-								<td><input type="number" id="jpeg_height"></td>
-							</tr>
-							<tr>
-								<td><label for="jpeg_qfactor">Quality&nbsp;(%)</label></td>
-								<td><input type="number" id="jpeg_qfactor" min="1" max="99"></td>
-							</tr>
-						</table>
-						<a href="javascript:apiApply('jpeg')" class="btn right">Apply</a>
-					</fieldset>
-				</div>
-			</div>
-			<div class="row">
-				<div class="6 col box">
-					<fieldset>
-						<legend>MP4</legend>
-						<table class="w-100">
-							<tr>
-								<td><label for="mp4_enable">Enabled</label></td>
-								<td><select id="mp4_enable">
-									<option value="false">OFF</option>
-									<option value="true">ON</option>
-								</select></td>
-							</tr>
-							<tr>
-								<td><label for="mp4_width">Width</label></td>
-								<td><input type="number" id="mp4_width"></td>
-							</tr>
-							<tr>
-								<td><label for="mp4_height">Height</label>
-								<td><input type="number" id="mp4_height"></td>
-							</tr>
-							<tr>
-								<td><label for="mp4_fps">Framerate</label></td>
-								<td><input type="number" id="mp4_fps"></td>
-							</tr>
-							<tr>
-								<td><label for="mp4_gop">Keyframe&nbsp;interval</label></td>
-								<td><input type="number" id="mp4_gop"></td>
-							</tr>
-							<tr>
-								<td><label for="mp4_bitrate">Bitrate&nbsp;(kbps)</label></td>
-								<td><input type="number" id="mp4_bitrate"></td>
-							</tr>
-							<tr>
-								<td><label for="mp4_h265">Codec</label></td>
-								<td><select id="mp4_h265">
-									<option value="false">H.264</option>
-									<option value="true">H.265</option>
-								</select></td>
-							</tr>
-							<tr>
-								<td><label for="mp4_mode">Rate&nbsp;control</label></td>
-								<td><select id="mp4_mode">
-									<option value="CBR">CBR</option>
-									<option value="VBR">VBR</option>
-									<option value="QP">QP</option>
-									<option value="ABR">ABR</option>
-									<option value="AVBR">AVBR</option>
-								</select></td>
-							</tr>
-							<tr>
-								<td><label for="mp4_profile">Profile</label></td>
-								<td><select id="mp4_profile">
-									<option value="BP">Baseline</option>
-									<option value="MP">Main</option>
-									<option value="HP">High</option>
-								</select></td>
-							</tr>
-						</table>
-						<a href="javascript:apiApply('mp4')" class="btn right">Apply</a>
-					</fieldset>
-				</div>
-				<div class="6 col box">
-					<fieldset>
-						<legend>MJPEG</legend>
-						<table class="w-100">
-							<tr>
-								<td><label for="mjpeg_enable">Enabled</label></td>
-								<td><select id="mjpeg_enable">
-									<option value="false">OFF</option>
-									<option value="true">ON</option>
-								</select></td>
-							</tr>
-							<tr>
-								<td><label for="mjpeg_width">Width</label></td>
-								<td><input type="number" id="mjpeg_width"></td>
-							</tr>
-							<tr>
-								<td><label for="mjpeg_height">Height</label></td>
-								<td><input type="number" id="mjpeg_height"></td>
-							</tr>
-							<tr>
-								<td><label for="mjpeg_fps">Framerate</label></td>
-								<td><input type="number" id="mjpeg_fps"></td>
-							</tr>
-							<tr>
-								<td><label for="mjpeg_mode">Rate&nbsp;control</label></td>
-								<td><select id="mjpeg_mode">
-									<option value="CBR">CBR</option>
-									<option value="VBR">VBR</option>
-									<option value="QP">QP</option>
-								</select></td>
-							</tr>
-							<tr>
-								<td><label for="mjpeg_qfactor">Quality&nbsp;(%)</label></td>
-								<td><input type="number" id="mjpeg_qfactor" min="1" max="99"></td>
-							</tr>
-						</table>
-						<a href="javascript:apiApply('mjpeg')" class="btn right">Apply</a>
-					</fieldset>
-				</div>
-			</div>
-			<div class="row">
-				<div class="6 col box">
-					<fieldset>
-						<legend>Geometry (digital zoom and rotation)</legend>
-						<table class="w-100">
-							<tr>
-								<td><label for="eptz_enable">Digital zoom</label></td>
-								<td><select id="eptz_enable">
-									<option value="false">OFF</option>
-									<option value="true">ON</option>
-								</select></td>
-							</tr>
-							<tr>
-								<td><label for="eptz_stream">Zoom stream</label></td>
-								<td><select id="eptz_stream">
-									<option value="main">Main</option>
-									<option value="sub">Sub</option>
-								</select></td>
-							</tr>
-							<tr>
-								<td><label for="eptz_zoom">Preset</label></td>
-								<td><select id="eptz_zoom">
-									<option value="">Keep</option>
-									<option value="1">1x</option>
-									<option value="2">2x</option>
-									<option value="4">4x</option>
-								</select></td>
-							</tr>
-							<tr>
-								<td><label for="eptz_x">Crop X / Y / W / H</label></td>
-								<td><input type="number" id="eptz_x" placeholder="x">
-									<input type="number" id="eptz_y" placeholder="y">
-									<input type="number" id="eptz_w" placeholder="w">
-									<input type="number" id="eptz_h" placeholder="h"></td>
-							</tr>
-							<tr>
-								<td><label for="rotate_enable">Rotation</label></td>
-								<td><select id="rotate_enable">
-									<option value="false">OFF</option>
-									<option value="true">ON</option>
-								</select></td>
-							</tr>
-							<tr>
-								<td><label for="rotate_stream">Rotate stream</label></td>
-								<td><select id="rotate_stream">
-									<option value="main">Main</option>
-									<option value="sub">Sub</option>
-								</select></td>
-							</tr>
-							<tr>
-								<td><label for="rotate_angle">Angle</label></td>
-								<td><select id="rotate_angle">
-									<option value="0">0&deg;</option>
-									<option value="90">90&deg;</option>
-									<option value="180">180&deg;</option>
-									<option value="270">270&deg;</option>
-								</select></td>
-							</tr>
-						</table>
-						<a href="javascript:apiApply('eptz')" class="btn right">Apply zoom</a>
-						<a href="javascript:apiApply('rotate')" class="btn right">Apply rotation</a>
-					</fieldset>
-				</div>
-				<div class="6 col box">
-					<fieldset>
-						<legend>Encoding (main and sub)</legend>
-						<table class="w-100">
-							<tr>
-								<td><label for="venc_smartp">SmartP</label></td>
-								<td><select id="venc_smartp">
-									<option value="false">OFF</option>
-									<option value="true">ON</option>
-								</select></td>
-							</tr>
-							<tr>
-								<td><label for="venc_vir_idr_len">Virtual IDR length</label></td>
-								<td><input type="number" id="venc_vir_idr_len" min="0" max="255"></td>
-							</tr>
-							<tr>
-								<td><label for="venc_svc">SVC</label></td>
-								<td><select id="venc_svc">
-									<option value="false">OFF</option>
-									<option value="true">ON</option>
-								</select></td>
-							</tr>
-							<tr>
-								<td><label for="venc_motion_deblur">Motion deblur</label></td>
-								<td><select id="venc_motion_deblur">
-									<option value="false">OFF</option>
-									<option value="true">ON</option>
-								</select></td>
-							</tr>
-							<tr>
-								<td><label for="venc_min_qp">QP window (min/max, I min/max)</label></td>
-								<td><input type="number" id="venc_min_qp" min="0" max="51" placeholder="min">
-									<input type="number" id="venc_max_qp" min="0" max="51" placeholder="max">
-									<input type="number" id="venc_min_iqp" min="0" max="51" placeholder="I min">
-									<input type="number" id="venc_max_iqp" min="0" max="51" placeholder="I max"></td>
-							</tr>
-						</table>
-						<a href="javascript:apiApply('venc')" class="btn right">Apply (recreates channels)</a>
-					</fieldset>
-				</div>
-			</div>
-			<div class="row">
-				<div class="6 col box">
-					<fieldset>
-						<legend>Night image (AIISP)</legend>
-						<table class="w-100">
-							<tr>
-								<td><label for="aiisp_enable">AIISP</label></td>
-								<td><select id="aiisp_enable">
-									<option value="off">OFF</option>
-									<option value="auto">Auto</option>
-									<option value="on">ON</option>
-								</select></td>
-							</tr>
-							<tr>
-								<td><label for="aiisp_model_dir">Model directory</label></td>
-								<td><input type="text" id="aiisp_model_dir"></td>
-							</tr>
-							<tr>
-								<td><label for="aiisp_buf_cnt">Frame buffers</label></td>
-								<td><input type="number" id="aiisp_buf_cnt" min="1" max="8"></td>
-							</tr>
-						</table>
-						<a href="javascript:apiApply('aiisp')" class="btn right">Apply</a>
-					</fieldset>
-				</div>
-				<div class="6 col box">
-					<fieldset>
-						<legend>Image (HDR and IQ)</legend>
-						<table class="w-100">
-							<tr>
-								<td><label for="hdr_mode">HDR</label></td>
-								<td><select id="hdr_mode">
-									<option value="normal">Normal</option>
-									<option value="hdr2">HDR 2-frame</option>
-									<option value="hdr3">HDR 3-frame</option>
-								</select></td>
-							</tr>
-							<tr>
-								<td><label for="hdr_apply">Apply</label></td>
-								<td><select id="hdr_apply">
-									<option value="auto">Auto</option>
-									<option value="restart">Restart</option>
-								</select></td>
-							</tr>
-							<tr>
-								<td><label for="iq_main_scene">IQ main scene</label></td>
-								<td><input type="text" id="iq_main_scene" placeholder="normal"></td>
-							</tr>
-							<tr>
-								<td><label for="iq_sub_scene">IQ sub scene</label></td>
-								<td><input type="text" id="iq_sub_scene" placeholder="day"></td>
-							</tr>
-							<tr>
-								<td><label for="iq_file">IQ file</label></td>
-								<td><input type="text" id="iq_file" placeholder="iqfile.xml"></td>
-							</tr>
-						</table>
-						<a href="javascript:apiApply('hdr')" class="btn right">Apply HDR</a>
-						<a href="javascript:apiApply('iq')" class="btn right">Apply IQ</a>
-					</fieldset>
-				</div>
-			</div>
-			<div class="row">
-				<div class="12 col box">
-					<fieldset>
-						<legend>Analytics (motion and object detection)</legend>
-						<table class="w-100">
-							<tr>
-								<td><label for="ivs_enable">IVS</label></td>
-								<td><select id="ivs_enable">
-									<option value="false">OFF</option>
-									<option value="true">ON</option>
-								</select></td>
-							</tr>
-							<tr>
-								<td><label for="ivs_mode">Mode</label></td>
-								<td><select id="ivs_mode">
-									<option value="md">Motion</option>
-									<option value="od">Object</option>
-									<option value="md_od">Motion + object</option>
-								</select></td>
-							</tr>
-							<tr>
-								<td><label for="ivs_sensitivity">Sensitivity (1-3)</label></td>
-								<td><input type="number" id="ivs_sensitivity" min="1" max="3"></td>
-							</tr>
-							<tr>
-								<td><label for="ivs_md_interval">MD interval</label></td>
-								<td><input type="number" id="ivs_md_interval" min="1" max="100"></td>
-							</tr>
-							<tr>
-								<td><label for="ivs_od_interval">OD interval</label></td>
-								<td><input type="number" id="ivs_od_interval" min="1" max="100"></td>
-							</tr>
-							<tr>
-								<td><label for="ivs_act_record">Record on motion</label></td>
-								<td><select id="ivs_act_record">
-									<option value="false">OFF</option>
-									<option value="true">ON</option>
-								</select></td>
-							</tr>
-							<tr>
-								<td><label for="ivs_record_seconds">Clip length&nbsp;(s)</label></td>
-								<td><input type="number" id="ivs_record_seconds" min="1" max="600"></td>
-							</tr>
-							<tr>
-								<td><label for="ivs_act_http_post">Upload snapshot</label></td>
-								<td><select id="ivs_act_http_post">
-									<option value="false">OFF</option>
-									<option value="true">ON</option>
-								</select></td>
-							</tr>
-							<tr>
-								<td><label for="ivs_act_osd">OSD indicator</label></td>
-								<td><select id="ivs_act_osd">
-									<option value="false">OFF</option>
-									<option value="true">ON</option>
-								</select></td>
-							</tr>
-						</table>
-						<a href="javascript:apiApply('ivs')" class="btn right">Apply</a>
-						<div id="ivs_events" class="small gray"></div>
-					</fieldset>
-				</div>
-			</div>
-		</div>
+</noscript>
+
+<header id="topbar">
+	<div class="brand">Divinus</div>
+	<div id="statusline">
+		<span><span data-i18n="ip">IP</span> <b id="sb_ip">–</b></span>
+		<span><span data-i18n="uptime">Uptime</span> <b id="sb_uptime">–</b></span>
+		<span><span data-i18n="load">Load</span> <b id="sb_load">–</b></span>
+		<span><span data-i18n="soc_temp">SoC</span> <b id="sb_temp">–</b></span>
+		<span><span data-i18n="sd_card">SD</span> <b id="sb_sd">–</b></span>
 	</div>
-	<input type="checkbox" id="osd-modal">
-	<div class="c modal vh-100 w-100 scrolly">
-		<div class="c bg-black menu pv2 row" tabindex="0">
-			<b><label for="osd-modal" class="lbl-modal ph2 gray">Divinus</label></b>
-			<div class="col">
-				<a href="javascript:saveOsds()" class="ph2">Apply all</a>
-				<a href="javascript:saveConfig()" class="ph2">Save</a>
-				<a href="javascript:restartApp()" class="ph2">Restart</a>
-				<label for="osd-modal" class="btn primary close">Close</label>
-			</div>
-		</div>
-		<div class="c cont">
-			<h2 class="unl">OSD</h2>
-			<div id="osd_tpl" style="display:none">
-				<div class="w-100 box osd_sect">
-					<div class="m0 p1 osd_head" onclick="var p=this.parentNode; p.className=p.className.indexOf(' open')>-1?p.className.replace(' open',''):p.className+' open'">
-						<table class="w-100 gapless">
-							<tr>
-								<td class="vm" style="width:1%; white-space:nowrap;">
-									<span class="caret"></span>
-									<form target="osd_file" method="post" enctype="multipart/form-data" action="/api/osd" class="m0 inline vm">
-										<input type="file" id="osd_id" class="nope" name="osd_upld" accept=".bmp,.png" onchange="this.form.submit()">
-										<label for="osd_id" class="btn primary m0 inline vm tc osd-lbl pe-auto" onclick="event.stopPropagation()"></label>
-									</form>
-								</td>
-								<td class="vm" style="padding-left:1em;">
-									<span id="osd_title" class="gray"></span>
-									<iframe name="osd_file" class="hide"></iframe>
-								</td>
-								<td class="tr vm" style="width:1%; white-space:nowrap; padding-right: 0.5em;">
-									<a href="javascript:apiApply('osd')" class="btn pe-auto" onclick="event.stopPropagation()">Apply</a>
-								</td>
-							</tr>
-						</table>
-					</div>
-					<div class="p2 osd_body">
-						<table class="w-100">
-							<tr><td><label for="osd_text">Text</label></td><td><input type="text" id="osd_text" oninput="updateOsdSummary(this.id)"></td></tr>
-							<tr><td><label for="osd_pos">Position</label></td><td><input type="text" id="osd_pos"></td></tr>
-							<tr><td><label for="osd_font">Font family</label></td><td><input type="text" id="osd_font"></td></tr>
-							<tr><td><label for="osd_size">Size</label></td><td><input type="number" id="osd_size" step="0.1"></td></tr>
-							<tr><td><label for="osd_color">Color</label></td><td><input type="color" id="osd_color" class="w-100 p0 color-input"></td></tr>
-							<tr><td><label for="osd_outl">Outline</label></td><td><input type="color" id="osd_outl" class="w-100 p0 color-input"></td></tr>
-							<tr><td><label for="osd_opal">Opacity</label></td><td>
-								<div class="range-wrap">
-									<span id="osd_opal_val" class="range-val"></span>
-									<div class="range-input">
-										<input type="range" id="osd_opal" min="0" max="255" value="255" class="w-100 m0" oninput="document.getElementById(this.id+'_val').innerHTML=this.value">
-									</div>
-								</div>
-							</td></tr>
-							<tr><td><label for="osd_thick">Thickness</label></td><td><input type="number" id="osd_thick" step="0.1"></td></tr>
-							<tr><td><label for="osd_img">Local file</label></td><td><input type="text" id="osd_img" oninput="updateOsdSummary(this.id)"></td></tr>
-						</table>
-					</div>
-				</div>
-			</div>
-		</div>
+	<div id="langs">
+		<button type="button" id="lang-en">EN</button>
+		<button type="button" id="lang-ru">RU</button>
 	</div>
-	<input type="checkbox" id="network-modal">
-	<div class="c modal vh-100 w-100 scrolly">
-		<div class="c bg-black menu pv2 row" tabindex="0">
-			<b><label for="network-modal" class="lbl-modal ph2 gray">Divinus</label></b>
-			<div class="col">
-				<a href="javascript:saveConfig()" class="ph2">Save</a>
-				<a href="javascript:restartApp()" class="ph2">Restart</a>
-				<label for="network-modal" class="btn primary close">Close</label>
+</header>
+
+<div id="restart-banner">
+	<span data-i18n="restart_needed">A restart is required for some of the applied changes.</span>
+	<button type="button" class="btn" onclick="restartApp()" data-i18n="restart">Restart streamer</button>
+</div>
+
+<div id="layout">
+	<nav id="sidebar">
+		<button type="button" data-sec="live"><span data-i18n="live">Live</span><span class="dot"></span></button>
+		<button type="button" data-sec="image"><span data-i18n="image">Image</span><span class="dot"></span></button>
+		<button type="button" data-sec="streams"><span data-i18n="streams">Streams</span><span class="dot"></span></button>
+		<button type="button" data-sec="events"><span data-i18n="events">Events</span><span class="dot"></span></button>
+		<button type="button" data-sec="storage"><span data-i18n="storage">Storage</span><span class="dot"></span></button>
+		<button type="button" data-sec="network"><span data-i18n="network">Network</span><span class="dot"></span></button>
+		<button type="button" data-sec="osd"><span data-i18n="osd">OSD</span><span class="dot"></span></button>
+		<button type="button" data-sec="system"><span data-i18n="system">System</span><span class="dot"></span></button>
+	</nav>
+
+	<main id="content">
+
+	<!-- ===================== LIVE ===================== -->
+	<section class="sec" id="sec-live">
+		<h2 data-i18n="live">Live</h2>
+		<div class="grid">
+			<div class="card wide">
+				<h3><span data-i18n="preview">Preview</span></h3>
+				<div id="preview"><p data-i18n="preview_idle">Choose MP4, MJPEG or take a snapshot.</p></div>
+				<div class="actions">
+					<button type="button" class="btn primary" onclick="setSource('mp4')">MP4</button>
+					<button type="button" class="btn" onclick="setSource('mjpeg')">MJPEG</button>
+					<button type="button" class="btn" onclick="setSource('')" data-i18n="stop">Stop</button>
+					<a class="btn" href="/image.jpg" target="_blank" rel="noopener" data-i18n="snapshot">Snapshot</a>
+				</div>
+				<p class="note" data-i18n="preview_note">MP4 is H.264/H.265; if the picture stays blank, use MJPEG.</p>
+			</div>
+
+			<div class="card">
+				<h3><span data-i18n="recording">Recording</span>
+					<span class="badge-state off" id="rec-badge">OFF</span></h3>
+				<div class="field"><label data-i18n="state">State</label>
+					<div class="ctl"><span id="record_recording" class="hint">–</span></div></div>
+				<div class="field"><label data-i18n="started_at">Started at</label>
+					<div class="ctl"><span id="record_start_time" class="hint">–</span></div></div>
+				<div class="actions">
+					<button type="button" class="btn primary" id="rec-start" onclick="recordAction('start')" data-i18n="start_recording">Start recording</button>
+					<button type="button" class="btn danger" id="rec-stop" onclick="recordAction('stop')" data-i18n="stop_recording">Stop recording</button>
+				</div>
+				<p class="note" data-i18n="record_note">Recording needs a mounted microSD card; the settings live in Storage.</p>
+			</div>
+
+			<div class="card">
+				<h3><span data-i18n="geometry">Zoom and rotation</span></h3>
+				<div class="field"><label data-i18n="digital_zoom">Digital zoom</label>
+					<div class="ctl"><select id="eptz_enable" data-group="eptz" data-k="enable">
+						<option value="false">OFF</option><option value="true">ON</option></select></div></div>
+				<div class="field"><label data-i18n="zoom_stream">Zoom stream</label>
+					<div class="ctl"><select id="eptz_stream" data-group="eptz" data-k="stream">
+						<option value="main">Main</option><option value="sub">Sub</option></select></div></div>
+				<div class="field"><label data-i18n="preset">Preset</label>
+					<div class="ctl"><select id="eptz_zoom" data-group="eptz" data-k="zoom">
+						<option value=""></option><option value="1">1x</option><option value="2">2x</option><option value="4">4x</option></select></div></div>
+				<div class="field"><label data-i18n="crop">Crop X / Y / W / H</label>
+					<div class="ctl row2">
+						<input type="number" id="eptz_x" data-group="eptz" data-k="x" placeholder="x">
+						<input type="number" id="eptz_y" data-group="eptz" data-k="y" placeholder="y">
+						<input type="number" id="eptz_w" data-group="eptz" data-k="w" placeholder="w">
+						<input type="number" id="eptz_h" data-group="eptz" data-k="h" placeholder="h">
+					</div></div>
+				<div class="actions">
+					<button type="button" class="btn primary" data-apply="eptz" data-ep="eptz" disabled data-i18n="apply_zoom">Apply zoom</button>
+					<button type="button" class="btn" onclick="eptzReset()" data-i18n="reset">Reset</button>
+				</div>
+				<div class="field" style="margin-top:.9em"><label data-i18n="rotation">Rotation</label>
+					<div class="ctl"><select id="rotate_enable" data-group="rotate" data-k="enable">
+						<option value="false">OFF</option><option value="true">ON</option></select></div></div>
+				<div class="field"><label data-i18n="rotate_stream">Rotate stream</label>
+					<div class="ctl"><select id="rotate_stream" data-group="rotate" data-k="stream">
+						<option value="main">Main</option><option value="sub">Sub</option></select></div></div>
+				<div class="field"><label data-i18n="angle">Angle</label>
+					<div class="ctl"><select id="rotate_angle" data-group="rotate" data-k="angle">
+						<option value="0">0&deg;</option><option value="90">90&deg;</option>
+						<option value="180">180&deg;</option><option value="270">270&deg;</option></select></div></div>
+				<div class="actions">
+					<button type="button" class="btn primary" data-apply="rotate" data-ep="rotate" disabled data-i18n="apply_rotation">Apply rotation</button>
+				</div>
+			</div>
+
+			<div class="card">
+				<h3><span data-i18n="events_journal">Event log</span></h3>
+				<div class="log" id="ivs_events_live"><div class="hint" data-i18n="no_events">No motion events yet.</div></div>
+			</div>
+
+			<div class="card wide">
+				<h3><span data-i18n="telemetry">Telemetry</span>
+					<span class="badge-state off" id="tel-state">–</span></h3>
+				<div class="tel-grid" id="telemetry"></div>
+				<p class="note" data-i18n="telemetry_note">Values come from the oko-ec daemon (/tmp/oko-ec.json) and refresh every two seconds.</p>
 			</div>
 		</div>
-		<div class="c cont">
-			<h2 class="unl">Network</h2>
-			<div class="row">
-				<div class="6 col box">
-					<fieldset>
-						<legend>Ethernet</legend>
-						<table class="w-100">
-							<tr>
-								<td><label for="network_mode">Mode</label></td>
-								<td><select id="network_mode" onchange="updateNetworkFields()">
-									<option value="dhcp">DHCP</option>
-									<option value="static">Static</option>
-								</select></td>
-							</tr>
-							<tr>
-								<td><label for="network_ipaddr">IP address</label></td>
-								<td><input type="text" id="network_ipaddr" placeholder="192.168.52.100"></td>
-							</tr>
-							<tr>
-								<td><label for="network_netmask">Netmask</label></td>
-								<td><input type="text" id="network_netmask" placeholder="255.255.255.0"></td>
-							</tr>
-							<tr>
-								<td><label for="network_gateway">Gateway</label></td>
-								<td><input type="text" id="network_gateway" placeholder="192.168.52.1"></td>
-							</tr>
-							<tr>
-								<td><label for="network_dns">DNS</label></td>
-								<td><input type="text" id="network_dns" placeholder="192.168.52.1"></td>
-							</tr>
-						</table>
-						<p class="small gray">Stored in the U-Boot env partition; survives a /userdata reset. Changing the IP can disconnect this page.</p>
-						<a href="javascript:applyNetwork()" class="btn right">Apply</a>
-					</fieldset>
-				</div>
-				<div class="6 col box">
-					<fieldset>
-						<legend>Current link</legend>
-						<table class="w-100">
-							<tr><td><label>IP address</label></td>
-								<td><span id="network_current_ip"></span></td></tr>
-							<tr><td><label>MAC address</label></td>
-								<td><span id="network_current_mac"></span></td></tr>
-							<tr><td><label>Persistent MAC</label></td>
-								<td><span id="network_mac"></span></td></tr>
-							<tr><td><label>DHCP client</label></td>
-								<td><span id="network_dhcp_running"></span></td></tr>
-						</table>
-						<a href="javascript:apiRead('network')" class="btn right">Refresh</a>
-					</fieldset>
+	</section>
+
+	<!-- ===================== IMAGE ===================== -->
+	<section class="sec" id="sec-image">
+		<h2 data-i18n="image">Image</h2>
+		<div class="grid">
+			<div class="card">
+				<h3><span data-i18n="isp">ISP</span></h3>
+				<div class="field"><label data-i18n="mirror">Mirror</label>
+					<div class="ctl"><select id="isp_mirror" data-group="isp" data-k="mirror">
+						<option value="false">OFF</option><option value="true">ON</option></select></div></div>
+				<div class="field"><label data-i18n="flip">Flip</label>
+					<div class="ctl"><select id="isp_flip" data-group="isp" data-k="flip">
+						<option value="false">OFF</option><option value="true">ON</option></select></div></div>
+				<div class="field"><label data-i18n="antiflicker">Anti-flicker</label>
+					<div class="ctl"><select id="isp_antiflicker" data-group="isp" data-k="antiflicker">
+						<option value="0" data-i18n="off">OFF</option><option value="50">50 Hz</option>
+						<option value="60">60 Hz</option></select></div></div>
+				<div class="actions">
+					<button type="button" class="btn primary" data-apply="isp" data-ep="isp" disabled data-i18n="apply">Apply</button>
 				</div>
 			</div>
-			<div class="row">
-				<div class="6 col box">
-					<fieldset>
-						<legend>RTSP</legend>
-						<table class="w-100">
-							<tr>
-								<td><label for="rtsp_enable">Enabled</label></td>
-								<td><select id="rtsp_enable">
-									<option value="false">OFF</option>
-									<option value="true">ON</option>
-								</select></td>
-							</tr>
-							<tr>
-								<td><label for="rtsp_port">Port</label></td>
-								<td><input type="number" id="rtsp_port" min="1" max="65535"></td>
-							</tr>
-							<tr>
-								<td><label for="rtsp_enable_auth">Authentication</label></td>
-								<td><select id="rtsp_enable_auth">
-									<option value="false">OFF</option>
-									<option value="true">ON</option>
-								</select></td>
-							</tr>
-							<tr>
-								<td><label for="rtsp_auth_user">Username</label></td>
-								<td><input type="text" id="rtsp_auth_user"></td>
-							</tr>
-							<tr>
-								<td><label for="rtsp_auth_pass">Password</label></td>
-								<td><input type="password" id="rtsp_auth_pass"></td>
-							</tr>
-							<tr>
-								<td><label for="rtsp_audio_codec">Audio&nbsp;codec</label></td>
-								<td><select id="rtsp_audio_codec">
-									<option value="pcma">G.711A</option>
-									<option value="pcmu">G.711U</option>
-									<option value="mp3">MP3</option>
-								</select></td>
-							</tr>
-						</table>
-						<a href="javascript:apiApply('rtsp')" class="btn right">Apply</a>
-					</fieldset>
-				</div>
-				<div class="6 col box">
-					<fieldset>
-						<legend>ONVIF</legend>
-						<table class="w-100">
-							<tr>
-								<td><label for="onvif_enable">Enabled</label></td>
-								<td><select id="onvif_enable">
-									<option value="false">OFF</option>
-									<option value="true">ON</option>
-								</select></td>
-							</tr>
-							<tr>
-								<td><label for="onvif_enable_auth">Authentication</label></td>
-								<td><select id="onvif_enable_auth">
-									<option value="false">OFF</option>
-									<option value="true">ON</option>
-								</select></td>
-							</tr>
-							<tr>
-								<td><label for="onvif_auth_user">Username</label></td>
-								<td><input type="text" id="onvif_auth_user"></td>
-							</tr>
-							<tr>
-								<td><label for="onvif_auth_pass">Password</label></td>
-								<td><input type="password" id="onvif_auth_pass"></td>
-							</tr>
-						</table>
-						<a href="javascript:apiApply('onvif')" class="btn right">Apply</a>
-					</fieldset>
+
+			<div class="card">
+				<h3><span data-i18n="night">Night mode</span></h3>
+				<div class="field"><label data-i18n="night_enable">Automatic mode</label>
+					<div class="ctl"><select id="night_active" data-group="night" data-k="enable">
+						<option value="false">OFF</option><option value="true">ON</option></select></div></div>
+				<div class="field"><label data-i18n="manual">Manual override</label>
+					<div class="ctl"><select id="night_manual" data-group="night" data-k="manual">
+						<option value="false">OFF</option><option value="true">ON</option></select></div></div>
+				<div class="field"><label data-i18n="grayscale">Grayscale</label>
+					<div class="ctl"><select id="night_grayscale" data-group="night" data-k="grayscale">
+						<option value="false">OFF</option><option value="true">ON</option></select></div></div>
+				<div class="field"><label data-i18n="ircut">IR cut filter</label>
+					<div class="ctl"><select id="night_ircut" data-group="night" data-k="ircut">
+						<option value="false">OFF</option><option value="true">ON</option></select></div></div>
+				<div class="field"><label data-i18n="ircut_pin1">IR filter pin 1</label>
+					<div class="ctl"><input type="number" id="night_ircut_pin1" data-group="night" data-k="ircut_pin1"></div></div>
+				<div class="field"><label data-i18n="ircut_pin2">IR filter pin 2</label>
+					<div class="ctl"><input type="number" id="night_ircut_pin2" data-group="night" data-k="ircut_pin2"></div></div>
+				<div class="field"><label data-i18n="irled">IR LED</label>
+					<div class="ctl"><select id="night_irled" data-group="night" data-k="irled">
+						<option value="false">OFF</option><option value="true">ON</option></select></div></div>
+				<div class="field"><label data-i18n="irled_pin">IR LED pin</label>
+					<div class="ctl"><input type="number" id="night_irled_pin" data-group="night" data-k="irled_pin"></div></div>
+				<div class="field"><label data-i18n="irsense_pin">IR sensor pin</label>
+					<div class="ctl"><input type="number" id="night_irsense_pin" data-group="night" data-k="irsense_pin"></div></div>
+				<div class="field"><label data-i18n="adc_device">ADC device</label>
+					<div class="ctl"><input type="text" id="night_adc_device" data-group="night" data-k="adc_device"></div></div>
+				<div class="field"><label data-i18n="adc_threshold">ADC threshold</label>
+					<div class="ctl"><input type="number" id="night_adc_threshold" data-group="night" data-k="adc_threshold"></div></div>
+				<div class="actions">
+					<button type="button" class="btn primary" data-apply="night" data-ep="night" disabled data-i18n="apply">Apply</button>
+					<button type="button" class="btn" onclick="apiRead('night')" data-i18n="refresh">Refresh</button>
 				</div>
 			</div>
-			<div class="row">
-				<div class="6 col box">
-					<fieldset>
-						<legend>Sub stream (RTSP /live/1)</legend>
-						<table class="w-100">
-							<tr>
-								<td><label for="substream_enable">Enabled</label></td>
-								<td><select id="substream_enable">
-									<option value="false">OFF</option>
-									<option value="true">ON</option>
-								</select></td>
-							</tr>
-							<tr>
-								<td><label for="substream_path">RTSP path</label></td>
-								<td><input type="text" id="substream_path"></td>
-							</tr>
-							<tr>
-								<td><label for="substream_codec">Codec</label></td>
-								<td><select id="substream_codec">
-									<option value="H.265">H.265</option>
-									<option value="H.264">H.264</option>
-								</select></td>
-							</tr>
-							<tr>
-								<td><label for="substream_width">Width / height</label></td>
-								<td><input type="number" id="substream_width">
-									<input type="number" id="substream_height"></td>
-							</tr>
-							<tr>
-								<td><label for="substream_fps">FPS / GOP</label></td>
-								<td><input type="number" id="substream_fps">
-									<input type="number" id="substream_gop"></td>
-							</tr>
-							<tr>
-								<td><label for="substream_bitrate">Bitrate&nbsp;(kbps)</label></td>
-								<td><input type="number" id="substream_bitrate"></td>
-							</tr>
-						</table>
-						<a href="javascript:apiApply('substream')" class="btn right">Apply</a>
-					</fieldset>
+
+			<div class="card">
+				<h3><span data-i18n="aiisp">Night image (AIISP)</span></h3>
+				<div class="field"><label data-i18n="mode">Mode</label>
+					<div class="ctl"><select id="aiisp_enable" data-group="aiisp" data-k="enable">
+						<option value="off">OFF</option><option value="auto">Auto</option><option value="on">ON</option></select></div></div>
+				<div class="field"><label data-i18n="model_dir">Model directory</label>
+					<div class="ctl"><input type="text" id="aiisp_model_dir" data-group="aiisp" data-k="model_dir"></div></div>
+				<div class="field"><label data-i18n="buf_cnt">Frame buffers</label>
+					<div class="ctl"><input type="number" id="aiisp_buf_cnt" data-group="aiisp" data-k="buf_cnt" min="1" max="8"></div></div>
+				<div class="actions">
+					<button type="button" class="btn primary" data-apply="aiisp" data-ep="aiisp" disabled data-i18n="apply">Apply</button>
 				</div>
-				<div class="6 col box">
-					<fieldset>
-						<legend>RTSP streams</legend>
-						<div id="streams_table" class="small"></div>
-						<a href="javascript:loadStreams()" class="btn right">Refresh</a>
-					</fieldset>
+				<p class="note" data-i18n="aiisp_note">AIISP and HDR cannot run together; AIISP lowers the frame rate while the model is active.</p>
+			</div>
+
+			<div class="card">
+				<h3><span data-i18n="hdr_iq">HDR and IQ</span></h3>
+				<div class="field"><label>HDR</label>
+					<div class="ctl"><select id="hdr_mode" data-group="hdr" data-k="mode">
+						<option value="normal">Normal</option><option value="hdr2">HDR 2-frame</option>
+						<option value="hdr3">HDR 3-frame</option></select></div></div>
+				<div class="field"><label data-i18n="hdr_apply">Apply mode</label>
+					<div class="ctl"><select id="hdr_apply" data-group="hdr" data-k="apply">
+						<option value="auto">Auto</option><option value="restart">Restart</option></select></div></div>
+				<div class="field"><label data-i18n="iq_main">IQ main scene</label>
+					<div class="ctl"><input type="text" id="iq_main_scene" data-group="iq" data-k="main_scene"></div></div>
+				<div class="field"><label data-i18n="iq_sub">IQ sub scene</label>
+					<div class="ctl"><input type="text" id="iq_sub_scene" data-group="iq" data-k="sub_scene"></div></div>
+				<div class="field"><label data-i18n="iq_file">IQ file</label>
+					<div class="ctl"><input type="text" id="iq_file" data-group="iq" data-k="file"></div></div>
+				<div class="actions">
+					<button type="button" class="btn primary" data-apply="hdr" data-ep="hdr" disabled data-i18n="apply_hdr">Apply HDR</button>
+					<button type="button" class="btn primary" data-apply="iq" data-ep="iq" disabled data-i18n="apply_iq">Apply IQ</button>
+				</div>
+				<p class="note" data-i18n="hdr_note">HDR requires a restart; it is refused while AIISP is on.</p>
+			</div>
+		</div>
+	</section>
+
+<!-- ===================== STREAMS ===================== -->
+	<section class="sec" id="sec-streams">
+		<h2 data-i18n="streams">Streams</h2>
+		<div class="grid">
+			<div class="card">
+				<h3><span data-i18n="mp4">Main stream (MP4)</span></h3>
+				<div class="field"><label data-i18n="enabled">Enabled</label>
+					<div class="ctl"><select id="mp4_enable" data-group="mp4" data-k="enable"><option value="false">OFF</option><option value="true">ON</option></select></div></div>
+				<div class="field"><label data-i18n="width">Width</label>
+					<div class="ctl"><input type="number" id="mp4_width" data-group="mp4" data-k="width"></div></div>
+				<div class="field"><label data-i18n="height">Height</label>
+					<div class="ctl"><input type="number" id="mp4_height" data-group="mp4" data-k="height"></div></div>
+				<div class="field"><label data-i18n="fps">Framerate</label>
+					<div class="ctl"><input type="number" id="mp4_fps" data-group="mp4" data-k="fps"></div></div>
+				<div class="field"><label data-i18n="gop">Keyframe interval</label>
+					<div class="ctl"><input type="number" id="mp4_gop" data-group="mp4" data-k="gop"></div></div>
+				<div class="field"><label data-i18n="bitrate">Bitrate (kbps)</label>
+					<div class="ctl"><input type="number" id="mp4_bitrate" data-group="mp4" data-k="bitrate"></div></div>
+				<div class="field"><label data-i18n="codec">Codec</label>
+					<div class="ctl"><select id="mp4_h265" data-group="mp4" data-k="h265">
+						<option value="false">H.264</option><option value="true">H.265</option></select></div></div>
+				<div class="field"><label data-i18n="rate_control">Rate control</label>
+					<div class="ctl"><select id="mp4_mode" data-group="mp4" data-k="mode">
+						<option>CBR</option><option>VBR</option><option>QP</option><option>ABR</option><option>AVBR</option></select></div></div>
+				<div class="field"><label data-i18n="profile">Profile</label>
+					<div class="ctl"><select id="mp4_profile" data-group="mp4" data-k="profile">
+						<option value="BP">Baseline</option><option value="MP">Main</option><option value="HP">High</option></select></div></div>
+				<div class="actions">
+					<button type="button" class="btn primary" data-apply="mp4" data-ep="mp4" disabled data-i18n="apply">Apply</button>
+				</div>
+			</div>
+
+			<div class="card">
+				<h3><span data-i18n="substream">Sub stream (RTSP)</span></h3>
+				<div class="field"><label data-i18n="enabled">Enabled</label>
+					<div class="ctl"><select id="substream_enable" data-group="substream" data-k="enable"><option value="false">OFF</option><option value="true">ON</option></select></div></div>
+				<div class="field"><label data-i18n="rtsp_path">RTSP path</label>
+					<div class="ctl"><input type="text" id="substream_path" data-group="substream" data-k="path"></div></div>
+				<div class="field"><label data-i18n="codec">Codec</label>
+					<div class="ctl"><select id="substream_codec" data-group="substream" data-k="codec">
+						<option value="H.265">H.265</option><option value="H.264">H.264</option></select></div></div>
+				<div class="field"><label data-i18n="rate_control">Rate control</label>
+					<div class="ctl"><select id="substream_mode" data-group="substream" data-k="mode">
+						<option>CBR</option><option>VBR</option><option>QP</option><option>AVBR</option></select></div></div>
+				<div class="field"><label data-i18n="width_height">Width / height</label>
+					<div class="ctl row2"><input type="number" id="substream_width" data-group="substream" data-k="width"><input type="number" id="substream_height" data-group="substream" data-k="height"></div></div>
+				<div class="field"><label data-i18n="fps_gop">FPS / GOP</label>
+					<div class="ctl row2"><input type="number" id="substream_fps" data-group="substream" data-k="fps"><input type="number" id="substream_gop" data-group="substream" data-k="gop"></div></div>
+				<div class="field"><label data-i18n="bitrate">Bitrate (kbps)</label>
+					<div class="ctl"><input type="number" id="substream_bitrate" data-group="substream" data-k="bitrate"></div></div>
+				<div class="field"><label data-i18n="profile">Profile</label>
+					<div class="ctl"><select id="substream_profile" data-group="substream" data-k="profile">
+						<option value="BP">Baseline</option><option value="MP">Main</option><option value="HP">High</option></select></div></div>
+				<div class="actions">
+					<button type="button" class="btn primary" data-apply="substream" data-ep="substream" disabled data-i18n="apply">Apply</button>
+				</div>
+				<p class="note" data-i18n="substream_note">Encoder changes restart the application; the path applies to new connections.</p>
+			</div>
+
+			<div class="card">
+				<h3><span data-i18n="mjpeg">MJPEG</span></h3>
+				<div class="field"><label data-i18n="enabled">Enabled</label>
+					<div class="ctl"><select id="mjpeg_enable" data-group="mjpeg" data-k="enable"><option value="false">OFF</option><option value="true">ON</option></select></div></div>
+				<div class="field"><label data-i18n="width">Width</label>
+					<div class="ctl"><input type="number" id="mjpeg_width" data-group="mjpeg" data-k="width"></div></div>
+				<div class="field"><label data-i18n="height">Height</label>
+					<div class="ctl"><input type="number" id="mjpeg_height" data-group="mjpeg" data-k="height"></div></div>
+				<div class="field"><label data-i18n="fps">Framerate</label>
+					<div class="ctl"><input type="number" id="mjpeg_fps" data-group="mjpeg" data-k="fps"></div></div>
+				<div class="field"><label data-i18n="rate_control">Rate control</label>
+					<div class="ctl"><select id="mjpeg_mode" data-group="mjpeg" data-k="mode">
+						<option>CBR</option><option>VBR</option><option>QP</option></select></div></div>
+				<div class="field"><label data-i18n="bitrate">Bitrate (kbps)</label>
+					<div class="ctl"><input type="number" id="mjpeg_bitrate" data-group="mjpeg" data-k="bitrate"></div></div>
+				<div class="field"><label data-i18n="quality">Quality (%)</label>
+					<div class="ctl"><input type="number" id="mjpeg_qfactor" data-group="mjpeg" data-k="qfactor" min="1" max="99"></div></div>
+				<div class="actions">
+					<button type="button" class="btn primary" data-apply="mjpeg" data-ep="mjpeg" disabled data-i18n="apply">Apply</button>
+				</div>
+			</div>
+
+			<div class="card">
+				<h3><span data-i18n="jpeg">JPEG snapshots</span></h3>
+				<div class="field"><label data-i18n="enabled">Enabled</label>
+					<div class="ctl"><select id="jpeg_enable" data-group="jpeg" data-k="enable"><option value="false">OFF</option><option value="true">ON</option></select></div></div>
+				<div class="field"><label data-i18n="width">Width</label>
+					<div class="ctl"><input type="number" id="jpeg_width" data-group="jpeg" data-k="width"></div></div>
+				<div class="field"><label data-i18n="height">Height</label>
+					<div class="ctl"><input type="number" id="jpeg_height" data-group="jpeg" data-k="height"></div></div>
+				<div class="field"><label data-i18n="quality">Quality (%)</label>
+					<div class="ctl"><input type="number" id="jpeg_qfactor" data-group="jpeg" data-k="qfactor" min="1" max="99"></div></div>
+				<div class="actions">
+					<button type="button" class="btn primary" data-apply="jpeg" data-ep="jpeg" disabled data-i18n="apply">Apply</button>
+				</div>
+			</div>
+
+			<div class="card">
+				<h3><span data-i18n="audio">Audio</span></h3>
+				<div class="field"><label data-i18n="enabled">Enabled</label>
+					<div class="ctl"><select id="audio_enable" data-group="audio" data-k="enable"><option value="false">OFF</option><option value="true">ON</option></select></div></div>
+				<div class="field"><label data-i18n="bitrate">Bitrate (kbps)</label>
+					<div class="ctl"><input type="number" id="audio_bitrate" data-group="audio" data-k="bitrate"></div></div>
+				<div class="field"><label data-i18n="gain">Gain (dB)</label>
+					<div class="ctl"><input type="number" id="audio_gain" data-group="audio" data-k="gain"></div></div>
+				<div class="field"><label data-i18n="sample_rate">Sample rate</label>
+					<div class="ctl"><input type="number" id="audio_srate" data-group="audio" data-k="srate"></div></div>
+				<div class="actions">
+					<button type="button" class="btn primary" data-apply="audio" data-ep="audio" disabled data-i18n="apply">Apply</button>
+				</div>
+			</div>
+
+			<div class="card">
+				<h3><span data-i18n="venc">Encoder extensions</span></h3>
+				<div class="field"><label>SmartP</label>
+					<div class="ctl"><select id="venc_smartp" data-group="venc" data-k="smartp"><option value="false">OFF</option><option value="true">ON</option></select></div></div>
+				<div class="field"><label data-i18n="vir_idr">Virtual IDR length</label>
+					<div class="ctl"><input type="number" id="venc_vir_idr_len" data-group="venc" data-k="vir_idr_len" min="0" max="255"></div></div>
+				<div class="field"><label>SVC</label>
+					<div class="ctl"><select id="venc_svc" data-group="venc" data-k="svc"><option value="false">OFF</option><option value="true">ON</option></select></div></div>
+				<div class="field"><label data-i18n="motion_deblur">Motion deblur</label>
+					<div class="ctl"><select id="venc_motion_deblur" data-group="venc" data-k="motion_deblur"><option value="false">OFF</option><option value="true">ON</option></select></div></div>
+				<div class="field"><label data-i18n="qp_window">QP window (min/max, I min/max)</label>
+					<div class="ctl row2">
+						<input type="number" id="venc_min_qp" data-group="venc" data-k="min_qp" min="0" max="51" placeholder="min">
+						<input type="number" id="venc_max_qp" data-group="venc" data-k="max_qp" min="0" max="51" placeholder="max">
+						<input type="number" id="venc_min_iqp" data-group="venc" data-k="min_iqp" min="0" max="51" placeholder="I min">
+						<input type="number" id="venc_max_iqp" data-group="venc" data-k="max_iqp" min="0" max="51" placeholder="I max">
+					</div></div>
+				<div class="actions">
+					<button type="button" class="btn primary" data-apply="venc" data-ep="venc" disabled data-i18n="apply">Apply</button>
+				</div>
+				<p class="note" data-i18n="venc_note">SVC, deblur and the QP window apply live; SmartP applies after a restart.</p>
+			</div>
+
+			<div class="card">
+				<h3><span data-i18n="rtsp">RTSP</span></h3>
+				<div class="field"><label data-i18n="enabled">Enabled</label>
+					<div class="ctl"><select id="rtsp_enable" data-group="rtsp" data-k="enable"><option value="false">OFF</option><option value="true">ON</option></select></div></div>
+				<div class="field"><label data-i18n="port">Port</label>
+					<div class="ctl"><input type="number" id="rtsp_port" data-group="rtsp" data-k="port" min="1" max="65535"></div></div>
+				<div class="field"><label data-i18n="authentication">Authentication</label>
+					<div class="ctl"><select id="rtsp_enable_auth" data-group="rtsp" data-k="enable_auth"><option value="false">OFF</option><option value="true">ON</option></select></div></div>
+				<div class="field"><label data-i18n="username">Username</label>
+					<div class="ctl"><input type="text" id="rtsp_auth_user" data-group="rtsp" data-k="auth_user"></div></div>
+				<div class="field"><label data-i18n="password">Password</label>
+					<div class="ctl"><input type="password" id="rtsp_auth_pass" data-group="rtsp" data-k="auth_pass" placeholder="(unchanged)"></div></div>
+				<div class="field"><label data-i18n="audio_codec">Audio codec</label>
+					<div class="ctl"><select id="rtsp_audio_codec" data-group="rtsp" data-k="audio_codec">
+						<option value="pcma">G.711A</option><option value="pcmu">G.711U</option><option value="mp3">MP3</option></select></div></div>
+				<div class="actions">
+					<button type="button" class="btn primary" data-apply="rtsp" data-ep="rtsp" disabled data-i18n="apply">Apply</button>
+				</div>
+				<p class="note" data-i18n="rtsp_note">The port and the audio codec apply after a restart. The password is never read back.</p>
+			</div>
+
+			<div class="card">
+				<h3><span data-i18n="onvif">ONVIF</span></h3>
+				<div class="field"><label data-i18n="enabled">Enabled</label>
+					<div class="ctl"><select id="onvif_enable" data-group="onvif" data-k="enable"><option value="false">OFF</option><option value="true">ON</option></select></div></div>
+				<div class="field"><label data-i18n="authentication">Authentication</label>
+					<div class="ctl"><select id="onvif_enable_auth" data-group="onvif" data-k="enable_auth"><option value="false">OFF</option><option value="true">ON</option></select></div></div>
+				<div class="field"><label data-i18n="username">Username</label>
+					<div class="ctl"><input type="text" id="onvif_auth_user" data-group="onvif" data-k="auth_user"></div></div>
+				<div class="field"><label data-i18n="password">Password</label>
+					<div class="ctl"><input type="password" id="onvif_auth_pass" data-group="onvif" data-k="auth_pass" placeholder="(unchanged)"></div></div>
+				<div class="actions">
+					<button type="button" class="btn primary" data-apply="onvif" data-ep="onvif" disabled data-i18n="apply">Apply</button>
+				</div>
+				<p class="note" data-i18n="onvif_note">ONVIF applies after a restart; the password is never read back.</p>
+			</div>
+
+			<div class="card">
+				<h3><span data-i18n="active_streams">Active streams</span></h3>
+				<div id="streams_table" class="hint">–</div>
+				<div class="actions">
+					<button type="button" class="btn" onclick="loadStreams()" data-i18n="refresh">Refresh</button>
 				</div>
 			</div>
 		</div>
-	</div>
-	<input type="checkbox" id="system-modal">
-	<div class="c modal vh-100 w-100 scrolly">
-		<div class="c bg-black menu pv2 row" tabindex="0">
-			<b><label for="system-modal" class="lbl-modal ph2 gray">Divinus</label></b>
-			<div class="col">
-			    <a href="javascript:saveConfig()" class="ph2">Save</a>
-			    <a href="javascript:restartApp()" class="ph2">Restart</a>
-				<label for="system-modal" class="btn primary close">Close</label>
-			</div>
-		</div>
-		<div class="c cont">
-			<h2 class="unl">System</h2>
-			<div class="row scrollx">
-				<div class="12 col box">
-					<fieldset>
-						<legend>Night</legend>
-						<table class="tc w-100">
-							<tr>
-								<td><label for="night_active">Active</label></td>
-								<td><select id="night_active">
-									<option value="false">OFF</option>
-									<option value="true">ON</option>
-								</select></td>
-							</tr>
-							<tr>
-								<td><label for="night_manual">Manual</label></td>
-								<td><select id="night_manual">
-									<option value="false">OFF</option>
-									<option value="true">ON</option>
-								</select></td>
-							</tr>
-							<tr>
-								<td><label for="night_ircut">IR cut</label></td>
-								<td><select id="night_ircut">
-									<option value="false">OFF</option>
-									<option value="true">ON</option>
-								</select></td>
-							</tr>
-							<tr>
-								<td><label for="night_ircut_pin1">IR filter - pin 1</label></td>
-								<td><input type="number" id="night_ircut_pin1"></td>
-							</tr>
-							<tr>
-								<td><label for="night_ircut_pin2">IR filter - pin 2</label></td>
-								<td><input type="number" id="night_ircut_pin2"></td>
-							</tr>
-							<tr>
-								<td><label for="night_irled">IR LED</label></td>
-								<td><select id="night_irled">
-									<option value="false">OFF</option>
-									<option value="true">ON</option>
-								</select></td>
-							</tr>
-							<tr>
-								<td><label for="night_irled_pin">IR LED - pin</label></td>
-								<td><input type="number" id="night_irled_pin"></td>
-							</tr>
-							<tr>
-								<td><label for="night_irsense_pin">IR sense - pin</label></td>
-								<td><input type="number" id="night_irsense_pin"></td>
-							</tr>
-							<tr>
-								<td><label for="night_adc_device">ADC device endpoint</label></td>
-								<td><input type="text" id="night_adc_device"></td>
-							</tr>
-							<tr>
-								<td><label for="night_adc_threshold">ADC threshold</label></td>
-								<td><input type="number" id="night_adc_threshold"></td>
-							</tr>
-						</table>
-						<a href="javascript:apiApply('night')" class="btn right">Apply</a>
-					</fieldset>
+	</section>
+
+	<!-- ===================== EVENTS ===================== -->
+	<section class="sec" id="sec-events">
+		<h2 data-i18n="events">Events</h2>
+		<div class="grid">
+			<div class="card">
+				<h3><span data-i18n="ivs">Analytics (motion and objects)</span></h3>
+				<div class="field"><label>IVS</label>
+					<div class="ctl"><select id="ivs_enable" data-group="ivs" data-k="enable"><option value="false">OFF</option><option value="true">ON</option></select></div></div>
+				<div class="field"><label data-i18n="mode">Mode</label>
+					<div class="ctl"><select id="ivs_mode" data-group="ivs" data-k="mode">
+						<option value="md" data-i18n="ivs_md">Motion</option>
+						<option value="od" data-i18n="ivs_od">Object</option>
+						<option value="md_od" data-i18n="ivs_md_od">Motion + object</option></select></div></div>
+				<div class="field"><label data-i18n="sensitivity">Sensitivity (1-3)</label>
+					<div class="ctl"><input type="number" id="ivs_sensitivity" data-group="ivs" data-k="sensitivity" min="1" max="3"></div></div>
+				<div class="field"><label data-i18n="md_interval">MD interval</label>
+					<div class="ctl"><input type="number" id="ivs_md_interval" data-group="ivs" data-k="md_interval" min="1" max="100"></div></div>
+				<div class="field"><label data-i18n="od_interval">OD interval</label>
+					<div class="ctl"><input type="number" id="ivs_od_interval" data-group="ivs" data-k="od_interval" min="1" max="100"></div></div>
+				<div class="field"><label data-i18n="od_percent">OD threshold (%)</label>
+					<div class="ctl"><input type="number" id="ivs_od_percent" data-group="ivs" data-k="od_percent" min="5" max="8"></div></div>
+				<div class="field"><label data-i18n="act_record">Record a clip on motion</label>
+					<div class="ctl"><select id="ivs_act_record" data-group="ivs" data-k="act_record"><option value="false">OFF</option><option value="true">ON</option></select></div></div>
+				<div class="field"><label data-i18n="clip_seconds">Clip length (s)</label>
+					<div class="ctl"><input type="number" id="ivs_record_seconds" data-group="ivs" data-k="record_seconds" min="1" max="600"></div></div>
+				<div class="field"><label data-i18n="record_source">Clip source</label>
+					<div class="ctl"><select id="ivs_record_source" data-group="ivs" data-k="record_source">
+						<option value="main">Main</option><option value="sub">Sub</option></select></div></div>
+				<div class="field"><label data-i18n="act_http_post">Upload a snapshot (HTTP post)</label>
+					<div class="ctl"><select id="ivs_act_http_post" data-group="ivs" data-k="act_http_post"><option value="false">OFF</option><option value="true">ON</option></select></div></div>
+				<div class="field"><label data-i18n="act_osd">OSD indicator</label>
+					<div class="ctl"><select id="ivs_act_osd" data-group="ivs" data-k="act_osd"><option value="false">OFF</option><option value="true">ON</option></select></div></div>
+				<div class="actions">
+					<button type="button" class="btn primary" data-apply="ivs" data-ep="ivs" disabled data-i18n="apply">Apply</button>
 				</div>
 			</div>
-			<div class="row scrollx">
-				<div class="12 col box">
-					<fieldset>
-						<legend>Time</legend>
-						<table class="tc w-100">
-							<tr>
-								<td><label for="time_fmt">Display format</label></td>
-								<td><input type="text" id="time_fmt"></td>
-								<td><a href="javascript:setFormatTime()" class="btn cell">Set</a></td>
-							</tr>
-							<tr>
-								<td><label for="time_ts">Current Unix time</label></td>
-								<td><input type="text" id="time_ts"></td>
-								<td>
-									<a href="javascript:setLocalTime()" class="btn cell">Sync</a>
-									<a href="javascript:apiApply('time')" class="btn cell">Apply</a>
-								</td>
-							</tr>
-						</table>
-						<a href="javascript:apiRead('time')" class="btn right">Refresh</a>
-					</fieldset>
-				</div>
-			</div>
-			<div class="row">
-				<div class="12 col box">
-					<fieldset>
-						<legend>Storage</legend>
-						<table class="w-100">
-							<tr><td><label for="storage_sd_mounted">microSD mounted</label></td>
-								<td><span id="storage_sd_mounted"></span></td></tr>
-							<tr><td><label for="storage_device">Device</label></td>
-								<td><span id="storage_device"></span></td></tr>
-							<tr><td><label for="storage_fs">Filesystem</label></td>
-								<td><span id="storage_fs"></span></td></tr>
-							<tr><td><label for="storage_total_mb">Capacity (MB)</label></td>
-								<td><span id="storage_total_mb"></span></td></tr>
-							<tr><td><label for="storage_free_mb">Free (MB)</label></td>
-								<td><span id="storage_free_mb"></span></td></tr>
-							<tr><td><label for="storage_path">Recording path</label></td>
-								<td><span id="storage_path"></span></td></tr>
-							<tr><td><label for="storage_max_bytes">Ring limit (bytes)</label></td>
-								<td><span id="storage_max_bytes"></span></td></tr>
-							<tr><td><label for="storage_format_supported">Format supported</label></td>
-								<td><span id="storage_format_supported"></span></td></tr>
-							<tr><td><label for="storage_format_busy">Format busy</label></td>
-								<td><span id="storage_format_busy"></span></td></tr>
-							<tr><td><label for="storage_reason">Status</label></td>
-								<td><span id="storage_reason"></span></td></tr>
-						</table>
-						<input type="hidden" id="storage_format_token" value="">
-						<button type="button" class="btn" onclick="storageAction('mount')">Mount</button>
-						<button type="button" class="btn" onclick="storageAction('unmount')">Unmount</button>
-						<button type="button" class="btn error" id="storage_format_btn" onclick="formatSd()">Format card</button>
-						<a href="javascript:apiRead('storage')" class="btn right">Refresh</a>
-					</fieldset>
+
+			<div class="card">
+				<h3><span data-i18n="events_journal">Event log</span></h3>
+				<div class="log" id="ivs_events_events"><div class="hint" data-i18n="no_events">No motion events yet.</div></div>
+				<div class="actions">
+					<button type="button" class="btn" onclick="loadIvsEvents()" data-i18n="refresh">Refresh</button>
 				</div>
 			</div>
 		</div>
-	</div>
-	<div class="c bg-black menu pv2 row" tabindex="0">
-		<b><a href="./" class="ph2 gray">Divinus</a></b>
-		<div class="col">
-			<label for="live-modal" class="lbl-modal ph2 white">Live</label>
-			<label for="media-modal" class="lbl-modal ph2 white">Media</label>
-			<label for="network-modal" class="lbl-modal ph2 white">Network</label>
-			<label for="osd-modal" class="lbl-modal ph2 white">OSD</label>
-			<label for="system-modal" class="lbl-modal ph2 white">System</label>
-			<a href="image.jpg" class="ph2 white" target="_blank">Snapshot</a>
+	</section>
+
+	<!-- ===================== STORAGE ===================== -->
+	<section class="sec" id="sec-storage">
+		<h2 data-i18n="storage">Storage</h2>
+		<div class="grid">
+			<div class="card">
+				<h3><span data-i18n="microsd">microSD card</span>
+					<span class="badge-state off" id="sd-state">–</span></h3>
+				<div class="bar"><div id="sd-bar"></div></div>
+				<div class="field"><label data-i18n="capacity">Capacity</label>
+					<div class="ctl"><span id="storage_total_mb">–</span>&nbsp;MB</div></div>
+				<div class="field"><label data-i18n="free">Free</label>
+					<div class="ctl"><span id="storage_free_mb">–</span>&nbsp;MB</div></div>
+				<div class="field"><label data-i18n="device">Device</label>
+					<div class="ctl"><span id="storage_device" class="hint">–</span></div></div>
+				<div class="field"><label data-i18n="filesystem">Filesystem</label>
+					<div class="ctl"><span id="storage_fs" class="hint">–</span></div></div>
+				<div class="field"><label data-i18n="status">Status</label>
+					<div class="ctl"><span id="storage_reason" class="hint">–</span></div></div>
+				<input type="hidden" id="storage_format_token">
+				<input type="hidden" id="storage_format_supported">
+				<input type="hidden" id="storage_format_busy">
+				<input type="hidden" id="storage_sd_mounted">
+				<div class="actions">
+					<button type="button" class="btn" onclick="storageAction('mount')" data-i18n="mount">Mount</button>
+					<button type="button" class="btn" onclick="storageAction('unmount')" data-i18n="unmount">Unmount</button>
+					<button type="button" class="btn danger" id="storage_format_btn" onclick="storageAction('format')" data-i18n="format">Format card</button>
+					<button type="button" class="btn" onclick="apiRead('storage')" data-i18n="refresh">Refresh</button>
+				</div>
+				<p class="note" data-i18n="format_note">Formatting erases the whole card. Unmount before removing it.</p>
+			</div>
+
+			<div class="card">
+				<h3><span data-i18n="record_settings">Recording settings</span></h3>
+				<div class="field"><label data-i18n="continuous">Continuous</label>
+					<div class="ctl"><select id="record_continuous" data-group="record" data-k="continuous"><option value="false">OFF</option><option value="true">ON</option></select></div></div>
+				<div class="field"><label data-i18n="record_source">Source</label>
+					<div class="ctl"><select id="record_source" data-group="record" data-k="source"><option value="main">Main</option><option value="sub">Sub</option></select></div></div>
+				<div class="field"><label data-i18n="path">Path</label>
+					<div class="ctl"><input type="text" id="record_path" data-group="record" data-k="path"></div></div>
+				<div class="field"><label data-i18n="filename">Filename</label>
+					<div class="ctl"><input type="text" id="record_filename" data-group="record" data-k="filename"></div></div>
+				<div class="field"><label data-i18n="segment_duration">Segment duration (s)</label>
+					<div class="ctl"><input type="number" id="record_segment_duration" data-group="record" data-k="segment_duration"></div></div>
+				<div class="field"><label data-i18n="segment_size">Segment size (bytes)</label>
+					<div class="ctl"><input type="number" id="record_segment_size" data-group="record" data-k="segment_size"></div></div>
+				<div class="field"><label data-i18n="ring_limit">Ring limit (bytes, 0 = off)</label>
+					<div class="ctl"><input type="number" id="record_max_bytes" data-group="record" data-k="max_bytes"></div></div>
+				<div class="field"><label data-i18n="min_free">Keep free (MB)</label>
+					<div class="ctl"><input type="number" id="record_min_free_mb" data-group="record" data-k="min_free_mb"></div></div>
+				<div class="actions">
+					<button type="button" class="btn primary" data-apply="record" data-ep="record" disabled data-i18n="apply">Apply</button>
+				</div>
+				<p class="note" data-i18n="record_settings_note">Path and filename changes apply to new segments.</p>
+			</div>
+
+			<div class="card wide">
+				<h3><span data-i18n="archive">Recording archive</span>
+					<span class="badge-state off" id="rec-count">0</span></h3>
+				<div class="bar"><div id="archive-bar"></div></div>
+				<div class="hint" id="archive-usage">–</div>
+				<table id="archive-table">
+					<thead><tr><th data-i18n="file">File</th><th data-i18n="size">Size</th>
+						<th data-i18n="modified">Modified</th><th></th></tr></thead>
+					<tbody id="archive-body"></tbody>
+				</table>
+				<div class="actions">
+					<button type="button" class="btn" onclick="refreshRecordings()" data-i18n="refresh">Refresh</button>
+				</div>
+			</div>
 		</div>
-	</div>
-	<div class="c cont">
-		<h2 class="unl">Status</h2>
-		<p>
-			<b>Chip identifier:</b> <span id="status_chip"></span><br>
-			<b>Load charge:</b> <span id="status_loadavg"></span><br>
-			<b>Memory usage:</b> <span id="status_memory"></span><br>
-			<b>Sensor:</b> <span id="status_sensor"></span><br>
-			<b>Temperature:</b> <span id="status_temp"></span><br>
-			<b>Uptime:</b> <span id="status_uptime"></span><br>
-		</p>
-	</div>
+	</section>
+
+<!-- ===================== NETWORK ===================== -->
+	<section class="sec" id="sec-network">
+		<h2 data-i18n="network">Network</h2>
+		<div class="grid">
+			<div class="card">
+				<h3><span data-i18n="ethernet">Ethernet</span></h3>
+				<div class="field"><label data-i18n="mode">Mode</label>
+					<div class="ctl"><select id="network_mode" data-group="network" data-k="mode" onchange="updateNetworkFields()">
+						<option value="dhcp">DHCP</option><option value="static" data-i18n="static">Static</option></select></div></div>
+				<div class="field"><label data-i18n="ip_address">IP address</label>
+					<div class="ctl"><input type="text" id="network_ipaddr" data-group="network" data-k="ipaddr" placeholder="192.168.52.100"></div></div>
+				<div class="field"><label data-i18n="netmask">Netmask</label>
+					<div class="ctl"><input type="text" id="network_netmask" data-group="network" data-k="netmask" placeholder="255.255.255.0"></div></div>
+				<div class="field"><label data-i18n="gateway">Gateway</label>
+					<div class="ctl"><input type="text" id="network_gateway" data-group="network" data-k="gateway" placeholder="192.168.52.1"></div></div>
+				<div class="field"><label data-i18n="dns">DNS</label>
+					<div class="ctl"><input type="text" id="network_dns" data-group="network" data-k="dns" placeholder="192.168.52.1"></div></div>
+				<div class="actions">
+					<button type="button" class="btn primary" data-apply="network" data-ep="network" disabled data-i18n="apply">Apply</button>
+				</div>
+				<p class="note" data-i18n="network_note">Stored in the U-Boot environment; survives a /userdata reset. Changing the address can disconnect this page.</p>
+			</div>
+
+			<div class="card">
+				<h3><span data-i18n="current_link">Current link</span></h3>
+				<div class="field"><label data-i18n="ip_address">IP address</label>
+					<div class="ctl"><span id="network_current_ip">–</span></div></div>
+				<div class="field"><label data-i18n="mac_address">MAC address</label>
+					<div class="ctl"><span id="network_current_mac">–</span></div></div>
+				<div class="field"><label data-i18n="persistent_mac">Persistent MAC</label>
+					<div class="ctl"><span id="network_mac">–</span></div></div>
+				<div class="field"><label data-i18n="dhcp_client">DHCP client</label>
+					<div class="ctl"><span id="network_dhcp_running">–</span></div></div>
+				<div class="actions">
+					<button type="button" class="btn" onclick="apiRead('network')" data-i18n="refresh">Refresh</button>
+				</div>
+			</div>
+
+			<div class="card">
+				<h3><span data-i18n="ntp">Time synchronization</span>
+					<span class="badge-state off" id="ntp-state">–</span></h3>
+				<div class="field"><label data-i18n="ntp_enable">NTP client</label>
+					<div class="ctl"><select id="time_ntp_enabled" data-group="time-ntp" data-k="ntp">
+						<option value="true">ON</option><option value="false">OFF</option></select></div></div>
+				<div class="field"><label data-i18n="ntp_server">Server</label>
+					<div class="ctl"><input type="text" id="time_ntp_server" data-group="time-ntp" data-k="ntp_server" placeholder="pool.ntp.org"></div></div>
+				<div class="actions">
+					<button type="button" class="btn primary" data-apply="time-ntp" data-ep="time" disabled data-i18n="apply">Apply</button>
+					<button type="button" class="btn" onclick="apiRead('time')" data-i18n="refresh">Refresh</button>
+				</div>
+				<p class="note" data-i18n="ntp_note">An empty server keeps the system /etc/ntp.conf. Press Save in System to keep the setting after a restart.</p>
+			</div>
+		</div>
+	</section>
+
+	<!-- ===================== OSD ===================== -->
+	<section class="sec" id="sec-osd">
+		<h2 data-i18n="osd">OSD</h2>
+		<div class="card wide">
+			<h3><span data-i18n="osd_regions">Overlay regions</span></h3>
+			<p class="note" data-i18n="osd_note">Text is drawn with simsun_en.ttf: only ASCII/Latin is available, Cyrillic glyphs are missing. A region shows either text or an uploaded image.</p>
+			<div id="osd-regions"></div>
+			<div class="actions">
+				<button type="button" class="btn primary" onclick="applyAllOsd()" data-i18n="apply_all">Apply all</button>
+				<button type="button" class="btn" onclick="saveConfig()" data-i18n="save_config">Save configuration</button>
+			</div>
+		</div>
+	</section>
+
+	<!-- ===================== SYSTEM ===================== -->
+	<section class="sec" id="sec-system">
+		<h2 data-i18n="system">System</h2>
+		<div class="grid">
+			<div class="card">
+				<h3><span data-i18n="status">Status</span></h3>
+				<div class="field"><label data-i18n="chip">Chip</label><div class="ctl"><span id="status_chip">–</span></div></div>
+				<div class="field"><label data-i18n="sensor">Sensor</label><div class="ctl"><span id="status_sensor">–</span></div></div>
+				<div class="field"><label data-i18n="memory">Memory</label><div class="ctl"><span id="status_memory">–</span></div></div>
+				<div class="field"><label data-i18n="load">Load</label><div class="ctl"><span id="status_loadavg">–</span></div></div>
+				<div class="field"><label data-i18n="soc_temp">SoC temperature</label><div class="ctl"><span id="status_temp">–</span></div></div>
+				<div class="field"><label data-i18n="uptime">Uptime</label><div class="ctl"><span id="status_uptime">–</span></div></div>
+				<div class="field"><label data-i18n="ip_address">IP address</label><div class="ctl"><span id="status_ip">–</span></div></div>
+				<div class="chips" id="status_features"></div>
+				<div class="actions">
+					<button type="button" class="btn" onclick="apiRead('status')" data-i18n="refresh">Refresh</button>
+				</div>
+			</div>
+
+			<div class="card">
+				<h3><span data-i18n="time">Time</span></h3>
+				<div class="field"><label data-i18n="time_format">Display format</label>
+					<div class="ctl"><input type="text" id="time_fmt" data-group="time-fmt" data-k="fmt"></div></div>
+				<div class="field"><label data-i18n="device_time">Device time</label>
+					<div class="ctl"><input type="text" id="time_ts" readonly></div></div>
+				<div class="actions">
+					<button type="button" class="btn primary" data-apply="time-fmt" data-ep="time" disabled data-i18n="apply">Apply</button>
+					<button type="button" class="btn" onclick="syncTime()" data-i18n="sync_browser">Set from browser</button>
+				</div>
+				<p class="note" data-i18n="time_note">The format uses strftime tokens; the value is also used by the OSD clock region.</p>
+			</div>
+
+			<div class="card">
+				<h3><span data-i18n="web_access">Web access</span></h3>
+				<div class="field"><label data-i18n="username">Username</label>
+					<div class="ctl"><input type="text" id="auth_user" value="admin" autocomplete="username"></div></div>
+				<div class="field"><label data-i18n="current_password">Current password</label>
+					<div class="ctl"><input type="password" id="auth_pass_old" autocomplete="current-password"></div></div>
+				<div class="field"><label data-i18n="new_password">New password</label>
+					<div class="ctl"><input type="password" id="auth_pass_new" autocomplete="new-password"></div></div>
+				<div class="field"><label data-i18n="confirm_password">Confirm password</label>
+					<div class="ctl"><input type="password" id="auth_pass_confirm" autocomplete="new-password"></div></div>
+				<div class="actions">
+					<button type="button" class="btn primary" onclick="changePassword()" data-i18n="change_password">Change password</button>
+				</div>
+				<p class="note" data-i18n="web_note">HTTP Basic authentication: there is no log-out and no HTTPS. The password is sent with every request and stored in divinus.yaml in plain text.</p>
+			</div>
+
+			<div class="card">
+				<h3><span data-i18n="configuration">Configuration</span></h3>
+				<div class="actions">
+					<a class="btn" href="/api/cmd?export" data-i18n="export_config">Export</a>
+					<label class="btn" for="import_file" data-i18n="import_config">Import</label>
+					<input type="file" id="import_file" accept=".yaml,.yml,text/plain" style="display:none" onchange="importConfig(this)">
+					<button type="button" class="btn" onclick="saveConfig()" data-i18n="save_config">Save configuration</button>
+					<a class="btn" href="/api/cmd?log" data-i18n="export_log">Export log</a>
+				</div>
+				<p class="note" data-i18n="config_note">Import replaces divinus.yaml (the current file is kept as .bak) and applies after a restart.</p>
+			</div>
+
+			<div class="card">
+				<h3><span data-i18n="maintenance">Maintenance</span></h3>
+				<div class="actions">
+					<button type="button" class="btn" onclick="restartApp()" data-i18n="restart">Restart streamer</button>
+					<button type="button" class="btn danger" onclick="rebootDevice()" data-i18n="reboot">Reboot device</button>
+				</div>
+				<p class="note" data-i18n="maintenance_note">Restarting the streamer drops the video streams for a few seconds. Rebooting the device takes about half a minute.</p>
+			</div>
+		</div>
+	</section>
+
+</main>
+</div>
+
+<div id="toasts"></div>
+
+<script>
+/* ============================ i18n ============================ */
+var I18N = {
+	en: {
+		live: "Live", image: "Image", streams: "Streams", events: "Events",
+		storage: "Storage", network: "Network", osd: "OSD", system: "System",
+		ip: "IP", uptime: "Uptime", load: "Load", soc_temp: "SoC", sd_card: "SD",
+		mounted: "mounted", absent: "absent",
+		restart_needed: "A restart is required for some of the applied changes.",
+		restart: "Restart streamer", reboot: "Reboot device",
+		preview: "Preview", preview_idle: "Choose MP4, MJPEG or take a snapshot.",
+		preview_note: "MP4 is H.264/H.265; if the picture stays blank, use MJPEG.",
+		stop: "Stop", snapshot: "Snapshot",
+		recording: "Recording", state: "State", started_at: "Started at",
+		start_recording: "Start recording", stop_recording: "Stop recording",
+		record_note: "Recording needs a mounted microSD card; the settings live in Storage.",
+		geometry: "Zoom and rotation", digital_zoom: "Digital zoom",
+		zoom_stream: "Zoom stream", preset: "Preset",
+		crop: "Crop X / Y / W / H", apply_zoom: "Apply zoom", reset: "Reset",
+		rotation: "Rotation", rotate_stream: "Rotate stream", angle: "Angle",
+		apply_rotation: "Apply rotation",
+		events_journal: "Event log", no_events: "No motion events yet.",
+		telemetry: "Telemetry",
+		telemetry_note: "Values come from the oko-ec daemon (/tmp/oko-ec.json) and refresh every two seconds.",
+		telemetry_offline: "Telemetry is offline",
+		isp: "ISP", mirror: "Mirror", flip: "Flip", antiflicker: "Anti-flicker",
+		off: "OFF", night: "Night mode", night_enable: "Automatic mode",
+		manual: "Manual override", grayscale: "Grayscale", ircut: "IR cut filter",
+		ircut_pin1: "IR filter pin 1", ircut_pin2: "IR filter pin 2",
+		irled: "IR LED", irled_pin: "IR LED pin", irsense_pin: "IR sensor pin",
+		adc_device: "ADC device", adc_threshold: "ADC threshold",
+		aiisp: "Night image (AIISP)", mode: "Mode", model_dir: "Model directory",
+		buf_cnt: "Frame buffers",
+		aiisp_note: "AIISP and HDR cannot run together; AIISP lowers the frame rate while the model is active.",
+		hdr_iq: "HDR and IQ", hdr_apply: "Apply mode", iq_main: "IQ main scene",
+		iq_sub: "IQ sub scene", iq_file: "IQ file", apply_hdr: "Apply HDR",
+		apply_iq: "Apply IQ", hdr_note: "HDR requires a restart; it is refused while AIISP is on.",
+		enabled: "Enabled", width: "Width", height: "Height", fps: "Framerate",
+		gop: "Keyframe interval", bitrate: "Bitrate (kbps)", codec: "Codec",
+		rate_control: "Rate control", profile: "Profile",
+		mp4: "Main stream (MP4)", substream: "Sub stream (RTSP)",
+		rtsp_path: "RTSP path", width_height: "Width / height", fps_gop: "FPS / GOP",
+		substream_note: "Encoder changes restart the application; the path applies to new connections.",
+		mjpeg: "MJPEG", jpeg: "JPEG snapshots", quality: "Quality (%)",
+		audio: "Audio", gain: "Gain (dB)", sample_rate: "Sample rate",
+		venc: "Encoder extensions", vir_idr: "Virtual IDR length",
+		motion_deblur: "Motion deblur", qp_window: "QP window (min/max, I min/max)",
+		venc_note: "SVC, deblur and the QP window apply live; SmartP applies after a restart.",
+		rtsp: "RTSP", port: "Port", authentication: "Authentication",
+		username: "Username", password: "Password", audio_codec: "Audio codec",
+		rtsp_note: "The port and the audio codec apply after a restart. The password is never read back.",
+		onvif: "ONVIF",
+		onvif_note: "ONVIF applies after a restart; the password is never read back.",
+		active_streams: "Active streams",
+		ivs: "Analytics (motion and objects)", ivs_md: "Motion", ivs_od: "Object",
+		ivs_md_od: "Motion + object", sensitivity: "Sensitivity (1-3)",
+		md_interval: "MD interval", od_interval: "OD interval",
+		od_percent: "OD threshold (%)", act_record: "Record a clip on motion",
+		clip_seconds: "Clip length (s)", record_source: "Clip source",
+		act_http_post: "Upload a snapshot (HTTP post)", act_osd: "OSD indicator",
+		microsd: "microSD card", capacity: "Capacity", free: "Free",
+		device: "Device", filesystem: "Filesystem", status: "Status",
+		mount: "Mount", unmount: "Unmount", format: "Format card",
+		format_note: "Formatting erases the whole card. Unmount before removing it.",
+		record_settings: "Recording settings", continuous: "Continuous",
+		path: "Path", filename: "Filename", segment_duration: "Segment duration (s)",
+		segment_size: "Segment size (bytes)",
+		ring_limit: "Ring limit (bytes, 0 = off)", min_free: "Keep free (MB)",
+		record_settings_note: "Path and filename changes apply to new segments.",
+		archive: "Recording archive", file: "File", size: "Size",
+		modified: "Modified", download: "Download", delete: "Delete",
+		ethernet: "Ethernet", static: "Static", ip_address: "IP address",
+		netmask: "Netmask", gateway: "Gateway", dns: "DNS",
+		network_note: "Stored in the U-Boot environment; survives a /userdata reset. Changing the address can disconnect this page.",
+		current_link: "Current link", mac_address: "MAC address",
+		persistent_mac: "Persistent MAC", dhcp_client: "DHCP client",
+		ntp: "Time synchronization", ntp_enable: "NTP client", ntp_server: "Server",
+		ntp_note: "An empty server keeps the system /etc/ntp.conf. Press Save in System to keep the setting after a restart.",
+		osd_regions: "Overlay regions",
+		osd_note: "Text is drawn with simsun_en.ttf: only ASCII/Latin is available, Cyrillic glyphs are missing. A region shows either text or an uploaded image.",
+		apply_all: "Apply all", save_config: "Save configuration",
+		chip: "Chip", sensor: "Sensor", memory: "Memory",
+		device_time: "Device time", time: "Time", time_format: "Display format",
+		sync_browser: "Set from browser",
+		time_note: "The format uses strftime tokens; the value is also used by the OSD clock region.",
+		web_access: "Web access", current_password: "Current password",
+		new_password: "New password", confirm_password: "Confirm password",
+		change_password: "Change password",
+		web_note: "HTTP Basic authentication: there is no log-out and no HTTPS. The password is sent with every request and stored in divinus.yaml in plain text.",
+		configuration: "Configuration", export_config: "Export", import_config: "Import",
+		export_log: "Export log",
+		config_note: "Import replaces divinus.yaml (the current file is kept as .bak) and applies after a restart.",
+		maintenance: "Maintenance",
+		maintenance_note: "Restarting the streamer drops the video streams for a few seconds. Rebooting the device takes about half a minute.",
+		region: "Region", text: "Text", image_file: "Image", font: "Font family",
+		position: "Position", size_px: "Size", color: "Color", outline: "Outline",
+		opacity: "Opacity", thickness: "Thickness", upload_image: "Upload image",
+		apply: "Apply", refresh: "Refresh",
+		applied: "Applied", apply_failed: "The request failed",
+		restart_required: "Restart required",
+		saved: "Configuration saved", save_failed: "Could not save the configuration",
+		restarting: "Restarting the streamer", rebooting: "Rebooting the device",
+		reboot_confirm: "Reboot the device now?",
+		format_confirm: "ALL DATA ON THE microSD CARD WILL BE LOST. Continue?",
+		network_confirm: "Changing the Ethernet settings can disconnect this page. Continue?",
+		auth_required: "Fill in the user name, the current and the new password.",
+		auth_mismatch: "The new password and its confirmation differ.",
+		auth_ok: "Password changed. Reload the page and sign in again.",
+		auth_reload: "The page reloads now; sign in with the new credentials.",
+		import_too_big: "The file is larger than 128 KiB.",
+		import_ok: "Configuration imported; restart the streamer to apply it.",
+		storage_mount: "Card mounted", storage_unmount: "Card unmounted",
+		storage_format: "Card formatted",
+		recording_started: "Recording started", recording_stopped: "Recording stopped",
+		recording_on: "Recording", recording_off: "Idle",
+		confirm_delete: "Delete this recording?",
+		no_recordings: "No recordings yet.",
+		usage: "Used",
+		yes: "yes", no: "no"
+	},
+	ru: {
+		live: "Видео", image: "Изображение", streams: "Потоки", events: "События",
+		storage: "Накопитель", network: "Сеть", osd: "OSD", system: "Система",
+		ip: "IP", uptime: "Аптайм", load: "Нагрузка", soc_temp: "SoC", sd_card: "SD",
+		mounted: "подключена", absent: "нет",
+		restart_needed: "Часть применённых настроек вступит в силу после перезапуска.",
+		restart: "Перезапустить стример", reboot: "Перезагрузить устройство",
+		preview: "Предпросмотр", preview_idle: "Выберите MP4, MJPEG или сделайте снимок.",
+		preview_note: "MP4 — это H.264/H.265; если картинка не появляется, используйте MJPEG.",
+		stop: "Стоп", snapshot: "Снимок",
+		recording: "Запись", state: "Состояние", started_at: "Начало",
+		start_recording: "Начать запись", stop_recording: "Остановить запись",
+		record_note: "Для записи нужна подключённая microSD; параметры — в разделе «Накопитель».",
+		geometry: "Зум и поворот", digital_zoom: "Цифровой зум",
+		zoom_stream: "Поток зума", preset: "Предустановка",
+		crop: "Обрезка X / Y / W / H", apply_zoom: "Применить зум", reset: "Сброс",
+		rotation: "Поворот", rotate_stream: "Поток поворота", angle: "Угол",
+		apply_rotation: "Применить поворот",
+		events_journal: "Журнал событий", no_events: "Событий движения пока нет.",
+		telemetry: "Телеметрия",
+		telemetry_note: "Значения берутся из демона oko-ec (/tmp/oko-ec.json) и обновляются каждые две секунды.",
+		telemetry_offline: "Телеметрия недоступна",
+		isp: "ISP", mirror: "Зеркало", flip: "Переворот", antiflicker: "Антимерцание",
+		off: "ВЫКЛ", night: "Ночной режим", night_enable: "Автоматический режим",
+		manual: "Ручное управление", grayscale: "Чёрно-белый", ircut: "ИК-фильтр",
+		ircut_pin1: "ИК-фильтр — пин 1", ircut_pin2: "ИК-фильтр — пин 2",
+		irled: "ИК-подсветка", irled_pin: "ИК-подсветка — пин", irsense_pin: "Датчик ИК — пин",
+		adc_device: "Устройство АЦП", adc_threshold: "Порог АЦП",
+		aiisp: "Ночное изображение (AIISP)", mode: "Режим", model_dir: "Каталог модели",
+		buf_cnt: "Буферы кадров",
+		aiisp_note: "AIISP и HDR несовместимы; при активной модели AIISP снижает частоту кадров.",
+		hdr_iq: "HDR и IQ", hdr_apply: "Способ применения", iq_main: "IQ-сцена основного",
+		iq_sub: "IQ-сцена субпотока", iq_file: "Файл IQ", apply_hdr: "Применить HDR",
+		apply_iq: "Применить IQ", hdr_note: "HDR требует перезапуска; отключается при включённом AIISP.",
+		enabled: "Включено", width: "Ширина", height: "Высота", fps: "Частота кадров",
+		gop: "Интервал ключевых кадров", bitrate: "Битрейт (кбит/с)", codec: "Кодек",
+		rate_control: "Управление битрейтом", profile: "Профиль",
+		mp4: "Основной поток (MP4)", substream: "Субпоток (RTSP)",
+		rtsp_path: "Путь RTSP", width_height: "Ширина / высота", fps_gop: "FPS / GOP",
+		substream_note: "Изменение кодера перезапускает приложение; путь действует для новых подключений.",
+		mjpeg: "MJPEG", jpeg: "JPEG-снимки", quality: "Качество (%)",
+		audio: "Звук", gain: "Усиление (дБ)", sample_rate: "Частота дискретизации",
+		venc: "Расширения кодера", vir_idr: "Длина виртуального IDR",
+		motion_deblur: "Устранение смаза", qp_window: "Окно QP (min/max, I min/max)",
+		venc_note: "SVC, деблёр и окно QP применяются сразу; SmartP — после перезапуска.",
+		rtsp: "RTSP", port: "Порт", authentication: "Аутентификация",
+		username: "Пользователь", password: "Пароль", audio_codec: "Аудиокодек",
+		rtsp_note: "Порт и аудиокодек применяются после перезапуска. Пароль не читается обратно.",
+		onvif: "ONVIF",
+		onvif_note: "ONVIF применяется после перезапуска; пароль не читается обратно.",
+		active_streams: "Активные потоки",
+		ivs: "Аналитика (движение и объекты)", ivs_md: "Движение", ivs_od: "Объекты",
+		ivs_md_od: "Движение + объекты", sensitivity: "Чувствительность (1-3)",
+		md_interval: "Интервал MD", od_interval: "Интервал OD",
+		od_percent: "Порог OD (%)", act_record: "Писать клип по движению",
+		clip_seconds: "Длина клипа (с)", record_source: "Источник клипа",
+		act_http_post: "Отправлять снимок (HTTP post)", act_osd: "Индикатор на OSD",
+		microsd: "Карта microSD", capacity: "Ёмкость", free: "Свободно",
+		device: "Устройство", filesystem: "Файловая система", status: "Статус",
+		mount: "Подключить", unmount: "Отключить", format: "Форматировать",
+		format_note: "Форматирование стирает всю карту. Перед извлечением отключите её.",
+		record_settings: "Параметры записи", continuous: "Непрерывно",
+		path: "Путь", filename: "Имя файла", segment_duration: "Длительность сегмента (с)",
+		segment_size: "Размер сегмента (байт)",
+		ring_limit: "Лимит кольца (байт, 0 = выкл)", min_free: "Оставлять свободно (МБ)",
+		record_settings_note: "Путь и имя файла действуют для новых сегментов.",
+		archive: "Архив записей", file: "Файл", size: "Размер",
+		modified: "Изменён", download: "Скачать", delete: "Удалить",
+		ethernet: "Ethernet", static: "Статический", ip_address: "IP-адрес",
+		netmask: "Маска", gateway: "Шлюз", dns: "DNS",
+		network_note: "Хранится в окружении U-Boot и переживает сброс /userdata. Смена адреса может разорвать эту страницу.",
+		current_link: "Текущее подключение", mac_address: "MAC-адрес",
+		persistent_mac: "Постоянный MAC", dhcp_client: "DHCP-клиент",
+		ntp: "Синхронизация времени", ntp_enable: "Клиент NTP", ntp_server: "Сервер",
+		ntp_note: "Пустой сервер означает системный /etc/ntp.conf. Нажмите «Сохранить» в «Системе», чтобы настройка пережила перезапуск.",
+		osd_regions: "Регионы наложения",
+		osd_note: "Текст рисуется шрифтом simsun_en.ttf: доступна только латиница, кириллицы в шрифте нет. Регион показывает либо текст, либо загруженную картинку.",
+		apply_all: "Применить все", save_config: "Сохранить конфигурацию",
+		chip: "Чип", sensor: "Сенсор", memory: "Память",
+		device_time: "Время устройства", time: "Время", time_format: "Формат отображения",
+		sync_browser: "Взять из браузера",
+		time_note: "Формат задаётся токенами strftime; значение используется и часами на OSD.",
+		web_access: "Доступ к WebUI", current_password: "Текущий пароль",
+		new_password: "Новый пароль", confirm_password: "Повтор пароля",
+		change_password: "Сменить пароль",
+		web_note: "HTTP Basic: выхода из сессии и HTTPS нет. Пароль передаётся с каждым запросом и хранится в divinus.yaml открытым текстом.",
+		configuration: "Конфигурация", export_config: "Экспорт", import_config: "Импорт",
+		export_log: "Экспорт журнала",
+		config_note: "Импорт заменяет divinus.yaml (текущий файл сохраняется как .bak) и применяется после перезапуска.",
+		maintenance: "Обслуживание",
+		maintenance_note: "Перезапуск стримера прерывает видеопотоки на несколько секунд. Перезагрузка устройства занимает около полуминуты.",
+		region: "Регион", text: "Текст", image_file: "Картинка", font: "Шрифт",
+		position: "Позиция", size_px: "Размер", color: "Цвет", outline: "Обводка",
+		opacity: "Прозрачность", thickness: "Толщина", upload_image: "Загрузить картинку",
+		apply: "Применить", refresh: "Обновить",
+		applied: "Применено", apply_failed: "Запрос не выполнен",
+		restart_required: "Требуется перезапуск",
+		saved: "Конфигурация сохранена", save_failed: "Не удалось сохранить конфигурацию",
+		restarting: "Перезапуск стримера", rebooting: "Перезагрузка устройства",
+		reboot_confirm: "Перезагрузить устройство сейчас?",
+		format_confirm: "ВСЕ ДАННЫЕ НА microSD БУДУТ ПОТЕРЯНЫ. Продолжить?",
+		network_confirm: "Смена настроек Ethernet может разорвать эту страницу. Продолжить?",
+		auth_required: "Заполните пользователя, текущий и новый пароль.",
+		auth_mismatch: "Новый пароль и подтверждение не совпадают.",
+		auth_ok: "Пароль изменён. Перезагрузите страницу и войдите заново.",
+		auth_reload: "Страница сейчас перезагрузится; войдите с новыми данными.",
+		import_too_big: "Файл больше 128 КиБ.",
+		import_ok: "Конфигурация импортирована; перезапустите стример.",
+		storage_mount: "Карта подключена", storage_unmount: "Карта отключена",
+		storage_format: "Карта отформатирована",
+		recording_started: "Запись начата", recording_stopped: "Запись остановлена",
+		recording_on: "Идёт запись", recording_off: "Простой",
+		confirm_delete: "Удалить эту запись?",
+		no_recordings: "Записей пока нет.",
+		usage: "Занято",
+		yes: "да", no: "нет"
+	}
+};
+
+var lang = 'en';
+try { lang = localStorage.getItem('divinus.lang') || 'en'; } catch (e) {}
+if (!I18N[lang]) lang = 'en';
+
+function t(key) { return (I18N[lang] && I18N[lang][key]) || I18N.en[key] || key; }
+
+function applyLang() {
+	document.documentElement.lang = lang;
+	var nodes = document.querySelectorAll('[data-i18n]');
+	for (var i = 0; i < nodes.length; i++) nodes[i].textContent = t(nodes[i].getAttribute('data-i18n'));
+	var en = document.getElementById('lang-en'), ru = document.getElementById('lang-ru');
+	if (en) en.className = lang === 'en' ? 'on' : '';
+	if (ru) ru.className = lang === 'ru' ? 'on' : '';
+}
+
+function setLang(next) {
+	if (!I18N[next] || next === lang) return;
+	lang = next;
+	try { localStorage.setItem('divinus.lang', lang); } catch (e) {}
+	applyLang();
+	renderStatus(lastStatus);
+	renderTelemetry(lastTelemetry);
+	updateRecordBadge(lastRecord);
+	refreshAllGroups();
+}
+
+/* ============================ helpers ============================ */
+function $(id) { return document.getElementById(id); }
+function esc(v) { return encodeURIComponent(v === undefined || v === null ? '' : v); }
+function has(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
+function setText(id, v) { var e = $(id); if (e) e.textContent = v; }
+
+function toast(kind, msg, sub) {
+	var box = $('toasts');
+	if (!box) return;
+	var el = document.createElement('div');
+	el.className = 'toast ' + kind;
+	el.textContent = msg;
+	if (sub) {
+		var s = document.createElement('small');
+		s.textContent = sub;
+		el.appendChild(s);
+	}
+	box.appendChild(el);
+	setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 6000);
+}
+
+function toastError(dec) {
+	if (!dec) return toast('err', t('apply_failed'));
+	toast('err', dec.reason || dec.error || t('apply_failed'), dec.hint || '');
+}
+
+function request(method, url, body, ctype, cb) {
+	var req = new XMLHttpRequest();
+	req.onreadystatechange = function () {
+		if (req.readyState !== 4) return;
+		var dec = null;
+		try { dec = JSON.parse(req.responseText); } catch (e) {}
+		if (req.status !== 200 && !dec) return cb(null, req.status);
+		cb(dec, req.status);
+	};
+	req.open(method, url);
+	if (ctype) req.setRequestHeader('Content-Type', ctype);
+	req.send(body || null);
+}
+
+function getJson(url, cb) { request('GET', url, null, null, cb); }
+
+function encodeForm(data) {
+	var parts = [];
+	for (var k in data) {
+		if (!has(data, k)) continue;
+		parts.push(esc(k) + '=' + esc(data[k]));
+	}
+	return parts.join('&');
+}
+
+/* ============================ groups and dirty state ============================ */
+var groups = {};      /* group -> { ep, btn, section } */
+var snapshots = {};   /* group -> { key: value } */
+var activeSec = 'live';
+var loaded = {};
+
+function sectionOf(el) {
+	var sec = el.closest ? el.closest('.sec') : null;
+	return sec ? sec.id.replace('sec-', '') : '';
+}
+
+function initGroups() {
+	var btns = document.querySelectorAll('[data-apply]');
+	for (var i = 0; i < btns.length; i++) {
+		var g = btns[i].getAttribute('data-apply');
+		groups[g] = {
+			ep: btns[i].getAttribute('data-ep'),
+			btn: btns[i],
+			section: sectionOf(btns[i])
+		};
+	}
+}
+
+function collectGroup(g) {
+	var els = document.querySelectorAll('[data-group="' + g + '"]');
+	var out = {};
+	for (var i = 0; i < els.length; i++) {
+		var el = els[i];
+		if (el.tagName !== 'INPUT' && el.tagName !== 'SELECT') continue;
+		if (el.type === 'file' || el.type === 'button' || el.type === 'submit' || el.type === 'hidden') continue;
+		var k = el.getAttribute('data-k');
+		if (!k) continue;
+		out[k] = el.value;
+	}
+	return out;
+}
+
+function groupDirty(g) {
+	var cur = collectGroup(g), snap = snapshots[g], k;
+	if (!snap) return false;
+	for (k in cur) {
+		if (!has(cur, k)) continue;
+		var was = has(snap, k) ? String(snap[k]) : '';
+		if (String(cur[k]) !== was) return true;
+	}
+	return false;
+}
+
+function refreshGroup(g) {
+	var info = groups[g];
+	if (!info) return;
+	var dirty = groupDirty(g);
+	if (info.btn) info.btn.disabled = !dirty;
+	var badge = document.querySelector('[data-badge="' + g + '"]');
+	if (badge) badge.className = 'badge' + (dirty ? ' show' : '');
+}
+
+function refreshAllGroups() {
+	for (var g in groups) if (has(groups, g)) refreshGroup(g);
+	updateNavDots();
+}
+
+function snapshotGroup(g) { snapshots[g] = collectGroup(g); refreshGroup(g); }
+
+function snapshotEndpoint(ep) {
+	for (var g in groups)
+		if (has(groups, g) && groups[g].ep === ep) snapshotGroup(g);
+}
+
+function updateNavDots() {
+	var dirty = {};
+	for (var g in groups) {
+		if (!has(groups, g)) continue;
+		if (groupDirty(g)) dirty[groups[g].section] = true;
+	}
+	var btns = document.querySelectorAll('#sidebar button');
+	for (var i = 0; i < btns.length; i++) {
+		var sec = btns[i].getAttribute('data-sec');
+		var cls = sec === activeSec ? 'active' : '';
+		if (dirty[sec]) cls = 'dirty' + (cls ? ' ' + cls : '');
+		btns[i].className = cls;
+	}
+}
+
+/* ============================ read and apply ============================ */
+var READ_HOOKS = {
+	'substream_mode': function (v) { return ['CBR', 'VBR', 'QP', 'ABR', 'AVBR'][v] || 'CBR'; },
+	'substream_profile': function (v) { return ['BP', 'MP', 'HP'][v] || 'MP'; }
+};
+
+function setField(id, v) {
+	var el = $(id);
+	if (!el) return;
+	var s = (v === undefined || v === null) ? '' : String(v);
+
+	if (el.tagName === 'SELECT') {
+		for (var i = 0; i < el.options.length; i++) {
+			if (el.options[i].value === s) { el.selectedIndex = i; return; }
+		}
+		return;
+	}
+	if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+		el.value = s;
+		if (el.type === 'range') {
+			var span = $(id + '_val');
+			if (span) span.textContent = s;
+		}
+		return;
+	}
+	/* Status, storage and record state live in plain spans. */
+	el.textContent = s;
+}
+
+function applyValues(ep, dec) {
+	if (!dec || typeof dec !== 'object') return;
+	for (var k in dec) {
+		if (!has(dec, k)) continue;
+		var v = dec[k];
+		if (v === null || typeof v === 'object') continue;
+		var id = ep + '_' + k;
+		setField(id, READ_HOOKS[id] ? READ_HOOKS[id](v) : v);
+	}
+	if (dec.pos && dec.pos.length === 2) {
+		setField(ep + '_posx', dec.pos[0]);
+		setField(ep + '_posy', dec.pos[1]);
+	}
+	if (ep === 'status') { lastStatus = dec; renderStatus(dec); }
+	if (ep === 'record') { lastRecord = dec; updateRecordBadge(dec); }
+	if (ep === 'storage') updateStorageFields(dec);
+	if (ep === 'time') updateTimeFields(dec);
+}
+
+function apiRead(ep, cb) {
+	getJson('/api/' + ep, function (dec) {
+		if (!dec || dec.error) { if (cb) cb(dec); return; }
+		applyValues(ep, dec);
+		snapshotEndpoint(ep);
+		if (cb) cb(dec);
+	});
+}
+
+function applyGroup(g) {
+	var info = groups[g];
+	if (!info) return;
+	var body = encodeForm(collectGroup(g));
+	if (info.btn) info.btn.disabled = true;
+	request('POST', '/api/' + info.ep, body, 'application/x-www-form-urlencoded', function (dec) {
+		if (!dec) { toast('err', t('apply_failed')); refreshGroup(g); return; }
+		if (dec.error) { toastError(dec); refreshGroup(g); return; }
+		applyValues(info.ep, dec);
+		snapshotEndpoint(info.ep);
+		refreshAllGroups();
+		if (dec.note && /restart|перезапуск/i.test(dec.note)) showRestartHint(true);
+		toast('ok', t('applied'), dec.note || '');
+	});
+}
+
+function applyAllOsd() {
+	for (var i = 0; i < 10; i++) applyGroup('osd-' + i);
+}
+
+function showRestartHint(on) {
+	var banner = $('restart-banner');
+	if (banner) banner.className = on ? 'show' : '';
+}
+
+/* ============================ live ============================ */
+var lastRecord = null, lastStatus = null, lastTelemetry = null;
+
+function setSource(kind) {
+	var frame = $('preview');
+	if (!frame) return;
+	if (!kind) {
+		frame.innerHTML = '<p>' + t('preview_idle') + '</p>';
+		return;
+	}
+	if (kind === 'mp4') {
+		var en = $('mp4_enable');
+		if (en && en.value !== 'true') {
+			frame.innerHTML = '<p>' + t('mp4') + ' — ' + t('off') + '</p>';
+			toast('info', t('mp4'), t('enabled') + ': OFF');
+			return;
+		}
+		frame.innerHTML = '<video autoplay muted playsinline controls src="/video.mp4"></video>';
+		return;
+	}
+	var mj = $('mjpeg_enable');
+	if (mj && mj.value !== 'true') {
+		frame.innerHTML = '<p>' + t('mjpeg') + ' — ' + t('off') + '</p>';
+		toast('info', t('mjpeg'), t('enabled') + ': OFF');
+		return;
+	}
+	frame.innerHTML = '<img alt="MJPEG" src="/mjpeg?' + Date.now() + '">';
+}
+
+function updateRecordBadge(dec) {
+	if (!dec) return;
+	var active = dec.recording === true;
+	var badge = $('rec-badge');
+	if (badge) {
+		badge.className = 'badge-state ' + (active ? 'on' : 'off');
+		badge.textContent = active ? t('recording_on') : t('recording_off');
+	}
+	setField('record_recording', active ? t('yes') : t('no'));
+	setField('record_start_time', dec.start_time ? dec.start_time : '–');
+	var startBtn = $('rec-start'), stopBtn = $('rec-stop');
+	if (startBtn) startBtn.disabled = active;
+	if (stopBtn) stopBtn.disabled = !active;
+}
+
+function recordAction(action) {
+	var body = action === 'start' ? 'enable=true&start=1' : 'stop=1';
+	request('POST', '/api/record', body, 'application/x-www-form-urlencoded', function (dec) {
+		if (!dec || dec.error) {
+			toastError(dec);
+			apiRead('record');
+			return;
+		}
+		applyValues('record', dec);
+		updateRecordBadge(dec);
+		toast('ok', action === 'start' ? t('recording_started') : t('recording_stopped'));
+		refreshRecordingsLater();
+	});
+}
+
+function eptzReset() {
+	request('POST', '/api/eptz', 'reset=1', 'application/x-www-form-urlencoded', function (dec) {
+		if (!dec || dec.error) return toastError(dec);
+		applyValues('eptz', dec);
+		snapshotEndpoint('eptz');
+		toast('ok', t('applied'));
+	});
+}
+
+function loadIvsEvents() {
+	getJson('/api/ivs', function (dec) {
+		if (!dec || !dec.events) return;
+		var ids = ['ivs_events_live', 'ivs_events_events'];
+		for (var n = 0; n < ids.length; n++) {
+			var box = $(ids[n]);
+			if (!box) continue;
+			box.innerHTML = '';
+			if (!dec.events.length) {
+				var empty = document.createElement('div');
+				empty.className = 'hint';
+				empty.textContent = t('no_events');
+				box.appendChild(empty);
+				continue;
+			}
+			for (var i = dec.events.length - 1; i >= 0; i--) {
+				var e = dec.events[i];
+				var row = document.createElement('div');
+				row.textContent = e.time + ' — ' + e.rects + ' region(s) [' +
+					(e.bbox || []).join(',') + ']';
+				box.appendChild(row);
+			}
+		}
+	});
+}
+
+function renderTelemetry(dec) {
+	var box = $('telemetry'), state = $('tel-state');
+	if (!box) return;
+	box.innerHTML = '';
+	if (!dec || dec.available !== true || !dec.data) {
+		if (state) { state.className = 'badge-state warn'; state.textContent = t('telemetry_offline'); }
+		var hint = document.createElement('div');
+		hint.className = 'hint';
+		hint.textContent = (dec && dec.hint) ? dec.hint : t('telemetry_offline');
+		box.appendChild(hint);
+		return;
+	}
+	if (state) { state.className = 'badge-state on'; state.textContent = dec.age + ' s'; }
+	var d = dec.data, ec = d.ec || {}, ina = d.ina226 || {}, sht = d.sht21 || {};
+	var cells = '';
+	if (ec.cells && ec.cells.length) {
+		var mv = [];
+		for (var i = 0; i < ec.cells.length; i++) mv.push((ec.cells[i] / 1000).toFixed(2));
+		cells = mv.join(' / ') + ' V';
+	}
+	var items = [
+		['EC voltage', ec.voltage_mv !== undefined ? (ec.voltage_mv / 1000).toFixed(2) + ' V' : '–'],
+		['EC current', ec.current_ma !== undefined ? (ec.current_ma / 1000).toFixed(2) + ' A' : '–'],
+		['EC temp', ec.temp_c10 !== undefined ? (ec.temp_c10 / 10).toFixed(1) + ' °C' : '–'],
+		['EC SoC', ec.soc !== undefined ? ec.soc + ' %' : '–'],
+		['Cells', cells || '–'],
+		['SHT21 temp', sht.temp_c100 !== undefined ? (sht.temp_c100 / 100).toFixed(2) + ' °C' : '–'],
+		['Humidity', sht.humidity_rh10 !== undefined ? (sht.humidity_rh10 / 10).toFixed(1) + ' %' : '–'],
+		['INA3221 bus', ina.bus_mv !== undefined ? (ina.bus_mv / 1000).toFixed(2) + ' V' : '–'],
+		['INA3221 current', ina.current_ma !== undefined ? (ina.current_ma / 1000).toFixed(2) + ' A' : '–']
+	];
+	for (var j = 0; j < items.length; j++) {
+		var cell = document.createElement('div');
+		cell.className = 'tel';
+		var name = document.createElement('span');
+		name.textContent = items[j][0];
+		var val = document.createElement('b');
+		val.textContent = items[j][1];
+		cell.appendChild(name);
+		cell.appendChild(val);
+		box.appendChild(cell);
+	}
+}
+
+function loadTelemetry() {
+	getJson('/api/telemetry', function (dec) {
+		lastTelemetry = dec;
+		renderTelemetry(dec);
+	});
+}
+
+/* ============================ streams ============================ */
+function loadStreams() {
+	getJson('/api/streams', function (dec) {
+		var box = $('streams_table');
+		if (!box || !dec || !dec.streams) return;
+		var html = '<table><thead><tr><th>Path</th><th>Codec</th><th>Channel</th><th>' +
+			t('enabled') + '</th></tr></thead><tbody>';
+		for (var i = 0; i < dec.streams.length; i++) {
+			var s = dec.streams[i];
+			html += '<tr><td>' + s.path + '</td><td>' + s.codec + '</td><td>' +
+				s.channel + '</td><td>' + (s.enabled ? t('yes') : t('no')) + '</td></tr>';
+		}
+		html += '</tbody></table><p class="note">Connections: ' + dec.connections +
+			' / ' + dec.max_connections + '</p>';
+		box.className = '';
+		box.innerHTML = html;
+	});
+}
+
+/* Extra strings kept next to the code that uses them. */
+I18N.en.network_static_required = "Static mode requires an IP address and a netmask.";
+I18N.ru.network_static_required = "Для статического режима нужны IP-адрес и маска.";
+I18N.en.ntp_on = "NTP ON";
+I18N.ru.ntp_on = "NTP ON";
+I18N.en.ntp_off = "NTP OFF";
+I18N.ru.ntp_off = "NTP OFF";
+
+/* ============================ storage ============================ */
+function updateStorageFields(dec) {
+	var mounted = dec.sd_mounted === true;
+	var badge = $('sd-state');
+	if (badge) {
+		badge.className = 'badge-state ' + (mounted ? 'on' : 'off');
+		badge.textContent = mounted ? t('mounted') : t('absent');
+	}
+	var btn = $('storage_format_btn');
+	if (btn) btn.disabled = !(dec.format_supported === true) || dec.format_busy === true || !mounted;
+	setText('storage_reason', mounted ? '' : (dec.reason || ''));
+
+	var total = dec.total_mb || 0, free = dec.free_mb || 0;
+	var bar = $('sd-bar');
+	if (bar) bar.style.width = total > 0 ? Math.min(100, (total - free) / total * 100).toFixed(1) + '%' : '0';
+}
+
+function storageAction(action) {
+	if (action === 'format' && !confirm(t('format_confirm'))) return;
+	var body = 'action=' + action;
+	var token = $('storage_format_token') ? $('storage_format_token').value : '';
+	if (action === 'format') body += '&fs=fat32&confirm=FORMAT&token=' + esc(token);
+	if (action === 'unmount') body += '&token=' + esc(token);
+	request('POST', '/api/storage', body, 'application/x-www-form-urlencoded', function (dec) {
+		if (!dec || dec.error) return toastError(dec);
+		apiRead('storage');
+		toast('ok', t('storage_' + action));
+		refreshRecordingsLater();
+	});
+}
+
+function formatSize(bytes) {
+	if (bytes === undefined || bytes === null) return '–';
+	if (bytes >= 1024 * 1024 * 1024) return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+	if (bytes >= 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+	if (bytes >= 1024) return Math.round(bytes / 1024) + ' KB';
+	return bytes + ' B';
+}
+
+function fmtTime(ts) {
+	var d = new Date(ts * 1000);
+	if (isNaN(d.getTime())) return '–';
+	function p(n) { return n < 10 ? '0' + n : '' + n; }
+	return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' +
+		p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+}
+
+function refreshRecordings() {
+	getJson('/api/recordings', function (dec) {
+		var body = $('archive-body'), usage = $('archive-usage'), bar = $('archive-bar');
+		var count = $('rec-count');
+		if (!body) return;
+		body.innerHTML = '';
+		if (!dec || dec.error) {
+			setText('archive-usage', (dec && dec.hint) ? dec.hint : t('apply_failed'));
+			if (bar) bar.style.width = '0';
+			if (count) { count.className = 'badge-state off'; count.textContent = '0'; }
+			return;
+		}
+		if (!dec.files || !dec.files.length) {
+			var tr = document.createElement('tr');
+			var td = document.createElement('td');
+			td.colSpan = 4;
+			td.className = 'hint';
+			td.textContent = t('no_recordings');
+			tr.appendChild(td);
+			body.appendChild(tr);
+		} else {
+			for (var i = 0; i < dec.files.length; i++) {
+				var f = dec.files[i];
+				var row = document.createElement('tr');
+				var name = document.createElement('td');
+				name.textContent = f.name;
+				var size = document.createElement('td');
+				size.className = 'num';
+				size.textContent = formatSize(f.size);
+				var when = document.createElement('td');
+				when.textContent = fmtTime(f.mtime);
+				var act = document.createElement('td');
+				act.className = 'num';
+				var dl = document.createElement('a');
+				dl.className = 'btn';
+				dl.href = '/api/recordings/file?name=' + esc(f.name);
+				dl.textContent = t('download');
+				var del = document.createElement('button');
+				del.type = 'button';
+				del.className = 'btn danger';
+				del.textContent = t('delete');
+				del.setAttribute('data-name', f.name);
+				del.onclick = function () { deleteRecording(this.getAttribute('data-name')); };
+				act.appendChild(dl);
+				act.appendChild(document.createTextNode(' '));
+				act.appendChild(del);
+				row.appendChild(name);
+				row.appendChild(size);
+				row.appendChild(when);
+				row.appendChild(act);
+				body.appendChild(row);
+			}
+		}
+		if (count) {
+			count.className = 'badge-state ' + (dec.count ? 'on' : 'off');
+			count.textContent = dec.count + ' · ' + formatSize(dec.total_bytes);
+		}
+		var totalMb = parseInt($('storage_total_mb') ? $('storage_total_mb').textContent : '0', 10) || 0;
+		var usedMb = dec.total_bytes / (1024 * 1024);
+		if (bar) bar.style.width = totalMb > 0 ? Math.min(100, usedMb / totalMb * 100).toFixed(1) + '%' : '0';
+		if (usage) setText('archive-usage', t('usage') + ': ' + formatSize(dec.total_bytes) +
+			(totalMb > 0 ? ' / ' + totalMb + ' MB' : ''));
+	});
+}
+
+function refreshRecordingsLater() { setTimeout(refreshRecordings, 1500); }
+
+function deleteRecording(name) {
+	if (!confirm(t('confirm_delete'))) return;
+	request('POST', '/api/recordings/delete', 'name=' + esc(name), 'application/x-www-form-urlencoded', function (dec) {
+		if (!dec || dec.error) return toastError(dec);
+		toast('ok', t('delete'), name);
+		refreshRecordings();
+	});
+}
+
+/* ============================ network ============================ */
+function updateNetworkFields() {
+	var mode = $('network_mode');
+	var disabled = !mode || mode.value !== 'static';
+	var ids = ['network_ipaddr', 'network_netmask', 'network_gateway', 'network_dns'];
+	for (var i = 0; i < ids.length; i++) {
+		var el = $(ids[i]);
+		if (el) el.disabled = disabled;
+	}
+}
+
+/* ============================ OSD ============================ */
+function osdRegion(i) {
+	var base = 'osd/' + i;
+	return '<div class="osd-region" id="osd-region-' + i + '">' +
+		'<div class="osd-head" onclick="toggleOsd(' + i + ')">' +
+		'<span class="caret">+</span>' +
+		'<span class="title" id="' + base + '_title">' + t('region') + ' ' + i + '</span>' +
+		'<span class="badge" data-badge="osd-' + i + '">&#9679;</span>' +
+		'<button type="button" class="btn primary" data-apply="osd-' + i + '" data-ep="' + base +
+		'" disabled onclick="event.stopPropagation()">' + t('apply') + '</button>' +
+		'</div>' +
+		'<div class="osd-body">' +
+		'<div class="field"><label>' + t('text') + '</label><div class="ctl">' +
+		'<input type="text" id="' + base + '_text" data-group="osd-' + i + '" data-k="text" oninput="osdTitle(' + i + ')"></div></div>' +
+		'<div class="field"><label>' + t('image_file') + '</label><div class="ctl">' +
+		'<input type="text" id="' + base + '_img" data-group="osd-' + i + '" data-k="img" oninput="osdTitle(' + i + ')">' +
+		'<label class="btn" for="' + base + '_upld">' + t('upload_image') + '</label></div></div>' +
+		'<form id="' + base + '_form" action="/api/' + base + '" method="post" enctype="multipart/form-data" ' +
+		'target="' + base + '_frame" style="display:none">' +
+		'<input type="file" id="' + base + '_upld" name="osd_upld" accept=".bmp,.png" onchange="uploadOsd(' + i + ')">' +
+		'</form><iframe name="' + base + '_frame" style="display:none"></iframe>' +
+		'<div class="field"><label>' + t('font') + '</label><div class="ctl">' +
+		'<input type="text" id="' + base + '_font" data-group="osd-' + i + '" data-k="font"></div></div>' +
+		'<div class="field"><label>' + t('position') + ' X / Y</label><div class="ctl row2">' +
+		'<input type="number" id="' + base + '_posx" data-group="osd-' + i + '" data-k="posx">' +
+		'<input type="number" id="' + base + '_posy" data-group="osd-' + i + '" data-k="posy"></div></div>' +
+		'<div class="field"><label>' + t('size_px') + '</label><div class="ctl">' +
+		'<input type="number" id="' + base + '_size" data-group="osd-' + i + '" data-k="size" step="0.1"></div></div>' +
+		'<div class="field"><label>' + t('color') + '</label><div class="ctl">' +
+		'<input type="color" id="' + base + '_color" data-group="osd-' + i + '" data-k="color"></div></div>' +
+		'<div class="field"><label>' + t('outline') + '</label><div class="ctl">' +
+		'<input type="color" id="' + base + '_outl" data-group="osd-' + i + '" data-k="outl"></div></div>' +
+		'<div class="field"><label>' + t('opacity') + '</label><div class="ctl">' +
+		'<input type="range" id="' + base + '_opal" data-group="osd-' + i + '" data-k="opal" min="0" max="255" ' +
+		'oninput="osdOpacity(' + i + ')"><span class="val" id="' + base + '_opal_val">–</span></div></div>' +
+		'<div class="field"><label>' + t('thickness') + '</label><div class="ctl">' +
+		'<input type="number" id="' + base + '_thick" data-group="osd-' + i + '" data-k="thick" step="0.1"></div></div>' +
+		'</div></div>';
+}
+
+function buildOsd() {
+	var box = $('osd-regions');
+	if (!box || box.getAttribute('data-built') === '1') return;
+	var html = '';
+	for (var i = 0; i < 10; i++) html += osdRegion(i);
+	box.innerHTML = html;
+	box.setAttribute('data-built', '1');
+}
+
+function toggleOsd(i) {
+	var el = $('osd-region-' + i);
+	if (!el) return;
+	var open = el.className.indexOf('open') >= 0;
+	el.className = 'osd-region' + (open ? '' : ' open');
+	var caret = el.querySelector('.caret');
+	if (caret) caret.textContent = open ? '+' : '\u2212';
+}
+
+function osdOpacity(i) {
+	var range = $('osd/' + i + '_opal'), span = $('osd/' + i + '_opal_val');
+	if (range && span) span.textContent = range.value;
+}
+
+function osdTitle(i) {
+	var text = $('osd/' + i + '_text'), img = $('osd/' + i + '_img'), title = $('osd/' + i + '_title');
+	if (!title) return;
+	var v = (img && img.value) ? img.value : ((text && text.value) ? text.value : '');
+	title.textContent = t('region') + ' ' + i + (v ? ': ' + v : '');
+}
+
+function uploadOsd(i) {
+	var input = $('osd/' + i + '_upld');
+	var form = $('osd/' + i + '_form');
+	if (!input || !form || !input.files || !input.files.length) return;
+	form.submit();
+	setTimeout(function () { apiRead('osd/' + i); }, 1500);
+}
+
+/* ============================ system ============================ */
+function renderStatus(d) {
+	if (!d) return;
+	if (d.ip) setText('sb_ip', d.ip);
+	if (d.uptime) setText('sb_uptime', d.uptime);
+	if (d.loadavg && d.loadavg.length) setText('sb_load', Number(d.loadavg[0]).toFixed(2));
+	if (d.temp) setText('sb_temp', d.temp);
+	if (d.features) setText('sb_sd', d.features.sd ? t('mounted') : t('absent'));
+	if (d.loadavg) setText('status_loadavg', d.loadavg.join(' / '));
+	var chips = $('status_features');
+	if (chips && d.features) {
+		chips.innerHTML = '';
+		var names = ['eptz', 'rotate', 'substream', 'aiisp', 'ivs', 'hdr', 'sd'];
+		for (var i = 0; i < names.length; i++) {
+			var chip = document.createElement('span');
+			chip.className = 'chip' + (d.features[names[i]] ? ' on' : '');
+			chip.textContent = names[i].toUpperCase() + (d.features[names[i]] ? ' \u2713' : '');
+			chips.appendChild(chip);
+		}
+	}
+}
+
+function updateTimeFields(dec) {
+	if (dec.ts) setField('time_ts', fmtTime(dec.ts));
+	var badge = $('ntp-state');
+	if (badge) {
+		badge.className = 'badge-state ' + (dec.ntp_running ? 'on' : 'off');
+		badge.textContent = dec.ntp_running ? t('ntp_on') : t('ntp_off');
+	}
+}
+
+function syncTime() {
+	var ts = Math.floor(Date.now() / 1000);
+	request('POST', '/api/time', 'ts=' + ts, 'application/x-www-form-urlencoded', function (dec) {
+		if (!dec || dec.error) return toastError(dec);
+		applyValues('time', dec);
+		toast('ok', t('applied'));
+	});
+}
+
+function changePassword() {
+	var user = $('auth_user').value, old = $('auth_pass_old').value;
+	var n1 = $('auth_pass_new').value, n2 = $('auth_pass_confirm').value;
+	if (!user || !old || !n1) return toast('err', t('auth_required'));
+	if (n1 !== n2) return toast('err', t('auth_mismatch'));
+	request('POST', '/api/web-auth',
+		'user=' + esc(user) + '&pass_old=' + esc(old) + '&pass_new=' + esc(n1),
+		'application/x-www-form-urlencoded', function (dec) {
+			if (!dec || dec.error) return toastError(dec);
+			$('auth_pass_old').value = '';
+			$('auth_pass_new').value = '';
+			$('auth_pass_confirm').value = '';
+			toast('ok', t('auth_ok'), t('auth_reload'));
+			setTimeout(function () { location.reload(); }, 3000);
+		});
+}
+
+function importConfig(input) {
+	var file = input.files && input.files[0];
+	if (!file) return;
+	if (file.size > 128 * 1024) { toast('err', t('import_too_big')); input.value = ''; return; }
+	var form = new FormData();
+	form.append('file', file);
+	var req = new XMLHttpRequest();
+	req.open('POST', '/api/cmd/import');
+	req.onreadystatechange = function () {
+		if (req.readyState !== 4) return;
+		var dec = null;
+		try { dec = JSON.parse(req.responseText); } catch (e) {}
+		if (!dec || dec.error) toastError(dec);
+		else { toast('ok', t('import_ok')); showRestartHint(true); }
+		input.value = '';
+	};
+	req.send(form);
+}
+
+function saveConfig() {
+	getJson('/api/cmd?save', function (dec) {
+		if (dec && dec.code === 0) toast('ok', t('saved'));
+		else toast('err', t('save_failed'));
+	});
+}
+
+function restartApp() {
+	getJson('/api/cmd?restart', function (dec) {
+		if (dec && dec.code === 0) {
+			toast('info', t('restarting'));
+			showRestartHint(false);
+			setTimeout(function () { location.reload(); }, 6000);
+		} else toast('err', t('apply_failed'));
+	});
+}
+
+function rebootDevice() {
+	if (!confirm(t('reboot_confirm'))) return;
+	getJson('/api/cmd?reboot', function () { toast('info', t('rebooting')); });
+}
+
+/* ============================ sections ============================ */
+var SECTION_LOAD = {
+	live: ['record', 'eptz', 'rotate'],
+	image: ['isp', 'night', 'aiisp', 'hdr', 'iq'],
+	streams: ['mp4', 'substream', 'mjpeg', 'jpeg', 'audio', 'venc', 'rtsp', 'onvif'],
+	events: ['ivs'],
+	storage: ['storage', 'record'],
+	network: ['network', 'time'],
+	osd: ['osd/0', 'osd/1', 'osd/2', 'osd/3', 'osd/4', 'osd/5', 'osd/6', 'osd/7', 'osd/8', 'osd/9'],
+	system: ['status', 'time']
+};
+
+function loadSection(name) {
+	var eps = SECTION_LOAD[name] || [];
+	for (var i = 0; i < eps.length; i++) apiRead(eps[i]);
+	if (name === 'storage') refreshRecordings();
+	if (name === 'streams') loadStreams();
+}
+
+function showSection(name) {
+	if (!SECTION_LOAD[name]) name = 'live';
+	activeSec = name;
+	var secs = document.querySelectorAll('.sec');
+	for (var i = 0; i < secs.length; i++)
+		secs[i].className = 'sec' + (secs[i].id === 'sec-' + name ? ' active' : '');
+	updateNavDots();
+	if (!loaded[name]) {
+		loaded[name] = true;
+		loadSection(name);
+	} else if (name === 'storage') {
+		apiRead('storage');
+		refreshRecordings();
+	} else if (name === 'streams') {
+		loadStreams();
+	}
+	poll();
+}
+
+function onApplyClick(g) {
+	if (g === 'network') {
+		if ($('network_mode').value === 'static' &&
+			(!$('network_ipaddr').value || !$('network_netmask').value))
+			return toast('err', t('network_static_required'));
+		if (!confirm(t('network_confirm'))) return;
+	}
+	applyGroup(g);
+}
+
+/* ============================ polling and startup ============================ */
+function poll() {
+	if (activeSec === 'live') {
+		loadIvsEvents();
+		loadTelemetry();
+	} else if (activeSec === 'events') {
+		loadIvsEvents();
+	}
+}
+
+function every5s() {
+	apiRead('status');
+	if (activeSec === 'live') apiRead('record');
+}
+
+function init() {
+	applyLang();
+	$('lang-en').onclick = function () { setLang('en'); };
+	$('lang-ru').onclick = function () { setLang('ru'); };
+
+	buildOsd();
+	initGroups();
+
+	var btns = document.querySelectorAll('[data-apply]');
+	for (var i = 0; i < btns.length; i++) {
+		btns[i].onclick = function () { onApplyClick(this.getAttribute('data-apply')); };
+	}
+
+	var nav = document.querySelectorAll('#sidebar button');
+	for (var j = 0; j < nav.length; j++) {
+		nav[j].onclick = function () { showSection(this.getAttribute('data-sec')); };
+	}
+
+	document.addEventListener('input', function (e) {
+		if (e.target && e.target.getAttribute && e.target.getAttribute('data-group')) refreshAllGroups();
+	});
+	document.addEventListener('change', function (e) {
+		if (e.target && e.target.getAttribute && e.target.getAttribute('data-group')) refreshAllGroups();
+	});
+
+	apiRead('status');
+	apiRead('record');
+	apiRead('mp4');
+	apiRead('mjpeg');
+
+	var start = (location.hash || '').replace('#', '');
+	showSection(SECTION_LOAD[start] ? start : 'live');
+
+	every5s();
+	setInterval(every5s, 5000);
+	setInterval(poll, 2000);
+}
+
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+else init();
+</script>
 </body>
 </html>

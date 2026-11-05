@@ -6,6 +6,19 @@ This document describes the REST API endpoints available in Divinus' web server.
 
 All APIs return responses in JSON format with appropriate HTTP status codes.
 
+**OKO:** a `POST` with `Content-Type: application/x-www-form-urlencoded` is
+accepted as an alternative to the query string. The body is parsed with the same
+loop as `GET` parameters, so every write endpoint works both ways:
+
+```sh
+curl -u admin:secret -X POST -H 'Content-Type: application/x-www-form-urlencoded' \
+  --data 'mirror=true&flip=false' http://<DUT>/api/isp
+```
+
+`GET` writes remain supported for compatibility but are deprecated: they put
+credentials and state into URLs, logs and browser history. New clients should
+use `POST`.
+
 ## Authentication
 
 If authentication is enabled, all requests must include a basic authentication header:
@@ -24,17 +37,66 @@ where \[ENCODED_CREDENTIALS\] is a string representing a Base64-encoded string f
 
 Calls various integrated commands.
 
-| Method | Parameters | Description                     |
-|--------|------------|---------------------------------|
-| GET    | `save`     | Saves the current configuration |
-| GET    | `restart`  | Restarts the streaming service  |
+| Method | Parameters | Description |
+|--------|------------|-------------|
+| GET/POST | `save` | Saves the current configuration to `divinus.yaml` (previous file kept as `.bak`) |
+| GET/POST | `restart` | Graceful restart of the streaming service (`execvp`, keeps the PID) |
+| GET/POST | `reboot` | Answers first, then reboots the device (OKO) |
+| GET | `export` | Downloads the in-memory configuration as `divinus.yaml` (OKO) |
+| GET | `log` | Downloads the tail of `/var/log/messages` as `divinus.log`, up to 256 KiB (OKO) |
 
-**Response**
+**Response** (for `save`, `restart`, `reboot`)
 ```json
 {
   "code": 0  // 0 = success, !0 = error code
 }
 ```
+
+`export` and `log` return an attachment with `Content-Disposition` and a correct
+`Content-Length` instead of JSON.
+
+#### `/api/cmd/import`
+
+**OKO.** Replaces `divinus.yaml` with an uploaded copy. `POST` only,
+`multipart/form-data`, one field (the name is not used):
+
+```sh
+curl -u admin:secret -F 'file=@divinus.yaml' http://<DUT>/api/cmd/import
+```
+
+The current file is rotated to `divinus.yaml.bak` first, so a file that does not
+parse is rolled back at the next start. The limit is 128 KiB; the payload must
+contain `system:` and `web_port:`. The imported configuration takes effect after
+`/api/cmd?restart`.
+
+**Response**
+```json
+{ "imported": true, "bytes": 3399, "note": "the imported configuration applies after restart" }
+```
+
+Errors use the common `{"error","reason","hint"}` shape, for example `blocked`
+for a file that is not a divinus configuration.
+
+#### `/api/web-auth`
+
+**OKO.** Changes the WebUI credentials. `POST` only; the current credentials must
+be supplied because HTTP Basic has no session.
+
+| Parameter | Description |
+|-----------|-------------|
+| `user` | User name (the current one must match) |
+| `pass_old` | Current password |
+| `pass_new` | New password, 1–31 characters |
+
+```sh
+curl -u admin:secret -X POST \
+  --data 'user=admin&pass_old=secret&pass_new=new-secret' \
+  http://<DUT>/api/web-auth
+```
+
+The change is saved immediately; the page must be reloaded and the browser will
+ask for the new credentials. Answers `{"error":"forbidden"}` when the current
+user name or password is wrong.
 
 #### `/api/isp`
 
@@ -72,6 +134,9 @@ Gets live system status information.
   "sensor": "sc230ai",
   "temp": "45.0°C",
   "uptime": "7 days, 14:08:57",
+  "ip": "192.168.52.97",
+  "sd_free_mb": 15175,
+  "sd_total_mb": 15177,
   "features": {
     "eptz": true,
     "rotate": true,
@@ -88,17 +153,87 @@ Gets live system status information.
 
 Configures or reads the real-time clock.
 
-| Method | Parameters | Description                                |
-|--------|------------|--------------------------------------------|
-| GET    | `fmt`      | Time display format (used by dynamic OSDs) |
-| GET    | `ts`       | Unix timestamp to set (assuming local TZ)  |
+| Method | Parameters | Description |
+|--------|------------|-------------|
+| GET/POST | `fmt` | Time display format (used by dynamic OSDs) |
+| GET/POST | `ts` | Unix timestamp to set (seconds; values below 1000000 are ignored) |
+| GET/POST | `ntp` | OKO: `on`/`off` (also `true`/`false`, `1`/`0`) — enables the NTP client |
+| GET/POST | `ntp_server` | OKO: host name or IP address; an empty value restores `/etc/ntp.conf` |
 
 **Response**
 ```json
 {
   "fmt": "%Y-%m-%d %H:%M:%S",
-  "ts": 1716633815
+  "ts": 1716633815,
+  "ntp_enabled": true,
+  "ntp_server": "pool.ntp.org",
+  "ntp_running": true
 }
+```
+
+`ntp`/`ntp_server` change the running daemon immediately (OKO): with an empty
+server the vendor daemon from `/etc/init.d/S49ntp` is restarted with
+`/etc/ntp.conf`; with a server divinus stops it and starts
+`ntpd -c /tmp/divinus-ntp.conf`. The setting is only persisted by
+`/api/cmd?save`. An invalid host name returns
+`{"error":"blocked","reason":"the NTP server name is not valid"}`.
+
+#### `/api/telemetry`
+
+**OKO.** Returns the telemetry JSON written by the `oko-ec` daemon to
+`/tmp/oko-ec.json`, wrapped so the client can detect stale data.
+
+**Response**
+```json
+{
+  "available": true,
+  "age": 1,
+  "data": {
+    "ts": 1793864508,
+    "ok": 1,
+    "ec": { "ok": 1, "voltage_mv": 12400, "current_ma": 1200,
+            "temp_c10": 270, "soc": 87, "cells": [4130, 4135, 4128] },
+    "ina226": { "ok": 1, "bus_mv": 0, "current_ma": 0 },
+    "sht21": { "ok": 1, "temp_c100": 2542, "humidity_rh10": 237 },
+    "errors": []
+  }
+}
+```
+
+When the file is missing or older than 30 s the answer is
+`{"available":false,"age":<seconds>}` and the WebUI shows “Telemetry is offline”.
+
+#### `/api/recordings`
+
+**OKO.** Lists the recording archive of `record.path`
+(`/mnt/sdcard/recordings` by default), newest first, at most 200 entries.
+
+**Response**
+```json
+{
+  "path": "/mnt/sdcard/recordings",
+  "count": 1,
+  "total_bytes": 2014174,
+  "files": [
+    { "name": "recording_20261104-153241.mp4", "size": 2014174, "mtime": 1793806366 }
+  ]
+}
+```
+
+#### `/api/recordings/file`
+
+**OKO.** `GET name=<basename>` streams one `.mp4` or `.jpg` from the recording
+directory with `Content-Disposition: attachment`. Names are plain basenames;
+separators and `..` are rejected with `{"error":"blocked"}`.
+
+#### `/api/recordings/delete`
+
+**OKO.** `POST name=<basename>` deletes one recording. The segment that is being
+written right now is refused:
+
+```json
+{ "error": "blocked", "reason": "the segment is being written right now",
+  "hint": "stop the recording and try again" }
 ```
 
 ### Video Configuration
@@ -244,33 +379,43 @@ Configures text or image overlays by their ID (0-9 at the moment).
 
 | Method | Parameters | Description                                        |
 |--------|------------|----------------------------------------------------|
-| GET    | `text`     | Text to display (special specifiers supported)     |
-| GET    | `img`      | Local image path to display (`text` must be empty) |
-| GET    | `font`     | Font name to be used                               |
-| GET    | `size`     | Font size (decimal in pt)                          |
-| GET    | `color`    | Font color (hex format, RGB555 format)             |
-| GET    | `opal`     | Opacity level (0-255)                              |
-| GET    | `pos`      | Position on main stream \[x,y\]                    |
-| GET    | `posx`     | X coordinate (write-only)                          |
-| GET    | `posy`     | Y coordinate (write-only)                          |
-| GET    | `outl`     | Outline color (hex format, RGB555 format)          |
-| GET    | `thick`    | Outline thickness (0 to disable)                   |
+| GET/POST | `text`   | Text to display (special specifiers supported); empty clears it |
+| GET/POST | `img`    | Local image path to display (`text` must be empty); empty falls back to `/tmp/osd{id}.bmp` |
+| GET/POST | `font`   | Font name to be used                               |
+| GET/POST | `size`   | Font size (decimal in pt)                          |
+| GET/POST | `color`  | Font color (`#RGB` or `#RRGGBB`)                   |
+| GET/POST | `opal`   | Opacity level (0-255)                              |
+| GET/POST | `pos`    | Position on main stream \[x,y\]                    |
+| GET/POST | `posx`   | X coordinate                                       |
+| GET/POST | `posy`   | Y coordinate                                       |
+| GET/POST | `outl`   | Outline color (`#RGB` or `#RRGGBB`)                |
+| GET/POST | `thick`  | Outline thickness (0 to disable)                   |
 | POST   | `file`     | Bitmap or PNG image to upload (replaces text)      |
 
 **Response**
 ```json
 {
   "id": 0,
-  "color": "#ffff",
+  "color": "#00ff00",
   "opal": 255,
   "pos": [16, 64],
   "font": "UbuntuMono-Regular",
   "size": 15.0,
   "text": "Backyard (%T)",
-  "outl": "#8000",
+  "img": "",
+  "outl": "#008000",
   "thick": 0.0
 }
 ```
+
+**OKO notes**
+
+- `color` and `outl` are returned as `#RRGGBB` (zero-padded); `text`, `img` and
+  `font` are JSON-escaped, so quotes and `%` survive a round trip.
+- A PNG upload stores `/tmp/osd{id}.png` and points `img` at it; a BMP upload
+  clears `img`, which makes the renderer use `/tmp/osd{id}.bmp`.
+- An empty `text` or `img` now clears the value (previously the parameter was
+  ignored), which is what the WebUI “clear” flow relies on.
 
 ### Recordings
 
@@ -581,3 +726,19 @@ Gracefully stops the server.
 WebUI homepage.
 
 **Response**: HTML SPA with embedded resources
+
+### Static downloads (OKO)
+
+Any other path is served from the microSD card only. The server resolves the
+real path and refuses everything outside `/mnt/sdcard/` with `404`:
+
+| Request | Result |
+|---|---|
+| `/mnt/sdcard/recordings/recording_*.mp4` | file, MIME by extension |
+| `/mnt/sdcard/photo.jpg` | file, `image/jpeg` |
+| `//etc/passwd`, `/tmp/divinus.yaml` | `404` (previously served, this is a **breaking** restriction) |
+| path with `..` | connection closed (unchanged) |
+
+`web_enable_static: false` disables the whole static handler (answer `400`).
+Use `/api/recordings/file` for archive downloads that need a file name and an
+attachment header.

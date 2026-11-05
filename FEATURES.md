@@ -50,9 +50,14 @@ Buildroot) с сенсором SC230AI: паспорт платформы и о�
 | Видео и стриминг | OSD | Время, GPS, T/BAT/LTE/WiFi, система, сообщения | `/api/osd/{id}`, `[osd]`, `oko-osd`, `/tmp/osd.fifo` | `reg0`–`reg4`, `region.c` `@file`, HAL-патч RV1106, `S20oko-osd` | **работает** — регионы видны в RTSP main |
 | Видео и стриминг | HDR2/HDR3 | HDR на SC230AI | `/api/hdr` | HDR API + `gating.c`; экспериментальный HDR_X2 выключен | **заблокировано** — `librkaiq` не поддерживает SC230AI |
 | Видео и стриминг | OSD на всех потоках | `osd.scope=all` (main+sub+JPEG) | конфиг `[osd]`, гейт G4 | `gating.c` | **заблокировано** — multi-attach RGN не прошёл проверку |
-| WebUI/API | WebUI | Geometry, Encoding, Night image, Image, Analytics, Sub stream, Streams, Storage, Network | `http://<DUT>/` | WebUI `divinus`; Storage и Network расширены OKO | **работает** — `GET /` → HTTP 200 |
-| WebUI/API | HTTP API | status, isp, time, night, streams, storage, network + медиаэндпоинты | `/api/*`, `project/app/divinus/source/doc/endpoints.md` | сети/хранилище: mount, unmount, format, record, osd | **работает** — основные endpoint'ы отвечают |
-| WebUI/API | Аутентификация | WebUI и RTSP, смена фабричного пароля | `[web]`, `[rtsp]`, `web_auth_skiplocal=off` | включена в фабричном `divinus.yaml` | **работает** — без учётных данных запрос отклоняется |
+| WebUI/API | WebUI | Восемь разделов: Live, Image, Streams, Events, Storage, Network, OSD, System; статус-строка, EN/RU, тосты ошибок | `http://<DUT>/`, `project/app/divinus/source/doc/WEBUI_REORG.md` | переработанный `index.html` (dirty-state, POST-применение) | **работает (2026-11-05)** — headless Chromium: 8 разделов, EN/RU, Apply/dirty, 0 ошибок консоли, нет прокрутки на 390/1440 px |
+| WebUI/API | HTTP API | status, isp, time, night, streams, storage, network, recordings, telemetry, cmd + медиаэндпоинты | `/api/*`, `project/app/divinus/source/doc/endpoints.md` | сети/хранилище: mount, unmount, format, record, osd, import, web-auth | **работает (2026-11-05)** — `bench/api_check.py`: 74 проверки, 0 ошибок |
+| WebUI/API | Аутентификация | WebUI и RTSP, смена фабричного пароля через `/api/web-auth` | `[web]`, `[rtsp]`, `web_auth_skiplocal=off` | включена в фабричном `divinus.yaml`; смена пароля пишется сразу | **работает (2026-11-05)** — без учётных данных 401, старый пароль после смены 401 |
+| WebUI/API | NTP | Клиент NTP: вкл/выкл и сервер, пустой сервер — системный `/etc/ntp.conf` | `/api/time?ntp=on&ntp_server=…`, `[system] ntp_*` | `ntp.c`, `S49ntp` | **работает (2026-11-05)** — `ntp=off` останавливает демон, сервер поднимает `ntpd -c /tmp/divinus-ntp.conf`, пустой — вендорский конфиг |
+| WebUI/API | Архив записей | Список, скачивание и удаление `.mp4`/`.jpg`; активный сегмент удалить нельзя | `/api/recordings`, `/file`, `/delete` | `record.c`, microSD | **работает (2026-11-05)** — удаление тестового файла, отказ для `..`, активного сегмента и несуществующего файла |
+| WebUI/API | Экспорт/импорт конфигурации | YAML из памяти, импорт multipart с ротацией `.bak` и откатом битого файла | `/api/cmd?export`, `POST /api/cmd/import` | `app_config_dump`, `app_config_replace`, `main.c` | **работает (2026-11-05)** — импорт 3399 байт, битый `web_port` откатился из `.bak` |
+| WebUI/API | Телеметрия в WebUI | Живые значения EC/INA/SHT21 | `/api/telemetry` | `oko-ec` → `/tmp/oko-ec.json` | **работает (2026-11-05)** — 9 плиток, `age` 1–2 с |
+| WebUI/API | Статика | Раздача файлов только с microSD | `/mnt/sdcard/…` | `send_file` + `realpath` | **работает (2026-11-05)** — `//etc/passwd` и `/tmp/divinus.yaml` → 404; запись скачивается |
 | Сеть | DHCP | Один клиент `dhcpcd`, client ID по MAC, без DUID | `/api/network?mode=dhcp` | `S41dhcpcd` — заглушка, `oko-net apply` | **работает** — IP держится после reboot |
 | Сеть | Статический IPv4 | Адрес, маска, шлюз, DNS | WebUI Network → Ethernet, `/api/network?mode=static` | `/api/network` и `oko-net` | **работает** — `.220` применяется и переживает reboot |
 | Сеть | Постоянный MAC | Выводится из serial SoC и хранится в env | `fw_printenv oko_mac` | `oko_mac`, восстановление из serial | **работает** — MAC не меняется после прошивки |
@@ -71,8 +76,10 @@ Buildroot) с сенсором SC230AI: паспорт платформы и о�
 ### Примечания
 
 - Бюджет каналов VPSS — 4. Без IVS доступны main + sub + MJPEG + JPEG; с
-  включённым IVS — main + sub + JPEG, MJPEG нужно выключить. Неподтверждённые
-  комбинации `gating.c` отклоняет с причиной и подсказкой.
+  включённым IVS свободных каналов меньше. Проверено 2026-11-05: IVS + MJPEG
+  (субпоток выключен) работают вместе; комбинация sub + MJPEG + IVS не
+  проверялась. Неподтверждённые комбинации `gating.c` отклоняет с причиной и
+  подсказкой.
 - Ручная правка YAML санитизируется при старте: HDR откатывается,
   `osd.scope=all` приводится к `main`.
 - Шрифт OSD — ASCII без кириллицы; текст OSD пишется латиницей.
@@ -82,10 +89,25 @@ Buildroot) с сенсором SC230AI: паспорт платформы и о�
 - I2C3-M1 работает на 100 кГц — это требование SHT21/INA3221/STM32 EC.
 - Фабричные учётные данные — `admin` / `oko-change-me`; пароль нужно сменить до
   подключения камеры к недоверенной сети (см. `TESTBENCH.md` §6).
+- WebUI использует HTTP Basic: сессии и Logout нет (`/exit` останавливает
+  сервер), HTTPS не поддерживается, пароли хранятся в `divinus.yaml` открытым
+  текстом. Пароли RTSP/ONVIF/WebUI не читаются через API.
+- Конфиг, который не разбирается при старте, откатывается из
+  `divinus.yaml.bak` (один раз); импорт из WebUI сохраняет предыдущий файл как
+  `.bak`.
+- Статика отдаётся только с `/mnt/sdcard/`; для файлов вне карты сервер
+  возвращает 404 (раньше отдавал любой абсолютный путь).
+- В `divinus` нельзя использовать макросы ctype (`isalnum`, `isspace`):
+  `compat.c` определяет `__ctype_b` и перекрывает таблицу uClibc — процесс
+  падает. Проверки символов делаются ASCII-сравнениями.
 
 ### Как проверить
 
 ```sh
+# матрица API и WebUI на стенде
+bench/run.sh api_check.py
+bench/run.sh ui_check.py            # нужен Playwright + Chromium
+
 # статус и потоки
 curl -u admin:oko-change-me http://192.168.52.97/api/status
 curl -u admin:oko-change-me http://192.168.52.97/api/streams
@@ -93,6 +115,11 @@ curl -u admin:oko-change-me http://192.168.52.97/api/streams
 # сеть и накопитель
 curl -u admin:oko-change-me http://192.168.52.97/api/network
 curl -u admin:oko-change-me http://192.168.52.97/api/storage
+
+# архив, телеметрия и NTP
+curl -u admin:oko-change-me http://192.168.52.97/api/recordings
+curl -u admin:oko-change-me http://192.168.52.97/api/telemetry
+curl -u admin:oko-change-me http://192.168.52.97/api/time
 
 # RTSP (пути /live/0 и /live/1)
 ffprobe -v error -rtsp_transport tcp \
@@ -125,8 +152,8 @@ kernel 5.10.160. Status as of 2026-11-05. Markers: **works**, **limited**,
 | Runtime IQ | `switch_scene`, `updateIq` | **limited** — scene switch accepted, `updateIq` untested |
 | OSD | Time, GPS, T/BAT/LTE/WiFi, system, messages; ASCII font only, no Cyrillic | **works** — regions visible in RTSP main |
 | Recording | H.265 to microSD with quota and old-segment pruning | **works** — 150 frames decode as hevc 1080p |
-| Blocked features | HDR2/HDR3 on SC230AI and `osd.scope=all`; VPSS has four channels, so MJPEG must be off while IVS is active | **blocked** — refused with a reason |
-| WebUI and API | Geometry, Encoding, Night image, Image, Analytics, Sub stream, Streams, Storage, Network; `/api/*` endpoints; WebUI and RTSP authentication, change the factory password | **works** — `GET /` returns 200 |
+| Blocked features | HDR2/HDR3 on SC230AI and `osd.scope=all`; VPSS has four channels, so some stream combinations are refused. IVS + MJPEG worked with the sub stream off (2026-11-05); sub + MJPEG + IVS was not tested | **blocked** — refused with a reason |
+| WebUI and API | Eight sections (Live, Image, Streams, Events, Storage, Network, OSD, System), sticky status bar, EN/RU switch, per-card Apply with error toasts; `POST` form bodies; WebUI/RTSP authentication and `/api/web-auth`; NTP control; recording archive; telemetry card; config export/import; log download | **works (2026-11-05)** — `bench/api_check.py` 74 checks, `bench/ui_check.py` renders all sections without console errors; static files are limited to `/mnt/sdcard/` |
 | Network (Ethernet) | DHCP or static IPv4, one `dhcpcd` client (client ID by MAC, no DUID), persistent `oko_mac` and settings in U-Boot env; AIC8800 modules built | **works** — survives reboot; WiFi stack unverified |
 | Telemetry (`oko-ec`) | SHT21 `0x40`, INA3221/INA226 `0x41`, STM32 ACPI-EC `0x42` on I2C3-M1 at 100 kHz; CLI, 2 s daemon, opt-out | **works** — daemon and `/tmp/oko-ec.osd` |
 | microSD | udev automount at `/mnt/sdcard`, FAT32/MBR format with a one-time token, unmount, mount-only recording with quota and old-segment pruning | **limited** — hotplug verified by unbind/bind only |

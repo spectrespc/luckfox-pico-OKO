@@ -24,6 +24,8 @@ extern volatile int storageBusy;
 bool record_start(void);
 void record_stop(void);
 bool record_active(void);
+/* OKO: path of the segment currently written, "" when idle. */
+void record_active_path(char *out, size_t size);
 time_t record_start_time(void);
 void record_ingest_stream(hal_vidstream *stream, char isH265);
 

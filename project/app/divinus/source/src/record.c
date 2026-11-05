@@ -476,6 +476,22 @@ bool record_active(void) {
 }
 
 /**
+ * OKO: path of the segment being written, or an empty string when idle.
+ * Used by /api/recordings to refuse deleting the active file.
+ * @param out destination buffer, always NUL-terminated
+ * @param size size of the destination buffer
+ */
+void record_active_path(char *out, size_t size) {
+    if (!out || size == 0) return;
+    out[0] = '\0';
+
+    pthread_mutex_lock(&recordMtx);
+    if (recordActive && recordFile)
+        snprintf(out, size, "%s", recordPath);
+    pthread_mutex_unlock(&recordMtx);
+}
+
+/**
  * Reports when the current recording session started
  * @return the start time, or 0 when not recording
  */

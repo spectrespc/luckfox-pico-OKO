@@ -67,6 +67,31 @@ void app_config_restore(void) {
     }
 }
 
+/* OKO: report the file that app_config_open() resolves to, without opening
+ * it.  Mirrors the search order above: exe dir, ./divinus.yaml, /etc. */
+void app_config_path(char *out, size_t size) {
+    char exe_path[PATH_MAX], dir[PATH_MAX];
+
+    if (!out || size == 0) return;
+    out[0] = '\0';
+
+    ssize_t exe_len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+    if (exe_len != -1) {
+        exe_path[exe_len] = '\0';
+        snprintf(dir, sizeof(dir), "%s", exe_path);
+        snprintf(out, size, "%s/divinus.yaml", dirname(dir));
+        if (!access(out, F_OK)) return;
+    }
+
+    for (const char **path = appconf_paths; *path; path++) {
+        if (access(*path, F_OK)) continue;
+        snprintf(out, size, "%s", *path);
+        return;
+    }
+
+    snprintf(out, size, "%s", appconf_paths[0]);
+}
+
 int app_config_save(void) {
     FILE *file;
 
@@ -74,6 +99,29 @@ int app_config_save(void) {
     if (!file)
         HAL_ERROR("app_config", "Can't open config file for writing\n");
 
+    app_config_dump(file);
+    fclose(file);
+    return EXIT_SUCCESS;
+}
+
+int app_config_replace(const char *data, size_t len) {
+    FILE *file;
+
+    if (!data || !len) return EXIT_FAILURE;
+
+    app_config_open(&file, "w");
+    if (!file)
+        return EXIT_FAILURE;
+
+    if (fwrite(data, 1, len, file) != len) {
+        fclose(file);
+        return EXIT_FAILURE;
+    }
+
+    return fclose(file) == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+}
+
+void app_config_dump(FILE *file) {
     fprintf(file, "system:\n");
     fprintf(file, "  sensor_config: %s\n", app_config.sensor_config);
     fprintf(file, "  web_port: %d\n", app_config.web_port);
@@ -93,6 +141,8 @@ int app_config_save(void) {
     fprintf(file, "  web_server_thread_stack_size: %d\n", app_config.web_server_thread_stack_size);
     fprintf(file, "  time_format: %s\n", timefmt);
     fprintf(file, "  watchdog: %d\n", app_config.watchdog);
+    fprintf(file, "  ntp_enable: %s\n", app_config.ntp_enable ? "true" : "false");
+    fprintf(file, "  ntp_server: %s\n", app_config.ntp_server);
 
     fprintf(file, "night_mode:\n");
     fprintf(file, "  enable: %s\n", app_config.night_mode_enable ? "true" : "false");
@@ -285,9 +335,6 @@ int app_config_save(void) {
     fprintf(file, "  height: %d\n", app_config.http_post_height);
     fprintf(file, "  interval: %d\n", app_config.http_post_interval);
     fprintf(file, "  qfactor: %d\n", app_config.http_post_qfactor);
-
-    fclose(file);
-    return EXIT_SUCCESS;
 }
 
 enum ConfigError app_config_parse(void) {
@@ -302,6 +349,8 @@ enum ConfigError app_config_parse(void) {
     app_config.venc_stream_thread_stack_size = 16 * 1024;
     app_config.web_server_thread_stack_size = 32 * 1024;
     app_config.watchdog = 0;
+    app_config.ntp_enable = true;
+    app_config.ntp_server[0] = '\0';
 
     app_config.mdns_enable = false;
 
@@ -481,6 +530,9 @@ enum ConfigError app_config_parse(void) {
     if (EMPTY(timefmt))
         strncpy(timefmt, DEF_TIMEFMT, sizeof(timefmt) - 1);
     parse_int(&ini, "system", "watchdog", 0, INT_MAX, &app_config.watchdog);
+    parse_bool(&ini, "system", "ntp_enable", &app_config.ntp_enable);
+    parse_param_value_n(&ini, "system", "ntp_server",
+        app_config.ntp_server, sizeof(app_config.ntp_server) - 1);
 
     err =
         parse_bool(&ini, "night_mode", "enable", &app_config.night_mode_enable);

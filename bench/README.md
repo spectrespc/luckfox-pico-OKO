@@ -21,6 +21,9 @@ bench/run.sh dut.py 'mount | grep -w " / "'
 | `serial_exec.py` | вход в консоль по UART (`/dev/ttyACM*`, 115200 8N1) и выполнение команд на DUT |
 | `dut.py` | выполнение команд по SSH через `paramiko` |
 | `osd_check.py` | захват кадров RTSP, попарный диф боксов OSD-регионов, сохранение полных кадров и кропов |
+| `api_check.py` | матрица HTTP API: GET всех эндпоинтов, POST no-op, экспорт конфига и журнала, негативные проверки (статика, имена файлов, NTP) |
+| `ui_check.py` | WebUI в headless Chromium: восемь разделов, EN/RU, Apply/dirty-state, мобильная раскладка, скриншоты (нужен Playwright) |
+| `deploy_divinus.py` | копирование свежесобранного `divinus` в `/oem/usr/bin` по SSH и graceful restart (быстрая итерация, не замена прошивке) |
 
 ## Примеры
 
@@ -36,7 +39,24 @@ bench/run.sh osd_check.py --ip 192.168.52.97 --seconds 17
 
 # свои регионы (имя:x0,y0,x1,y1;...)
 bench/run.sh osd_check.py --regions 'telemetry:0,16,760,160;gps:1500,16,1920,64'
+
+# API: 74 проверки, код возврата 1 при ошибке
+bench/run.sh api_check.py
+
+# быстрая выкатка собранного divinus в /oem без пересборки образа
+make -C project/app/divinus            # в Docker-цикле SDK
+bench/run.sh deploy_divinus.py
+
+# WebUI: отдельный venv с Playwright и Chromium
+python3 -m venv /tmp/pw && /tmp/pw/bin/pip install playwright
+/tmp/pw/bin/playwright install chromium
+/tmp/pw/bin/python bench/ui_check.py
 ```
+
+`ui_check.py` не входит в `requirements.txt`: Playwright тянет браузер (~120 МБ),
+а `api_check.py` использует только стандартную библиотеку. Если Chromium не
+стартует с `libasound.so.2: cannot open shared object file`, поставьте
+`libasound2`/`libasound2t64` или распакуйте пакет и задайте `LD_LIBRARY_PATH`.
 
 ## Переменные окружения
 
@@ -55,6 +75,7 @@ bench/run.sh osd_check.py --regions 'telemetry:0,16,760,160;gps:1500,16,1920,64'
 ## Артефакты
 
 - Кадры и кропы OSD: `output/bench/osd-<YYYYmmdd-HHMMSS>-fNN[-<reg>].png`.
+- Скриншоты WebUI: `output/bench/ui/<раздел>.png` и `mobile-system.png`.
 - Каталог создаётся автоматически; `output/` в `.gitignore`.
 
 ## Типичные ошибки

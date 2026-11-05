@@ -87,8 +87,9 @@ SDK. Это read-only файлы: **никогда не редактироват
 ### Утилиты тестирования и диагностики стенда
 
 - Все рабочие скрипты стенда живут в `bench/` (`serial_exec.py`, `dut.py`,
-  `osd_check.py`, `setup.sh`, `run.sh`, `requirements.txt`,
-  `README.md`). Запуск только из проекта: `bench/run.sh <скрипт> [аргументы]` —
+  `osd_check.py`, `api_check.py`, `ui_check.py`, `deploy_divinus.py`,
+  `setup.sh`, `run.sh`, `requirements.txt`, `README.md`). Запуск только из
+  проекта: `bench/run.sh <скрипт> [аргументы]` —
   обёртка сама поднимает venv в `output/bench/venv`.
 - Логи, кадры и прочие артефакты — в `output/bench/` (gitignore), пути вида
   `/tmp/...` для скриптов и логов не использовать.

@@ -18,12 +18,12 @@
 | Папка | Назначение |
 |---|---|
 | `config/` | Извлечённые дефконфиги для быстрой настройки: `buildroot_defconfig`, `kernel_defconfig`, `dts_config`. |
-| `bench/` | Утилиты тестового стенда: UART/SSH-команды, проверка OSD по RTSP, venv. В сборке прошивки не участвует. |
+| `bench/` | Утилиты тестового стенда: UART/SSH-команды, проверка OSD по RTSP, матрица HTTP API (`api_check.py`), проверка WebUI в headless Chromium (`ui_check.py`), выкатка бинарника в `/oem` (`deploy_divinus.py`), venv. В сборке прошивки не участвует. |
 | `media/` | Медиастек Rockchip: кодеки, 2D-ускорение, ISP, NPU, медиафреймворк и примеры. |
 | `project/` | Скрипты сборки, конфигурации плат и прикладные приложения. Основная точка входа сборки. |
 | `sysdrv/` | Системный уровень: исходники U-Boot, ядра, Buildroot, прошивка MCU и модули ядра. |
 | `tools/` | Хостовые инструменты: кросс-тулчейн, утилиты упаковки и прошивки образов. |
-| `output/` | Результаты сборки: готовые образы в `image/`, промежуточные артефакты в `out/`, лог `build_all.log`. В `output/bench/` — venv и кадры OSD-проверок (gitignore). |
+| `output/` | Результаты сборки: готовые образы в `image/`, промежуточные артефакты в `out/`, лог `build_all.log`. В `output/bench/` — venv, кадры OSD-проверок и скриншоты WebUI `ui/` (gitignore). |
 | `IMAGE/` | Готовые релизные образы: папка конкретного релиза с `IMAGES/`, `PATCHES/`, `DEBUG_FILES/` и `build_info.txt`. |
 | `.kilo/` | Служебная конфигурация Kilo: команды (`command/`), skill `oko-docs` (`skills/`), планы (`plans/`), настройки (`kilo.jsonc`). Проектных агентов здесь нет. |
 
@@ -61,8 +61,10 @@
   `component` (общие компоненты).
 - `app/divinus/` — пакет `divinus`: `source/` (вендорские `src/`, `res/`, `doc/`,
   лицензии, пин коммита и локальные патчи — `compat.c` (ABI `mmap`), `region.c`
-  (`@file`-провайдер текста OSD) и `hal/plus/rk_hal.c`/`rk_rgn.h` (RGN OSD на
-  RV1106); описание патчей — в `README.md`), `files/divinus.yaml` (фабричный
+  (`@file`-провайдер текста OSD), `hal/plus/rk_hal.c`/`rk_rgn.h` (RGN OSD на
+  RV1106) и OKO-модуль `ntp.c` (NTP-клиент WebUI); переработанный WebUI —
+  `res/index.html` + `doc/WEBUI_REORG.md`; описание патчей — в `README.md`),
+  `files/divinus.yaml` (фабричный
   конфиг с OSD-регионами), `Makefile` (кросс-сборка и стейджинг в
   `/oem/usr/bin` и `/oem/usr/share/divinus`), `tests/bmp_align_test.c`
   (хостовый тест выравнивания растра OSD, в сборку не входит). Сборка входит в

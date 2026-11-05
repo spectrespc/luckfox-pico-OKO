@@ -6,6 +6,7 @@
 #include "media.h"
 #include "network.h"
 #include "night.h"
+#include "ntp.h"
 #include "rtsp/rtsp_server.h"
 #include "server.h"
 #include "watchdog.h"
@@ -69,6 +70,15 @@ int main(int argc, char *argv[]) {
     {
         enum ConfigError configError = app_config_parse();
         if (configError != CONFIG_OK) {
+            /* OKO: every save keeps the previous file as divinus.yaml.bak.
+             * An imported or hand-edited file that no longer parses must not
+             * leave the device without a streamer, so roll back once. */
+            HAL_WARNING("hal", "Configuration error %d; restoring the backup\n",
+                configError);
+            app_config_restore();
+            configError = app_config_parse();
+        }
+        if (configError != CONFIG_OK) {
             fprintf(stderr, "Configuration error code: %d\n", configError);
             HAL_ERROR("hal", "Can't load app config 'divinus.yaml'\n");
         }
@@ -87,6 +97,9 @@ int main(int argc, char *argv[]) {
         watchdog_start(app_config.watchdog);
 
     network_start();
+
+    /* OKO: honour ntp_enable / ntp_server from the saved configuration. */
+    ntp_startup_schedule();
 
     server_start();
 

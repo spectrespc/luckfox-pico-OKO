@@ -1,9 +1,14 @@
 #include "server.h"
 
 #include <dirent.h>
+#include <net/if.h>
+#include <sys/ioctl.h>
+#include <sys/stat.h>
+#include <sys/statvfs.h>
 
 #include "gating.h"
 #include "ivs_events.h"
+#include "ntp.h"
 
 #define HTTP_MAX_CLIENTS 50
 #define HTTP_MIN_BUF_SIZE 4096
@@ -165,6 +170,168 @@ static int capture_command(const char *command, char *output, size_t outputSize)
 static bool valid_ipv4(const char *value) {
     struct in_addr address;
     return value && *value && inet_pton(AF_INET, value, &address) == 1;
+}
+
+/* OKO: helpers shared by the operational endpoints (WebUI rework). */
+
+/* Defined further down; the helpers below send through them. */
+int send_to_fd(int fd, char *buf, ssize_t size);
+void send_http_error(int fd, int code);
+static void close_socket_fd(int sockFd);
+
+#define REC_ENTRY_LIMIT 200
+
+typedef struct {
+    char name[256];
+    unsigned long long size;
+    time_t mtime;
+} rec_entry;
+
+static int rec_entry_cmp(const void *a, const void *b) {
+    const rec_entry *ra = a, *rb = b;
+    if (ra->mtime != rb->mtime) return ra->mtime < rb->mtime ? 1 : -1;
+    return strcmp(rb->name, ra->name);
+}
+
+/* Sends a complete JSON body with a correct Content-Length and closes. */
+static void reply_json(int fd, const char *body, size_t len) {
+    char header[192];
+    int header_len = snprintf(header, sizeof(header),
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: application/json;charset=UTF-8\r\n"
+        "Content-Length: %zu\r\n"
+        "Connection: close\r\n\r\n", len);
+
+    send_to_fd(fd, header, header_len);
+    send_to_fd(fd, (char *)body, (ssize_t)len);
+    close_socket_fd(fd);
+}
+
+static void reply_error(int fd, const char *code, const char *reason,
+    const char *hint) {
+    char body[640];
+    int len = snprintf(body, sizeof(body),
+        "{\"error\":\"%s\",\"reason\":\"%s\",\"hint\":\"%s\"}",
+        code ? code : "failed", reason ? reason : "", hint ? hint : "");
+    reply_json(fd, body, len);
+}
+
+/* Streams a regular file with a proper MIME type and Content-Length.
+ * max_bytes > 0 sends only the tail of the file (log export). */
+static int send_stream_file(const int fd, const char *path, const char *mime,
+    const char *filename, bool attachment, size_t max_bytes) {
+    struct stat st;
+    FILE *file = fopen(path, "rb");
+
+    if (!file || fstat(fileno(file), &st) || !S_ISREG(st.st_mode)) {
+        if (file) fclose(file);
+        send_http_error(fd, 404);
+        return -1;
+    }
+
+    long long start = 0;
+    long long length = (long long)st.st_size;
+    if (max_bytes && length > (long long)max_bytes) {
+        start = length - (long long)max_bytes;
+        length = (long long)max_bytes;
+    }
+    if (start && fseek(file, (long)start, SEEK_SET)) {
+        fclose(file);
+        send_http_error(fd, 404);
+        return -1;
+    }
+
+    char header[512];
+    int header_len = snprintf(header, sizeof(header),
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: %s\r\n"
+        "Content-Disposition: %s; filename=\"%s\"\r\n"
+        "Content-Length: %lld\r\n"
+        "Connection: close\r\n\r\n",
+        mime, attachment ? "attachment" : "inline",
+        filename, length);
+    send_to_fd(fd, header, header_len);
+
+    char buf[8192];
+    long long sent = 0;
+    while (sent < length) {
+        size_t want = sizeof(buf);
+        if ((long long)want > length - sent) want = (size_t)(length - sent);
+        size_t n = fread(buf, 1, want, file);
+        if (n == 0) break;
+        if (send_to_fd(fd, buf, (ssize_t)n) < 0) break;
+        sent += (long long)n;
+    }
+    fclose(file);
+    close_socket_fd(fd);
+    return 0;
+}
+
+static const char *mime_for_name(const char *name) {
+    const char *ext = get_extension(name);
+
+    if (!strcasecmp(ext, "mp4")) return "video/mp4";
+    if (!strcasecmp(ext, "jpg") || !strcasecmp(ext, "jpeg")) return "image/jpeg";
+    if (!strcasecmp(ext, "png")) return "image/png";
+    if (!strcasecmp(ext, "bmp")) return "image/bmp";
+    if (!strcasecmp(ext, "txt") || !strcasecmp(ext, "log")) return "text/plain";
+    return "application/octet-stream";
+}
+
+/* Recording names are plain basenames: no separators, no traversal. */
+static bool valid_basename(const char *name) {
+    static const char *allowed = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        "abcdefghijklmnopqrstuvwxyz._-";
+    size_t len = name ? strlen(name) : 0;
+    const char *ext;
+
+    if (len < 5 || len > 68) return false;
+    if (strspn(name, allowed) != len) return false;
+    if (name[0] == '.') return false;
+
+    ext = get_extension(name);
+    return !strcasecmp(ext, "mp4") || !strcasecmp(ext, "jpg");
+}
+
+/* NTP server: hostname, IPv4 or IPv6 literal; the shell never sees more
+ * than these characters, which also keeps the generated config safe. */
+static bool valid_hostname(const char *value) {
+    size_t len = value ? strlen(value) : 0;
+
+    if (len == 0 || len > 127) return false;
+    if (strstr(value, "..")) return false;
+    if (value[0] == '.' || value[0] == '-' ||
+        value[len - 1] == '.' || value[len - 1] == '-') return false;
+    for (size_t i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)value[i];
+        /* OKO: do not use isalnum() here.  compat.c defines a function named
+         * __ctype_b for librockit and -rdynamic exports it, which interposes
+         * the uClibc ctype table pointer: every ctype macro then dereferences
+         * code as a table and crashes.  The NTP server charset is ASCII only. */
+        bool alnum = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') ||
+            (c >= 'A' && c <= 'Z');
+        if (!alnum && c != '.' && c != '-' && c != ':') return false;
+    }
+    return true;
+}
+
+static void local_ipv4(char *out, size_t size) {
+    int fd;
+    struct ifreq ifr;
+
+    if (!out || !size) return;
+    out[0] = '\0';
+
+    fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0) return;
+
+    memset(&ifr, 0, sizeof(ifr));
+    snprintf(ifr.ifr_name, sizeof(ifr.ifr_name), "eth0");
+    if (ioctl(fd, SIOCGIFADDR, &ifr) == 0) {
+        struct sockaddr_in *addr = (struct sockaddr_in *)&ifr.ifr_addr;
+        inet_ntop(AF_INET, &addr->sin_addr, out, size);
+    }
+    close(fd);
 }
 
 static void close_socket_fd(int sockFd) {
@@ -584,9 +751,21 @@ struct jpegtask {
 };
 
 int send_file(const int client_fd, const char *path) {
-    if (!access(path, F_OK)) {
-        const char *mime = (path);
-        FILE *file = fopen(path, "r");
+    char resolved[PATH_MAX];
+
+    /* OKO: static serving is a download path for the microSD card only.
+     * It used to hand out any absolute path as root and echo the URI as the
+     * Content-Type, so "//etc/passwd" leaked the file system.  Resolve
+     * symlinks as well, so a link on the card cannot leave it. */
+    if (!path || !STARTS_WITH(path, "/mnt/sdcard/") ||
+        !realpath(path, resolved) || !STARTS_WITH(resolved, "/mnt/sdcard/")) {
+        send_http_error(client_fd, 404);
+        return EXIT_FAILURE;
+    }
+
+    if (!access(resolved, F_OK)) {
+        const char *mime = mime_for_name(resolved);
+        FILE *file = fopen(resolved, "r");
         if (file == NULL) {
             close_socket_fd(client_fd);
             return EXIT_SUCCESS;
@@ -726,6 +905,15 @@ grant_access:
     }
 
     req->payload = req->input + req->header_len;
+
+    /* OKO: a form-encoded POST body is accepted as the query string when the
+     * URI carries no parameters.  Every existing split("&")/split("=") loop
+     * then works for POST without changes, and GET stays compatible. */
+    if (!req->query && EQUALS(req->method, "POST") && req->total > req->header_len) {
+        char *type = request_header("Content-Type");
+        if (type && STARTS_WITH(type, "application/x-www-form-urlencoded"))
+            req->query = req->payload;
+    }
 }
 
 static int query_bool(const char *value)
@@ -988,6 +1176,7 @@ void respond_request(http_request_t *req) {
                     if (!value || !*value) continue;
                     char *key = split(&value, "=");
                     if (!key || !*key || !value || !*value) continue;
+                    unescape_uri(value);
                     if (EQUALS(key, "width")) {
                         short result = strtol(value, &remain, 10);
                         if (remain != value)
@@ -1043,9 +1232,9 @@ void respond_request(http_request_t *req) {
             while (req->query) {
                 char *value = split(&req->query, "&");
                 if (!value || !*value) continue;
-                unescape_uri(value);
                 char *key = split(&value, "=");
                 if (!key || !*key || !value || !*value) continue;
+                unescape_uri(value);
                 if (EQUALS(key, "bitrate")) {
                     long result;
                     if (parse_ranged(value, 32, 320, &result))
@@ -1083,15 +1272,14 @@ void respond_request(http_request_t *req) {
     }
 
     if (EQUALS(req->uri, "/api/cmd")) {
-        int result = -1;
+        int result = -1, doReboot = 0, doExport = 0, doLog = 0;
         if (req->query) {
-            char *remain;
             while (req->query) {
                 char *value = split(&req->query, "&");
                 if (!value || !*value) continue;
-                unescape_uri(value);
                 char *key = split(&value, "=");
                 if (!key || !*key) continue;
+                if (value) unescape_uri(value);
                 if (EQUALS(key, "save")) {
                     result = app_config_save();
                     if (!result)
@@ -1103,8 +1291,51 @@ void respond_request(http_request_t *req) {
                     kill(getpid(), SIGHUP);
                     result = 0;
                     break;
+                } else if (EQUALS(key, "reboot")) {
+                    result = 0;
+                    doReboot = 1;
+                    break;
+                } else if (EQUALS(key, "export")) {
+                    doExport = 1;
+                    break;
+                } else if (EQUALS(key, "log")) {
+                    doLog = 1;
+                    break;
                 }
             }
+        }
+
+        /* OKO: export the in-memory configuration, so the download matches
+         * what the Apply buttons have already changed (before Save). */
+        if (doExport) {
+            FILE *tmp = fopen("/tmp/divinus-export.yaml", "w");
+            if (!tmp) {
+                reply_error(req->clntFd, "failed",
+                    "cannot create the export file",
+                    "check the free space in /tmp");
+                return;
+            }
+            app_config_dump(tmp);
+            fclose(tmp);
+            send_stream_file(req->clntFd, "/tmp/divinus-export.yaml",
+                "application/x-yaml", "divinus.yaml", true, 0);
+            unlink("/tmp/divinus-export.yaml");
+            return;
+        }
+
+        /* OKO: syslog tail; logread is not part of this busybox build, but
+         * syslogd writes /var/log/messages. */
+        if (doLog) {
+            struct stat st;
+            if (stat("/var/log/messages", &st) || !S_ISREG(st.st_mode)) {
+                reply_error(req->clntFd, "unavailable",
+                    "the system log is not available",
+                    "syslogd writes /var/log/messages on this image");
+                return;
+            }
+            send_stream_file(req->clntFd, "/var/log/messages",
+                "text/plain", "divinus.log", true, 256 * 1024);
+            return;
         }
 
         respLen = sprintf(response,
@@ -1114,6 +1345,111 @@ void respond_request(http_request_t *req) {
             "\r\n"
             "{\"code\":%d}", result);
         send_and_close(req->clntFd, response, respLen);
+
+        /* OKO: answer first, reboot afterwards so the client sees the JSON. */
+        if (doReboot) {
+            HAL_INFO("server", "Rebooting the device\n");
+            system("(sleep 1; reboot) >/dev/null 2>&1 &");
+        }
+        return;
+    }
+
+    /* OKO: POST /api/cmd/import — replace divinus.yaml with an uploaded copy.
+     * The current file is rotated to .bak first, so main.c can roll back when
+     * the imported file does not parse. */
+    if (EQUALS(req->uri, "/api/cmd/import")) {
+        char *type = request_header("Content-Type");
+        int body_len = req->total - req->header_len;
+        char *payload = req->payload;
+        char bound[96];
+        char marker[104];
+        char *boundary, *start, *stop;
+        size_t imported_len;
+
+        if (!EQUALS(req->method, "POST")) {
+            send_http_error(req->clntFd, 405);
+            return;
+        }
+        if (!type || !STARTS_WITH(type, "multipart/form-data") || body_len <= 0) {
+            reply_error(req->clntFd, "unsupported",
+                "the upload must be multipart/form-data",
+                "send the configuration as the 'file' field");
+            return;
+        }
+
+        boundary = strstr(type, "boundary=");
+        if (!boundary) {
+            reply_error(req->clntFd, "unsupported",
+                "the multipart boundary is missing", "");
+            return;
+        }
+        boundary += strlen("boundary=");
+        size_t bound_len = strcspn(boundary, ";\r\n");
+        if (bound_len >= 2 && boundary[0] == '"' && boundary[bound_len - 1] == '"') {
+            boundary++;
+            bound_len -= 2;
+        }
+        if (bound_len == 0 || bound_len >= sizeof(bound)) {
+            reply_error(req->clntFd, "unsupported",
+                "the multipart boundary is invalid", "");
+            return;
+        }
+        snprintf(bound, sizeof(bound), "%.*s", (int)bound_len, boundary);
+
+        start = memstr(payload, "\r\n\r\n", body_len, 4);
+        if (!start) {
+            reply_error(req->clntFd, "unsupported",
+                "the multipart body has no part header", "");
+            return;
+        }
+        start += 4;
+
+        snprintf(marker, sizeof(marker), "--%s", bound);
+        stop = memstr(start, marker, body_len - (int)(start - payload),
+            (char)strlen(marker));
+        if (stop) {
+            /* Strip the CRLF that precedes the closing boundary. */
+            if (stop - start >= 2)
+                stop -= 2;
+            else
+                stop = start;
+        } else {
+            stop = payload + body_len;
+        }
+        imported_len = (size_t)(stop - start);
+
+        if (imported_len == 0 || imported_len > 128 * 1024) {
+            reply_error(req->clntFd, "blocked",
+                "the uploaded configuration is empty or too large",
+                "the limit is 128 KiB");
+            return;
+        }
+        if (!memstr(start, "system:", (int)imported_len, 7) ||
+            !memstr(start, "web_port:", (int)imported_len, 9)) {
+            reply_error(req->clntFd, "blocked",
+                "the uploaded file is not a divinus configuration",
+                "export the current configuration and edit that copy");
+            return;
+        }
+
+        {
+            if (app_config_replace(start, imported_len)) {
+                reply_error(req->clntFd, "failed",
+                    "cannot write the configuration file",
+                    "check the permissions of divinus.yaml");
+                return;
+            }
+        }
+
+        {
+            char body[320];
+            int len = snprintf(body, sizeof(body),
+                "{\"imported\":true,\"bytes\":%zu,"
+                "\"note\":\"the imported configuration applies after restart\"}",
+                imported_len);
+            HAL_INFO("server", "Imported configuration (%zu bytes)\n", imported_len);
+            reply_json(req->clntFd, body, len);
+        }
         return;
     }
 
@@ -1123,9 +1459,9 @@ void respond_request(http_request_t *req) {
             while (req->query) {
                 char *value = split(&req->query, "&");
                 if (!value || !*value) continue;
-                unescape_uri(value);
                 char *key = split(&value, "=");
                 if (!key || !*key || !value || !*value) continue;
+                unescape_uri(value);
                 if (EQUALS(key, "mirror")) {
                     if (EQUALS_CASE(value, "true") || EQUALS(value, "1"))
                         app_config.mirror = 1;
@@ -1159,9 +1495,9 @@ void respond_request(http_request_t *req) {
             while (req->query) {
                 char *value = split(&req->query, "&");
                 if (!value || !*value) continue;
-                unescape_uri(value);
                 char *key = split(&value, "=");
                 if (!key || !*key || !value || !*value) continue;
+                unescape_uri(value);
                 if (EQUALS(key, "width")) {
                     short result = strtol(value, &remain, 10);
                     if (remain != value)
@@ -1199,9 +1535,9 @@ void respond_request(http_request_t *req) {
             while (req->query) {
                 char *value = split(&req->query, "&");
                 if (!value || !*value) continue;
-                unescape_uri(value);
                 char *key = split(&value, "=");
                 if (!key || !*key || !value || !*value) continue;
+                unescape_uri(value);
                 if (EQUALS(key, "enable")) {
                     if (EQUALS_CASE(value, "true") || EQUALS(value, "1"))
                         app_config.mjpeg_enable = 1;
@@ -1267,9 +1603,9 @@ void respond_request(http_request_t *req) {
             while (req->query) {
                 char *value = split(&req->query, "&");
                 if (!value || !*value) continue;
-                unescape_uri(value);
                 char *key = split(&value, "=");
                 if (!key || !*key || !value || !*value) continue;
+                unescape_uri(value);
                 if (EQUALS(key, "enable")) {
                     if (EQUALS_CASE(value, "true") || EQUALS(value, "1"))
                         app_config.mp4_enable = 1;
@@ -1357,9 +1693,9 @@ void respond_request(http_request_t *req) {
             while (req->query) {
                 char *value = split(&req->query, "&");
                 if (!value || !*value) continue;
-                unescape_uri(value);
                 char *key = split(&value, "=");
                 if (!key || !*key || !value || !*value) continue;
+                unescape_uri(value);
                 if (EQUALS(key, "enable"))
                     app_config.rtsp_enable = EQUALS_CASE(value, "true") || EQUALS(value, "1");
                 else if (EQUALS(key, "enable_auth"))
@@ -1402,9 +1738,9 @@ void respond_request(http_request_t *req) {
             while (req->query) {
                 char *value = split(&req->query, "&");
                 if (!value || !*value) continue;
-                unescape_uri(value);
                 char *key = split(&value, "=");
                 if (!key || !*key || !value || !*value) continue;
+                unescape_uri(value);
                 if (EQUALS(key, "enable"))
                     app_config.onvif_enable = EQUALS_CASE(value, "true") || EQUALS(value, "1");
                 else if (EQUALS(key, "enable_auth"))
@@ -1434,9 +1770,9 @@ void respond_request(http_request_t *req) {
             while (req->query) {
                 char *value = split(&req->query, "&");
                 if (!value || !*value) continue;
-                unescape_uri(value);
                 char *key = split(&value, "=");
                 if (!key || !*key || !value || !*value) continue;
+                unescape_uri(value);
                 if (EQUALS(key, "enable")) {
                     if (EQUALS_CASE(value, "true") || EQUALS(value, "1"))
                         app_config.night_mode_enable = 1;
@@ -1518,31 +1854,64 @@ void respond_request(http_request_t *req) {
             region_defaults(&osds[id], id);
         if (EQUALS(req->method, "POST")) {
             char *type = request_header("Content-Type");
-            if (type && STARTS_WITH(type, "multipart/form-data")) {
-                char *bound = strstr(type, "boundary=") + strlen("boundary=");
+            bool multipart = type && STARTS_WITH(type, "multipart/form-data");
+            /* OKO: a form-encoded body carries the region parameters and is
+             * handled by the query loop below, like a GET. */
+            bool form = type && STARTS_WITH(type, "application/x-www-form-urlencoded");
+
+            if (multipart) {
+                char *bound = strstr(type, "boundary=");
+                if (bound) bound += strlen("boundary=");
+                if (!bound || !*bound) {
+                    send_http_error(req->clntFd, 400);
+                    return;
+                }
 
                 char *payloadb = strstr(req->payload, bound);
+                if (!payloadb) {
+                    send_http_error(req->clntFd, 400);
+                    return;
+                }
                 payloadb = memstr(payloadb, "\r\n\r\n", req->total - (payloadb - req->input), 4);
-                if (payloadb) payloadb += 4;
+                if (!payloadb) {
+                    send_http_error(req->clntFd, 400);
+                    return;
+                }
+                payloadb += 4;
 
                 char *payloade = memstr(payloadb, bound,
                     req->total - (payloadb - req->input), strlen(bound));
                 if (payloade) payloade -= 4;
+                if (!payloade || payloade <= payloadb) {
+                    send_http_error(req->clntFd, 400);
+                    return;
+                }
 
                 char path[32];
 
-                if (!memcmp(payloadb, "\x89\x50\x4E\x47\xD\xA\x1A\xA", 8))
+                if (!memcmp(payloadb, "\x89\x50\x4E\x47\xD\xA\x1A\xA", 8)) {
+                    /* OKO: the PNG lands in a separate file, so point the region
+                     * at it; an empty img would load the default BMP path. */
                     sprintf(path, "/tmp/osd%d.png", id);
-                else
+                    snprintf(osds[id].img, sizeof(osds[id].img), "%s", path);
+                } else {
                     sprintf(path, "/tmp/osd%d.bmp", id);
+                    osds[id].img[0] = '\0';
+                }
 
                 FILE *img = fopen(path, "wb");
+                if (!img) {
+                    reply_error(req->clntFd, "failed",
+                        "the uploaded image could not be stored",
+                        "check the free space in /tmp");
+                    return;
+                }
                 fwrite(payloadb, sizeof(char), payloade - payloadb, img);
                 fclose(img);
 
                 strcpy(osds[id].text, "");
                 osds[id].updt = 1;
-            } else {
+            } else if (!form) {
                 respLen = sprintf(response,
                     "HTTP/1.1 415 Unsupported Media Type\r\n"
                     "Content-Type: text/plain\r\n"
@@ -1558,19 +1927,25 @@ void respond_request(http_request_t *req) {
             char *remain;
             while (req->query) {
                 char *value = split(&req->query, "&");
-                if (!value || !*value) continue;
-                unescape_uri(value);
+                if (!value) continue;
                 char *key = split(&value, "=");
-                if (!key || !*key || !value || !*value) continue;
-                if (EQUALS(key, "img"))
+                if (!key || !*key || !value) continue;
+                unescape_uri(value);
+                if (EQUALS(key, "img")) {
                     strncpy(osds[id].img, value,
                         sizeof(osds[id].img) - 1);
-                else if (EQUALS(key, "font"))
+                    osds[id].img[sizeof(osds[id].img) - 1] = '\0';
+                }
+                else if (EQUALS(key, "font")) {
                     strncpy(osds[id].font, !EMPTY(value) ? value : DEF_FONT,
                         sizeof(osds[id].font) - 1);
-                else if (EQUALS(key, "text"))
+                    osds[id].font[sizeof(osds[id].font) - 1] = '\0';
+                }
+                else if (EQUALS(key, "text")) {
                     strncpy(osds[id].text, value,
                         sizeof(osds[id].text) - 1);
+                    osds[id].text[sizeof(osds[id].text) - 1] = '\0';
+                }
                 else if (EQUALS(key, "size")) {
                     double result = strtod(value, &remain);
                     if (remain == value) continue;
@@ -1578,7 +1953,7 @@ void respond_request(http_request_t *req) {
                 }
                 else if (EQUALS(key, "color")) {
                     int result = color_parse(value);
-                    osds[id].color = result;
+                    if (result > 0) osds[id].color = result;
                 }
                 else if (EQUALS(key, "opal")) {
                     short result = strtol(value, &remain, 10);
@@ -1604,7 +1979,7 @@ void respond_request(http_request_t *req) {
                 }
                 else if (EQUALS(key, "outl")) {
                     int result = color_parse(value);
-                    osds[id].outl = result;
+                    if (result > 0) osds[id].outl = result;
                 }
                 else if (EQUALS(key, "thick")) {
                     double result = strtod(value, &remain);
@@ -1617,17 +1992,25 @@ void respond_request(http_request_t *req) {
         int color = (((osds[id].color >> 10) & 0x1F) * 255 / 31) << 16 |
                     (((osds[id].color >> 5) & 0x1F) * 255 / 31) << 8 |
                     ((osds[id].color & 0x1F) * 255 / 31);
-        respLen = sprintf(response,
-            "HTTP/1.1 200 OK\r\n"
-            "Content-Type: application/json;charset=UTF-8\r\n"
-            "Connection: close\r\n"
-            "\r\n"
-            "{\"id\":%d,\"color\":\"#%x\",\"opal\":%d,\"pos\":[%d,%d],"
-            "\"font\":\"%s\",\"size\":%.1f,\"text\":\"%s\",\"img\":\"%s\","
-            "\"outl\":\"#%x\",\"thick\":%.1f}",
-            id, color, osds[id].opal, osds[id].posx, osds[id].posy,
-            osds[id].font, osds[id].size, osds[id].text, osds[id].img,
-            osds[id].outl, osds[id].thick);
+        {
+            char esc_text[sizeof(osds[id].text) * 6 + 1];
+            char esc_img[sizeof(osds[id].img) * 6 + 1];
+            char esc_font[sizeof(osds[id].font) * 6 + 1];
+            escape_json(esc_text, osds[id].text, sizeof(esc_text));
+            escape_json(esc_img, osds[id].img, sizeof(esc_img));
+            escape_json(esc_font, osds[id].font, sizeof(esc_font));
+            respLen = sprintf(response,
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: application/json;charset=UTF-8\r\n"
+                "Connection: close\r\n"
+                "\r\n"
+                "{\"id\":%d,\"color\":\"#%06x\",\"opal\":%d,\"pos\":[%d,%d],"
+                "\"font\":\"%s\",\"size\":%.1f,\"text\":\"%s\",\"img\":\"%s\","
+                "\"outl\":\"#%06x\",\"thick\":%.1f}",
+                id, color, osds[id].opal, osds[id].posx, osds[id].posy,
+                esc_font, osds[id].size, esc_text, esc_img,
+                osds[id].outl, osds[id].thick);
+        }
         send_and_close(req->clntFd, response, respLen);
         return;
     }
@@ -1638,9 +2021,9 @@ void respond_request(http_request_t *req) {
             while (req->query) {
                 char *value = split(&req->query, "&");
                 if (!value || !*value) continue;
-                unescape_uri(value);
                 char *key = split(&value, "=");
                 if (!key || !*key || !value || !*value) continue;
+                unescape_uri(value);
                 if (EQUALS(key, "enable")) {
                     if (EQUALS_CASE(value, "true") || EQUALS(value, "1")) {
                         gating_result gate = gating_check("record");
@@ -1742,9 +2125,9 @@ void respond_request(http_request_t *req) {
             while (req->query) {
                 char *value = split(&req->query, "&");
                 if (!value || !*value) continue;
-                unescape_uri(value);
                 char *key = split(&value, "=");
                 if (!key || !*key || !value || !*value) continue;
+                unescape_uri(value);
                 if (EQUALS(key, "enable")) {
                     enableReq = query_bool(value);
                 } else if (EQUALS(key, "stream")) {
@@ -1824,9 +2207,9 @@ void respond_request(http_request_t *req) {
             while (req->query) {
                 char *value = split(&req->query, "&");
                 if (!value || !*value) continue;
-                unescape_uri(value);
                 char *key = split(&value, "=");
                 if (!key || !*key || !value || !*value) continue;
+                unescape_uri(value);
                 if (EQUALS(key, "enable")) {
                     enableReq = query_bool(value);
                 } else if (EQUALS(key, "stream")) {
@@ -1870,9 +2253,9 @@ void respond_request(http_request_t *req) {
             while (req->query) {
                 char *value = split(&req->query, "&");
                 if (!value || !*value) continue;
-                unescape_uri(value);
                 char *key = split(&value, "=");
                 if (!key || !*key || !value || !*value) continue;
+                unescape_uri(value);
                 if (EQUALS(key, "smartp")) {
                     app_config.venc_smartp = query_bool(value);
                     wantsExtra |= app_config.venc_smartp;
@@ -1937,9 +2320,9 @@ void respond_request(http_request_t *req) {
             while (req->query) {
                 char *value = split(&req->query, "&");
                 if (!value || !*value) continue;
-                unescape_uri(value);
                 char *key = split(&value, "=");
                 if (!key || !*key || !value || !*value) continue;
+                unescape_uri(value);
                 if (EQUALS(key, "enable")) {
                     enableReq = query_bool(value);
                 } else if (EQUALS(key, "path")) {
@@ -2051,9 +2434,9 @@ void respond_request(http_request_t *req) {
             while (req->query) {
                 char *value = split(&req->query, "&");
                 if (!value || !*value) continue;
-                unescape_uri(value);
                 char *key = split(&value, "=");
                 if (!key || !*key || !value || !*value) continue;
+                unescape_uri(value);
                 if (EQUALS(key, "enable")) {
                     if (EQUALS_CASE(value, "off")) { enableReq = 0; }
                     else if (EQUALS_CASE(value, "auto")) { enableReq = 2; }
@@ -2101,9 +2484,9 @@ void respond_request(http_request_t *req) {
             while (req->query) {
                 char *value = split(&req->query, "&");
                 if (!value || !*value) continue;
-                unescape_uri(value);
                 char *key = split(&value, "=");
                 if (!key || !*key || !value || !*value) continue;
+                unescape_uri(value);
                 if (EQUALS(key, "enable")) {
                     enableReq = query_bool(value);
                 } else if (EQUALS(key, "mode")) {
@@ -2187,9 +2570,9 @@ void respond_request(http_request_t *req) {
             while (req->query) {
                 char *value = split(&req->query, "&");
                 if (!value || !*value) continue;
-                unescape_uri(value);
                 char *key = split(&value, "=");
                 if (!key || !*key || !value || !*value) continue;
+                unescape_uri(value);
                 if (EQUALS(key, "main_scene")) {
                     strncpy(app_config.iq_main_scene, value, sizeof(app_config.iq_main_scene) - 1);
                     app_config.iq_main_scene[sizeof(app_config.iq_main_scene) - 1] = 0;
@@ -2259,9 +2642,9 @@ void respond_request(http_request_t *req) {
             while (req->query) {
                 char *value = split(&req->query, "&");
                 if (!value || !*value) continue;
-                unescape_uri(value);
                 char *key = split(&value, "=");
                 if (!key || !*key || !value || !*value) continue;
+                unescape_uri(value);
                 if (EQUALS(key, "mode")) {
                     unsigned int mode = 0;
                     if (EQUALS_CASE(value, "hdr2")) mode = 1;
@@ -2345,9 +2728,9 @@ void respond_request(http_request_t *req) {
             while (req->query) {
                 char *value = split(&req->query, "&");
                 if (!value || !*value) continue;
-                unescape_uri(value);
                 char *key = split(&value, "=");
                 if (!key || !*key || !value) continue;
+                unescape_uri(value);
                 if (EQUALS(key, "mode")) {
                     snprintf(mode, sizeof(mode), "%s", value);
                     haveMode = true;
@@ -2473,9 +2856,9 @@ if (EQUALS(req->uri, "/api/storage")) {
             while (req->query) {
                 char *value = split(&req->query, "&");
                 if (!value || !*value) continue;
-                unescape_uri(value);
                 char *key = split(&value, "=");
                 if (!key || !*key || !value || !*value) continue;
+                unescape_uri(value);
                 if (EQUALS(key, "action"))
                     snprintf(action, sizeof(action), "%s", value);
                 else if (EQUALS(key, "fs"))
@@ -2618,13 +3001,295 @@ if (EQUALS(req->uri, "/api/storage")) {
         return;
     }
 
+    /* OKO: change the WebUI credentials.  Basic auth has no session, so the
+     * browser picks up the new credentials on the next request. */
+    if (EQUALS(req->uri, "/api/web-auth")) {
+        char user[64] = "", passOld[64] = "", passNew[64] = "";
+
+        if (!EQUALS(req->method, "POST")) {
+            send_http_error(req->clntFd, 405);
+            return;
+        }
+        if (req->query) {
+            while (req->query) {
+                char *value = split(&req->query, "&");
+                if (!value || !*value) continue;
+                char *key = split(&value, "=");
+                if (!key || !*key || !value || !*value) continue;
+                unescape_uri(value);
+                if (EQUALS(key, "user"))
+                    snprintf(user, sizeof(user), "%s", value);
+                else if (EQUALS(key, "pass_old"))
+                    snprintf(passOld, sizeof(passOld), "%s", value);
+                else if (EQUALS(key, "pass_new"))
+                    snprintf(passNew, sizeof(passNew), "%s", value);
+            }
+        }
+
+        if (!EQUALS(user, app_config.web_auth_user) ||
+            !EQUALS(passOld, app_config.web_auth_pass)) {
+            reply_error(req->clntFd, "forbidden",
+                "the current user name or password is invalid",
+                "reload the page and try again");
+            return;
+        }
+        if (!*user || !*passNew) {
+            reply_error(req->clntFd, "blocked",
+                "the user name and the new password must not be empty", "");
+            return;
+        }
+        if (strlen(app_config.web_auth_user) >= sizeof(app_config.web_auth_user) ||
+            strlen(passNew) >= sizeof(app_config.web_auth_pass)) {
+            reply_error(req->clntFd, "blocked",
+                "the new credentials are too long",
+                "the limit is 31 characters");
+            return;
+        }
+
+        snprintf(app_config.web_auth_user, sizeof(app_config.web_auth_user), "%s", user);
+        snprintf(app_config.web_auth_pass, sizeof(app_config.web_auth_pass), "%s", passNew);
+        if (app_config_save()) {
+            reply_error(req->clntFd, "failed",
+                "the credentials were changed but could not be saved",
+                "press Save in the System section and restart");
+            return;
+        }
+
+        {
+            char esc_user[sizeof(app_config.web_auth_user) * 6 + 1];
+            char body[256];
+            escape_json(esc_user, app_config.web_auth_user, sizeof(esc_user));
+            int len = snprintf(body, sizeof(body),
+                "{\"ok\":true,\"user\":\"%s\","
+                "\"note\":\"reload the page and sign in with the new credentials\"}",
+                esc_user);
+            HAL_INFO("server", "WebUI credentials updated\n");
+            reply_json(req->clntFd, body, len);
+        }
+        return;
+    }
+
+    /* OKO: recording archive of the microSD card. */
+    if (EQUALS(req->uri, "/api/recordings")) {
+        DIR *dir = opendir(app_config.record_path);
+        rec_entry *items;
+        int count = 0;
+        unsigned long long total = 0;
+
+        items = malloc(sizeof(*items) * REC_ENTRY_LIMIT);
+        if (!dir || !items) {
+            if (dir) closedir(dir);
+            free(items);
+            reply_error(req->clntFd, "unavailable",
+                "the recording directory is not available",
+                "insert and mount a microSD card");
+            return;
+        }
+
+        {
+            struct dirent *entry;
+            while ((entry = readdir(dir))) {
+                char path[RECORD_PATH_MAX + 256];
+                struct stat st;
+                const char *ext;
+
+                if (entry->d_name[0] == '.') continue;
+                ext = get_extension(entry->d_name);
+                if (strcasecmp(ext, "mp4") && strcasecmp(ext, "jpg")) continue;
+
+                snprintf(path, sizeof(path), "%s/%s",
+                    app_config.record_path, entry->d_name);
+                if (stat(path, &st) || !S_ISREG(st.st_mode)) continue;
+
+                total += (unsigned long long)st.st_size;
+                if (count >= REC_ENTRY_LIMIT) continue;
+                snprintf(items[count].name, sizeof(items[count].name), "%s",
+                    entry->d_name);
+                items[count].size = (unsigned long long)st.st_size;
+                items[count].mtime = st.st_mtime;
+                count++;
+            }
+            closedir(dir);
+        }
+
+        qsort(items, count, sizeof(*items), rec_entry_cmp);
+
+        {
+            size_t cap = 512 + (size_t)count * 1700;
+            char *body = malloc(cap);
+            char esc_path[sizeof(app_config.record_path) * 6 + 1];
+            size_t used;
+
+            if (!body) {
+                free(items);
+                reply_error(req->clntFd, "failed", "out of memory", "");
+                return;
+            }
+            escape_json(esc_path, app_config.record_path, sizeof(esc_path));
+            used = (size_t)snprintf(body, cap,
+                "{\"path\":\"%s\",\"count\":%d,\"total_bytes\":%llu,\"files\":[",
+                esc_path, count, total);
+            for (int i = 0; i < count && used < cap; i++) {
+                char esc_name[sizeof(items[i].name) * 6 + 1];
+                escape_json(esc_name, items[i].name, sizeof(esc_name));
+                used += (size_t)snprintf(body + used, cap - used,
+                    "%s{\"name\":\"%s\",\"size\":%llu,\"mtime\":%ld}",
+                    i ? "," : "", esc_name, items[i].size,
+                    (long)items[i].mtime);
+            }
+            if (used < cap)
+                used += (size_t)snprintf(body + used, cap - used, "]}");
+            reply_json(req->clntFd, body, used < cap ? used : cap - 1);
+            free(body);
+        }
+        free(items);
+        return;
+    }
+
+    if (EQUALS(req->uri, "/api/recordings/file") ||
+        EQUALS(req->uri, "/api/recordings/delete")) {
+        char name[96] = "";
+        bool doRemove = EQUALS(req->uri, "/api/recordings/delete");
+
+        if (req->query) {
+            while (req->query) {
+                char *value = split(&req->query, "&");
+                if (!value || !*value) continue;
+                char *key = split(&value, "=");
+                if (!key || !*key || !value || !*value) continue;
+                unescape_uri(value);
+                if (EQUALS(key, "name"))
+                    snprintf(name, sizeof(name), "%s", value);
+            }
+        }
+
+        if (!valid_basename(name)) {
+            reply_error(req->clntFd, "blocked",
+                "the file name is not valid",
+                "use a name from the archive list");
+            return;
+        }
+
+        {
+            char path[RECORD_PATH_MAX + 128];
+            char active[RECORD_PATH_MAX];
+            struct stat st;
+
+            snprintf(path, sizeof(path), "%s/%s", app_config.record_path, name);
+            if (stat(path, &st) || !S_ISREG(st.st_mode)) {
+                reply_error(req->clntFd, "notfound",
+                    "the file does not exist", "refresh the archive list");
+                return;
+            }
+
+            if (!doRemove) {
+                send_stream_file(req->clntFd, path, mime_for_name(name),
+                    name, true, 0);
+                return;
+            }
+
+            if (!EQUALS(req->method, "POST")) {
+                send_http_error(req->clntFd, 405);
+                return;
+            }
+            record_active_path(active, sizeof(active));
+            if (*active && EQUALS(active, path)) {
+                reply_error(req->clntFd, "blocked",
+                    "the segment is being written right now",
+                    "stop the recording and try again");
+                return;
+            }
+            if (unlink(path)) {
+                reply_error(req->clntFd, "failed",
+                    "the file could not be deleted", strerror(errno));
+                return;
+            }
+            {
+                char body[192];
+                int len = snprintf(body, sizeof(body),
+                    "{\"deleted\":true,\"name\":\"%s\"}", name);
+                HAL_INFO("server", "Deleted recording '%s'\n", name);
+                reply_json(req->clntFd, body, len);
+            }
+        }
+        return;
+    }
+
+    /* OKO: telemetry written by the S21oko-ec companion daemon. */
+    if (EQUALS(req->uri, "/api/telemetry")) {
+        struct stat st;
+        FILE *file = fopen("/tmp/oko-ec.json", "rb");
+        time_t now = time(NULL);
+        long age = -1;
+        int len = 0;
+        char *body = NULL;
+
+        if (!file || fstat(fileno(file), &st) || !S_ISREG(st.st_mode)) {
+            if (file) fclose(file);
+            reply_error(req->clntFd, "unavailable",
+                "no telemetry data is available",
+                "the oko-ec daemon is not running");
+            return;
+        }
+
+        age = (long)(now - st.st_mtime);
+        if (age < 0) age = 0;
+        if (age > 30 || st.st_size <= 0 || st.st_size > 65536) {
+            fclose(file);
+            {
+                char body_stale[96];
+                int stale_len = snprintf(body_stale, sizeof(body_stale),
+                    "{\"available\":false,\"age\":%ld}", age);
+                reply_json(req->clntFd, body_stale, stale_len);
+            }
+            return;
+        }
+
+        body = malloc((size_t)st.st_size + 128);
+        if (!body) {
+            fclose(file);
+            reply_error(req->clntFd, "failed", "out of memory", "");
+            return;
+        }
+        len = snprintf(body, 128, "{\"available\":true,\"age\":%ld,\"data\":", age);
+        {
+            int prefix = len;
+            size_t n = fread(body + len, 1, (size_t)st.st_size, file);
+            len += (int)n;
+            fclose(file);
+            while (len > prefix && (body[len - 1] == '\n' || body[len - 1] == '\r' ||
+                    body[len - 1] == ' '))
+                len--;
+            if (len <= prefix || body[len - 1] != '}') {
+                /* The daemon may be mid-write; treat it as stale rather than
+                 * as an error so the next poll recovers by itself. */
+                free(body);
+                {
+                    char stale[96];
+                    int stale_len = snprintf(stale, sizeof(stale),
+                        "{\"available\":false,\"age\":%ld}", age);
+                    reply_json(req->clntFd, stale, stale_len);
+                }
+                return;
+            }
+        }
+        body[len++] = '}';
+        reply_json(req->clntFd, body, (size_t)len);
+        free(body);
+        return;
+    }
+
     if (EQUALS(req->uri, "/api/status")) {
         struct sysinfo si;
         sysinfo(&si);
-        char memory[16], uptime[48];
+        char memory[16], uptime[48], ipaddr[16];
+        unsigned long long sdTotal = 0, sdFree = 0;
+        bool sdSpace;
         short free = (si.freeram + si.bufferram) / 1024 / 1024;
         short total = si.totalram / 1024 / 1024;
         sprintf(memory, "%d/%dMB", total - free, total);
+        local_ipv4(ipaddr, sizeof(ipaddr));
+        sdSpace = gating_sd_space(&sdTotal, &sdFree);
         if (si.uptime > 86400)
             sprintf(uptime, "%ld days, %ld:%02ld:%02ld", si.uptime / 86400, (si.uptime % 86400) / 3600, (si.uptime % 3600) / 60, si.uptime % 60);
         else if (si.uptime > 3600)
@@ -2638,10 +3303,14 @@ if (EQUALS(req->uri, "/api/storage")) {
             "\r\n"
             "{\"chip\":\"%s\",\"loadavg\":[%.2f,%.2f,%.2f],\"memory\":\"%s\","
             "\"sensor\":\"%s\",\"temp\":\"%.1f\u00B0C\",\"uptime\":\"%s\","
+            "\"ip\":\"%s\",\"sd_free_mb\":%llu,\"sd_total_mb\":%llu,"
             "\"features\":{\"eptz\":%s,\"rotate\":%s,\"substream\":%s,"
             "\"aiisp\":%s,\"ivs\":%s,\"hdr\":%s,\"sd\":%s}}",
             chip, si.loads[0] / 65536.0, si.loads[1] / 65536.0, si.loads[2] / 65536.0,
             memory, sensor, hal_temperature_read(), uptime,
+            ipaddr,
+            sdSpace ? sdFree / (1024 * 1024) : 0,
+            sdSpace ? sdTotal / (1024 * 1024) : 0,
             (halCapabilities & HAL_CAP_EPTZ) ? "true" : "false",
             (halCapabilities & HAL_CAP_ROTATE) ? "true" : "false",
             app_config.substream_enable ? "true" : "false",
@@ -2655,32 +3324,86 @@ if (EQUALS(req->uri, "/api/storage")) {
 
     if (EQUALS(req->uri, "/api/time")) {
         struct timespec t;
+        int ntpChanged = 0, ntpFailed = 0, ntpInvalid = 0;
         if (req->query) {
             char *remain;
             while (req->query) {
                 char *value = split(&req->query, "&");
-                if (!value || !*value) continue;
-                unescape_uri(value);
+                if (!value) continue;
                 char *key = split(&value, "=");
-                if (!key || !*key || !value || !*value) continue;
+                if (!key || !*key || !value) continue;
+                unescape_uri(value);
                 if (EQUALS(key, "fmt")) {
-                    strncpy(timefmt, value, 32);
+                    if (!*value) continue;
+                    strncpy(timefmt, value, sizeof(timefmt) - 1);
+                    timefmt[sizeof(timefmt) - 1] = '\0';
                 } else if (EQUALS(key, "ts")) {
-                    short result = strtol(value, &remain, 10);
-                    if (remain == value) continue;
-                    t.tv_sec = result;
+                    /* OKO: epoch seconds do not fit in short; the old code
+                     * truncated them and set a random time. */
+                    long result = strtol(value, &remain, 10);
+                    if (remain == value || result < 1000000) continue;
+                    t.tv_sec = (time_t)result;
+                    t.tv_nsec = 0;
                     clock_settime(CLOCK_REALTIME, &t);
+                } else if (EQUALS(key, "ntp")) {
+                    if (!*value) continue;
+                    app_config.ntp_enable = query_bool(value);
+                    ntpChanged = 1;
+                } else if (EQUALS(key, "ntp_server")) {
+                    /* OKO: an empty value clears the custom server (and the
+                     * watcher falls back to /etc/ntp.conf). */
+                    if (!*value) {
+                        app_config.ntp_server[0] = '\0';
+                        ntpChanged = 1;
+                    } else if (valid_hostname(value)) {
+                        strncpy(app_config.ntp_server, value,
+                            sizeof(app_config.ntp_server) - 1);
+                        app_config.ntp_server[sizeof(app_config.ntp_server) - 1] = '\0';
+                        ntpChanged = 1;
+                    } else {
+                        ntpInvalid = 1;
+                    }
                 }
             }
+
+            if (ntpInvalid) {
+                reply_error(req->clntFd, "blocked",
+                    "the NTP server name is not valid",
+                    "use a host name such as pool.ntp.org or an IP address");
+                return;
+            }
+
+            if (ntpChanged) {
+                if (!ntp_tool_available())
+                    ntpFailed = 1;
+                else if (ntp_apply())
+                    ntpFailed = 1;
+            }
         }
+
+        if (ntpFailed) {
+            reply_error(req->clntFd, "unavailable",
+                "ntpd could not be restarted with the requested server",
+                "check /tmp/divinus-ntp.conf and the system log");
+            return;
+        }
+
         clock_gettime(CLOCK_REALTIME, &t);
-        respLen = sprintf(response,
-            "HTTP/1.1 200 OK\r\n"
-            "Content-Type: application/json;charset=UTF-8\r\n"
-            "Connection: close\r\n"
-            "\r\n"
-            "{\"fmt\":\"%s\",\"ts\":%zu}", timefmt, t.tv_sec);
-        send_and_close(req->clntFd, response, respLen);
+        {
+            char esc_server[sizeof(app_config.ntp_server) * 6 + 1];
+            escape_json(esc_server, app_config.ntp_server, sizeof(esc_server));
+            respLen = sprintf(response,
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: application/json;charset=UTF-8\r\n"
+                "Connection: close\r\n"
+                "\r\n"
+                "{\"fmt\":\"%s\",\"ts\":%ld,\"ntp_enabled\":%s,"
+                "\"ntp_server\":\"%s\",\"ntp_running\":%s}",
+                timefmt, (long)t.tv_sec,
+                app_config.ntp_enable ? "true" : "false",
+                esc_server, ntp_running() ? "true" : "false");
+            send_and_close(req->clntFd, response, respLen);
+        }
         return;
     }
 

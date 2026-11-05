@@ -172,7 +172,13 @@ int escape_url(char *dst, const char *src, size_t maxlen) {
     while (*src && len < maxlen - 1) {
         unsigned char c = *src;
 
-        if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+        /* OKO: ASCII test instead of isalnum(): compat.c exports a function
+         * named __ctype_b, which interposes the uClibc ctype table pointer
+         * and makes every ctype macro crash (see compat.c). */
+        bool alnum = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') ||
+            (c >= 'A' && c <= 'Z');
+
+        if (alnum || c == '-' || c == '_' || c == '.' || c == '~') {
             *dst++ = c;
             len++;
         } else {
@@ -529,6 +535,9 @@ char *split(char **input, char *sep) {
 void unescape_uri(char *uri) {
     char *src = uri;
     char *dst = uri;
+
+    /* OKO: a parameter without '=' has no value; callers may pass NULL. */
+    if (!uri) return;
 
     while (*src && !alt_isspace((int)(*src)) && (*src != '%'))
         src++;

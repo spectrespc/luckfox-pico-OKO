@@ -299,6 +299,64 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   `BR2_PACKAGE_UTIL_LINUX_BINARIES=y` and `BR2_PACKAGE_UTIL_LINUX_WIPEFS=y`, so
   the rootfs contains `sfdisk`, `wipefs`, `fdisk` and the rest of the basic
   util-linux set (needed to format the microSD card).
+- WebUI: страница `/` переработана в восемь разделов — **Live, Image, Streams,
+  Events, Storage, Network, OSD, System** — с боковым меню, липкой статус-строкой
+  (IP, аптайм, load, температура, microSD), переключателем **EN/RU** (по
+  умолчанию `en`, выбор в `localStorage`), тостами ошибок (`reason`/`hint`) и
+  индикацией неприменённых изменений; описание — в
+  `project/app/divinus/source/doc/WEBUI_REORG.md`.
+- WebUI: the `/` page is reworked into eight sections — **Live, Image, Streams,
+  Events, Storage, Network, OSD, System** — with a sidebar, a sticky status bar
+  (IP, uptime, load, SoC temperature, microSD), an **EN/RU** switch (default
+  `en`, choice kept in `localStorage`), error toasts built from `reason`/`hint`,
+  and unsaved-change indicators; see
+  `project/app/divinus/source/doc/WEBUI_REORG.md`.
+- API: `/api/cmd` получил `reboot`, `export` (in-memory YAML как вложение) и
+  `log` (хвост `/var/log/messages`, до 256 КиБ); добавлены `POST
+  /api/cmd/import` (multipart, замена `divinus.yaml` с ротацией `.bak`),
+  `POST /api/web-auth` (смена пароля WebUI с проверкой текущего),
+  `/api/recordings` (+ `/file`, `/delete`), `/api/telemetry`; `/api/status`
+  теперь отдаёт `ip`, `sd_free_mb`, `sd_total_mb`.
+- API: `/api/cmd` gained `reboot`, `export` (in-memory YAML as an attachment) and
+  `log` (tail of `/var/log/messages`, up to 256 KiB); added `POST
+  /api/cmd/import` (multipart, replaces `divinus.yaml` and rotates `.bak`),
+  `POST /api/web-auth` (WebUI password change with current-password check),
+  `/api/recordings` (+ `/file`, `/delete`) and `/api/telemetry`; `/api/status`
+  now returns `ip`, `sd_free_mb` and `sd_total_mb`.
+- NTP: `/api/time` принимает `ntp=on|off` и `ntp_server`; ключи
+  `ntp_enable`/`ntp_server` пишутся в секцию `system` YAML. `ntp.c` на старте
+  учитывает их через 10 с (после `S49ntp`): при выключенном NTP останавливает
+  демон, при заданном сервере поднимает `ntpd -c /tmp/divinus-ntp.conf`, при
+  пустом сервере не трогает вендорский `/etc/init.d/S49ntp` (или поднимает его,
+  если тот не стартовал). Проверено тремя перезагрузками стенда.
+- NTP: `/api/time` accepts `ntp=on|off` and `ntp_server`; the `ntp_enable` /
+  `ntp_server` keys are stored in the YAML `system` section. Ten seconds after
+  startup (after `S49ntp`) `ntp.c` applies them: a disabled client stops the
+  daemon, a configured server starts `ntpd -c /tmp/divinus-ntp.conf`, and an
+  empty server leaves the vendor `/etc/init.d/S49ntp` daemon alone (or starts it
+  if it did not come up). Verified with three bench reboots.
+- Стенд: `bench/api_check.py` (матрица GET/POST и негативных проверок API),
+  `bench/ui_check.py` (headless Chromium: разделы, EN/RU, dirty-state,
+  отсутствие горизонтальной прокрутки на 1440 и 390 px, скриншоты в
+  `output/bench/ui/`) и `bench/deploy_divinus.py` (выкатка собранного бинарника
+  в `/oem` по SSH для быстрой итерации).
+- Bench: `bench/api_check.py` (GET/POST and negative API matrix),
+  `bench/ui_check.py` (headless Chromium: sections, EN/RU, dirty state, no
+  horizontal scroll at 1440 and 390 px, screenshots in `output/bench/ui/`) and
+  `bench/deploy_divinus.py` (installs the built binary into `/oem` over SSH for
+  fast iteration).
+- Документация OKO: `project/app/divinus/source/doc/WEBUI_REORG.md` (разбор
+  «до/после», карта разделов, матрица функций ipcweb, backlog), обновлены
+  `endpoints.md`, `INIT_ORDER.md` (порядок NTP и откат конфига),
+  `TESTBENCH.md` (§1, §7B, §8), `STRUCTURE.md`, `bench/README.md`,
+  `FEATURES.md`, `VERIFIED_FUNCTIONS.md`; `doc/webui.png` заменён, прежний
+  экран сохранён как `doc/webui-before.png`.
+- OKO documentation: `project/app/divinus/source/doc/WEBUI_REORG.md` (before and
+  after, section map, ipcweb feature matrix, backlog), updated
+  `endpoints.md`, `INIT_ORDER.md` (NTP ordering and config rollback),
+  `TESTBENCH.md` (§1, §7B, §8), `STRUCTURE.md`, `bench/README.md`,
+  `FEATURES.md`, `VERIFIED_FUNCTIONS.md`; `doc/webui.png` is replaced and the
+  previous screen is kept as `doc/webui-before.png`.
 
 ### Изменено
 
@@ -542,7 +600,34 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   `OKO_NETBOOT_LOG` and creates the directory itself. Updated `TESTBENCH.md`
   (§4, §7B, §8, §10), `README_RU.md`, `STRUCTURE.md` (`bench/`, `output/bench/`),
   the `/bench` command and the rule in `AGENTS.md` §6.
-
+- WebUI: запись настроек переведена на `POST application/x-www-form-urlencoded`
+  (сервер подставляет тело в `req->query`, обработчики не менялись); `GET`
+  оставлен для совместимости и помечен устаревшим в `endpoints.md`. Кнопка
+  `Apply` активна только при отличиях от последнего прочитанного состояния,
+  ответ сервера разбирается вместо безусловного «success».
+- WebUI: writes now use `POST application/x-www-form-urlencoded` (the server
+  maps the body to `req->query`, so the handlers are unchanged); `GET` is kept
+  for compatibility and marked deprecated in `endpoints.md`. `Apply` is enabled
+  only when a field differs from the last read state, and the server response is
+  parsed instead of assuming success.
+- `/api/osd/{id}`: `color` и `outl` отдаются как `#RRGGBB` с ведущими нулями,
+  `text`/`img`/`font` экранируются в JSON; пустые `text`/`img` очищают значение;
+  PNG-загрузка прописывает `img=/tmp/osd{id}.png`, поэтому картинка реально
+  отображается.
+- `/api/osd/{id}`: `color` and `outl` are returned as zero-padded `#RRGGBB`, and
+  `text`/`img`/`font` are JSON-escaped; empty `text`/`img` clear the value; a PNG
+  upload sets `img=/tmp/osd{id}.png`, so the image is actually displayed.
+- `divinus.yaml` (фабричный и рабочий): в `system` добавлены `ntp_enable` и
+  `ntp_server`; существующие файлы без этих ключей читаются со значениями по
+  умолчанию.
+- `divinus.yaml` (factory and working copies): `system` gains `ntp_enable` and
+  `ntp_server`; existing files without the keys parse with defaults.
+- `unescape_uri()` вызывается после разделения `key=value`, поэтому `%3D` в
+  значении параметра больше не влияет на разбор, а `NULL` для параметра без
+  значения безопасен.
+- `unescape_uri()` now runs after the `key=value` split, so an encoded `%3D` in
+  a value no longer affects parsing, and `NULL` for a parameter without a value
+  is safe.
 
 ### Удалено
 
@@ -739,6 +824,42 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 - `INIT_ORDER.md`: removed the duplicated `divinus.yaml` bootstrap condition —
   replacement when the file or `reg0_text` is missing is described once, and
   the `post_chk` fallback is called out separately.
+- `divinus.yaml`, который не разбирается (например, после ручной правки или
+  импорта), больше не оставляет устройство без стримера: `main.c` при ошибке
+  разбора один раз восстанавливает `divinus.yaml.bak` и повторяет разбор,
+  и только затем завершается. Проверено на стенде: битый `web_port` →
+  восстановление, `/api/status` отвечает.
+- A `divinus.yaml` that no longer parses (after a manual edit or an import) no
+  longer leaves the device without a streamer: on a parse error `main.c`
+  restores `divinus.yaml.bak` once and retries, exiting only if that also
+  fails. Verified on the bench: a broken `web_port` is rolled back and
+  `/api/status` keeps answering.
+- `/api/time?ts=`: отметка времени читалась в `short`, из-за чего эпоха
+  обрезалась и на устройство выставлялось случайное время; теперь `long` с
+  проверкой нижней границы.
+- `/api/time?ts=`: the timestamp was read into a `short`, so the epoch was
+  truncated and the device got a random time; it is a `long` with a lower-bound
+  check now.
+- Проверки символов: `compat.c` определяет функцию `__ctype_b`, а `-rdynamic`
+  экспортирует её поверх таблицы ctype uClibc, поэтому любой макрос
+  `isalnum()`/`isspace()` разыменовывал код как таблицу и ронял процесс
+  (`SIGSEGV`). В `escape_url()`, разборе ONVIF и проверке имени NTP-сервера
+  заменено на явные ASCII-сравнения.
+- Character checks: `compat.c` defines a function named `__ctype_b` and
+  `-rdynamic` exports it over the uClibc ctype table, so every
+  `isalnum()`/`isspace()` macro dereferenced code as a table and crashed the
+  process (`SIGSEGV`). `escape_url()`, the ONVIF parser and the NTP server-name
+  check now use explicit ASCII comparisons.
+- `send_file()` отдаёт только файлы под `/mnt/sdcard/` и резолвит симлинки
+  (`realpath`). Раньше любой несовпавший URI трактовался как абсолютный путь от
+  `/`, а MIME-тип был равен самому URI, поэтому `GET //etc/passwd` отдавал файл
+  системы. **Ломающее изменение** для сторонних скриптов, которые скачивали
+  файлы вне карты; для архива записей используйте `/api/recordings/file`.
+- `send_file()` serves only files under `/mnt/sdcard/` and resolves symlinks
+  (`realpath`). Previously any unmatched URI was treated as an absolute path
+  from `/` and the MIME type was the URI itself, so `GET //etc/passwd` leaked the
+  system file. **Breaking change** for third-party scripts that downloaded files
+  outside the card; use `/api/recordings/file` for the recording archive.
 
 ### Безопасность
 
@@ -751,6 +872,17 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   `web_auth_skiplocal`; the password is a public factory default and must be
   changed before the camera is connected to an untrusted network (see
   `TESTBENCH.md` §6).
+- `POST /api/cmd/import` принимает только `multipart/form-data`, ограничен
+  128 КиБ, требует подстроки `system:` и `web_port:` и пишет файл только после
+  этих проверок; предыдущий конфиг сохраняется как `.bak` до перезаписи.
+- `POST /api/cmd/import` accepts `multipart/form-data` only, is limited to
+  128 KiB, requires the `system:` and `web_port:` markers, and writes the file
+  only after those checks; the previous config is kept as `.bak` before the
+  overwrite.
+- Смена пароля WebUI (`/api/web-auth`) требует текущий пароль и выполняется
+  только методом `POST`; пароли по-прежнему не читаются ни одним GET-эндпоинтом.
+- The WebUI password change (`/api/web-auth`) requires the current password and
+  is `POST`-only; passwords are still never returned by any GET endpoint.
 
 ## [0.1.0] — 2026-10-29
 
