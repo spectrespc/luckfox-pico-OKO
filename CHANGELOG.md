@@ -746,6 +746,17 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   `libasound2t64`) and ended with `UI check passed`; screenshots are in
   `output/bench/ui/`, and the command is documented in `bench/README.md`.
 
+- Зафиксирована проверка AIISP + YOLO на `vpss3` (демо-модель 640×640,
+  3 fps): AIISP on/off не роняет детекцию, main 30.2–32.8 fps, NPU 28%,
+  `librkpostisp.so` загружен, пропусков в `/live/0` не видно; результаты — в
+  `VERIFIED_FUNCTIONS.md`. Ночная точность и CMA не измерялись (нет
+  цели/разметки), целевая модель 640×384 ещё не собрана.
+- Recorded the AIISP + YOLO check on `vpss3` (640×640 demo model, 3 fps):
+  toggling AIISP does not break detection, main runs at 30.2–32.8 fps with 28%
+  NPU, `librkpostisp.so` is loaded and `/live/0` shows no gaps; results are in
+  `VERIFIED_FUNCTIONS.md`. Night accuracy and CMA were not measured (no
+  target/labels), and the target 640×384 model is not built yet.
+
 ### Удалено
 
 - Из oem активной платы удалены `sample_*` и `simple_*` (включая прежние
