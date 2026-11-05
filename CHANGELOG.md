@@ -302,6 +302,20 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Изменено
 
+- `FEATURES.md` переработан: вместо разнородных списков и прозы — короткий
+  паспорт платформы и одна сводная таблица функционала с колонками «Группа»,
+  «Функционал», «Описание», «Управление (API, секция YAML)», «Что добавлено
+  (OKO vs вендорский V1.4)» и «Проверено и работает». English-раздел сжат до
+  зеркальной таблицы `Feature | What was added | Verified & works`; ограничения
+  привязаны к строкам таблицы или вынесены в «Примечания». Строка `FEATURES.md`
+  в карте документации `AGENTS.md` приведена к новой структуре.
+- `FEATURES.md` reworked: the mixed lists and prose are replaced by a short
+  platform passport and one consolidated feature table with `Group`, `Feature`,
+  `Description`, `Control (API, YAML section)`, `What was added (OKO vs vendor
+  V1.4)` and `Verified & works` columns. The English section is reduced to a
+  mirrored `Feature | What was added | Verified & works` table; limitations are
+  attached to table rows or collected under "Notes". The `FEATURES.md` row in
+  the `AGENTS.md` documentation map now matches the new structure.
 - `project/app/divinus/source/src/record.c`: запись разрешена только ниже
   реально смонтированного `/mnt/sdcard`; `/oem`, `/userdata`, `/tmp` и `/`
   отвергаются. Добавлен `storageBusy`: во время формата/размонтирования новый
