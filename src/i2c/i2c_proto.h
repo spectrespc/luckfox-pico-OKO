@@ -11,6 +11,8 @@
 #define I2C_CMD_GET_POS      0x04
 #define I2C_CMD_GET_STATUS   0x05
 #define I2C_CMD_RESET        0x06
+#define I2C_CMD_ENTER_BOOT   0x07
+#define I2C_CMD_GET_STATE    0x08
 #define I2C_CMD_GET_VERSION  0xFF
 
 /* X-macro table: code, minimum number of received bytes.
@@ -22,6 +24,8 @@
     X(I2C_CMD_GET_POS,     2)    \
     X(I2C_CMD_GET_STATUS,  2)    \
     X(I2C_CMD_RESET,       1)    \
+    X(I2C_CMD_ENTER_BOOT,  1)    \
+    X(I2C_CMD_GET_STATE,   1)    \
     X(I2C_CMD_GET_VERSION, 1)
 
 /* Minimum number of received bytes required for a valid command.

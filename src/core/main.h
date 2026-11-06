@@ -8,6 +8,13 @@
 #define MAX_STEP_SPEED      5000
 #define I2C_TIMEOUT_MS    2000
 
+/* Application version reported by I2C command 0xFF and written into the
+ * application header by tools/mkapp.py.  Bump it on every user-visible
+ * firmware change; the WebUI shows these three bytes. */
+#define APP_VERSION_MAJOR   2
+#define APP_VERSION_MINOR   0
+#define APP_VERSION_PATCH   1
+
 /* Shared with ISRs: must be volatile (and read atomically where 32-bit). */
 extern volatile uint32_t system_ticks;
 extern volatile uint32_t i2c_last_activity;

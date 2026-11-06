@@ -30,6 +30,7 @@
 #include "main.h"
 #include "i2c_slave.h"
 #include "i2c_proto.h"
+#include "oko_boot.h"
 
 /* Private typedef -----------------------------------------------------------*/
 /* Private define ----------------------------------------------------------*/
@@ -240,10 +241,17 @@ void i2c_prepare_read_response(void)
             i2c_tx_buf[0] = steppers[motor].state;
             i2c_tx_idx = 0;
             break;
+        case I2C_CMD_GET_STATE: /* Role + firmware version */
+            i2c_tx_buf[0] = OKO_ROLE_APP;
+            i2c_tx_buf[1] = APP_VERSION_MAJOR;
+            i2c_tx_buf[2] = APP_VERSION_MINOR;
+            i2c_tx_buf[3] = APP_VERSION_PATCH;
+            i2c_tx_idx = 0;
+            break;
         case 0xFF: /* Firmware version */
-            i2c_tx_buf[0] = 2; /* Major */
-            i2c_tx_buf[1] = 0; /* Minor */
-            i2c_tx_buf[2] = 0; /* Patch */
+            i2c_tx_buf[0] = APP_VERSION_MAJOR;
+            i2c_tx_buf[1] = APP_VERSION_MINOR;
+            i2c_tx_buf[2] = APP_VERSION_PATCH;
             i2c_tx_idx = 0;
             break;
         default:
@@ -286,6 +294,16 @@ void i2c_process_command(void)
         case 0x06: /* Software reset */
             WWDG->CR = 0xBF;
             while(1);
+            break;
+        case I2C_CMD_ENTER_BOOT: /* Ask the bootloader for an update */
+            stepper_stop(0);
+            stepper_stop(1);
+            FLASH_Unlock(FLASH_MEMTYPE_DATA);
+            FLASH_ProgramByte(OKO_EEPROM_MAGIC_ADDR, OKO_EEPROM_MAGIC);
+            FLASH_Lock(FLASH_MEMTYPE_DATA);
+            IWDG->KR = 0x00;   /* do not reload: the watchdog resets us */
+            while (1)
+                ;
             break;
         default:
             /* Read commands (0x04/0x05/0xFF) are handled in the ISR; unknown

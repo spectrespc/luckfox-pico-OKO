@@ -74,8 +74,9 @@ static void test_required_len(void)
     CHECK(i2c_required_len(0x06) == 1); /* reset      */
     CHECK(i2c_required_len(0xFF) == 1); /* version    */
     CHECK(i2c_required_len(0x00) == 1); /* unknown    */
-    CHECK(i2c_required_len(0x07) == 1); /* calibrate removed in 2.0.0 -> unknown */
-    CHECK(i2c_required_len(0x08) == 1); /* unknown: adding a command must update
+    CHECK(i2c_required_len(0x07) == 1); /* enter-boot */
+    CHECK(i2c_required_len(0x08) == 1); /* get role + version */
+    CHECK(i2c_required_len(0x09) == 1); /* unknown: adding a command must update
                                            i2c_proto.h and this test together */
     CHECK(i2c_required_len(0x42) == 1); /* unknown    */
 }

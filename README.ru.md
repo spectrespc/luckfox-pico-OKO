@@ -2,11 +2,28 @@
 
 > 🇬🇧 [English version](README.md)
 
+> **Загрузчик.** Это прошивка мотора STM8 для OKO. По сравнению с раскладкой
+> до загрузчика (`3f36dcee4f05c02a48bcc48b8eea7e606fe7634e`) добавлены
+> I2C-загрузчик и утилита `oko-motor`; разметка: boot
+> `0x8000–0x89FF`, заголовок `0x8A00`, приложение `0x8A10–0x9FFF`
+> (измерено 2412/4279 байт). Команда 0x07 — вход в загрузчик, 0x08 —
+> роль/версия `[role, major, minor, patch]`; протокол 0x10–0x14 — в
+> `docs/BOOTLOADER.md`.
+
 ## 1. Быстрый старт
-- Требования: SDCC ≥ 4.0, STM8-SPL-SDCC в ~/STM8-SPL-SDCC, stm8flash, ST-LINK/v2
-- Сборка: `make clean && make` → build/firmware.ihx
-- Прошивка: `make flash` (или `stm8flash -c stlinkv2 -p stm8s103f3 -s flash -w build/firmware.ihx`)
-- Проверка: `i2cdetect -y 7` (должен показать 0x60)
+- Требования: SDCC ≥ 4.0, STM8-SPL-SDCC в ~/STM8-SPL-SDCC, stm8flash,
+  ST-LINK/v2. В OKO SDK есть готовый образ `tools/stm8-sdcc` (Debian
+  bookworm, SDCC 4.2).
+- Сборка (из корня репозитория): `make` (или `make -f Makefile.stm8 all`)
+  → `build/app.ihx` (обновление по I2C), `build/factory.ihx` (ST-Link),
+  `build/app.bin`. В OKO SDK та же сборка запускается в `tools/stm8-sdcc`:
+  `docker run --rm -v "$PWD:/work" -w /work oko-stm8-sdcc make -f Makefile.stm8 all`
+- Хост-утилита: `make -C util` → `util/motorctl`.
+- Прошивка: первый раз `factory.ihx` по ST-Link/SWIM (`docs/BOOTLOADER.md`),
+  далее `oko-motor flash build/app.ihx` по I2C или `/api/flash` в WebUI OKO.
+- Офлайн-проверка: `oko-motor check build/app.ihx` (без I2C, код 0/2);
+  выход из загрузчика — `oko-motor boot-reset`.
+- Проверка: `i2cdetect -y 3` (должен показать 0x60; шину выберите под свой хост)
 
 ## 2. Возможности
 - Ведомый I²C, адрес 0x60, стандартный режим 100 кГц
@@ -56,10 +73,12 @@ src/
 
 Для сборки прошивки (запускать из корня репозитория):
 ```
-make clean && make
+docker run --rm -v "$PWD:/work" -w /work \
+  oko-stm8-sdcc make -f Makefile.stm8 all
 ```
 
-Прошивка будет создана как build/firmware.ihx. Все промежуточные артефакты
+`Makefile.stm8` линкует приложение на `0x8A10`, проверяет размер и создаёт
+`build/app.ihx`/`build/factory.ihx`. Все промежуточные артефакты
 (.rel, .asm, .lst, .map, ...) записываются в build/ и не отслеживаются git.
 Host-тесты протокола находятся в tests/ и запускаются командой
 `make -C tests test`.
@@ -68,20 +87,20 @@ Host-тесты протокола находятся в tests/ и запуск�
 Основные команды проверки:
 ```bash
 # Check I2C device is present
-i2cdetect -y 7
+i2cdetect -y 3
 
 # Get firmware version
-i2ctransfer -y 7 w1@0x60 0xFF r3
+i2ctransfer -y 3 w1@0x60 0xFF r3
 
 # Move focus motor +100 steps
-i2ctransfer -y 7 w4@0x60 0x02 0x00 0x01 0xF4  # set speed
-i2ctransfer -y 7 w4@0x60 0x01 0x00 0x00 0x64   # move
+i2ctransfer -y 3 w4@0x60 0x02 0x00 0x01 0xF4  # set speed
+i2ctransfer -y 3 w4@0x60 0x01 0x00 0x00 0x64   # move
 
 # Get focus motor position
-i2ctransfer -y 7 w2@0x60 0x04 0x00 r4
+i2ctransfer -y 3 w2@0x60 0x04 0x00 r4
 
 # Get focus motor status
-i2ctransfer -y 7 w2@0x60 0x05 0x00 r1
+i2ctransfer -y 3 w2@0x60 0x05 0x00 r1
 ```
 
 ## 8. Известные ограничения

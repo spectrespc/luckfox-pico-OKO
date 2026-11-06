@@ -3,8 +3,8 @@
 
 #include <stdint.h>
 
-#define I2C_RX_BUF_SIZE 8
-#define I2C_TX_BUF_SIZE 8
+#define I2C_RX_BUF_SIZE 48
+#define I2C_TX_BUF_SIZE 48
 
 extern volatile uint8_t i2c_rx_buf[I2C_RX_BUF_SIZE];
 extern volatile uint8_t i2c_tx_buf[I2C_TX_BUF_SIZE];

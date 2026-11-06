@@ -22,55 +22,64 @@
 | 0x04 | [cmd][motor] | [pos_0..pos_3] | Request current position (int32 BE) |
 | 0x05 | [cmd][motor] | [status] | Request status (0=IDLE, 1=RUNNING, 2=ERROR) |
 | 0x06 | [cmd] | — | Software reset controller |
-| 0xFF | [cmd] | [maj][min][pat] | Get firmware version (3 bytes) |
+| 0x07 | [cmd] | — | Enter the I2C bootloader (OKO fork) |
+| 0x08 | [cmd] | [role][maj][min][pat] | Get role (0=app, 1=boot) and version (shared with the bootloader) |
+| 0xFF | [cmd] | [maj][min][pat] | Get firmware version (3 bytes; application only) |
 
 ## Detailed Command Examples
 
 ### Version Request
 ```bash
-i2ctransfer -y 7 w1@0x60 0xFF r3
-# Response: 0x02 0x00 0x00 (version 2.0.0)
+i2ctransfer -y 3 w1@0x60 0xFF r3
+# Response: 0x02 0x00 0x01 (version 2.0.1)
 ```
 
 ### Set Speed
 ```bash
 # Set focus motor speed to 500 steps/sec
-i2ctransfer -y 7 w4@0x60 0x02 0x00 0x01 0xF4
+i2ctransfer -y 3 w4@0x60 0x02 0x00 0x01 0xF4
 ```
 
 ### Move Motor
 ```bash
 # Move focus motor +100 steps
-i2ctransfer -y 7 w4@0x60 0x01 0x00 0x00 0x64
+i2ctransfer -y 3 w4@0x60 0x01 0x00 0x00 0x64
 ```
 
 ### Get Position
 ```bash
 # Get focus motor position
-i2ctransfer -y 7 w2@0x60 0x04 0x00 r4
+i2ctransfer -y 3 w2@0x60 0x04 0x00 r4
 # Response: [pos_0..pos_3] (int32 BE)
 ```
 
 ### Get Status
 ```bash
 # Get zoom motor status
-i2ctransfer -y 7 w2@0x60 0x05 0x01 r1
+i2ctransfer -y 3 w2@0x60 0x05 0x01 r1
 # Response: 0x00 (IDLE), 0x01 (RUNNING) or 0x02 (ERROR)
 ```
 
 ### Stop Motor
 ```bash
 # Stop zoom motor
-i2ctransfer -y 7 w2@0x60 0x03 0x01
+i2ctransfer -y 3 w2@0x60 0x03 0x01
 ```
 
 ### Software Reset
 ```bash
 # Reset controller
-i2ctransfer -y 7 w1@0x60 0x06
+i2ctransfer -y 3 w1@0x60 0x06
 ```
 
 ## Error Handling
-- Unknown commands (including the removed 0x07) are ignored (no NACK)
+- Unknown commands are ignored (no NACK); 0x07 is ENTER_BOOT in this fork.
 - I2C errors (AF/BERR/OVR) → automatic module reset
 - Timeout 2 s without activity → module reset
+
+## OKO bootloader
+
+This fork adds command `0x07` (ENTER_BOOT): the application stores `0x42` in
+EEPROM `0x4010` and lets the IWDG reset the MCU. The bootloader at
+`0x8000–0x89FF` answers commands `0x10–0x14`; see `BOOTLOADER.md` for the
+frames, CRC and the `0x8A00`/`0x8A10` application layout.
