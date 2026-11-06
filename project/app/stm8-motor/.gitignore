@@ -1,0 +1,42 @@
+# Артефакты сборки (build/)
+build/
+*.rel
+*.asm
+*.lst
+*.rst
+*.sym
+*.ihx
+*.lk
+*.map
+*.cdb
+
+# Зависимости
+node_modules/
+venv/
+__pycache__/
+*.pyc
+
+# Сборка хост-утилит
+dist/
+*.egg-info/
+util/motorctl
+tests/test_i2c_protocol
+tests/test_stepper_logic
+tests/test_boot_header
+tests/test_boot_protocol
+tests/test_crc32
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Kilo Code
+.kilo/
+*.log
+
+# Окружение
+.env
+.env.local
+# SDK staging
+out/

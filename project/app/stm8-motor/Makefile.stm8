@@ -1,0 +1,96 @@
+# Makefile.stm8 - firmware build for the OKO STM8S103F3P6 motor controller.
+#
+# This file is NOT called by the SDK build: `project/app/Makefile` builds every
+# subdirectory that contains a `Makefile`, and the main builder image has no
+# SDCC.  The SDK wrapper is `Makefile` (host `oko-motor` only); this file is
+# run inside tools/stm8-sdcc:
+#
+#   docker run --rm -v "$PWD:/work" -w /work/project/app/stm8-motor \
+#       oko-stm8-sdcc make -f Makefile.stm8 all
+#
+# Layout: boot 0x8000..0x89FF, header 0x8A00..0x8A0F, app 0x8A10..0x9FFF.
+SPL_ROOT ?= $(HOME)/STM8-SPL-SDCC
+SPL_INC  := $(SPL_ROOT)/Libraries/STM8S_StdPeriph_Driver/inc
+SPL_CONF := $(SPL_ROOT)/Libraries/STM8S_StdPeriph_Driver/conf
+SPL_LIB  := $(SPL_ROOT)/Libraries/STM8S_StdPeriph_Driver/STM8S103/spl.lib
+DEVICE   := STM8S103
+
+CC       := sdcc
+CFLAGS   := -mstm8 --std-sdcc11 --opt-code-size -D$(DEVICE)
+INCLUDE  := -Isrc/core -Isrc/hal -Isrc/i2c -Isrc/motor -Isrc/common \
+            -I$(SPL_INC) -I$(SPL_CONF)
+BUILD    := build
+
+BOOT_SRC := src/boot/boot.c src/boot/boot_hw.c src/boot/boot_i2c.c \
+            src/boot/boot_flash.c src/common/oko_crc.c
+APP_SRC  := src/core/main.c src/hal/hw_config.c src/hal/stm8s_it.c \
+            src/i2c/i2c_slave.c src/motor/stepper.c src/motor/eeprom.c
+BOOT_OBJ := $(addprefix $(BUILD)/boot_,$(notdir $(BOOT_SRC:.c=.rel)))
+APP_OBJ  := $(addprefix $(BUILD)/app_,$(notdir $(APP_SRC:.c=.rel)))
+
+BOOT_IHX    := $(BUILD)/boot.ihx
+APP_FW_IHX  := $(BUILD)/app-firmware.ihx
+APP_IHX     := $(BUILD)/app.ihx
+FACTORY_IHX := $(BUILD)/factory.ihx
+
+HEADERS := $(wildcard src/*/*.h) $(wildcard src/common/*.h)
+
+.PHONY: all boot app factory clean flash verify size
+
+all: $(APP_IHX) $(FACTORY_IHX)
+
+$(SPL_LIB):
+	$(MAKE) -C $(SPL_ROOT)/Libraries/STM8S_StdPeriph_Driver DEVICE=$(DEVICE)
+
+$(BUILD):
+	mkdir -p $(BUILD)
+
+# --- bootloader: register-level, no SPL library objects -------------------
+$(BUILD)/boot_%.rel: src/boot/%.c $(HEADERS) | $(BUILD)
+	$(CC) $(CFLAGS) --code-loc 0x8000 $(INCLUDE) -c $< -o $@
+
+$(BUILD)/boot_oko_crc.rel: src/common/oko_crc.c $(HEADERS) | $(BUILD)
+	$(CC) $(CFLAGS) --code-loc 0x8000 $(INCLUDE) -c $< -o $@
+
+$(BOOT_IHX): $(BOOT_OBJ) $(BUILD)
+	$(CC) $(CFLAGS) --code-loc 0x8000 -o $@ $(BOOT_OBJ)
+
+# --- application: SPL, vector table at 0x8A10 -----------------------------
+$(BUILD)/app_%.rel: src/core/%.c $(HEADERS) | $(BUILD)
+	$(CC) $(CFLAGS) --code-loc 0x8A10 $(INCLUDE) -c $< -o $@
+
+$(BUILD)/app_%.rel: src/hal/%.c $(HEADERS) | $(BUILD)
+	$(CC) $(CFLAGS) --code-loc 0x8A10 $(INCLUDE) -c $< -o $@
+
+$(BUILD)/app_%.rel: src/i2c/%.c $(HEADERS) | $(BUILD)
+	$(CC) $(CFLAGS) --code-loc 0x8A10 $(INCLUDE) -c $< -o $@
+
+$(BUILD)/app_%.rel: src/motor/%.c $(HEADERS) | $(BUILD)
+	$(CC) $(CFLAGS) --code-loc 0x8A10 $(INCLUDE) -c $< -o $@
+
+$(APP_FW_IHX): $(APP_OBJ) $(SPL_LIB) $(BUILD)
+	$(CC) $(CFLAGS) --code-loc 0x8A10 -o $@ $(APP_OBJ) \
+		-L$(dir $(SPL_LIB)) -lspl
+
+# Header at 0x8A00 + app at 0x8A10; mkapp.py also enforces the size gate.
+$(APP_IHX): $(APP_FW_IHX) $(BOOT_IHX) tools/mkapp.py Makefile.stm8
+	python3 tools/mkapp.py --boot $(BOOT_IHX) --app $(APP_FW_IHX) \
+		--out $(APP_IHX) --factory $(FACTORY_IHX) --bin $(BUILD)/app.bin
+
+$(FACTORY_IHX): $(APP_IHX) $(BOOT_IHX)
+
+boot: $(BOOT_IHX)
+app: $(APP_IHX)
+factory: $(FACTORY_IHX)
+
+size: $(APP_IHX)
+	python3 tools/mkapp.py --check $(BOOT_IHX) $(APP_FW_IHX)
+
+flash: $(FACTORY_IHX)
+	stm8flash -c stlinkv2 -p stm8s103f3 -s flash -w $(FACTORY_IHX)
+
+verify: $(FACTORY_IHX)
+	stm8flash -c stlinkv2 -p stm8s103f3 -s flash -v $(FACTORY_IHX)
+
+clean:
+	rm -rf $(BUILD)
