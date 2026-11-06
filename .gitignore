@@ -10,6 +10,7 @@ RK-RELEASE-NOTES-V1.4.1.txt
 IMAGE/
 output/
 project/app/oko-ec/out/
+project/app/STM32CubeF1/
 project/app/wifi_app/wpa_supplicant.conf
 config/
 sysdrv/tools/board/memtester/memtester-4.6.0/
