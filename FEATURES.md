@@ -27,6 +27,7 @@
 | Разделы | `env` 256K, `idblock` 256K, `uboot` 512K, `boot` 6M, `oem` 40M, `userdata` 40M, `rootfs` 168M |
 | Активный DTS | `rv1106g-luckfox-pico-pro-max-sc230ai.dts` |
 | Медиастек | `divinus` (OpenIPC), H.265/H.264, JPEG, RTSP, WebUI |
+| NPU-стек | драйвер `rknpu` 0.9.8 (`20240828`, non-IOMMU), мини-рантайм `librknnmrt.so` 1.6.0 |
 | Сборка | Docker (`./start.sh`), результат — `output/image/update.img` |
 
 ### Как проверить
@@ -155,8 +156,9 @@ Platform: Luckfox Pico Pro Max (RV1106), SC230AI, 256 MB SPI NAND, Buildroot,
 kernel 5.10.160. Partitions: `env` 256K, `idblock` 256K, `uboot` 512K, `boot` 6M,
 `oem` 40M, `userdata` 40M, `rootfs` 168M. Active DTS:
 `rv1106g-luckfox-pico-pro-max-sc230ai.dts`. Media stack: `divinus` (OpenIPC),
-H.265/H.264, JPEG, RTSP, WebUI. Build: Docker (`./start.sh`), output
-`output/image/update.img`.
+H.265/H.264, JPEG, RTSP, WebUI. NPU stack: `rknpu` driver 0.9.8 (`20240828`,
+non-IOMMU) with the `librknnmrt.so` 1.6.0 mini-runtime. Build: Docker
+(`./start.sh`), output `output/image/update.img`.
 
 Shared notes: see the Russian section above; open defects are in
 `KNOWN_ISSUES.md`, and unverified stream combinations, YOLO, sensors and

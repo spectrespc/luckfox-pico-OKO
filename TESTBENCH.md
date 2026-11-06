@@ -231,6 +231,19 @@ cat /tmp/oko-test-ok
 # модули медиастека и сенсора
 lsmod | grep -E 'sc230ai|rockit|rga3|rknpu|video_rkisp'
 
+# замена драйвера NPU без перепрошивки (этап A: 0.9.2 -> 0.9.8)
+# baseline сохранён в /userdata/rknpu-baseline-0.9.2.ko
+killall divinus
+rmmod rknpu
+insmod /userdata/rknpu-0.9.8.ko
+dmesg | grep -i rknpu | tail -3      # ожидается v0.9.8 и non-iommu mode
+cd /userdata && LD_LIBRARY_PATH=/oem/usr/lib setsid /oem/usr/bin/divinus \
+  >/tmp/divinus.log 2>&1 < /dev/null &
+curl -s -u admin:oko-change-me http://127.0.0.1/api/status
+# откат: killall divinus; rmmod rknpu; insmod /userdata/rknpu-baseline-0.9.2.ko
+# штатная загрузка берёт /oem/usr/ko/rknpu.ko; кандидат ставится туда же
+# только после soak (cp /userdata/rknpu-0.9.8.ko /oem/usr/ko/rknpu.ko)
+
 # сенсор определился, формат кадра читается
 cat /proc/rkisp-vir0
 

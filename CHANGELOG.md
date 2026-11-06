@@ -39,6 +39,26 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Изменено
 
+- **NPU: драйвер `rknpu` 0.9.2 → 0.9.8 (OKO).** Импортирован upstream
+  `drivers/rknpu` из `rockchip-linux/kernel`, ветка `develop-5.10`, коммит
+  `276af44f9a7be47a2804ecabf37f8898541d244e` (0.9.8, `20240828`). Сохранено
+  локальное отличие — enum `MONITOR_TPYE_DEV` в `rknpu_devfreq.c`; DT и
+  non-IOMMU режим не менялись. При `CONFIG_PM_DEVFREQ=y` модуль линкует
+  `rknpu_devfreq.o` (в 0.9.2 этот код был внутри `rknpu_drv.c`); `FENCE`,
+  `SRAM` и `DRM_GEM` остаются выключены. Рантайм `librknnmrt.so` 1.6.0 не
+  менялся. Проверено на DUT hot-swap: `v0.9.8`, YOLO и AIISP работают, три
+  перезагрузки и 2-часовой soak без деградации; обновлены `FEATURES.md`,
+  `FEATURES_VERIFIED.md`, `VERIFIED_FUNCTIONS.md` и `TESTBENCH.md` (§8).
+- **NPU: `rknpu` driver 0.9.2 → 0.9.8 (OKO).** Imported the upstream
+  `drivers/rknpu` from `rockchip-linux/kernel`, branch `develop-5.10`, commit
+  `276af44f9a7be47a2804ecabf37f8898541d244e` (0.9.8, `20240828`). The local
+  `MONITOR_TPYE_DEV` enum change in `rknpu_devfreq.c` is preserved; DT and
+  non-IOMMU mode are unchanged. With `CONFIG_PM_DEVFREQ=y` the module now links
+  `rknpu_devfreq.o` (0.9.2 kept that code inside `rknpu_drv.c`); `FENCE`,
+  `SRAM` and `DRM_GEM` stay disabled. The `librknnmrt.so` 1.6.0 runtime is
+  untouched. Verified on the DUT via hot-swap: `v0.9.8`, YOLO and AIISP work,
+  three reboots and a 2-hour soak show no degradation; updated `FEATURES.md`,
+  `FEATURES_VERIFIED.md`, `VERIFIED_FUNCTIONS.md` and `TESTBENCH.md` (§8).
 - **VPN: флаги сборки и статус (OKO).** `sysdrv/drv_ko/Makefile` собирает
   `amneziawg` (`M_DIRS`), `sysdrv/cfg/package.mk` получил
   `CONFIG_SYSDRV_ENABLE_AWG=n` + `RK_ENABLE_AWG`, активный board config —

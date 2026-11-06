@@ -58,7 +58,8 @@
 
 ### Примечания
 
-- YOLO/NPU: `librknnmrt.so` — 1.6.0, драйвер `rknpu` 0.9.2 совместим. Модель
+- YOLO/NPU: `librknnmrt.so` — 1.6.0, драйвер `rknpu` 0.9.8 совместим (проверено
+  2026-11-06: hot-swap, три перезагрузки и 2-часовой soak с YOLO и AIISP). Модель
   обязана быть INT8 `.rknn`, вход — ровно `yolo.input_width`×`yolo.input_height`;
   иначе активация отклоняется. Модель 640×384 INT8 (2.6 МиБ) собирается
   `tools/rknn-toolkit2/` и в образ не входит — после прошивки её загружают через
@@ -133,7 +134,9 @@ Status as of 2026-11-06.
 
 ### Notes
 
-- YOLO/NPU: `librknnmrt.so` is 1.6.0 and the `rknpu` 0.9.2 driver is compatible.
+- YOLO/NPU: `librknnmrt.so` is 1.6.0 and the `rknpu` 0.9.8 driver is compatible
+  (verified 2026-11-06: hot-swap, three reboots and a 2-hour soak with YOLO and
+  AIISP).
   The model must be INT8 `.rknn` with an input exactly
   `yolo.input_width`×`yolo.input_height`; otherwise activation is refused. The
   640×384 INT8 model (2.6 MiB) is built by `tools/rknn-toolkit2/`, is not part
