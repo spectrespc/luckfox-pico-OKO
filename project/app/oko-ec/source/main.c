@@ -44,6 +44,7 @@
 
 #include "crc_host.h"
 #include "daemon.h"
+#include "ec_lock.h"
 #include "ec_proto.h"
 #include "i2c_transport.h"
 #include "sensors.h"
@@ -910,6 +911,115 @@ static int cmd_flash_blob(int fd, uint8_t *data, uint32_t file_size, uint32_t ve
     return 0;
 }
 
+/*
+ * Wait until the EC reports the requested role.
+ *
+ * GET_INFO is polled every 100 ms with short I2C retries so the loop reacts
+ * quickly while the controller reboots. Transport/protocol diagnostics are
+ * suppressed because a rebooting device NACKs until its application (or
+ * bootloader) is ready; the final state is reported by the caller.
+ */
+static int wait_for_role(int fd, uint8_t role, unsigned timeout_ms)
+{
+    struct ec_info info;
+    unsigned waited_ms = 0;
+    int transport_verbose = i2c_transport_verbose();
+    int proto_verbose = ec_verbose_enabled();
+    int found = -1;
+
+    i2c_transport_set_verbose(0);
+    ec_set_verbose(0);
+
+    for (;;)
+    {
+        if (ec_get_info(fd, &info, 5000u, 2u) == 0 && info.device_type == role)
+        {
+            found = 0;
+            break;
+        }
+        if (waited_ms >= timeout_ms)
+        {
+            break;
+        }
+        usleep(100000);
+        waited_ms += 100;
+    }
+
+    i2c_transport_set_verbose(transport_verbose);
+    ec_set_verbose(proto_verbose);
+    return found;
+}
+
+/* Send ENTER_UPDATE (0x0E). The application resets before clocking out its
+ * reply, so a missing answer is treated as success. */
+static int enter_bootloader(int fd)
+{
+    uint8_t wbuf[3];
+    uint8_t rbuf[I2C_READ_BUF_SIZE];
+
+    put_le16(wbuf, 1);
+    wbuf[2] = CMD_ENTER_UPDATE;
+
+    printf("Entering update mode (ENTER_UPDATE)...\n");
+    if (ec_io(fd, wbuf, 3, rbuf, I2C_READ_BUF_SIZE) < 0)
+    {
+        return 0;
+    }
+
+    if (rbuf[2] != ST_OK)
+    {
+        fprintf(stderr, "oko-ec: ENTER_UPDATE failed: 0x%02X (%s)\n", rbuf[2],
+                status_str(rbuf[2]));
+        return -1;
+    }
+    return 0;
+}
+
+/* Make sure the STM32 is in its I2C bootloader before the first write.
+ * The application accepts only ENTER_UPDATE (0x0E); BEGIN_UPDATE sent to the
+ * running application is rejected with ERR_CMD. */
+static int ensure_bootloader(int fd)
+{
+    struct ec_info info;
+
+    if (ec_get_info(fd, &info, g_ec_delay_us, g_ec_retries) < 0)
+    {
+        fprintf(stderr,
+                "oko-ec: no response from 0x%02X; check the I2C bus and power\n",
+                (unsigned)EC_ADDR7);
+        return -1;
+    }
+
+    if (info.device_type == DEVICE_TYPE_BOOT)
+    {
+        printf("Device is already in the bootloader.\n");
+        return 0;
+    }
+    if (info.device_type != DEVICE_TYPE_APP)
+    {
+        fprintf(stderr, "oko-ec: unexpected device_type %u at 0x%02X\n",
+                (unsigned)info.device_type, (unsigned)EC_ADDR7);
+        return -1;
+    }
+
+    if (enter_bootloader(fd) < 0)
+    {
+        return -1;
+    }
+    if (wait_for_role(fd, DEVICE_TYPE_BOOT, 5000u) == 0)
+    {
+        printf("Bootloader ready.\n");
+        return 0;
+    }
+
+    fprintf(stderr,
+            "oko-ec: bootloader not responding after ENTER_UPDATE; check 0x42 / "
+            "ENTER_UPDATE and power\n");
+    return -1;
+}
+
+static int cmd_reset(int fd);
+
 /* EC-путь: линейный .bin, дальше общий код */
 static int cmd_flash(int fd, const char *file_path, uint32_t version)
 {
@@ -919,9 +1029,47 @@ static int cmd_flash(int fd, const char *file_path, uint32_t version)
     {
         return -1;
     }
+
+    if (ensure_bootloader(fd) < 0)
+    {
+        free(data);
+        return -1;
+    }
+
     int rc = cmd_flash_blob(fd, data, size, version, file_path);
     free(data);
-    return rc;
+    if (rc < 0)
+    {
+        /* The EC was already switched to the bootloader.  If the image was
+         * rejected before the first write (for example, oversized), the
+         * previous application is still valid, so leave update mode instead
+         * of requiring a manual reset/power cycle. */
+        fprintf(stderr, "oko-ec: flash failed; returning to the application\n");
+        if (cmd_reset(fd) == 0)
+            (void)wait_for_role(fd, DEVICE_TYPE_APP, 3000u);
+        return rc;
+    }
+
+    /* COMMIT only marks the new image; the bootloader stays in update mode
+     * until it is reset, so start the application explicitly. */
+    if (cmd_reset(fd) < 0)
+    {
+        fprintf(stderr,
+                "oko-ec: warning: firmware written, but RESET failed; "
+                "power-cycle the device\n");
+        return 0;
+    }
+    if (wait_for_role(fd, DEVICE_TYPE_APP, 3000u) == 0)
+    {
+        printf("Application started.\n");
+    }
+    else
+    {
+        fprintf(stderr,
+                "oko-ec: warning: firmware written, but the application did not "
+                "confirm startup; run \"oko-ec reset\" or power-cycle\n");
+    }
+    return 0;
 }
 
 static int cmd_enter_update(int fd)
@@ -1773,7 +1921,9 @@ int main(int argc, char **argv)
         else
         {
             uint32_t version = (uint32_t)strtoul(argv[index + 2], NULL, 0);
+            ec_lock_take(1);
             ret = cmd_flash(fd, argv[index + 1], version);
+            ec_lock_release();
         }
     }
     else if (strcmp(command, "enter-update") == 0)

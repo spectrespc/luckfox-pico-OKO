@@ -19,6 +19,11 @@ Target: Luckfox Pico Pro Max (RV1106, Buildroot, SC230AI, `librkaiq` from the
 | 9 | runtime IQ scene/file switch | API implemented, scene switch accepted | `rk_hal.c` |
 | 10 | microSD hotplug + recorder quota | implemented, format/hotplug/recording verified | `oko-sdcard`, `record.c` |
 | 11 | Ethernet DHCP/static + stable MAC | implemented, env-backed, verified | `oko-net`, `/api/network` |
+| 12 | Focus assistant (AF metric + ROI) | implemented, gate passed | `focus.c`, `hal/plus/rk_af_stats.c`, `/api/focus` |
+| 13 | STM8 focus motor (I2C `0x60`) | implemented, verified on the bench | `focus_motor.c`, `stm8-motor/` |
+| 14 | Controller firmware upload | implemented, STM8 verified; STM32 real flash not tested | `flash.c`, `/api/flash`, `oko-flash` |
+| 15 | Controller version cache | implemented, verified | `firmware_status.c`, `/api/firmware` |
+| 16 | NPU load on the OSD CPU line | implemented, verified | `oko-osd`, `/tmp/osd-sys.txt` |
 
 Blocked features return `{"error":"blocked","reason":...,"hint":...}` from the
 API and are refused again in `gating.c`; editing the YAML directly is also
@@ -40,6 +45,11 @@ sanitised at start (HDR falls back, `osd.scope=all` is forced to `main`).
 | G10 | microSD insert/remove | **pass (simulated)** | format via `/api/storage` created one FAT32 `OKO` partition; unbind/bind of `mmc1:aaaa` set `present=0`/not-mounted and then `present=1` with automount; a 5 s H.265 clip decoded as 150 frames of 1920x1080. Physical extraction was not performed |
 | G11 | unique channel budget | **pass** | `VPSS_MAX_CHN_NUM == 4`: without IVS the pool is main+sub+MJPEG+JPEG, with IVS it is main+sub+JPEG and MJPEG must be off |
 | G12 | Ethernet identity and static IP | **pass** | MAC derived from SoC serial and stored as `oko_mac` in U-Boot env; `dhcpcd` uses `clientid` by MAC (no DUID); a full flash and reboot kept `02:47:8d:05:67:56` and `192.168.52.97`; static `.220` survived reboot |
+| G13 | AFM statistics for the focus assistant | **pass** | `GET /api/focus` after enabling: `status=running`, `cells_used=225`, `metric_avg` 527k–530k over 20 samples (`output/bench/focus/focus-20261106-111557.csv`); `af_hw_ver=2`. The SC230AI IQ needs `af_v31.TuningPara.contrast_af.enable=1`; with `0` the cells are zero. Moving the ROI from the full frame to the top-left textured band changes the metric (525k vs 2.64M) and to the flat centre gives 0. The AFM grid itself stays full-frame, so the ROI is applied by cell selection |
+| G14 | STM32 firmware upload through the WebUI | **pass** | `/api/firmware` and `/api/flash` report `present=true`, `state=app`, dotted `version=1.0.0`; `POST /api/flash` with `app-1.0.1.bin` (version from the file name) reaches `done` and `/api/firmware` reports `1.0.1`; rollback `app-1.0.0.bin` returns `1.0.0`. Missing `confirm`, a name without a version, wrong extension, oversized body and unknown target return HTTP 400 |
+| G15 | STM8 firmware upload through the WebUI | **pass** | The upstream `2.0.0` was replaced with `factory-2.0.1.ihx` over ST-Link; `enter-boot`/`boot-reset`/`info` work; `/api/flash` (`target=stm8`, `app-2.0.1.ihx`, `confirm=FLASH`) returns 202, reaches `done`, and `oko-motor version` reports `2.0.1`; the server matches the name version against the OKO8 header (`oko-motor check FILE 2.0.1`). The application starts after a power cycle; killing the host tool mid-update leaves the bootloader answering and the next upload recovers. Invalid images, a name/header mismatch and missing `confirm` return 400; a second POST during a job returns 409 |
+| G16 | NPU load on the OSD | **pass** | `/proc/rknpu/load` is read by `oko-osd`; `/tmp/osd-sys.txt` is `CPU 20% NPU 0%\nMEM FREE 81%\nT 61.8C` and becomes `NPU 17%` with YOLO running; the region-4 text provider is `@/tmp/osd-sys.txt`. Frames were captured to `output/bench/focus/osd-frame-*.png` (the OSD text is not OCR-checked) |
+| G17 | STM32/STM8 versions in the WebUI | **pass** | `GET /api/firmware` reports dotted `1.0.0` for STM32 and `2.0.1` for STM8 (the raw STM32 hex remains in `oko-ec info`); the System card renders the same values; both entries update after a flash and survive a power cycle |
 
 ## Sub stream lifecycle and OSD
 

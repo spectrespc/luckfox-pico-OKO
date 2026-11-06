@@ -1,4 +1,7 @@
 #include "app_config.h"
+#include "firmware_status.h"
+#include "focus.h"
+#include "focus_motor.h"
 #include "gating.h"
 #include "hal/macros.h"
 #include "http_post.h"
@@ -110,6 +113,11 @@ int main(int argc, char *argv[]) {
             "falling back to vi0\n");
         app_config.yolo_source = 2;
     }
+    focus_motor_init(app_config.focus_device, app_config.focus_address);
+    focus_motor_set_enabled(app_config.focus_motor);
+    if (app_config.focus_motor)
+        focus_motor_set_all_speeds(app_config.focus_speed);
+
     models_start();
     if (app_config.watchdog)
         watchdog_start(app_config.watchdog);
@@ -142,6 +150,18 @@ int main(int argc, char *argv[]) {
 
     if (sdk_start())
         HAL_ERROR("hal", "Failed to start SDK!\n");
+
+    if (app_config.focus_enable) {
+        gating_result gate = gating_check("focus_metric");
+        if (!gate.ok)
+            HAL_WARNING("focus", "Focus assistant blocked: %s\n", gate.reason);
+        else if (focus_start()) {
+            app_config.focus_enable = false;
+            HAL_WARNING("focus", "Focus statistics could not be started\n");
+        }
+    }
+
+    firmware_status_start();
 
     if (app_config.ivs_enable) {
         gating_result gate = gating_check("ivs");
@@ -196,6 +216,9 @@ int main(int argc, char *argv[]) {
 
     ivs_events_stop();
 
+    focus_stop();
+    firmware_status_stop();
+
     sdk_stop();
 
     if (app_config.stream_enable)
@@ -207,6 +230,8 @@ int main(int argc, char *argv[]) {
     }
 
     server_stop();
+
+    focus_motor_shutdown();
 
     network_stop();
 

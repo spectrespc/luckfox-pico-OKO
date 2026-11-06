@@ -11,6 +11,7 @@
 #include <unistd.h>
 
 #include "daemon.h"
+#include "ec_lock.h"
 #include "ec_proto.h"
 #include "i2c_transport.h"
 #include "sensors.h"
@@ -58,8 +59,16 @@ void snapshot_collect(struct oko_snapshot *snap, const char *dev, uint8_t ec_add
     {
         struct ec_info info;
         struct ec_battery battery;
-        if (ec_get_info(fd, &info, delay_us, retries) == 0 &&
-            info.device_type == EC_DEVICE_APP &&
+        if (ec_get_info(fd, &info, delay_us, retries) == 0)
+        {
+            snap->ec.info_ok = 1;
+            snap->ec.device_type = info.device_type;
+            snap->ec.proto = info.proto;
+            snap->ec.version = info.version;
+            snap->ec.img_size = info.img_size;
+            snap->ec.flags = info.flags;
+        }
+        if (snap->ec.info_ok && info.device_type == EC_DEVICE_APP &&
             ec_get_battery(fd, &battery, delay_us, retries) == 0)
         {
             snap->ec.ok = 1;
@@ -135,9 +144,14 @@ void snapshot_print_json(FILE *out, const struct oko_snapshot *snap,
 
     if (parts & SNAP_EC)
     {
-        fprintf(out, ",\"ec\":{\"ok\":%d,\"voltage_mv\":%u,\"current_ma\":%d,"
+        fprintf(out, ",\"ec\":{\"ok\":%d,\"info_ok\":%d,\"device_type\":%u,"
+                     "\"proto\":%u,\"version\":%lu,\"img_size\":%lu,"
+                     "\"flags\":%u,\"voltage_mv\":%u,\"current_ma\":%d,"
                      "\"temp_c10\":%d,\"soc\":%u,\"status\":%u,\"cells\":[%u,%u,%u]}",
-                snap->ec.ok, (unsigned)snap->ec.voltage_mv, (int)snap->ec.current_ma,
+                snap->ec.ok, snap->ec.info_ok, (unsigned)snap->ec.device_type,
+                (unsigned)snap->ec.proto, (unsigned long)snap->ec.version,
+                (unsigned long)snap->ec.img_size, (unsigned)snap->ec.flags,
+                (unsigned)snap->ec.voltage_mv, (int)snap->ec.current_ma,
                 (int)snap->ec.temp_c10, (unsigned)snap->ec.soc,
                 (unsigned)snap->ec.status, (unsigned)snap->ec.cells[0],
                 (unsigned)snap->ec.cells[1], (unsigned)snap->ec.cells[2]);
@@ -499,8 +513,16 @@ int daemon_run(const char *dev, uint8_t ec_addr, uint8_t ina_addr, uint8_t sht_a
 
     while (!stop_flag)
     {
+        if (ec_lock_take(0))
+        {
+            /* "oko-ec flash" owns the bus; skip this cycle. */
+            for (unsigned i = 0; i < 10u && !stop_flag; i++)
+                usleep(100000);
+            continue;
+        }
         snapshot_collect(&snap, dev, ec_addr, ina_addr, sht_addr, shunt_mohm,
                          ina_channel, delay_us, retries);
+        ec_lock_release();
         if (snapshot_write_files(&snap) < 0 && !once)
         {
             fprintf(stderr, "oko-ec: cannot write state files: %s\n", strerror(errno));

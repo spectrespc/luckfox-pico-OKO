@@ -79,13 +79,22 @@ System**. Мобильная раскладка (<40em) превращает sid
 | Раздел | Endpoint'ы (GET для чтения, POST для применения) |
 |---|---|
 | Live | `/api/record` (пуск/стоп), `/api/eptz`, `/api/rotate`, `/api/ivs` (журнал), `/api/telemetry` |
-| Image | `/api/isp`, `/api/night`, `/api/aiisp`, `/api/hdr`, `/api/iq` |
+| Image | `/api/isp`, `/api/night`, `/api/aiisp`, `/api/hdr`, `/api/iq`, `/api/focus` |
 | Streams | `/api/mp4`, `/api/substream`, `/api/mjpeg`, `/api/jpeg`, `/api/audio`, `/api/venc`, `/api/rtsp`, `/api/onvif`, `/api/streams` |
 | Events | `/api/ivs` (настройки и журнал), `/api/yolo` (NPU-детекция), `/api/models` (список, загрузка, активация, удаление) |
 | Storage | `/api/storage`, `/api/record`, `/api/recordings`, `/api/recordings/file`, `/api/recordings/delete` |
-| Network | `/api/network`, `/api/time` (`ntp`, `ntp_server`) |
+| Network | `/api/network`, `/api/time` (`ntp`, `ntp_server`), `/api/vpn`, `/api/vpn/import`, `/api/vpn/export` |
 | OSD | `/api/osd/{0..9}` (текст или картинка) |
-| System | `/api/status`, `/api/time`, `/api/web-auth`, `/api/cmd` (`save`, `restart`, `reboot`, `export`, `log`), `/api/cmd/import` |
+| System | `/api/status`, `/api/time`, `/api/web-auth`, `/api/cmd` (`save`, `restart`, `reboot`, `export`, `log`), `/api/cmd/import`, `/api/flash`, `/api/firmware` |
+
+Карточки OKO: **Network → VPN** (профиль `wg0`/`awg0`, бейдж типа, живое
+состояние, импорт файлом или текстом, Connect/Disconnect/Autostart/Delete,
+скачивание профиля) и **Image → Focus assist** (`enable`, `mode`, `fps`, ROI и
+предпросмотр с рамкой, живой `metric_avg`/`cells_used`/`status`); также
+**System → Controller firmware / Firmware versions** (target, файл,
+`confirm=FLASH`, прогресс и журнал; строки STM32/STM8 с `state`, `version`,
+`boot_version`, Refresh и автоопрос раз в 10 с). Прошивка выполняется
+воркером, HTTP-поток не блокируется; при `busy` форма отключается.
 
 ### 5. Каталог функций ipcweb и матрица решений
 
@@ -103,7 +112,7 @@ System**. Мобильная раскладка (<40em) превращает sid
 | Reboot | **перенесено** — `/api/cmd?reboot` |
 | NTP | **перенесено** — `/api/time` + `ntp.c` |
 | JWT-логин, уровни доступа, пользователи | **backlog** — вне плана; сейчас Basic-auth |
-| Firmware upgrade через UI | **backlog** — нужен подписанный образ и защита от обрыва |
+| Firmware upgrade через UI | **перенесено для контроллеров** — `/api/flash` (STM32/STM8), карточки Controller firmware и Firmware versions; полный `update.img` — backlog |
 | Factory reset | **backlog** — нет безопасного сброса без физической кнопки |
 | Планировщики (motion/intrusion/video-plan/screenshot) | **backlog** |
 | Поиск архива по типам (black/white-list, snapshot) | **backlog** — сейчас список `.mp4`/`.jpg` |
@@ -177,7 +186,11 @@ every write. `GET` remains supported. New endpoints: `/api/cmd?reboot|export|log
 `/delete`), `/api/telemetry`, and `ntp`/`ntp_server` on `/api/time`;
 `/api/status` gained `ip`, `sd_free_mb`, `sd_total_mb`. Static serving is
 restricted to `/mnt/sdcard/`, and an unparsable configuration is rolled back from
-`divinus.yaml.bak` at startup.
+`divinus.yaml.bak` at startup. OKO cards: **Image → Focus assist** (enable, mode,
+fps, ROI preview/overlay, live metric) and **System → Controller firmware /
+Firmware versions** (STM32/STM8 upload with `confirm=FLASH`, progress and log;
+cached versions with a 10 s refresh). Firmware runs in a worker so the HTTP
+thread never blocks; the form is disabled while a job is busy.
 
 The ipcweb catalog was used as a reference: take-photo/record control, archive
 listing, log export, config export/import, reboot and NTP are ported; JWT and

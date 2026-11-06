@@ -1,0 +1,154 @@
+# Подтверждённые функции OKO
+
+Функции и возможности прошивки OKO, проверенные на реальном стенде и имеющие
+статус **работает**. Непроверенные и частично проверенные возможности — в
+`FEATURES_UNVERIFIED.md`; паспорт платформы, общие примечания и команды проверки —
+в `FEATURES.md`; доказательства — в `VERIFIED_FUNCTIONS.md`.
+
+Статус на 2026-11-06.
+
+## Русский
+
+### Сводная таблица подтверждённого функционала
+
+| Группа | Функционал | Описание | Управление (API, секция YAML) | Что добавлено (OKO vs вендорский V1.4) | Проверено и работает |
+|---|---|---|---|---|---|
+| Платформа и образ | Разметка SPI NAND | `boot` 6M, `oem` 40M, `userdata` 40M, `rootfs` 168M; нужна полная прошивка `update.img` | `update.img`, BoardConfig | `boot` 4→6M, `oem` 30→40M, `userdata` 10→40M, `rootfs` 198→168M | **работает** — `/proc/mtd`: `00600000`, `02800000`, `02800000`, `0a800000`; `df -h /userdata` — 29.1 МиБ; загрузка `.rknn` 3 МиБ проходит |
+| Платформа и образ | Сенсоры SC230AI-only | В образе только `sc230ai.ko` и IQ SC230AI; DTS выключает `sc3336`/`mis5001` | BoardConfig, `rv1106-sc230ai.config`, активный DTS | DTS `rv1106g-...-sc230ai.dts`, фрагмент ядра, `insmod_ko.sh` | **работает** — в `/oem/usr/ko` только `sc230ai.ko` |
+| Платформа и образ | Состав `oem` | Удалены `sample_*`/`simple_*`; диагностические `rk_*_test`/`rk_mpi_*_test` сохранены | `make oem`, BoardConfig | список удаления в сборке oem | **работает** — `sample_*`/`simple_*` отсутствуют |
+| Платформа и образ | AIISP-модель | В `/oem/usr/lib` только модель из `RK_AIISP_MODEL` | `RK_AIISP_MODEL=rkmodel_1080_1920.aiisp` | копирование модели до `build_mkimg oem` | **работает** — модель и `librkpostisp.so` в образе |
+| Платформа и образ | Buildroot-утилиты | `fw_printenv`/`fw_setenv`, `mount`/`fdisk`/`sfdisk`/`wipefs` | `fw_printenv`, `/etc/fw_env.config` | `BR2_PACKAGE_UBOOT_TOOLS*`, `UTIL_LINUX_WIPEFS` | **работает** — env читается, карта форматируется |
+| Платформа и образ | Сборка образа | Docker-сборка, результат `output/image/update.img` | `./start.sh`, `.BoardConfig.mk` | Docker-окружение: `Dockerfile`, compose, entrypoint | **работает** — образ собран и прошит |
+| Видео и стриминг | RTSP основной поток | `/live/0`, H.265 1920x1080 30 fps, ~4.7 Мбит/с | RTSP 554, `[mp4]` | `divinus` вместо `rkipc`; 1080p30, битрейт 4096 кбит/с | **работает** — PyAV: hevc 1920x1080 |
+| Видео и стриминг | RTSP второй поток | `/live/1`, H.265 640x360; выключение отдаёт 404 | `/api/substream`, `[substream]` | второй поток, soft-stop, рестарт `main → sub → JPEG` | **работает** — 30 кадров; 404 после disable |
+| Видео и стриминг | MJPEG | Поток для браузеров без HEVC | `/api/mjpeg` | 30 fps в `divinus` | **работает** — `multipart`, 1.3 МБ за 4 с |
+| Видео и стриминг | MP4-превью | `/video.mp4`; браузер должен поддерживать HEVC | `/api/mp4` | исправлен пустой chunk, подсказка HEVC | **работает** — 30 кадров hevc 1920x1080 |
+| Видео и стриминг | JPEG-снимок | Кадр по запросу, без OSD | `/api/jpeg` | `divinus` вместо `rkipc` | **работает** — endpoint отвечает |
+| Видео и стриминг | ePTZ | Цифровой зум 1x/2x кропом VPSS | `/api/eptz`, `[eptz]` | ePTZ stage `divinus` | **работает** — `zoom=2` даёт кроп 960x540 |
+| Видео и стриминг | Кодировщик | SVC, motion deblur, QP на живом канале | `/api/venc`, `[venc]` | SVC/deblur/QP stage `divinus` | **работает** — поток без рестарта |
+| Видео и стриминг | AIISP | Ночная шумоподавка по модели в `/oem/usr/lib` | `/api/aiisp`, `[aiisp]` | модель в oem, API stage `divinus` | **работает** — `librkpostisp.so` загружен, поток идёт |
+| Видео и стриминг | YOLO-детекция (NPU) | YOLOv5n на NPU, событие = индикатор OSD + пачка чистых JPEG до/после детекции; модели `.rknn` в `/userdata/models` | `/api/yolo`, `/api/models`, `[yolo]`, `POST /api/models*` | `analytics/yolo.c`, `yolo_postprocess.c`, `models.c`; `dlopen` `librknnmrt.so`; CPU-конверсия NV12→RGB; отдельный VENC-канал MJPG 4; Docker-сборка модели — `tools/rknn-toolkit2/` | **работает** (`vi1` — нет) — модель 640×384 INT8 (2.6 МиБ) активирована: `input 640x384 NHWC stride 640, 3 4D outputs`; NPU 17% @5 fps, CPU `divinus` ~28.5%, main 30.3 fps; событие проверено на демо 640×640 (6 JPEG с `X-Event-*`), `api_check` 80/80, RTSP/OSD без регрессии; `vi1` отклоняется (`gating`, API, UI); браузерный `ui_check` проходит |
+| Видео и стриминг | Запись | H.265 на смонтированную microSD с квотой и чисткой сегментов; сегмент может превысить квоту до ротации | `/api/record`, `[record]`, `record.max_bytes`, `record.min_free_mb` | `record.c`: `nal_split`, квота, `storageBusy` | **работает** — 150 кадров hevc 1080p декодируются |
+| Видео и стриминг | OSD | Время, GPS, T/BAT/LTE/WiFi, система, сообщения | `/api/osd/{id}`, `[osd]`, `oko-osd`, `/tmp/osd.fifo` | `reg0`–`reg4`, `region.c` `@file`, HAL-патч RV1106, `S20oko-osd` | **работает** — регионы видны в RTSP main |
+| Фокус | Помощь фокусировке | AF-метрика по 225 ячейкам, ROI, статус и карта | `/api/focus`, `[focus]` | поток `focus.c`, мост `hal/plus/rk_af_stats.c`, WebUI Image → Focus assist | **работает** — `status=running`, `cells_used=225`, `metric_avg` 527k–530k за 20 с (`output/bench/focus/focus-20261106-111557.csv`); ROI (текстурная vs плоская область) меняет метрику; IQ SC230AI обязан иметь `contrast_af.enable=1` |
+| Фокус | Мотор STM8 `0x60` | Перемещение/стоп/позиция, протокол `0x01–0x08`, `0xFF` | `/api/focus`, `oko-motor`, `[focus] motor` | `focus_motor.c`, пакет `stm8-motor`, I2C-загрузчик | **работает** — `position` 5002→5012→5002 при `move ±10`, `status=0`, `version=2.0.1` |
+| Прошивка | STM8 через WebUI | `app-2.0.1.ihx` через `/api/flash`, версия из имени, фоновая задача, прогресс | `/api/flash` (`target=stm8`, `confirm=FLASH`), `oko-flash` | `flash.c`, `oko-motor flash`, I2C-загрузчик STM8 | **работает** — 202 → `done`, версия `2.0.1`, имя сверено с заголовком OKO8 (`oko-motor check FILE 2.0.1`); приложение стартует после power-cycle; обрыв хостового процесса оставляет загрузчик и повторная загрузка восстанавливает приложение; плохой файл, имя без версии и несовпадение с заголовком → 400, busy → 409 |
+| Прошивка | Версии STM32/STM8 | Кэш версий и карточка System | `/api/firmware`, `[flash]` | `firmware_status.c`, daemon `oko-ec`, роль/версия STM8 `0x08` | **работает** — `1.0.0`/`2.0.1` (точечно; сырой hex STM32 — в `oko-ec info`), обновляются после прошивки и переживают reboot |
+| Прошивка | STM32 через WebUI | `.bin` CBT6, версия из имени файла, worker, rollback | `/api/flash` (`target=stm32`), `/api/firmware`, `[flash]` | `flash.c`, `oko-flash`, `oko-ec flash` | **работает** — CLI `1.0.1` (`0x00010001`) → `Application started`; WebUI `/api/flash` `app-1.0.1.bin` (без поля version) → job `done`, `/api/firmware` `1.0.1`; rollback `app-1.0.0.bin` → `1.0.0`; `oko-ec info` `img_size=2324`, `flags=0`, battery/cells/temp; после reboot app 1.0.0; негативные 9/9; установленный MCU — CBT6, сборка `-DMCU=CBT6` |
+| OSD | NPU в строке CPU | `NPU NN%` в `/tmp/osd-sys.txt` | `oko-osd`, `reg4` | чтение `/proc/rknpu/load` | **работает** — `CPU 20% NPU 0%` без YOLO и `NPU 17%` с YOLO; literal `\n` в файле, три текст-полосы в кадре (`output/bench/osd-fix2/`); кадры в `output/bench/focus/osd-frame-*.png` |
+| WebUI/API | WebUI | Восемь разделов: Live, Image, Streams, Events, Storage, Network, OSD, System; статус-строка, EN/RU, тосты ошибок | `http://<DUT>/`, `project/app/divinus/source/doc/WEBUI_REORG.md` | переработанный `index.html` (dirty-state, POST-применение) | **работает (2026-11-05)** — headless Chromium: 8 разделов, EN/RU, Apply/dirty, 0 ошибок консоли, нет прокрутки на 390/1440 px |
+| WebUI/API | HTTP API | status, isp, time, night, streams, storage, network, recordings, telemetry, cmd + медиаэндпоинты | `/api/*`, `project/app/divinus/source/doc/endpoints.md` | сети/хранилище: mount, unmount, format, record, osd, import, web-auth | **работает (2026-11-05)** — `bench/api_check.py`: 84 проверки, 0 ошибок |
+| WebUI/API | Аутентификация | WebUI и RTSP, смена фабричного пароля через `/api/web-auth` | `[web]`, `[rtsp]`, `web_auth_skiplocal=off` | включена в фабричном `divinus.yaml`; смена пароля пишется сразу | **работает (2026-11-05)** — без учётных данных 401, старый пароль после смены 401 |
+| WebUI/API | NTP | Клиент NTP: вкл/выкл и сервер, пустой сервер — системный `/etc/ntp.conf` | `/api/time?ntp=on&ntp_server=…`, `[system] ntp_*` | `ntp.c`, `S49ntp` | **работает (2026-11-05)** — `ntp=off` останавливает демон, сервер поднимает `ntpd -c /tmp/divinus-ntp.conf`, пустой — вендорский конфиг |
+| WebUI/API | Архив записей | Список, скачивание и удаление `.mp4`/`.jpg`; активный сегмент удалить нельзя | `/api/recordings`, `/file`, `/delete` | `record.c`, microSD | **работает (2026-11-05)** — удаление тестового файла, отказ для `..`, активного сегмента и несуществующего файла |
+| WebUI/API | Экспорт/импорт конфигурации | YAML из памяти, импорт multipart с ротацией `.bak` и откатом битого файла | `/api/cmd?export`, `POST /api/cmd/import` | `app_config_dump`, `app_config_replace`, `main.c` | **работает (2026-11-05)** — импорт 3399 байт, битый `web_port` откатился из `.bak` |
+| WebUI/API | Телеметрия в WebUI | Живые значения EC/INA/SHT21 | `/api/telemetry` | `oko-ec` → `/tmp/oko-ec.json` | **работает (2026-11-05)** — 9 плиток, `age` 1–2 с |
+| WebUI/API | Статика | Раздача файлов только с microSD | `/mnt/sdcard/…` | `send_file` + `realpath` | **работает (2026-11-05)** — `//etc/passwd` и `/tmp/divinus.yaml` → 404; запись скачивается |
+| Сеть | DHCP | Один клиент `dhcpcd`, client ID по MAC, без DUID | `/api/network?mode=dhcp` | `S41dhcpcd` — заглушка, `oko-net apply` | **работает** — IP держится после reboot |
+| Сеть | Статический IPv4 | Адрес, маска, шлюз, DNS | WebUI Network → Ethernet, `/api/network?mode=static` | `/api/network` и `oko-net` | **работает** — `.220` применяется и переживает reboot |
+| Сеть | Постоянный MAC | Выводится из serial SoC и хранится в env | `fw_printenv oko_mac` | `oko_mac`, восстановление из serial | **работает** — MAC не меняется после прошивки |
+| Сеть | Сохранение настроек | `oko_net_mode`, `oko_ipaddr`, `oko_netmask`, `oko_gateway`, `oko_dns` в U-Boot env | `fw_setenv`, `/etc/fw_env.config` | перенос настроек из `/userdata` в env | **работает** — переживает reboot и прошивку `oem`/`rootfs` |
+| Телеметрия (oko-ec) | `oko-ec` CLI и демон | Опрос датчиков раз в 2 с, JSON и строки OSD | `oko-ec`, `scan`/`info`/`battery`/`cells`/`temp`/`ina226`/`sht21`/`sensors`/`flash`/`reset`/`daemon`, `S21oko-ec` | пакет `project/app/oko-ec`, демон и opt-out | **работает** — демон запущен, `/tmp/oko-ec.json` обновляется |
+| Телеметрия (oko-ec) | OSD-телеметрия | Реальные строки, иначе симуляция после 30 с без данных | `/tmp/oko-ec.osd`, `/userdata/oko-ec.disable` | `oko-osd` + `reg1` | **работает** — T/BAT из свежего файла |
+| Телеметрия (oko-ec) | I2C3-M1 | Шина 100 кГц на `GPIO1_D2`/`GPIO1_D3` | `/dev/i2c-3`, DTS `&i2c3` | `status = "okay"`, `clock-frequency = <100000>`, `i2c3m1_xfer` | **работает** — `0x186a0`, 4 адреса на шине |
+| microSD | Автомонтирование | Точка `/mnt/sdcard`, состояние `/run/oko-sd.state` | udev `60-oko-sdcard.rules` | `oko-sdcard`, DTS `&sdmmc` как съёмная карта | **работает** — `/api/storage`: `sd_mounted=true` |
+| microSD | Формат карты | FAT32/MBR, метка `OKO`, одноразовый токен; блокируется при записи | `/api/storage?action=format`, `confirm=FORMAT`, `token` | mount/unmount/format в API и разделе Storage | **работает** — один раздел FAT32 |
+| microSD | Unmount | Снятие `/mnt/sdcard`, запись блокируется | `/api/storage?action=unmount` | `storageBusy`, отказ recorder | **работает** — запись переходит в `blocked` |
+| microSD | Запись только на карту | Только ниже `/mnt/sdcard`, SPI NAND не используется | `[record]`, `/api/record` | проверка монтирования раз в секунду и перед ротацией | **работает** — `/oem`, `/userdata`, `/tmp` и `/` не задействованы |
+
+### Примечания
+
+- YOLO/NPU: `librknnmrt.so` — 1.6.0, драйвер `rknpu` 0.9.2 совместим. Модель
+  обязана быть INT8 `.rknn`, вход — ровно `yolo.input_width`×`yolo.input_height`;
+  иначе активация отклоняется. Модель 640×384 INT8 (2.6 МиБ) собирается
+  `tools/rknn-toolkit2/` и в образ не входит — после прошивки её загружают через
+  `/api/models`. Кадры кольца — 640×384 NV12, `max_frames` — жёсткий потолок
+  пакета; квота загрузки 3 МиБ. `source: vpss3` занимает последний VPSS-канал и
+  потому несовместим с IVS/MJPEG/четвёртым потоком — санитайзер переводит на
+  `vi0`. `source: vi1` (selfpath) на этой сборке привёл к зависанию платы и
+  заблокирован — см. `FEATURES_UNVERIFIED.md`. Ящики в поток/JPEG не рисуются.
+  AIISP и YOLO на `vpss3` работают одновременно (стенд, демо 640×640:
+  main 30–33 fps, NPU 28%, без пропусков).
+- librga на образе непригодна (легаси `c_RkRgaBlit` — SIGSEGV, im2d
+  `importbuffer_fd` не импортирует ни MMZ-, ни dma-heap-fd, RGA по куче
+  вешала плату), поэтому NV12→RGB888 считается на CPU: на 5 fps — ~21.5%
+  одного ядра для 640×384 и ~59% для 640×640. Кольцо кадров живёт в MMZ и
+  отображается через `mmap(fd)` (виртуальный адрес `MB_Handle2VirAddr` для
+  MMZ-блока валиден только на первые 4 КиБ).
+- Доказательства по каждой строке — в `VERIFIED_FUNCTIONS.md`.
+
+## English
+
+Features verified on the real test bench with the **works** status. Unverified
+and partially verified capabilities are in `FEATURES_UNVERIFIED.md`; the
+platform passport, shared notes and verification commands are in `FEATURES.md`;
+evidence is in `VERIFIED_FUNCTIONS.md`.
+
+Status as of 2026-11-06.
+
+| Group | Feature | Control (API, YAML section) | What was added (OKO vs vendor V1.4) | Verified & works |
+|---|---|---|---|---|
+| Platform and image | SPI NAND layout: `boot` 6M, `oem` 40M, `userdata` 40M, `rootfs` 168M; full `update.img` required | `update.img`, BoardConfig | `boot` 4→6M, `oem` 30→40M, `userdata` 10→40M, `rootfs` 198→168M | **works** — `/proc/mtd` shows `00600000`, `02800000`, `02800000`, `0a800000`; `/userdata` is 29.1 MiB and a 3 MiB `.rknn` upload succeeds |
+| Platform and image | SC230AI-only sensors: only `sc230ai.ko` and SC230AI IQ, `sc3336`/`mis5001` disabled in the DTS | BoardConfig, `rv1106-sc230ai.config`, active DTS | DTS `rv1106g-...-sc230ai.dts`, kernel fragment, `insmod_ko.sh` | **works** — only `sc230ai.ko` in `/oem/usr/ko` |
+| Platform and image | `oem` contents: `sample_*`/`simple_*` removed, diagnostic `rk_*_test`/`rk_mpi_*_test` kept | `make oem`, BoardConfig | removal list in the oem build | **works** — no `sample_*`/`simple_*` |
+| Platform and image | AIISP model: only `RK_AIISP_MODEL` is placed in `/oem/usr/lib` | `RK_AIISP_MODEL=rkmodel_1080_1920.aiisp` | model copied before `build_mkimg oem` | **works** — model and `librkpostisp.so` present |
+| Platform and image | Buildroot utilities: `fw_printenv`/`fw_setenv`, `mount`/`fdisk`/`sfdisk`/`wipefs` | `fw_printenv`, `/etc/fw_env.config` | `BR2_PACKAGE_UBOOT_TOOLS*`, `UTIL_LINUX_WIPEFS` | **works** — env readable, card formattable |
+| Platform and image | Docker build producing `output/image/update.img` | `./start.sh`, `.BoardConfig.mk` | `Dockerfile`, compose, entrypoint | **works** — image built and flashed |
+| Video and streaming | RTSP main `/live/0`: H.265 1920x1080 30 fps, ~4.7 Mbit/s | RTSP 554, `[mp4]` | `divinus` instead of `rkipc`; 1080p30, 4096 kbit/s | **works** — PyAV: hevc 1920x1080 |
+| Video and streaming | RTSP sub `/live/1`: H.265 640x360; disabling returns 404 | `/api/substream`, `[substream]` | second stream, soft-stop, `main → sub → JPEG` restart | **works** — 30 frames; 404 after disable |
+| Video and streaming | MJPEG stream for browsers without HEVC | `/api/mjpeg` | 30 fps in `divinus` | **works** — `multipart`, 1.3 MB in 4 s |
+| Video and streaming | MP4 preview `/video.mp4`; the browser must support HEVC | `/api/mp4` | empty chunk fixed, HEVC hint | **works** — 30 hevc 1920x1080 frames |
+| Video and streaming | JPEG snapshot on demand, no OSD | `/api/jpeg` | `divinus` instead of `rkipc` | **works** — endpoint responds |
+| Video and streaming | ePTZ 1x/2x digital zoom via VPSS crop | `/api/eptz`, `[eptz]` | ePTZ stage in `divinus` | **works** — `zoom=2` yields a 960x540 crop |
+| Video and streaming | Encoder: SVC, motion deblur, QP on a live channel | `/api/venc`, `[venc]` | SVC/deblur/QP stage in `divinus` | **works** — stream keeps running |
+| Video and streaming | AIISP: night denoise with the model in `/oem/usr/lib` | `/api/aiisp`, `[aiisp]` | model in oem, API stage in `divinus` | **works** — `librkpostisp.so` loaded, stream continues |
+| Video and streaming | YOLO detection (NPU): YOLOv5n, event = OSD indicator plus clean JPEGs before/after; `.rknn` models in `/userdata/models` | `/api/yolo`, `/api/models`, `[yolo]`, `POST /api/models*` | `analytics/yolo.c`, `yolo_postprocess.c`, `models.c`; `dlopen` `librknnmrt.so`; CPU NV12→RGB; dedicated VENC MJPG 4; Docker model build in `tools/rknn-toolkit2/` | **works** (`vi1` does not) — the 640×384 INT8 model (2.6 MiB) is active: `input 640x384 NHWC stride 640, 3 4D outputs`; NPU 17% at 5 fps, `divinus` CPU ~28.5%, main 30.3 fps; event path verified with the 640×640 demo (6 JPEGs with `X-Event-*`), `api_check` 80/80, RTSP/OSD regression clean; `vi1` is rejected (`gating`, API, WebUI); the browser `ui_check` passes |
+| Video and streaming | Recording: H.265 to a mounted microSD with quota and pruning; a segment may exceed the quota before rotation | `/api/record`, `[record]`, `record.max_bytes`, `record.min_free_mb` | `record.c`: `nal_split`, quota, `storageBusy` | **works** — 150 hevc 1080p frames decode |
+| Video and streaming | OSD: time, GPS, T/BAT/LTE/WiFi, system, messages | `/api/osd/{id}`, `[osd]`, `oko-osd`, `/tmp/osd.fifo` | `reg0`–`reg4`, `region.c` `@file`, RV1106 HAL patch, `S20oko-osd` | **works** — regions visible in RTSP main |
+| Focus | Focus assistant: 225-cell AF metric, ROI, status and map | `/api/focus`, `[focus]` | `focus.c` thread, `hal/plus/rk_af_stats.c` bridge, WebUI Image → Focus assist | **works** — `status=running`, `cells_used=225`, `metric_avg` 527k–530k over 20 s (`output/bench/focus/focus-20261106-111557.csv`); a textured vs flat ROI changes the metric; the SC230AI IQ must keep `contrast_af.enable=1` |
+| Focus | STM8 motor `0x60`: move/stop/position, protocol `0x01–0x08`, `0xFF` | `/api/focus`, `oko-motor`, `[focus] motor` | `focus_motor.c`, `stm8-motor` package, I2C bootloader | **works** — `position` 5002→5012→5002 for `move ±10`, `status=0`, `version=2.0.1` |
+| Firmware | STM8 through the WebUI: `app-2.0.1.ihx` via `/api/flash`, version from the name, worker, progress | `/api/flash` (`target=stm8`, `confirm=FLASH`), `oko-flash` | `flash.c`, `oko-motor flash`, STM8 I2C bootloader | **works** — 202 → `done`, version `2.0.1`, the name is checked against the OKO8 header (`oko-motor check FILE 2.0.1`); the app starts after a power cycle; killing the host tool leaves the bootloader and the next upload recovers; a bad image, a missing name version and a header mismatch return 400, a busy job 409 |
+| Firmware | STM32/STM8 versions: cache and System card | `/api/firmware`, `[flash]` | `firmware_status.c`, `oko-ec` daemon, STM8 role/version `0x08` | **works** — `1.0.0`/`2.0.1` as dotted values (raw STM32 hex remains in `oko-ec info`), refresh after flashing and survive reboot |
+| Firmware | STM32 through the WebUI | CBT6 `.bin`, version from the file name, worker, rollback | `/api/flash` (`target=stm32`), `/api/firmware`, `[flash]` | `flash.c`, `oko-flash`, `oko-ec flash` | **works** — CLI `1.0.1` (`0x00010001`) → `Application started`; WebUI `/api/flash` `app-1.0.1.bin` (no version field) → job `done`, `/api/firmware` `1.0.1`; rollback `app-1.0.0.bin` → `1.0.0`; `oko-ec info` `img_size=2324`, `flags=0`, battery/cells/temp; after reboot app 1.0.0; negative checks 9/9; the installed MCU is CBT6, build with `-DMCU=CBT6` |
+| OSD | NPU on the CPU line: `NPU NN%` in `/tmp/osd-sys.txt` | `oko-osd`, `reg4` | `/proc/rknpu/load` reader | **works** — `CPU 20% NPU 0%` without YOLO and `NPU 17%` with YOLO; literal `\n` in the file, three text bands in the frame (`output/bench/osd-fix2/`); frames in `output/bench/focus/osd-frame-*.png` |
+| WebUI/API | WebUI: eight sections, sticky status bar, EN/RU, error toasts | `http://<DUT>/`, `project/app/divinus/source/doc/WEBUI_REORG.md` | reworked `index.html` (dirty state, POST apply) | **works (2026-11-05)** — headless Chromium: 8 sections, EN/RU, Apply/dirty, 0 console errors, no overflow at 390/1440 px |
+| WebUI/API | HTTP API: status, isp, time, night, streams, storage, network, recordings, telemetry, cmd and media endpoints | `/api/*`, `project/app/divinus/source/doc/endpoints.md` | network/storage: mount, unmount, format, record, osd, import, web-auth | **works (2026-11-05)** — `bench/api_check.py`: 84 checks, 0 errors |
+| WebUI/API | Authentication for WebUI and RTSP; factory password change via `/api/web-auth` | `[web]`, `[rtsp]`, `web_auth_skiplocal=off` | enabled in the factory `divinus.yaml`; the change is written immediately | **works (2026-11-05)** — 401 without credentials, old password returns 401 after change |
+| WebUI/API | NTP client: enable/disable and server; an empty server keeps `/etc/ntp.conf` | `/api/time?ntp=on&ntp_server=…`, `[system] ntp_*` | `ntp.c`, `S49ntp` | **works (2026-11-05)** — `ntp=off` stops the daemon, a server starts `ntpd -c /tmp/divinus-ntp.conf`, empty keeps the vendor config |
+| WebUI/API | Recording archive: list, download and delete `.mp4`/`.jpg`; the active segment is protected | `/api/recordings`, `/file`, `/delete` | `record.c`, microSD | **works (2026-11-05)** — test file deleted; `..`, the active segment and a missing file are refused |
+| WebUI/API | Config export/import: in-memory YAML, multipart import with `.bak` rotation and rollback | `/api/cmd?export`, `POST /api/cmd/import` | `app_config_dump`, `app_config_replace`, `main.c` | **works (2026-11-05)** — 3399-byte import; a broken `web_port` rolled back from `.bak` |
+| WebUI/API | WebUI telemetry: live EC/INA/SHT21 values | `/api/telemetry` | `oko-ec` → `/tmp/oko-ec.json` | **works (2026-11-05)** — 9 tiles, `age` 1–2 s |
+| WebUI/API | Static files served only from microSD | `/mnt/sdcard/…` | `send_file` + `realpath` | **works (2026-11-05)** — `//etc/passwd` and `/tmp/divinus.yaml` → 404; a recording downloads |
+| Network | DHCP: one `dhcpcd` client, client ID by MAC, no DUID | `/api/network?mode=dhcp` | `S41dhcpcd` stub, `oko-net apply` | **works** — IP survives reboot |
+| Network | Static IPv4: address, mask, gateway, DNS | WebUI Network → Ethernet, `/api/network?mode=static` | `/api/network` and `oko-net` | **works** — `.220` applies and survives reboot |
+| Network | Persistent MAC derived from the SoC serial and stored in env | `fw_printenv oko_mac` | `oko_mac`, restore from serial | **works** — MAC unchanged after flashing |
+| Network | Settings persistence: `oko_net_mode`, `oko_ipaddr`, `oko_netmask`, `oko_gateway`, `oko_dns` in U-Boot env | `fw_setenv`, `/etc/fw_env.config` | moved settings from `/userdata` to env | **works** — survives reboot and `oem`/`rootfs` flashing |
+| Telemetry (`oko-ec`) | `oko-ec` CLI and daemon: sensors polled every 2 s, JSON and OSD lines | `oko-ec`, `scan`/`info`/`battery`/`cells`/`temp`/`ina226`/`sht21`/`sensors`/`flash`/`reset`/`daemon`, `S21oko-ec` | `project/app/oko-ec` package, daemon and opt-out | **works** — daemon runs, `/tmp/oko-ec.json` updates |
+| Telemetry (`oko-ec`) | OSD telemetry: real lines, otherwise simulation after 30 s without data | `/tmp/oko-ec.osd`, `/userdata/oko-ec.disable` | `oko-osd` + `reg1` | **works** — T/BAT from a fresh file |
+| Telemetry (`oko-ec`) | I2C3-M1: 100 kHz bus on `GPIO1_D2`/`GPIO1_D3` | `/dev/i2c-3`, DTS `&i2c3` | `status = "okay"`, `clock-frequency = <100000>`, `i2c3m1_xfer` | **works** — `0x186a0`, 4 addresses on the bus |
+| microSD | Automount at `/mnt/sdcard`, state in `/run/oko-sd.state` | udev `60-oko-sdcard.rules` | `oko-sdcard`, DTS `&sdmmc` as a removable card | **works** — `/api/storage`: `sd_mounted=true` |
+| microSD | Card format: FAT32/MBR, label `OKO`, one-time token; blocked while recording | `/api/storage?action=format`, `confirm=FORMAT`, `token` | mount/unmount/format in the API and the Storage section | **works** — one FAT32 partition |
+| microSD | Unmount: releases `/mnt/sdcard`, recording is blocked | `/api/storage?action=unmount` | `storageBusy`, recorder refusal | **works** — recording goes to `blocked` |
+| microSD | microSD-only recording: only below `/mnt/sdcard`, SPI NAND unused | `[record]`, `/api/record` | mount check every second and before rotation | **works** — `/oem`, `/userdata`, `/tmp` and `/` are unused |
+
+### Notes
+
+- YOLO/NPU: `librknnmrt.so` is 1.6.0 and the `rknpu` 0.9.2 driver is compatible.
+  The model must be INT8 `.rknn` with an input exactly
+  `yolo.input_width`×`yolo.input_height`; otherwise activation is refused. The
+  640×384 INT8 model (2.6 MiB) is built by `tools/rknn-toolkit2/`, is not part
+  of the image and is uploaded via `/api/models` after flashing. Ring frames are
+  640×384 NV12, `max_frames` is a hard package cap, and the upload quota is
+  3 MiB. `source: vpss3` takes the last VPSS channel and is therefore
+  incompatible with IVS/MJPEG/a fourth stream, so the sanitizer falls back to
+  `vi0`. `source: vi1` (selfpath) hangs this board and is blocked — see
+  `FEATURES_UNVERIFIED.md`. Boxes are not drawn into the stream or JPEGs.
+  AIISP and YOLO on `vpss3` run together (bench, 640×640 demo: main 30–33 fps,
+  NPU 28%, no drops).
+- librga is unusable on this image (legacy `c_RkRgaBlit` → SIGSEGV, im2d
+  `importbuffer_fd` imports neither MMZ nor dma-heap fds, and RGA on the heap
+  hung the board), so NV12→RGB888 runs on the CPU: at 5 fps ~21.5% of one core
+  for 640×384 and ~59% for 640×640. The frame ring lives in MMZ and is mapped
+  via `mmap(fd)` (a `MB_Handle2VirAddr` virtual address is valid only for the
+  first 4 KiB of an MMZ block).
+- Per-row evidence is in `VERIFIED_FUNCTIONS.md`.

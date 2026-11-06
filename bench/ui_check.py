@@ -61,6 +61,35 @@ def main():
             page.screenshot(path=os.path.join(SHOTS, "%s.png" % sec), full_page=True)
             print("section %-8s visible=%s" % (sec, visible))
 
+        # Image: focus assist card, ROI preview and metric placeholder.
+        page.click('#sidebar button[data-sec="image"]')
+        page.wait_for_timeout(1200)
+        for selector in ("#focus-preview", "#focus-img", "#focus_enable",
+                         "#focus-metric", "#focus-state", "#focus-save-btn"):
+            if page.locator(selector).count() == 0:
+                failures.append("focus element %s is missing" % selector)
+        page.screenshot(path=os.path.join(SHOTS, "image-focus.png"), full_page=True)
+
+        # Exercise the card's POST path (mutations are POST-only).
+        page.evaluate("focusPost('enable=1')")
+        page.wait_for_timeout(1500)
+        enabled = page.evaluate(
+            "fetch('/api/focus').then(function (r) { return r.json(); })"
+            ".then(function (d) { return d.enable; })")
+        if enabled is not True:
+            failures.append("focusPost did not enable the focus thread")
+        page.evaluate("focusPost('enable=0')")
+        page.wait_for_timeout(500)
+
+        # System: controller firmware card and flash form.
+        page.click('#sidebar button[data-sec="system"]')
+        page.wait_for_timeout(1500)
+        for selector in ("#fw-versions", "#flash_target",
+                         "#flash_file", "#flash_confirm", "#flash_start"):
+            if page.locator(selector).count() == 0:
+                failures.append("firmware element %s is missing" % selector)
+        page.screenshot(path=os.path.join(SHOTS, "system-firmware.png"), full_page=True)
+
         # Events: the NPU settings card and the model table are rendered.
         page.click('#sidebar button[data-sec="events"]')
         page.wait_for_timeout(1500)
@@ -180,6 +209,24 @@ def main():
         if not page.locator('[id="osd/0_text"]').is_visible():
             failures.append("OSD region did not expand")
 
+        # VPN card in the Network section: profile selector, type selector,
+        # paste area and the import buttons must be rendered.
+        page.click('#sidebar button[data-sec="network"]')
+        page.wait_for_timeout(1500)
+        for selector in ("#vpn-card", "#vpn_profile", "#vpn_type",
+                         "#vpn_text", "#vpn_file", "#vpn-connect",
+                         "#vpn-disconnect", "#vpn-auto", "#vpn-delete",
+                         "#vpn-live"):
+            if page.locator(selector).count() == 0:
+                failures.append("VPN element %s is missing" % selector)
+        vpn_types = page.eval_on_selector_all("#vpn_type option",
+            "els => els.map(e => e.value)")
+        if vpn_types != ["auto", "wg", "awg"]:
+            failures.append("unexpected VPN type options: %r" % vpn_types)
+        if not page.is_visible("#vpn-card"):
+            failures.append("VPN card is not visible in Network")
+        page.screenshot(path=os.path.join(SHOTS, "network-vpn.png"), full_page=True)
+
         # Archive and storage fields are populated.
         page.click('#sidebar button[data-sec="storage"]')
         page.wait_for_timeout(1500)
@@ -195,6 +242,9 @@ def main():
         print("RU nav label:", label)
         if "Видео" not in label:
             failures.append("language toggle did not switch to RU")
+        vpn_label = page.text_content("#vpn-connect") or ""
+        if "Подключить" not in vpn_label:
+            failures.append("VPN controls did not switch to RU")
         page.click("#lang-en")
         page.wait_for_timeout(300)
 

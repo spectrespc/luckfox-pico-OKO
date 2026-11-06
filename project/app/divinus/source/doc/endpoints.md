@@ -584,6 +584,111 @@ runtime, the model file or VPSS channel 3 is unavailable. Setting
 `source=vi1` (VI selfpath hangs the RV1106 board) or any unknown value is
 rejected with HTTP 400 and `{"error":"invalid",...}`.
 
+#### `/api/focus`
+
+**OKO.** Focus assistant: AF measurement metric and the optional STM8 motor.
+`GET` is read-only (no query or `map=1`). Every change (`enable`, `mode`, ROI,
+`fps`, `motor`, `speed`, `move`, `position`, `stop`, `reset`) requires `POST`
+with the query string; GET with a mutating key returns HTTP 400. Changes are
+applied live and are not saved to `divinus.yaml` unless
+`POST /api/cmd?save` is called.
+
+| Method | Parameters | Description |
+|--------|------------|-------------|
+| POST | `enable` | Start/stop the AF statistics thread (`1`/`0`) |
+| POST | `mode` | `full` or `roi` |
+| POST | `rx`, `ry`, `rw`, `rh` | ROI in basis points `0..10000`; `rw`/`rh` ≥ 1000 |
+| POST | `fps` | Sampling rate `1..10` |
+| POST | `motor` | Enable/disable the STM8 motor (`1`/`0`) |
+| POST | `speed` | Motor speed `1..5000` steps/s |
+| POST | `move` | Relative focus move `-32768..32767` steps |
+| POST | `position` | Absolute focus position (clamped by `min_pos`/`max_pos`) |
+| POST | `stop`, `reset` | Stop both motors / soft-reset the application |
+| GET | `map=1` | Add the 225-cell arrays `fv_h1/fv_h2/fv_v1/fv_v2/luma/highlit` |
+
+**Response**
+```json
+{"enable":true,"available":true,"status":"running","mode":"roi",
+ "roi":{"x":2500,"y":2500,"w":5000,"h":5000},"pending":false,"fps":5,
+ "frame_id":48213,"metric":42187234,"metric_avg":187499,
+ "metric_smooth":187420,"cells_total":225,"cells_used":49,
+ "highlit_cells":0,"af_hw_ver":2,
+ "motor":{"enabled":false,"present":true,"device":"/dev/i2c-3",
+          "address":96,"bootloader":false,"status":"app",
+          "version":"2.0.1","boot_version":null,"position":5002}}
+```
+
+`status` is `idle`, `running`, `no_stats`, `unsupported` or `error`. The ROI
+is applied by aggregating the cells of the full-frame AF map whose centres lie
+inside it; the AFM window itself is still configured (and the map remains
+full-frame on the SC230AI/RV1106 build). A malformed parameter returns HTTP
+400; a missing AF capability or motor returns
+`{"error":"blocked","reason":...}`; an I2C failure returns HTTP 502.
+
+#### `/api/flash`
+
+**OKO.** Controller firmware upload. A job runs in a worker thread, so the
+single-threaded HTTP server keeps answering; the client polls `GET` for
+progress. Only one job may run at a time.
+
+`GET /api/flash` returns the last job and the cached target versions (see
+`/api/firmware`). `POST` is `multipart/form-data`.
+
+| Field | Required | Meaning |
+|-------|----------|---------|
+| `target` | yes | `stm32` or `stm8` |
+| `file` | yes | `.bin` for STM32; `.ihx`/`.hex`/`.bin` for STM8 |
+| `version` | ignored | the version comes from the file name (`app-1.0.1.bin`, `app-2.0.1.ihx`) |
+| `confirm` | yes | literally `FLASH` |
+
+The file name must contain exactly one `major.minor.patch` triple (each
+component ≤ 255); a missing or repeated triple returns HTTP 400. STM32 packs
+it as `(major<<16)|(minor<<8)|patch` for the bootloader metadata; STM8 keeps
+the OKO8 header as the device's source of truth and rejects a name/header
+mismatch before a job is created. The STM8 image is validated offline
+(`OKO8` magic, address range `0x8A00..0x9FFF`, CRC32); a bad image returns
+HTTP 400. Other errors: 400 for a missing field, wrong extension or an
+oversized file (`flash.max_bytes`, and 120 KiB for STM32 to fit the CBT6
+application slot);
+`blocked` when `flash.enable=false` or the controller is absent; HTTP 409 when
+a job is already running. A successful `POST` returns
+202 with the job; states are `queued`, `flashing`, `done`, `error`.
+
+```json
+{"enable":true,"busy":false,
+ "job":{"id":"20261106-080641","target":"stm8","state":"done","progress":100,
+        "message":"firmware flashed","file":"app-2.0.1.ihx","sha256":"…",
+        "started":1793952401,"finished":1793952414,"log":["PROGRESS 100","app 2.0.1"]},
+ "targets":[{"name":"stm32","present":true,"address":66,"state":"app",
+             "version":"1.0.0"},
+            {"name":"stm8","present":true,"address":96,"state":"app",
+             "version":"2.0.1"}]}
+```
+
+STM32 uses the vendor updater through `oko-ec flash` (the OKO board has a
+CBT6, 120 KiB application slot); STM8 uses the OKO I2C bootloader through
+`oko-motor flash`. The worker stops `S21oko-ec`, suspends
+the focus motor and restores both when it finishes. A device without the OKO
+bootloader (upstream `2.0.0`) must first be written with `factory.ihx` over
+ST-Link.
+
+#### `/api/firmware`
+
+**OKO.** Read-only cached controller versions. STM32 data comes from the
+`oko-ec` daemon snapshot (`/tmp/oko-ec.json`, considered stale after 15 s);
+STM8 is polled at 0.2 Hz over I2C with the role/version command `0x08`.
+During a flash job the last snapshot is returned with `stale=true`.
+
+```json
+{"stm32":{"present":true,"state":"app","version":"1.0.0","proto":2,
+          "device_type":2,"age":1},
+ "stm8":{"present":true,"state":"app","version":"2.0.1","boot_version":null,
+         "address":96,"age":0,"stale":false}}
+```
+
+`state` is `app`, `boot` or `absent`; `boot_version` is only known while the
+STM8 bootloader is active. An absent controller is not an API error.
+
 #### `/api/models`
 
 Precompiled `.rknn` models in `/userdata/models`. Uploads are limited to
@@ -768,6 +873,39 @@ Continuous MP3 audio stream.
 Raw PCM audio stream.
 
 **Response**: Uncompressed PCM audio stream
+
+## VPN (OKO)
+
+Profiles live in `/userdata/vpn/<name>.conf` and are applied by
+`/usr/bin/oko-vpn`; private keys are never included in JSON responses.
+
+### `/api/vpn`
+
+| Method | Parameters | Description |
+|---|---|---|
+| GET | none | Availability (`module_awg`, `wg`, `awg_bin`, `helper`), guard, delete token, profiles and live counters |
+| POST | `action=up\|down\|enable\|disable\|delete`, `profile=<name>`, `token=<token>` for delete | Apply an action; `up` is queued and the client polls the GET |
+
+### `/api/vpn/import`
+
+| Method | Parameters | Description |
+|---|---|---|
+| POST | multipart `file` (≤ 8 KiB) or form `text`; optional `type=auto\|wg\|awg` | Parse the `.conf`, reject `PreUp`/`PostUp`/`PreDown`/`PostDown`, save as `/userdata/vpn/<ifname>.conf` (`0600`) |
+
+A full tunnel (`AllowedIPs = 0.0.0.0/0` or `::/0`) is accepted; `oko-vpn`
+installs guard routes and rolls the default route back after 15 s when the
+gateway or the handshake is unreachable. Only two profiles exist by design:
+`wg0` and `awg0`.
+
+### `/api/vpn/export`
+
+| Method | Parameters | Description |
+|---|---|---|
+| GET | `profile=<name>` | Download the profile as an attachment (contains the keys, same trust level as `/api/log`) |
+
+Errors use the shared `{"error","reason","hint"}` shape; bad arguments return
+HTTP 400, refusals (hooks, unknown action, bad token) return HTTP 200 with
+`"error":"blocked"`.
 
 ## Special Commands
 

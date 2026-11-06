@@ -142,6 +142,20 @@ gating_result gating_check(const char *feature)
         return allowed;
     }
 
+    if (!strcmp(feature, "focus_metric")) {
+        if (!(halCapabilities & HAL_CAP_FOCUS_STATS))
+            return blocked("AF statistics are not available in this librkaiq build",
+                "check RKAIQ_ENABLE_AF and the af_* exports");
+        return allowed;
+    }
+
+    if (!strcmp(feature, "focus_motor")) {
+        if (!app_config.focus_motor)
+            return blocked("the focus motor is disabled in the configuration",
+                "set focus.motor to true first");
+        return allowed;
+    }
+
     if (!strcmp(feature, "iq")) {
         if (!(halCapabilities & HAL_CAP_IQ))
             return blocked("runtime IQ control is not available",

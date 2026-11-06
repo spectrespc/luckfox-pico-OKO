@@ -20,10 +20,13 @@ bench/run.sh dut.py 'mount | grep -w " / "'
 |---|---|
 | `serial_exec.py` | вход в консоль по UART (`/dev/ttyACM*`, 115200 8N1) и выполнение команд на DUT |
 | `dut.py` | выполнение команд по SSH через `paramiko` |
-| `osd_check.py` | захват кадров RTSP, попарный диф боксов OSD-регионов, сохранение полных кадров и кропов |
+| `osd_check.py` | захват кадров RTSP (`--path`, по умолчанию `/live/0`), попарный диф боксов OSD-регионов, сохранение полных кадров и кропов |
 | `api_check.py` | матрица HTTP API: GET всех эндпоинтов, POST no-op, экспорт конфига и журнала, негативные проверки (статика, имена файлов, NTP) |
 | `ui_check.py` | WebUI в headless Chromium: восемь разделов, EN/RU, Apply/dirty-state, мобильная раскладка, скриншоты (нужен Playwright) |
 | `deploy_divinus.py` | копирование свежесобранного `divinus` в `/oem/usr/bin` по SSH и graceful restart (быстрая итерация, не замена прошивке) |
+| `focus_check.py` | `/api/focus`: статус AF-метрики, ROI, мотор; `--enable`, `--roi x,y,w,h`, `--move`, `--seconds/--interval/--snapshot/--strict`, CSV в `--out` (по умолчанию `output/bench/focus`); код 2 — API жив, но снимок не снят, код 1 — метрика нулевая |
+| `firmware_check.py` | `/api/firmware` и `/api/flash`: версии STM32/STM8, состояние задачи; `--flash --confirm FLASH` запускает прошивку, `--negative` прогоняет проверки валидации (400) |
+| `vpn_check.py` | WireGuard/AmneziaWG на DUT: модуль, `awg version`, импорт `.conf` через API, `up`, handshake, маршруты, ping, `down`, негатив (хуки, delete без токена), опционально reboot + автозапуск; артефакты — `output/bench/vpn` |
 
 ## Примеры
 
@@ -40,8 +43,37 @@ bench/run.sh osd_check.py --ip 192.168.52.97 --seconds 17
 # свои регионы (имя:x0,y0,x1,y1;...)
 bench/run.sh osd_check.py --regions 'telemetry:0,16,760,160;gps:1500,16,1920,64'
 
-# API: 74 проверки, код возврата 1 при ошибке
+# API: 80+ проверок, код возврата 1 при ошибке
 bench/run.sh api_check.py
+
+# помощь фокусировке: 20 отсчётов, CSV и снимок; --strict падает на статичной метрике
+bench/run.sh focus_check.py --enable --seconds 20 --interval 1 --snapshot
+bench/run.sh focus_check.py --roi 2500,2500,5000,5000 --seconds 5
+
+# версии контроллеров, негативные проверки и реальная прошивка STM8
+bench/run.sh firmware_check.py
+# --negative требует project/app/stm8-motor/build/app-2.0.1.ihx
+# (make -f Makefile.stm8; версия в имени файла обязательна)
+bench/run.sh firmware_check.py --negative
+bench/run.sh firmware_check.py --flash --target stm8 \
+  --file project/app/stm8-motor/build/app-2.0.1.ihx --confirm FLASH
+# STM32: реальная прошивка CBT6 (слот 120 КиБ); 1.0.0 = rollback.
+# Версия берётся из имени файла, отдельного --version нет.
+bench/run.sh firmware_check.py --flash --target stm32 \
+  --file output/bench/stm32/app-1.0.0.bin --confirm FLASH
+
+# RTSP/OSD: если OPTIONS молчит, включите stream.enable=true и перезагрузите DUT
+bench/run.sh osd_check.py --path /live/0 --seconds 5 --frames 2
+# прошивка STM8 (после сборки app-2.0.1.ihx); требует --confirm FLASH
+bench/run.sh firmware_check.py --flash --target stm8 \
+  --file project/app/stm8-motor/build/app-2.0.1.ihx --confirm FLASH
+
+# STM32: безопасная проверка перехода app → bootloader → app без записи
+bench/run.sh dut.py '/etc/init.d/S21oko-ec stop' \
+  '/oem/usr/bin/oko-ec info' '/oem/usr/bin/oko-ec enter-update' \
+  '/oem/usr/bin/oko-ec info' '/oem/usr/bin/oko-ec reset' 'sleep 2' \
+  '/oem/usr/bin/oko-ec info' '/etc/init.d/S21oko-ec start'
+# ожидается device_type 2 → 1 → 2, версия и ячейки не меняются
 
 # быстрая выкатка собранного divinus в /oem без пересборки образа
 make -C project/app/divinus            # в Docker-цикле SDK
@@ -64,6 +96,46 @@ mkdir -p libasound && dpkg-deb -x libasound2t64_*.deb libasound
 LD_LIBRARY_PATH=/tmp/kilo/libasound/usr/lib/x86_64-linux-gnu bench/run.sh ui_check.py
 ```
 
+## VPN-пир на хосте
+
+Для `wg0` пир поднимается штатным WireGuard ядра хоста:
+
+```sh
+sudo modprobe wireguard
+sudo ip link add wgpeer0 type wireguard
+# ключи: wg genkey | tee peer.key | wg pubkey > peer.pub (x25519 совместим с awg)
+sudo ip addr add 10.8.0.1/24 dev wgpeer0
+sudo wg set wgpeer0 private-key peer.key listen-port 51820 peer <DUT_PUB>   allowed-ips 10.8.0.2/32
+sudo ip link set wgpeer0 up
+```
+
+Для `awg0` используется модуль из того же вендорного слепка, что и в прошивке:
+
+```sh
+make -C sysdrv/drv_ko/amneziawg/src KERNELDIR=/lib/modules/$(uname -r)/build   WIREGUARD_VERSION=3.1.20260906
+sudo insmod sysdrv/drv_ko/amneziawg/src/amneziawg.ko
+make -C project/app/vpn-tools/vendor/amneziawg-tools-3.1.20260812/src   PLATFORM=linux wg
+sudo install -m 755 project/app/vpn-tools/vendor/amneziawg-tools-3.1.20260812/src/wg   /usr/local/bin/awg
+```
+
+Хостовый `awg`-конфиг (`/etc/amnezia/amneziawg/host.conf`) повторяет параметры
+профиля DUT (`Jc`, `Jmin`, `Jmax`, `S1…S4`, `H1…H4`, `I1…I5`,
+`HeaderProtectionKey`, `ContentPaddingAddition`); ключи генерируются
+`wg genkey`/`awg genkey`. Для маршрута в туннель и полного туннеля:
+
+```sh
+sudo sysctl -w net.ipv4.ip_forward=1
+sudo iptables -t nat -A POSTROUTING -o <uplink> -j MASQUERADE
+sudo awg setconf awgpeer0 /etc/amnezia/amneziawg/host.conf
+sudo ip link set awgpeer0 up
+```
+
+Затем на DUT импортируется профиль (Network → VPN или API) и запускается
+`bench/run.sh vpn_check.py --peer-host 192.168.52.1 --profile output/bench/vpn/awg0.conf`.
+Для reboot-проверки автозапуска добавьте `--reboot`; профиль удаляется в конце,
+если не указан `--keep`. Артефакты: `output/bench/vpn/report.json`, `ssh.log`,
+`profile.conf`.
+
 ## Переменные окружения
 
 | Переменная | По умолчанию | Смысл |
@@ -74,6 +146,7 @@ LD_LIBRARY_PATH=/tmp/kilo/libasound/usr/lib/x86_64-linux-gnu bench/run.sh ui_che
 | `OKO_DUT_HOST` | `192.168.52.150` | адрес DUT по умолчанию (SSH/RTSP; текущий DHCP-адрес — `192.168.52.97`, см. TESTBENCH.md §5) |
 | `OKO_DUT_PASSWORD` | `luckfox` | пароль root (публичный вендорский дефолт) |
 | `OKO_RTSP_USER` / `OKO_RTSP_PASS` | `admin` / `oko-change-me` | учётка divinus (фабричный дефолт) |
+| `OKO_VPN_PEER` | — | адрес VPN-пира на хосте для `vpn_check.py` (`--peer-host` важнее) |
 
 Секреты в репозитории не хранятся: только публичные вендорские дефолты и
 переопределение переменными окружения.
@@ -82,6 +155,8 @@ LD_LIBRARY_PATH=/tmp/kilo/libasound/usr/lib/x86_64-linux-gnu bench/run.sh ui_che
 
 - Кадры и кропы OSD: `output/bench/osd-<YYYYmmdd-HHMMSS>-fNN[-<reg>].png`.
 - Скриншоты WebUI: `output/bench/ui/<раздел>.png` и `mobile-system.png`.
+- VPN: `output/bench/vpn/report.json`, `ssh.log`, `profile.conf` (тестовый
+  профиль; содержит ключи — не коммитить).
 - Каталог создаётся автоматически; `output/` в `.gitignore`.
 
 ## Типичные ошибки

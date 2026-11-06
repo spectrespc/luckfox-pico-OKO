@@ -8,12 +8,12 @@
 
 | Поле | Значение |
 |---|---|
-| Дата | `2026-11-05` |
+| Дата | `2026-11-06` |
 | Плата | Luckfox Pico Pro Max (RV1106), сенсор SC230AI |
-| Прошивка | `output/image/update.img`, полная прошивка SPI NAND |
+| Прошивка | `output/image/update.img` (sha256 `ad0b07ca…`); полная прошивка SPI NAND 2026-11-05, компоненты 2026-11-06 — по SSH |
 | Стенд | `192.168.52.97` (DHCP, SSH), UART `/dev/ttyACM0` 115200 |
 | Методы | SSH, RTSP (PyAV), HTTP API (`curl`, `bench/api_check.py`), WebUI (`bench/ui_check.py`, headless Chromium), скриншоты в `output/bench/ui/` |
-| Примечание | 2026-11-05 выполнен полный `./rkflash.sh update` образа с разметкой `userdata` 40 МБ / `rootfs` 168 МБ; вход в Maskrom — `download` из U-Boot по UART (см. `TESTBENCH.md` §7A) |
+| Примечание | 2026-11-05 выполнен полный `./rkflash.sh update` образа с разметкой `userdata` 40 МБ / `rootfs` 168 МБ; вход в Maskrom — `download` из U-Boot по UART (см. `TESTBENCH.md` §7A). 2026-11-06 полный `update.img` не заливался: USB OTG не подключён, компоненты `oem`/`rootfs` обновлены по SSH; образ собран из этих же исходников (`output/image/update.img`) |
 | Сборка | Docker, активный BoardConfig `BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI.mk` |
 
 ## 2. Функции
@@ -27,7 +27,8 @@
 | SVC, motion deblur, QP live | работает | `GET /api/venc?svc=true&motion_deblur=true&min_qp=20&max_qp=45`; поток hevc 1920x1080, 30 кадров без рестарта | Параметры действуют на работающий канал |
 | SmartP после рестарта | не перепроверялся в этой прошивке | Ранее проверялось: `GET /api/venc?smartp=true`, рестарт, меняется GOP | Применяется только при следующем старте |
 | AIISP с моделью | работает | В образе есть `rkmodel_1080_1920.aiisp` и `librkpostisp.so`; `GET /api/aiisp?enable=on` → `enable=on`, в `/proc/<pid>/maps` загружен `librkpostisp.so`, открыт `/dev/mpi/aiisp`, поток hevc 1920x1080 декодируется | Нужен `rkmodel_1080_1920.aiisp`; несовместим с HDR |
-| YOLO (NPU) | работает (`vpss3`; `vi1` отклоняется) | 2026-11-05, YOLOv5n 640×640, 3 fps: NPU 28–33%; событие = 6 JPEG 640×640 с `X-Event-*` (42 кадра на приёмнике), `/api/yolo` live enable/disable (NPU 0↔33%), `/api/models` upload/hash/activate-rollback/delete, `api_check.py` 80/80 (включая HTTP 400 для `source=vi1` и `bogus`), RTSP/OSD 20 кадров без регрессии; лог атрибутов: `input 640x640 NHWC stride 640 px, 3 4D outputs` | `vi1` (selfpath) вешает плату и отклоняется `gating.c`/API/UI; модель обязана быть INT8 `.rknn` 1.6.0, 4D-NHWC и совпадать с `yolo.input_*`; librga непригодна — CPU-конверсия ~28% ядра на 3 fps; браузерный `ui_check` проходит |
+| YOLO (NPU) | работает (`vpss3`; `vi1` отклоняется) | 2026-11-05, модель 640×384 INT8 (2.6 МиБ) активирована: `input 640x384 NHWC stride 640 px, 3 4D outputs (48x80x255, 24x40x255, 12x20x255)`; 5 fps — NPU 17%, CPU `divinus` ~28.5% (без YOLO ~7%), main 30.3 fps; 640×640 @5 fps — NPU 28%, CPU ~66%; событие проверено на демо 640×640 (6 JPEG с `X-Event-*`), `/api/yolo` live enable/disable, `/api/models` upload/hash/activate/delete, `api_check.py` 80/80, RTSP/OSD 20 кадров без регрессии, браузерный `ui_check` проходит; симулятор на `bus.jpg` — 3 person + 1 truck | `vi1` (selfpath) вешает плату; модель не входит в образ, после прошивки загружается через `/api/models`; mAP на валидационном наборе не измерен; для другой модели подбирать `conf_threshold` |
+| Модель YOLOv5n 640×384 (Docker) | работает | `tools/rknn-toolkit2/export_yolov5.sh 384 640` → ONNX 7.2 МиБ; `convert_rknn.sh` на 101 кадре SC230AI → `.rknn` 2.6 МиБ, sha256 `8285e1bd…`; `target_platform=rv1106`, INT8; активация на DUT заполнила `models.json` (640×384, 80 классов, runtime 1.6.0) | Образы `oko-rknn-toolkit2:1.6.0` и `oko-yolov5-export` ~2.5 ГБ; `.rknn` в git не коммитится; mAP не измерен |
 | Разметка `userdata`/`rootfs` | работает | 2026-11-05: `/proc/cmdline` и `/proc/mtd` показывают `40M(userdata),168M(rootfs)`; `df -h /userdata` — 29.1 МиБ, `ubi5_0/data_bytes` = 35045376; загрузка `.rknn` ровно 3 МиБ через `/api/models` → HTTP 200, затем delete | Нужна полная прошивка `update.img`; `userdata` пересоздаётся |
 | AIISP + YOLO одновременно | работает (640×640 демо) | 2026-11-05, `vpss3`, 3 fps: AIISP off — main 30.25 fps, NPU 28%, max gap 44 мс; AIISP on — `librkpostisp.so` в `/proc/<pid>/maps`, main 32.79 fps, NPU 28%, max gap 41 мс; контроль без YOLO — 30.32 fps, NPU 0%. Плата жива, пропусков в `/live/0` не видно | Ночная точность и CMA под кольцом не измерялись: на стенде нет цели/разметки; проверка на демо-модели 640×640, не на целевой 640×384 |
 | IVS MD: старт/стоп | работает | `GET /api/ivs?enable=true&mode=md`, затем `enable=false`; `/api/ivs` отвечает, процесс не падает | Событие движения на статичной сцене не наблюдалось — детекция ограничена сценой/настройками |
@@ -63,6 +64,14 @@
 | Ethernet: static через WebUI/API | работает | `GET /api/network?mode=static&ipaddr=192.168.52.220&netmask=255.255.255.0&gateway=192.168.52.254&dns=192.168.52.254` → `.220`, маршрут/DNS применяются, `dhcpcd` остановлен; после reboot `.220` сохраняется; возврат `mode=dhcp` → `.97` | Ответ приходит до применения; страница может отключиться, нужен reconnect |
 | Переразметка NAND 6M/40M/198M | работает | `cat /proc/mtd`: `boot 00600000`, `oem 02800000`, `userdata 00a00000`, `rootfs 0c600000`; `cmdline` содержит новую `mtdparts` | Требуется полная прошивка `update.img`; старые `/userdata` и таблица разделов несовместимы |
 | Сенсоры SC230AI-only | работает | `ls /oem/usr/ko` → только `sc230ai.ko`; `lsmod` → только `sc230ai`; IQ → только `sc230ai_CMK-OT2115-PC1_30IRC-F16.json`; `sample_*`/`simple_*` отсутствуют | Вендорские DTS/исходники других плат не тронуты |
+
+| Фокус: AF-метрика (A6) | работает | 2026-11-06, после `POST /api/focus?enable=1`: `status=running`, `af_hw_ver=2`, `cells_used=225`, 20 отсчётов `metric_avg` 527427–530023 (std 1124) в `output/bench/focus/focus-20261106-111557.csv` + снимок. ROI top-left 0,0,2000,2000 → `metric_avg=2635599` (9 ячеек), центр 2500,2500,5000,5000 → 0 (плоская область). Без `af_v31.TuningPara.contrast_af.enable=1` в IQ все ячейки нулевые | AFM-карта остаётся полнокадровой, ROI применяется выбором ячеек в `focus.c`; малые ходы мотора метрику не меняют — оптическая связь объектива не подтверждена |
+| Фокус: мотор STM8 | работает | `oko-motor -b 3 -a 0x60 speed 0 300`, `move 0 10` → `position 5012`, `move 0 -10` → `5002`, `status 0`; `move ±200` и `stop` без ошибок | Позиция — счётчик шагов; фактическое движение объектива не подтверждено |
+| STM8: загрузчик и обновление | работает | Исходный upstream `2.0.0` заменён `factory.ihx` по ST-Link; `enter-boot` → `info` = `bootloader: 1.0.0, application header: 2.0.1`, `version` в загрузчике → ошибка с подсказкой, `boot-reset` → `app 2.0.1`; `POST /api/flash` (target=stm8, `app-2.0.1.ihx`, confirm=FLASH) → 202, `state=done`, `oko-motor version` = `2.0.1`; сервер сверил версию из имени с заголовком OKO8 (`oko-motor check FILE 2.0.1`); power-cycle сохраняет `2.0.1`; kill -9 хостового `oko-motor flash` оставляет загрузчик, повторная загрузка успешна | Первая запись — только ST-Link/SWIM; обрыв питания при стирании не имитировался (KI-032) |
+| Прошивка: валидация и блокировки | работает | `/api/flash`: без `confirm`, неизвестный target, `.txt`, битый `OKO8`, 300 КиБ, без версии в имени (`app.bin`), несовпадение имени с заголовком STM8 (`app-9.9.9.ihx`), `.ihx` для STM32 и >120 КиБ → HTTP 400; второй POST во время работы → 409 `{"error":"busy"}`; `firmware_check.py --negative` — 9/9 | Реальная запись STM32 проверена (см. ниже) |
+| Прошивка: реальная прошивка STM32 | работает | 2026-11-06, CBT6: CLI `app-1.0.1.bin` (`0x00010001`) → `Application started`; WebUI `/api/flash` `app-1.0.1.bin` (версия из имени, без поля version) → job `done`, `/api/firmware` = `1.0.1`; rollback `app-1.0.0.bin` → `1.0.0` (progress 0→100); `oko-ec info` `img_size=2324`, `flags=0`; `battery/cells/temp` живы; после reboot — app 1.0.0; oversize 130 КиБ → `ERR_PARAM`, автоматический `RESET`, app 1.0.0 | Установленный MCU — CBT6 (128 КиБ, слот 120 КиБ); C8T6-сборка даёт `img_size=0`, использовать `-DMCU=CBT6`. Обрыв питания в момент стирания не имитировался |
+| Прошивка: версии контроллеров | работает | `GET /api/firmware` → STM32 `1.0.0`, STM8 `2.0.1` (точечно, без `0x`); сырой hex STM32 остаётся в `oko-ec info`; после flash и power-cycle значения сохраняются; карточка System в `ui_check.py` | STM32 `state` берётся из `/tmp/oko-ec.json` и считается устаревшим через 15 с |
+| OSD: NPU в строке CPU | работает | `/tmp/osd-sys.txt` — literal `\n` (backslash + n) и реальный перевод строки в конце: `CPU 20% NPU 0%\nMEM FREE 81%\nT 61.8C` (`od -c`); три текст-полосы в вырезке sys-региона `output/bench/osd-fix2/`; `GET /api/yolo?enable=1` → `NPU 17%`, после disable — 0%; регион 4 `text=@/tmp/osd-sys.txt` | Текст в кадре не распознавался OCR; проверка по байтам файла и полосам яркости |
 
 ### Причина смены DHCP-адреса
 
@@ -115,10 +124,41 @@ TOKEN=$(printf '%s' "$STATUS" | sed -n 's/.*"format_token":"\([0-9a-f]*\)".*/\1/
 curl -s "http://<DUT_IP>/api/storage?action=format&fs=fat32&confirm=FORMAT&token=$TOKEN"
 ```
 
+### Фокус, прошивка и NPU (2026-11-06)
+
+```sh
+# AF-метрика: 20 отсчётов + CSV + снимок
+G=$(curl -s -X POST -u admin:oko-change-me 'http://<DUT_IP>/api/focus?enable=1')
+bench/run.sh focus_check.py --seconds 20 --interval 1 --snapshot     --out output/bench/focus
+curl -s -u admin:oko-change-me 'http://<DUT_IP>/api/focus?map=1'
+
+# STM8: версия/роль, загрузчик, обновление через WebUI
+/oem/usr/bin/oko-motor -b 3 -a 0x60 version
+/oem/usr/bin/oko-motor -b 3 -a 0x60 enter-boot
+/oem/usr/bin/oko-motor -b 3 -a 0x60 info
+/oem/usr/bin/oko-motor -b 3 -a 0x60 boot-reset
+bench/run.sh firmware_check.py --flash --target stm8     --file project/app/stm8-motor/build/app-2.0.1.ihx --confirm FLASH
+/oem/usr/bin/oko-motor check /tmp/app-2.0.1.ihx 2.0.1      # rc 0
+/oem/usr/bin/oko-motor check /tmp/app-2.0.1.ihx 9.9.9      # rc 2
+
+# STM32 (CBT6): CLI 1.0.1, затем WebUI 1.0.0 (rollback)
+/oem/usr/bin/oko-ec flash /tmp/app-1.0.1.bin 0x00010001
+bench/run.sh firmware_check.py --flash --target stm32 \
+  --file output/bench/stm32/app-1.0.0.bin --confirm FLASH
+/oem/usr/bin/oko-ec info; /oem/usr/bin/oko-ec battery
+
+# негативные проверки прошивки (400/409)
+bench/run.sh firmware_check.py --negative
+
+# версии и NPU
+curl -s -u admin:oko-change-me http://<DUT_IP>/api/firmware
+cat /tmp/osd-sys.txt; cat /proc/rknpu/load
+```
+
 ### WebUI и API-матрица (2026-11-05)
 
 ```sh
-# 74 проверки: GET, POST no-op, вложения, негативные случаи
+# 80 проверок: GET, POST no-op, вложения, негативные случаи
 bench/run.sh api_check.py
 
 # WebUI в headless Chromium: разделы, EN/RU, Apply/dirty, мобильная раскладка

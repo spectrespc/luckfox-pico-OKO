@@ -1,0 +1,72 @@
+#!/bin/sh
+#
+# OKO VPN autostart.
+#
+# S21appinit (RkLunch.sh) has already applied the network settings by the
+# time this script runs, but the DHCP lease may still be in flight, so the
+# start path waits for a default route for up to 60 seconds.
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+VPN=/usr/bin/oko-vpn
+PID_FILE=/var/run/oko-vpn.pid
+LOG_FILE=/var/log/vpn.log
+
+start() {
+	[ -x "$VPN" ] || exit 0
+
+	_i=0
+	while [ "$_i" -lt 60 ]; do
+		ip route show default 2>/dev/null | grep -q '^default' && break
+		_i=$((_i + 1))
+		sleep 1
+	done
+
+	"$VPN" autostart || true
+
+	if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE" 2>/dev/null)" 2>/dev/null; then
+		return 0
+	fi
+	"$VPN" watchdog 30 >>"$LOG_FILE" 2>&1 &
+	echo $! >"$PID_FILE"
+}
+
+stop() {
+	if [ -f "$PID_FILE" ]; then
+		_pid=$(cat "$PID_FILE" 2>/dev/null)
+		[ -n "$_pid" ] && kill "$_pid" 2>/dev/null || true
+		rm -f "$PID_FILE"
+	fi
+
+	[ -x "$VPN" ] || return 0
+	"$VPN" status 2>/dev/null | while IFS= read -r _line; do
+		case "$_line" in
+			profile=*)
+				_name=
+				_state=
+				_rest=$_line
+				while [ -n "$_rest" ]; do
+					_field=${_rest%% *}
+					_rest=${_rest#* }
+					case "$_field" in
+						profile=*) _name=${_field#profile=} ;;
+						state=*) _state=${_field#state=} ;;
+					esac
+					[ "$_rest" = "$_field" ] && break
+				done
+				[ -n "$_name" ] && [ "$_state" = up ] &&
+					"$VPN" down "$_name" >/dev/null 2>&1 || true
+				;;
+		esac
+	done
+}
+
+case "$1" in
+	start) start ;;
+	stop) stop ;;
+	restart) stop; start ;;
+	*) echo "usage: $0 {start|stop|restart}" >&2; exit 1 ;;
+esac
+
+exit 0

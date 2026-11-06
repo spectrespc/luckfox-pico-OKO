@@ -82,12 +82,14 @@ def main():
     parser.add_argument("--interval", type=float, default=1.0, help="seconds between samples")
     parser.add_argument("--seconds", type=float, default=20.0, help="capture time limit")
     parser.add_argument("--out", default=os.environ.get("OKO_BENCH_OUT", str(DEFAULT_OUT)))
+    parser.add_argument("--path", default="/live/0",
+                        help="RTSP path (default /live/0)")
     args = parser.parse_args()
 
     out = Path(args.out).expanduser()
     out.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    url = f"rtsp://{args.user}:{args.password}@{args.ip}:554/"
+    url = f"rtsp://{args.user}:{args.password}@{args.ip}:554{args.path}"
 
     print(f"rtsp: {args.ip}  out: {out}")
     samples = capture(url, args.frames, args.interval, args.seconds)

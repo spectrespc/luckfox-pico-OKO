@@ -96,6 +96,11 @@
 (ярко-зелёный RGB565), контур — `regN_outl: 0x8000` (чёрный) толщиной
 `regN_thick: 1.0`.
 
+`@file`-провайдер (`region.c`) читает только первую строку файла, а
+`text.c` распознаёт перенос только как literal `\n` (backslash + n). Поэтому
+многострочные файлы (`/tmp/osd-sys.txt`) должны содержать `\n` внутри строки,
+а не реальные `0x0A`; иначе в кадре останется только первая строка.
+
 OSD виден в RTSP (VENC-канал 0). Снимок `/image.jpg` кодируется отдельным
 VENC-каналом JPEG; одна RGN-область на RV1106 не прикрепляется ко второму
 каналу, поэтому snapshot OSD не содержит (для JPEG нужны отдельные
@@ -245,6 +250,37 @@ MMZ-блока валиден только на первые 4 КиБ. `yolo.sou
 активация через `POST /api/models/activate` с откатом; INT8 `.rknn` 1.6.0,
 вход должен совпадать с `yolo.input_width/height`.
 
+## OKO: фокус и прошивка контроллеров
+
+`[focus] enable: true` (или `POST /api/focus?enable=1`) запускает поток
+`focus.c` после `sdk_start()`. Поток 5 Гц читает AF-статистику rkaiq через
+`hal/plus/rk_af_stats.c` — единственный TU с заголовками `rkaiq` (символы
+`af_GetAttrib`/`af_SetAttrib`/`get3AStatsBlk`/`release3AStatsRef` берутся
+`dlsym`, поэтому сборка без AF не падает). Метрика — сумма
+`fv_h1+h2+v1+v2` по 225 ячейкам с пропуском `highlit` и `luma==0`;
+`metric_avg` — среднее по валидным ячейкам, `metric_smooth` — EMA.
+В `mode=roi` агрегируются ячейки, центры которых попадают в ROI (координаты
+в базисных пунктах 0…10000); на этой сборке RV1106 сетка AFM остаётся
+полнокадровой, поэтому ROI применяется в `focus.c`, а не аппаратным окном.
+В IQ SC230AI **обязательно** `af_v31.TuningPara.contrast_af.enable=1` (оба
+блока, день и ночь); при `0` все ячейки AFM нулевые. `GET /api/focus?map=1`
+отдаёт исходную карту 225 ячеек. Неудачное применение окна повторяется,
+пока AIQ не готов; нулевая карта дважды включает `contrast_af` как fallback
+гейта A6.
+
+`[flash] enable: true` включает карточки прошивки контроллеров.
+`POST /api/flash` сохраняет multipart-тело в `/tmp/fw-<target>-<pid>.<ext>`
+(расширение сохраняется, чтобы `oko-motor` отличил Intel HEX от raw-образа),
+проверяет заголовок `OKO8`, CRC32 и диапазон STM8 офлайн и запускает воркер.
+Воркер останавливает `S21oko-ec`, приостанавливает мотор фокуса, запускает
+`/oem/usr/bin/oko-flash` и разбирает `PROGRESS nn` / `Progress: … NN%`.
+`GET /api/firmware` отдаёт снимок STM32 из `/tmp/oko-ec.json` и роль/версию
+STM8, которую `firmware_status.c` опрашивает с частотой 0.2 Гц; приложение
+STM8 отвечает на общую команду `0x08` как `[role][major][minor][patch]`,
+поэтому boot-команда `0x10` не уходит в работающее приложение. Прошивка
+STM8 и загрузчик — в `project/app/stm8-motor`; первая запись — `factory.ihx`
+через ST-Link, дальнейшие обновления — через `/api/flash`.
+
 ## Правила обновления
 
 1. Клонировать upstream с `--depth 1`, заменить `source/src`, `source/res`, `source/doc`,
@@ -278,6 +314,13 @@ MMZ-блока валиден только на первые 4 КиБ. `yolo.sou
    - `server.c`, `gating.*`, `ivs_events.*`, `record.*`, `res/index.html`:
      API, блокировки, аналитика, квота записей и WebUI.
    - `files/divinus.yaml`: регион `reg5` для индикатора IVS и новые секции.
+   - `focus.c/.h`, `focus_geom.*`, `focus_proto.*`, `focus_motor.*`,
+     `firmware_status.*`, `flash.*`, `hal/plus/rk_af_stats.*` и
+     `MEDIA_INCLUDE` в `Makefile`: фокус-ассистент, мотор STM8 `0x60` и
+     прошивка контроллеров (см. раздел «OKO: фокус и прошивка»).
+   - `server.c`/`res/index.html`/`app_config.*`/`gating.c`: `/api/focus`,
+     `/api/flash`, `/api/firmware`, карточки Image/System и секции
+     `[focus]`/`[flash]`.
 5. Перед коммитом пересобрать (`./build.sh` в Docker) и проверить наличие
    `output/out/oem/usr/bin/divinus` — цикл сборки приложений не прерывается на ошибке
    отдельного пакета. После применения HAL-патча прогнать хостовые тесты и

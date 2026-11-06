@@ -265,6 +265,26 @@ void app_config_dump(FILE *file) {
         app_config.yolo_pre_seconds, app_config.yolo_post_seconds,
         app_config.yolo_max_frames);
 
+    fprintf(file, "focus:\n");
+    fprintf(file, "  enable: %s\n", app_config.focus_enable ? "true" : "false");
+    fprintf(file, "  fps: %d\n", app_config.focus_fps);
+    fprintf(file, "  mode: %s\n", app_config.focus_mode ? "roi" : "full");
+    fprintf(file, "  roi_x: %d\n  roi_y: %d\n  roi_w: %d\n  roi_h: %d\n",
+        app_config.focus_roi_x, app_config.focus_roi_y,
+        app_config.focus_roi_w, app_config.focus_roi_h);
+    fprintf(file, "  skip_highlit: %s\n",
+        app_config.focus_skip_highlit ? "true" : "false");
+    fprintf(file, "  motor: %s\n", app_config.focus_motor ? "true" : "false");
+    fprintf(file, "  device: %s\n", app_config.focus_device);
+    fprintf(file, "  address: %d\n", app_config.focus_address);
+    fprintf(file, "  speed: %d\n", app_config.focus_speed);
+    fprintf(file, "  min_pos: %d\n  max_pos: %d\n",
+        app_config.focus_min_pos, app_config.focus_max_pos);
+
+    fprintf(file, "flash:\n");
+    fprintf(file, "  enable: %s\n", app_config.flash_enable ? "true" : "false");
+    fprintf(file, "  max_bytes: %d\n", app_config.flash_max_bytes);
+
     fprintf(file, "iq:\n");
     fprintf(file, "  main_scene: %s\n", app_config.iq_main_scene);
     fprintf(file, "  sub_scene: %s\n", app_config.iq_sub_scene);
@@ -456,6 +476,24 @@ enum ConfigError app_config_parse(void) {
     app_config.yolo_pre_seconds = 3;
     app_config.yolo_post_seconds = 2;
     app_config.yolo_max_frames = 20;
+
+    app_config.focus_enable = false;
+    app_config.focus_fps = 5;
+    app_config.focus_mode = 0;
+    app_config.focus_roi_x = 0;
+    app_config.focus_roi_y = 0;
+    app_config.focus_roi_w = 10000;
+    app_config.focus_roi_h = 10000;
+    app_config.focus_skip_highlit = true;
+    app_config.focus_motor = false;
+    strcpy(app_config.focus_device, "/dev/i2c-3");
+    app_config.focus_address = 0x60;
+    app_config.focus_speed = 300;
+    app_config.focus_min_pos = -100000;
+    app_config.focus_max_pos = 100000;
+
+    app_config.flash_enable = true;
+    app_config.flash_max_bytes = 262144;
 
     app_config.iq_main_scene[0] = '\0';
     app_config.iq_sub_scene[0] = '\0';
@@ -898,6 +936,52 @@ enum ConfigError app_config_parse(void) {
             &app_config.yolo_conf_threshold);
         parse_double(&ini, "yolo", "nms_threshold", 0.01, 0.99,
             &app_config.yolo_nms_threshold);
+    }
+
+    /* [focus] is parsed even while disabled: the WebUI edits it live. */
+    parse_bool(&ini, "focus", "enable", &app_config.focus_enable);
+    {
+        char val[32] = {0};
+        int v;
+
+        if (parse_param_value_n(&ini, "focus", "mode", val, sizeof(val)) == CONFIG_OK)
+            app_config.focus_mode = EQUALS_CASE(val, "roi") ? 1 : 0;
+        v = (int)app_config.focus_fps;
+        parse_int(&ini, "focus", "fps", 1, 10, &v);
+        app_config.focus_fps = (unsigned int)v;
+        v = (int)app_config.focus_roi_x;
+        parse_int(&ini, "focus", "roi_x", 0, 10000, &v);
+        app_config.focus_roi_x = (unsigned int)v;
+        v = (int)app_config.focus_roi_y;
+        parse_int(&ini, "focus", "roi_y", 0, 10000, &v);
+        app_config.focus_roi_y = (unsigned int)v;
+        v = (int)app_config.focus_roi_w;
+        parse_int(&ini, "focus", "roi_w", 1000, 10000, &v);
+        app_config.focus_roi_w = (unsigned int)v;
+        v = (int)app_config.focus_roi_h;
+        parse_int(&ini, "focus", "roi_h", 1000, 10000, &v);
+        app_config.focus_roi_h = (unsigned int)v;
+        parse_bool(&ini, "focus", "skip_highlit", &app_config.focus_skip_highlit);
+        parse_bool(&ini, "focus", "motor", &app_config.focus_motor);
+        parse_param_value_n(&ini, "focus", "device", app_config.focus_device,
+            sizeof(app_config.focus_device));
+        v = (int)app_config.focus_address;
+        parse_int(&ini, "focus", "address", 1, 127, &v);
+        app_config.focus_address = (unsigned int)v;
+        v = (int)app_config.focus_speed;
+        parse_int(&ini, "focus", "speed", 1, 5000, &v);
+        app_config.focus_speed = (unsigned int)v;
+        parse_int(&ini, "focus", "min_pos", -1000000, 1000000,
+            &app_config.focus_min_pos);
+        parse_int(&ini, "focus", "max_pos", -1000000, 1000000,
+            &app_config.focus_max_pos);
+    }
+
+    parse_bool(&ini, "flash", "enable", &app_config.flash_enable);
+    {
+        int v = (int)app_config.flash_max_bytes;
+        parse_int(&ini, "flash", "max_bytes", 1024, 1048576, &v);
+        app_config.flash_max_bytes = (unsigned int)v;
     }
 
     parse_param_value_n(&ini, "iq", "main_scene",

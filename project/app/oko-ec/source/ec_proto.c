@@ -20,6 +20,11 @@ void ec_set_verbose(int enable)
     ec_verbose = enable ? 1 : 0;
 }
 
+int ec_verbose_enabled(void)
+{
+    return ec_verbose;
+}
+
 static const char *status_str(uint8_t status)
 {
     switch (status)

@@ -31,6 +31,7 @@ divinus-build:
 	$(MAKE) -C source/src \
 		CC="$(RK_APP_CROSS)-gcc" \
 		OPT="-Os -s $(RK_APP_OPTS) $(RK_APP_CROSS_CFLAGS)" \
+		MEDIA_INCLUDE="$(RK_APP_MEDIA_INCLUDE_PATH)" \
 		GIT_REV=$(DIVINUS_REV)
 	@test -f source/divinus || (echo "### $(PKG_NAME): source/divinus was not produced" && exit 1)
 	rm -rf $(PKG_BIN)

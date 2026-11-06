@@ -1,0 +1,915 @@
+#!/bin/sh
+#
+# OKO VPN helper: applies WireGuard and AmneziaWG profiles.
+#
+# Profiles live in /userdata/vpn/<name>.conf and are imported from a
+# wg-quick-style configuration.  The helper does not use wg-quick: it parses
+# the file itself, rejects script hooks, strips the wg-quick-only keys and
+# feeds the rest to "wg syncconf" or "awg syncconf".
+#
+#   oko-vpn validate <file|->        print parsed fields as key=value
+#   oko-vpn up <profile>             create and configure the interface
+#   oko-vpn down <profile>           remove routes and the interface
+#   oko-vpn status [--json]          state of every profile
+#   oko-vpn autostart                bring up profiles with auto=1
+#   oko-vpn watchdog [interval]      keep auto profiles alive
+#   oko-vpn delete <profile>         down, then remove the profile
+#   oko-vpn set-auto <profile> <0|1> toggle the autostart flag
+#
+# Profile metadata is stored in the first "# oko:" comment:
+#   # oko: type=awg auto=1 mtu=1420 dns=keep admin_nets=10.0.0.0/8
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+VPN_DIR=${OKO_VPN_DIR:-/userdata/vpn}
+STATE_DIR=${OKO_VPN_STATE_DIR:-$VPN_DIR/state}
+LOG_FILE=${OKO_VPN_LOG:-/var/log/vpn.log}
+LOCK_DIR=${OKO_VPN_LOCK:-/var/run/oko-vpn.lock}
+PID_FILE=${OKO_VPN_PID:-/var/run/oko-vpn.pid}
+DEFAULT_MTU=1420
+PROFILE_RE='^[a-z0-9_-]{1,31}$'
+
+log() {
+	echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >>"$LOG_FILE" 2>/dev/null || true
+}
+
+die() {
+	echo "oko-vpn: $*" >&2
+	log "error: $*"
+	exit 1
+}
+
+find_tool() {
+	for _p in /oem/usr/bin /usr/bin /usr/sbin /sbin /bin; do
+		[ -x "$_p/$1" ] && { echo "$_p/$1"; return 0; }
+	done
+	command -v "$1" 2>/dev/null
+}
+
+valid_profile() {
+	case "$1" in
+		''|*[!a-z0-9_-]*) return 1 ;;
+	esac
+	[ ${#1} -le 31 ] || return 1
+	echo "$1" | grep -Eq "$PROFILE_RE"
+}
+
+profile_file() {
+	echo "$VPN_DIR/$1.conf"
+}
+
+state_file() {
+	echo "$STATE_DIR/$1.state"
+}
+
+lock_acquire() {
+	_i=0
+	while ! mkdir "$LOCK_DIR" 2>/dev/null; do
+		if [ -f "$LOCK_DIR/pid" ]; then
+			_lp=$(cat "$LOCK_DIR/pid" 2>/dev/null)
+			[ -n "$_lp" ] && ! kill -0 "$_lp" 2>/dev/null &&
+				rm -rf "$LOCK_DIR"
+		fi
+		_i=$((_i + 1))
+		[ "$_i" -ge 100 ] && die "another oko-vpn operation is running"
+		sleep 0.1
+	done
+	echo $$ >"$LOCK_DIR/pid"
+}
+
+lock_release() {
+	rm -rf "$LOCK_DIR"
+}
+
+# Prints the first "# oko:" line without its leading comment marker.
+meta_line() {
+	sed -n 's/^[[:space:]]*#[[:space:]]*oko:[[:space:]]*//p' "$1" | head -n 1
+}
+
+meta_get() {
+	meta_line "$1" | tr ' ' '\n' | sed -n "s/^$2=//p" | head -n 1
+}
+
+# Replaces or inserts the "# oko:" metadata line.
+meta_set() {
+	_f=$1
+	_key=$2
+	_val=$3
+	_tmp=$_f.tmp.$$
+	_meta=$(meta_line "$_f")
+	if [ -z "$_meta" ]; then
+		{
+			printf '# oko: %s=%s\n' "$_key" "$_val"
+			cat "$_f"
+		} >"$_tmp" || { rm -f "$_tmp"; return 1; }
+	else
+		_new=$(
+			printf '%s\n' "$_meta" | tr ' ' '\n' | while IFS= read -r _t; do
+				case "$_t" in
+					''|"$_key"=*) ;;
+					*) printf '%s ' "$_t" ;;
+				esac
+			done
+		)
+		_new=$(printf '%s %s=%s' "$_new" "$_key" "$_val" | sed 's/  */ /g;s/^ *//;s/ *$//')
+		awk -v meta="$_new" '
+			done == 0 && /^[[:space:]]*#[[:space:]]*oko:/ {
+				print "# oko: " meta
+				done = 1
+				next
+			}
+			{ print }
+			END { if (done == 0) print "# oko: " meta }
+		' "$_f" >"$_tmp" || { rm -f "$_tmp"; return 1; }
+	fi
+	mv -f "$_tmp" "$_f" || { rm -f "$_tmp"; return 1; }
+	chmod 600 "$_f" 2>/dev/null || true
+}
+
+# Parses a configuration and fills the globals below.  Prints key=value
+# fields for the "validate" command, and returns non-zero on rejection.
+#
+#   P_TYPE P_IFNAME P_ADDR4 P_ADDR6 P_MTU P_ENDPOINT P_ALLOWED
+#   P_FULLTUNNEL P_DNS P_AUTO P_PRIV P_PEERS P_HOOKS
+parse_conf() {
+	_f=$1
+	P_TYPE=$(meta_get "$_f" type)
+	P_AUTO=$(meta_get "$_f" auto)
+	P_MTU=$(meta_get "$_f" mtu)
+	P_DNS=$(meta_get "$_f" dns)
+	P_ADMIN=$(meta_get "$_f" admin_nets)
+	[ -n "$P_AUTO" ] || P_AUTO=0
+	[ -n "$P_DNS" ] || P_DNS=keep
+	P_DNS_LINE=
+	P_MTU_LINE=
+
+	P_ADDR4=
+	P_ADDR6=
+	P_EP=
+	P_ALLOWED=
+	P_PRIV=0
+	P_PEERS=0
+	P_HOOKS=
+	P_AWG=0
+	P_PEER_OK=0
+	_section=
+
+	_parsed=$(
+		awk '
+		function trim(s) { gsub(/^[ \t\r]+/, "", s); gsub(/[ \t\r]+$/, "", s); return s }
+		{
+			line = $0
+			sub(/\r$/, "", line)
+			t = trim(line)
+			if (t == "") next
+			if (t ~ /^#/) next
+			if (t ~ /^\[/) {
+				s = t; gsub(/[ \t]/, "", s); print "section=" s; next
+			}
+			eq = index(line, "=")
+			if (eq == 0) next
+			k = trim(substr(line, 1, eq - 1))
+			v = trim(substr(line, eq + 1))
+			if (k == "PreUp" || k == "PostUp" || k == "PreDown" || k == "PostDown")
+				print "hook=" k
+			else if (k == "PrivateKey" && v != "")
+				print "priv=1"
+			else if (k == "Address")
+				print "addr=" v
+			else if (k == "DNS")
+				print "dns=" v
+			else if (k == "MTU" && v ~ /^[0-9]+$/)
+				print "mtu=" v
+			else if (k == "PublicKey" && v != "")
+				print "pub=1"
+			else if (k == "Endpoint" && v != "")
+				print "endpoint=" v
+			else if (k == "AllowedIPs")
+				print "allowed=" v
+			else if (k == "Jc" || k == "Jmin" || k == "Jmax" || \
+				k == "S1" || k == "S2" || k == "S3" || k == "S4" || \
+				k == "H1" || k == "H2" || k == "H3" || k == "H4" || \
+				k == "I1" || k == "I2" || k == "I3" || k == "I4" || k == "I5" || \
+				k == "HeaderProtectionKey" || k == "ContentPaddingAddition" || \
+				k == "AdvancedSecurity" || k == "RandomTrailers" || \
+				k == "DisableCookies")
+				print "awg=1"
+		}' "$_f"
+	) || return 1
+
+	_prev_section=
+	_peer_has_pub=0
+	_peer_has_ep=0
+	_peer_allowed=
+	_peer_ep=
+	while IFS= read -r _line; do
+		case "$_line" in
+			section=*)
+				if [ "$_prev_section" = "[Peer]" ]; then
+					P_PEERS=$((P_PEERS + 1))
+					if [ "$_peer_has_pub" = 1 ] && [ "$_peer_has_ep" = 1 ]; then
+						P_PEER_OK=$((P_PEER_OK + 1))
+					fi
+				fi
+				_prev_section=${_line#section=}
+				_peer_has_pub=0
+				_peer_has_ep=0
+				;;
+			hook=*) P_HOOKS="${P_HOOKS:+$P_HOOKS }${_line#hook=}" ;;
+			priv=1) P_PRIV=1 ;;
+			awg=1) P_AWG=1 ;;
+			pub=1) _peer_has_pub=1 ;;
+			endpoint=*)
+				_peer_has_ep=1
+				[ -n "$P_EP" ] || P_EP=${_line#endpoint=}
+				;;
+			allowed=*)
+				_allowed=${_line#allowed=}
+				_allowed=$(echo "$_allowed" | tr ',' ' ')
+				for _a in $_allowed; do
+					P_ALLOWED=${P_ALLOWED:+$P_ALLOWED,}$_a
+				done
+				;;
+			addr=*)
+				_addrlist=$(echo "${_line#addr=}" | tr ',' ' ')
+				for _a in $_addrlist; do
+					case "$_a" in
+						*:*) P_ADDR6=${P_ADDR6:+$P_ADDR6,}$_a ;;
+						*) P_ADDR4=${P_ADDR4:+$P_ADDR4,}$_a ;;
+					esac
+				done
+				;;
+			dns=*)
+				[ -n "$P_DNS_LINE" ] || P_DNS_LINE=${_line#dns=}
+				;;
+			mtu=*)
+				[ -n "$P_MTU_LINE" ] || P_MTU_LINE=${_line#mtu=}
+				;;
+		esac
+	done <<EOF
+$_parsed
+EOF
+	# The last section may be a [Peer] as well.
+	if [ "$_prev_section" = "[Peer]" ]; then
+		P_PEERS=$((P_PEERS + 1))
+		if [ "$_peer_has_pub" = 1 ] && [ "$_peer_has_ep" = 1 ]; then
+			P_PEER_OK=$((P_PEER_OK + 1))
+		fi
+	fi
+
+	# A metadata line has priority over the file-level MTU.
+	[ -n "$P_MTU" ] || P_MTU=$P_MTU_LINE
+	[ -n "$P_MTU" ] || P_MTU=$DEFAULT_MTU
+
+	if [ "$P_AWG" = 1 ]; then
+		[ -n "$P_TYPE" ] || P_TYPE=awg
+	fi
+	[ -n "$P_TYPE" ] || P_TYPE=wg
+	case "$P_TYPE" in
+		wg|awg) ;;
+		*) die "type must be wg or awg" ;;
+	esac
+	case "$P_TYPE" in
+		wg) P_IFNAME=wg0 ;;
+		awg) P_IFNAME=awg0 ;;
+	esac
+
+	P_FULLTUNNEL=0
+	_ifs=$IFS
+	IFS=,
+	for _a in $P_ALLOWED; do
+		case "$_a" in
+			0.0.0.0/0|::/0) P_FULLTUNNEL=1 ;;
+		esac
+	done
+	IFS=$_ifs
+
+	[ -n "$P_MTU" ] || P_MTU=$DEFAULT_MTU
+	case "$P_MTU" in
+		''|*[!0-9]*) die "MTU must be a number" ;;
+	esac
+	[ "$P_MTU" -ge 576 ] && [ "$P_MTU" -le 1500 ] ||
+		die "MTU must be between 576 and 1500"
+
+	if [ -n "$P_HOOKS" ]; then
+		die "script hooks are not supported ($P_HOOKS)"
+	fi
+	[ "$P_PRIV" = 1 ] || die "[Interface] PrivateKey is required"
+	[ -n "$P_EP" ] || die "at least one [Peer] Endpoint is required"
+	[ "$P_PEER_OK" -ge 1 ] ||
+		die "at least one [Peer] needs PublicKey and Endpoint"
+}
+
+print_validate() {
+	echo "type=$P_TYPE"
+	echo "ifname=$P_IFNAME"
+	echo "address4=$P_ADDR4"
+	echo "address6=$P_ADDR6"
+	echo "mtu=$P_MTU"
+	echo "endpoint=$P_EP"
+	echo "allowedips=$P_ALLOWED"
+	echo "fulltunnel=$P_FULLTUNNEL"
+	echo "dns=$P_DNS"
+	echo "auto=$P_AUTO"
+}
+
+tool_path() {
+	case "$1" in
+		awg) find_tool awg ;;
+		wg) find_tool wg ;;
+	esac
+}
+
+ensure_module() {
+	_type=$1
+	[ "$_type" = awg ] || return 0
+	if grep -q '^amneziawg ' /proc/modules 2>/dev/null; then
+		return 0
+	fi
+	_ko=/oem/usr/ko/amneziawg.ko
+	[ -f "$_ko" ] || die "amneziawg.ko is missing from /oem/usr/ko"
+	insmod "$_ko" || die "cannot load amneziawg.ko"
+	log "loaded amneziawg.ko"
+}
+
+# Resolves the endpoint host to an IPv4 address (empty when unknown).
+resolve_endpoint() {
+	_ep=$1
+	case "$_ep" in
+		\[*\]:*) _host=${_ep#\[}; _host=${_host%%\]*} ;;
+		*:*) _host=${_ep%:*} ;;
+		*) _host=$_ep ;;
+	esac
+	case "$_host" in
+		''|*[!0-9.]*) ;;
+		*) echo "$_host"; return 0 ;;
+	esac
+	_ans=$(getent hosts "$_host" 2>/dev/null | awk 'NR==1{print $1}')
+	if [ -z "$_ans" ]; then
+		_ans=$(nslookup "$_host" 2>/dev/null | awk '
+			/^Address [0-9]+:/ { a = $3 }
+			END { print a }')
+	fi
+	echo "$_ans"
+}
+
+# Fills DIS_* with the current default route, gateway and eth0 address.
+eth0_state() {
+	DEF_LINE=$(ip route show default 2>/dev/null | head -n 1)
+	DEF_GW=$(printf '%s\n' "$DEF_LINE" | awk '
+		{ for (i = 1; i < NF; i++) if ($i == "via") print $(i + 1) }')
+	DEF_DEV=$(printf '%s\n' "$DEF_LINE" | awk '
+		{ for (i = 1; i < NF; i++) if ($i == "dev") print $(i + 1) }')
+	[ -n "$DEF_DEV" ] || DEF_DEV=eth0
+	ETH_CIDR=$(ip -4 addr show dev "$DEF_DEV" 2>/dev/null |
+		awk '/inet /{print $2; exit}')
+	ETH_IP=${ETH_CIDR%/*}
+	[ -n "$ETH_IP" ] || ETH_IP=$(ip -4 addr show dev "$DEF_DEV" 2>/dev/null |
+		awk '/inet /{print $2; exit}' | cut -d/ -f1)
+}
+
+state_reset() {
+	_state=$(state_file "$1")
+	{
+		echo "type=$2"
+		echo "ifname=$3"
+		echo "configured=0"
+		echo "guard_reverted=0"
+	} >"$_state"
+	chmod 600 "$_state"
+}
+
+state_add() {
+	echo "$2" >>"$(state_file "$1")"
+}
+
+state_set() {
+	_state=$(state_file "$1")
+	[ -f "$_state" ] || return 0
+	awk -v k="$2" -v v="$3" '
+		BEGIN { done = 0 }
+		{
+			if (index($0, k "=") == 1) {
+				if (!done) { print k "=" v; done = 1 }
+				next
+			}
+			print
+		}
+		END { if (!done) print k "=" v }
+	' "$_state" >"$_state.tmp.$$" && mv -f "$_state.tmp.$$" "$_state"
+}
+
+state_get() {
+	_state=$(state_file "$1")
+	[ -f "$_state" ] || return 1
+	sed -n "s/^$2=//p" "$_state" | head -n 1
+}
+
+# Adds a route and remembers it for "down".
+add_route() {
+	_profile=$1
+	_route=$2
+	shift 2
+	ip route replace "$_route" "$@" 2>/dev/null || return 1
+	state_add "$_profile" "route=$_route"
+}
+
+remove_routes() {
+	_profile=$1
+	_state=$(state_file "$_profile")
+	[ -f "$_state" ] || return 0
+	sed -n 's/^route=//p' "$_state" | while IFS= read -r _route; do
+		[ -n "$_route" ] || continue
+		ip route del "$_route" 2>/dev/null || true
+	done
+}
+
+# Writes the configuration without the wg-quick-only keys.
+write_tunnel_conf() {
+	_src=$1
+	_dst=$2
+	awk '
+		{
+			line = $0
+			t = line
+			sub(/^[ \t]+/, "", t)
+			if (t ~ /^(Address|DNS|Table|MTU|SaveConfig)[ \t]*=/)
+				next
+			print line
+		}' "$_src" >"$_dst"
+	chmod 600 "$_dst"
+}
+
+apply_addresses() {
+	_profile=$1
+	_ifname=$2
+	for _a in $(echo "$P_ADDR4" | tr ',' ' '); do
+		case "$_a" in
+			*/*) ;;
+			*) _a=$_a/32 ;;
+		esac
+		ip addr add "$_a" dev "$_ifname" 2>/dev/null || true
+	done
+	for _a in $(echo "$P_ADDR6" | tr ',' ' '); do
+		case "$_a" in
+			*/*) ;;
+			*) _a=$_a/128 ;;
+		esac
+		ip -6 addr add "$_a" dev "$_ifname" 2>/dev/null || true
+	done
+}
+
+add_split_routes() {
+	_profile=$1
+	_ifname=$2
+	_ifs=$IFS
+	IFS=,
+	for _net in $P_ALLOWED; do
+		case "$_net" in
+			0.0.0.0/0|::/0) continue ;;
+		esac
+		[ -n "$_net" ] || continue
+		if ip route replace "$_net" dev "$_ifname" 2>/dev/null; then
+			state_add "$_profile" "route=$_net"
+		else
+			log "profile $_profile: cannot add route $_net"
+		fi
+	done
+	IFS=$_ifs
+}
+
+apply_dns() {
+	_profile=$1
+	[ "$P_DNS" = tunnel ] || return 0
+	[ -n "$P_DNS_LINE" ] || return 0
+	_bak=$STATE_DIR/$_profile.resolv
+	[ -f "$_bak" ] || cp /etc/resolv.conf "$_bak" 2>/dev/null || true
+	{
+		for _d in $(echo "$P_DNS_LINE" | tr ',' ' '); do
+			echo "nameserver $_d"
+		done
+	} >/etc/resolv.conf 2>/dev/null || true
+	state_add "$_profile" "dns_changed=1"
+}
+
+restore_dns() {
+	_profile=$1
+	_bak=$STATE_DIR/$_profile.resolv
+	if [ "$(state_get "$_profile" dns_changed)" = 1 ] && [ -f "$_bak" ]; then
+		cat "$_bak" >/etc/resolv.conf 2>/dev/null || true
+	fi
+	rm -f "$_bak"
+}
+
+latest_handshake_epoch() {
+	_tool=$1
+	_ifname=$2
+	# dump peer fields: public psk endpoint allowed-ips handshake rx tx keepalive
+	"$_tool" show "$_ifname" dump 2>/dev/null | awk 'NR == 2 { print $5 }'
+}
+
+guard_apply() {
+	_profile=$1
+	_ifname=$2
+	_tool=$3
+
+	eth0_state
+	[ -n "$DEF_LINE" ] || { log "profile $_profile: no default route, full tunnel not attempted"; return 1; }
+	[ -n "$DEF_GW" ] || { log "profile $_profile: default route has no gateway"; return 1; }
+
+	_ep_ip=$(resolve_endpoint "$P_EP")
+	[ -n "$_ep_ip" ] || {
+		log "profile $_profile: cannot resolve $P_EP, full tunnel not attempted"
+		return 1
+	}
+
+	add_route "$_profile" "$_ep_ip/32" dev "$DEF_DEV" src "$ETH_IP" ||
+		add_route "$_profile" "$_ep_ip/32" dev "$DEF_DEV" || true
+	[ -n "$DEF_GW" ] && { add_route "$_profile" "$DEF_GW/32" dev "$DEF_DEV" || true; }
+	[ -n "$ETH_CIDR" ] && { add_route "$_profile" "$ETH_CIDR" dev "$DEF_DEV" || true; }
+	if [ -n "$P_ADMIN" ]; then
+		for _n in $(echo "$P_ADMIN" | tr ',' ' '); do
+			[ -n "$_n" ] && { add_route "$_profile" "$_n" dev "$DEF_DEV" || true; }
+		done
+	fi
+
+	state_add "$_profile" "default_saved=$DEF_LINE"
+	state_add "$_profile" "guard_ep=$_ep_ip"
+	ip route replace default dev "$_ifname" metric 100 ||
+		die "cannot move the default route to $_ifname"
+	state_add "$_profile" "default_changed=1"
+	log "profile $_profile: full tunnel default route via $_ifname"
+
+	sleep 15
+
+	_hs=$(latest_handshake_epoch "$_tool" "$_ifname")
+	_now=$(date +%s)
+	_ping_ok=0
+	[ -n "$DEF_GW" ] && ping -c1 -W2 -I "$DEF_DEV" "$DEF_GW" >/dev/null 2>&1 && _ping_ok=1
+
+	if [ -n "$_hs" ] && [ "$_hs" -gt 0 ] 2>/dev/null &&
+		[ $((_now - _hs)) -lt 180 ] && [ "$_ping_ok" = 1 ]; then
+		log "profile $_profile: guard passed (handshake ${_hs}, gw reachable)"
+		return 0
+	fi
+
+	log "profile $_profile: guard failed (handshake '$_hs', gw ping $_ping_ok), reverting"
+	ip route del default dev "$_ifname" 2>/dev/null || true
+	if [ -n "$DEF_LINE" ]; then
+		# The saved line is a full route: word splitting is intentional.
+		# shellcheck disable=SC2086
+		ip route replace $DEF_LINE 2>/dev/null || log "profile $_profile: cannot restore default route"
+	fi
+	state_set "$_profile" default_changed 0
+	state_set "$_profile" guard_reverted 1
+	return 1
+}
+
+guard_restore() {
+	_profile=$1
+	_ifname=$2
+	if [ "$(state_get "$_profile" default_changed)" = 1 ]; then
+		_saved=$(state_get "$_profile" default_saved)
+		ip route del default dev "$_ifname" 2>/dev/null || true
+		# shellcheck disable=SC2086
+		[ -n "$_saved" ] && ip route replace $_saved 2>/dev/null || true
+	fi
+	state_set "$_profile" default_changed 0
+}
+
+up_profile() {
+	_profile=$1
+	valid_profile "$_profile" || die "invalid profile name"
+	_conf=$(profile_file "$_profile")
+	[ -f "$_conf" ] && [ ! -L "$_conf" ] || die "profile $_profile does not exist"
+	[ -x "$(find_tool ip)" ] || die "ip is missing"
+	[ -d "$STATE_DIR" ] || mkdir -p "$STATE_DIR"
+
+	parse_conf "$_conf"
+	_tool=$(tool_path "$P_TYPE")
+	[ -n "$_tool" ] || die "$P_TYPE tools are missing"
+	_ifname=$P_IFNAME
+
+	# A stale state file means the previous instance was not stopped.
+	if [ -f "$(state_file "$_profile")" ]; then
+		down_profile "$_profile" >/dev/null 2>&1 || true
+	fi
+	if ip link show "$_ifname" >/dev/null 2>&1; then
+		ip link del "$_ifname" >/dev/null 2>&1 || true
+	fi
+
+	ensure_module "$P_TYPE"
+
+	case "$P_TYPE" in
+		wg) _type=wireguard ;;
+		awg) _type=amneziawg ;;
+	esac
+	ip link add "$_ifname" type "$_type" ||
+		die "cannot create $_ifname (module loaded?)"
+	ip link set dev "$_ifname" mtu "$P_MTU" ||
+		die "cannot set MTU $P_MTU on $_ifname"
+	apply_addresses "$_profile" "$_ifname"
+	ip link set dev "$_ifname" up || die "cannot bring $_ifname up"
+
+	_tmp=/tmp/oko-vpn.$_profile.conf
+	write_tunnel_conf "$_conf" "$_tmp"
+	if ! "$_tool" syncconf "$_ifname" "$_tmp"; then
+		rm -f "$_tmp"
+		ip link del "$_ifname" 2>/dev/null || true
+		die "$_tool syncconf failed for $_profile"
+	fi
+	rm -f "$_tmp"
+
+	state_reset "$_profile" "$P_TYPE" "$_ifname"
+	add_split_routes "$_profile" "$_ifname"
+	apply_dns "$_profile"
+
+	if [ "$P_FULLTUNNEL" = 1 ]; then
+		guard_apply "$_profile" "$_ifname" "$_tool" || true
+	fi
+	state_set "$_profile" configured 1
+	log "profile $_profile is up on $_ifname (fulltunnel=$P_FULLTUNNEL)"
+}
+
+down_profile() {
+	_profile=$1
+	valid_profile "$_profile" || die "invalid profile name"
+	_state=$(state_file "$_profile")
+	_conf=$(profile_file "$_profile")
+	_type=$(state_get "$_profile" type)
+	_ifname=$(state_get "$_profile" ifname)
+	if [ -z "$_type" ] && [ -f "$_conf" ]; then
+		_type=$(meta_get "$_conf" type)
+		[ -n "$_type" ] || _type=wg
+	fi
+	[ -n "$_ifname" ] || {
+		case "$_type" in
+			awg) _ifname=awg0 ;;
+			*) _ifname=wg0 ;;
+		esac
+	}
+
+	guard_restore "$_profile" "$_ifname"
+	remove_routes "$_profile"
+	restore_dns "$_profile"
+	ip link del "$_ifname" 2>/dev/null || true
+	rm -f "$_state"
+	log "profile $_profile is down"
+}
+
+status_one() {
+	_profile=$1
+	_conf=$(profile_file "$_profile")
+	[ -f "$_conf" ] || return 0
+	_type=$(meta_get "$_conf" type)
+	_auto=$(meta_get "$_conf" auto)
+	[ -n "$_auto" ] || _auto=0
+
+	# Validation runs in a subshell: one broken profile must not stop the
+	# whole status listing.
+	_info=$(
+		( parse_conf "$_conf" && print_validate ) 2>/dev/null
+	)
+	_p_ok=0
+	[ -n "$_info" ] && _p_ok=1
+	_v_type=
+	_v_ifname=
+	_v_ep=
+	_v_aips=
+	_v_ft=
+	while IFS='=' read -r _k _v; do
+		case "$_k" in
+			type) _v_type=$_v ;;
+			ifname) _v_ifname=$_v ;;
+			endpoint) _v_ep=$_v ;;
+			allowedips) _v_aips=$_v ;;
+			fulltunnel) _v_ft=$_v ;;
+		esac
+	done <<LIST
+$_info
+LIST
+	[ -n "$_type" ] || _type=${_v_type:-wg}
+	_ifname=${_v_ifname:-}
+	[ -n "$_ifname" ] || { [ "$_type" = awg ] && _ifname=awg0 || _ifname=wg0; }
+	_state=down
+	if ip link show "$_ifname" >/dev/null 2>&1 &&
+		[ "$(state_get "$_profile" configured)" = 1 ]; then
+		_state=up
+	fi
+	_ep=$_v_ep
+	_aips=$_v_aips
+	_ft=${_v_ft:-0}
+	_gr=$(state_get "$_profile" guard_reverted)
+	[ -n "$_gr" ] || _gr=0
+	_routes=$(sed -n 's/^route=//p' "$(state_file "$_profile")" 2>/dev/null | tr '\n' ' ')
+	_hs=
+	_tx=
+	_rx=
+	_mtu=
+	if [ "$_state" = up ]; then
+		_tool=$(tool_path "$_type")
+		if [ -n "$_tool" ]; then
+			_dump=$("$_tool" show "$_ifname" dump 2>/dev/null)
+			_hs=$(printf '%s\n' "$_dump" | awk 'NR == 2 { print $5 }')
+			_rx=$(printf '%s\n' "$_dump" | awk 'NR == 2 { print $6 }')
+			_tx=$(printf '%s\n' "$_dump" | awk 'NR == 2 { print $7 }')
+		fi
+		_mtu=$(ip -o link show dev "$_ifname" 2>/dev/null |
+			awk '{ for (i = 1; i < NF; i++) if ($i == "mtu") print $(i + 1) }')
+	fi
+	_now=$(date +%s)
+	_age=
+	[ -n "$_hs" ] && [ "$_hs" -gt 0 ] 2>/dev/null && _age=$((_now - _hs))
+
+	if [ "$JSON" = 1 ]; then
+		printf '{"name":"%s","type":"%s","ifname":"%s","auto":%s,' \
+			"$_profile" "$_type" "$_ifname" "$_auto"
+		printf '"endpoint":"%s","allowedips":"%s","fulltunnel":%s,' \
+			"$_ep" "$_aips" "$_ft"
+		printf '"state":"%s","valid":%s,"guard_reverted":%s,' \
+			"$_state" "$_p_ok" "$_gr"
+		if [ "$_state" = up ]; then
+			printf '"live":{"handshake_age":%s,"tx":%s,"rx":%s,"mtu":%s,"routes":"%s"}' \
+				"${_age:--1}" "${_tx:-0}" "${_rx:-0}" "${_mtu:-0}" "$_routes"
+		else
+			printf '"live":null'
+		fi
+		printf '}'
+	else
+		echo "profile=$_profile type=$_type ifname=$_ifname auto=$_auto state=$_state valid=$_p_ok endpoint=$_ep allowedips=$_aips fulltunnel=$_ft guard_reverted=$_gr routes=$_routes handshake_age=${_age:--1} tx=${_tx:-0} rx=${_rx:-0} mtu=${_mtu:-0}"
+	fi
+}
+
+profile_names() {
+	[ -d "$VPN_DIR" ] || return 0
+	for _f in "$VPN_DIR"/*.conf; do
+		[ -f "$_f" ] || continue
+		_b=${_f##*/}
+		_b=${_b%.conf}
+		valid_profile "$_b" && echo "$_b"
+	done
+}
+
+cmd_status() {
+	JSON=0
+	[ "$1" = --json ] && JSON=1
+	if [ "$JSON" = 1 ]; then
+		printf '{"profiles":['
+	else
+		printf 'vpn_dir=%s\n' "$VPN_DIR"
+	fi
+	_first=1
+	for _p in $(profile_names); do
+		if [ "$JSON" = 1 ]; then
+			[ "$_first" = 1 ] || printf ','
+			_first=0
+		fi
+		status_one "$_p"
+	done
+	if [ "$JSON" = 1 ]; then
+		printf ']}\n'
+	else
+		_wd=$(cat "$PID_FILE" 2>/dev/null || echo 0)
+		kill -0 "$_wd" 2>/dev/null || _wd=0
+		printf 'watchdog_pid=%s\n' "$_wd"
+	fi
+}
+
+cmd_autostart() {
+	for _p in $(profile_names); do
+		_conf=$(profile_file "$_p")
+		[ "$(meta_get "$_conf" auto)" = 1 ] || continue
+		lock_acquire
+		_type=$(meta_get "$_conf" type)
+		_ifname=wg0
+		[ "$_type" = awg ] && _ifname=awg0
+		if ip link show "$_ifname" >/dev/null 2>&1; then
+			lock_release
+			continue
+		fi
+		( up_profile "$_p" ) || log "autostart: profile $_p failed"
+		lock_release
+	done
+}
+
+cmd_watchdog() {
+	_interval=${1:-30}
+	case "$_interval" in
+		''|*[!0-9]*) _interval=30 ;;
+	esac
+	[ "$_interval" -ge 5 ] || _interval=5
+	echo $$ >"$PID_FILE"
+	trap 'rm -f "$PID_FILE"; exit 0' TERM INT HUP
+	log "watchdog started (interval ${_interval}s, pid $$)"
+	while :; do
+		for _p in $(profile_names); do
+			_conf=$(profile_file "$_p")
+			[ "$(meta_get "$_conf" auto)" = 1 ] || continue
+			_type=$(meta_get "$_conf" type)
+			_ifname=wg0
+			[ "$_type" = awg ] && _ifname=awg0
+			if ! ip link show "$_ifname" >/dev/null 2>&1; then
+				lock_acquire
+				if ! ip link show "$_ifname" >/dev/null 2>&1; then
+					( up_profile "$_p" ) || log "watchdog: profile $_p failed"
+				fi
+				lock_release
+			fi
+		done
+		sleep "$_interval"
+	done
+}
+
+cmd_delete() {
+	_profile=$1
+	valid_profile "$_profile" || die "invalid profile name"
+	[ -f "$(profile_file "$_profile")" ] || die "profile $_profile does not exist"
+	down_profile "$_profile"
+	rm -f "$(profile_file "$_profile")" "$(state_file "$_profile")" \
+		"$STATE_DIR/$_profile.resolv"
+	log "profile $_profile deleted"
+}
+
+cmd_set_auto() {
+	_profile=$1
+	_flag=$2
+	valid_profile "$_profile" || die "invalid profile name"
+	case "$_flag" in 0|1) ;; *) die "auto must be 0 or 1" ;; esac
+	_conf=$(profile_file "$_profile")
+	[ -f "$_conf" ] || die "profile $_profile does not exist"
+	meta_set "$_conf" auto "$_flag" || die "cannot write $_conf"
+}
+
+usage() {
+	cat >&2 <<EOF
+usage: oko-vpn <command> [arguments]
+  validate <file|->          validate a configuration and print its fields
+  up <profile>               configure and start a profile
+  down <profile>             stop a profile and remove its routes
+  status [--json]            show the profiles and live state
+  autostart                  start every profile with auto=1
+  watchdog [interval]        keep auto profiles alive (default 30s)
+  delete <profile>           stop and remove a profile
+  set-auto <profile> <0|1>   toggle the autostart flag
+EOF
+	exit 1
+}
+
+[ $# -ge 1 ] || usage
+_cmd=$1
+shift
+
+case "$_cmd" in
+	validate)
+		[ $# -ge 1 ] || usage
+		_src=$1
+		_tmp=
+		if [ "$_src" = - ]; then
+			_tmp=/tmp/oko-vpn.validate.$$
+			umask 077
+			cat >"$_tmp" || die "cannot read the configuration from stdin"
+			_src=$_tmp
+		fi
+		[ -f "$_src" ] || die "configuration file not found"
+		parse_conf "$_src"
+		_rc=$?
+		[ -n "$_tmp" ] && rm -f "$_tmp"
+		[ "$_rc" = 0 ] || exit 1
+		print_validate
+		;;
+	up)
+		[ $# -ge 1 ] || usage
+		lock_acquire
+		trap 'lock_release' EXIT INT TERM HUP
+		up_profile "$1"
+		;;
+	down)
+		[ $# -ge 1 ] || usage
+		lock_acquire
+		trap 'lock_release' EXIT INT TERM HUP
+		down_profile "$1"
+		;;
+	status)
+		cmd_status "$@"
+		;;
+	autostart)
+		cmd_autostart
+		;;
+	watchdog)
+		cmd_watchdog "$@"
+		;;
+	delete)
+		[ $# -ge 1 ] || usage
+		lock_acquire
+		trap 'lock_release' EXIT INT TERM HUP
+		cmd_delete "$1"
+		;;
+	set-auto)
+		[ $# -ge 2 ] || usage
+		cmd_set_auto "$1" "$2"
+		;;
+	*)
+		usage
+		;;
+esac

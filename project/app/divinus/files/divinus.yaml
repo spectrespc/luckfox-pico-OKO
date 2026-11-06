@@ -251,6 +251,26 @@ mjpeg:
 #   post_seconds: 2
 #   max_frames: 20
 #
+# focus:
+#   enable: false         # AF statistics thread (focus assist)
+#   fps: 5
+#   mode: full            # full | roi
+#   roi_x: 0
+#   roi_y: 0
+#   roi_w: 10000
+#   roi_h: 10000
+#   skip_highlit: true
+#   motor: false          # drive the STM8 focus motor (0x60, /dev/i2c-3)
+#   device: /dev/i2c-3
+#   address: 96
+#   speed: 300
+#   min_pos: -100000
+#   max_pos: 100000
+#
+# flash:
+#   enable: true          # controller firmware upload via the WebUI
+#   max_bytes: 262144
+
 # iq:
 #   main_scene: normal
 #   sub_scene: day

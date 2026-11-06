@@ -212,8 +212,21 @@ write_cpu_mem() {
 	# Save current values for next iteration
 	echo "$cpu_total $cpu_idle" > /tmp/osd-cpu.stats
 
-	printf 'CPU %d%%\\nMEM FREE %d%%\\nT %d.%dC\n' \
-		"$usage" "$mem_free_pct" "$temp_whole" "$temp_frac" >"$SYS.tmp"
+	# NPU load: /proc/rknpu/load is "NPU load: NN%" on RV1106.  Appending it
+	# to the existing CPU line avoids adding a fourth OSD line (the region at
+	# reg4_posy=960 clips).  The file is absent when rknpu.ko is not loaded.
+	local npu_suffix=""
+	if [ -r /proc/rknpu/load ]; then
+		local npu_raw=$(cat /proc/rknpu/load 2>/dev/null)
+		local npu_pct=$(printf '%s' "$npu_raw" | sed -n 's/.*NPU load:[^0-9]*\([0-9][0-9]*\)%.*/\1/p' | head -n1)
+		[ -n "$npu_pct" ] && npu_suffix=" NPU ${npu_pct}%"
+	fi
+
+	# The renderer splits lines on the two-character sequence "\n" (backslash
+	# + n), not on a real newline: region_read_text_file() reads only the first
+	# line and text.c handles "\\n".  Keep the backslashes literal.
+	printf 'CPU %d%%%s\\nMEM FREE %d%%\\nT %d.%dC\n' \
+		"$usage" "$npu_suffix" "$mem_free_pct" "$temp_whole" "$temp_frac" >"$SYS.tmp"
 	mv -f "$SYS.tmp" "$SYS"
 }
 

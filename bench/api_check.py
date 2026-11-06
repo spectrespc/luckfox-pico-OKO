@@ -47,7 +47,11 @@ GET_JSON = [
     "/api/ivs",
     "/api/yolo",
     "/api/models",
+    "/api/focus",
+    "/api/flash",
+    "/api/firmware",
     "/api/streams",
+    "/api/vpn",
 ] + ["/api/osd/%d" % i for i in range(10)]
 
 POST_NOOP = [
@@ -70,6 +74,7 @@ POST_NOOP = [
     "/api/ivs",
     "/api/yolo",
     "/api/models",
+    "/api/focus",
     "/api/network",
     "/api/storage",
     "/api/time",
@@ -163,6 +168,32 @@ def main():
             failures.append("GET %s: expected 400 invalid, got HTTP %s %r" %
                 (path, status, dec))
         print("GET  %-18s %s %s" % (path, status, dec.get("error", "?")))
+
+    # VPN: a bad profile name, a missing action and a path traversal in the
+    # export must be refused without touching the profiles.
+    checks += 1
+    status, _headers, body = request("/api/vpn", "POST",
+        b"action=up&profile=..%2Fetc")
+    dec = json.loads(body.decode())
+    if dec.get("error") != "blocked":
+        failures.append("VPN bad profile: expected blocked, got %r" % dec)
+    print("POST %-18s %s %s" % ("/api/vpn profile", status,
+        dec.get("error", "?")))
+
+    checks += 1
+    status, _headers, body = request("/api/vpn", "POST", b"")
+    if not 400 <= status < 500:
+        failures.append("VPN empty action: expected 400, got %s" % status)
+    print("POST %-18s %s" % ("/api/vpn empty", status))
+
+    checks += 1
+    status, _headers, body = request(
+        "/api/vpn/export?profile=..%2Fetc%2Fpasswd")
+    dec = json.loads(body.decode())
+    if dec.get("error") != "blocked":
+        failures.append("VPN export traversal: expected blocked, got %r" % dec)
+    print("GET  %-18s %s %s" % ("/api/vpn/export", status,
+        dec.get("error", "?")))
 
     for name in ("../../etc/passwd", "x.txt", "..", ""):
         checks += 1

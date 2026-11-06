@@ -24,8 +24,361 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ## [Не выпущено]
 
+- `KNOWN_ISSUES.md` — реестр открытых ошибок и ограничений: критичные
+  (`vi1`, librga, отсутствие модели 640×384, лицензия YOLOv5), функциональные
+  (ночная точность, CMA, OSD, IVS, HDR, VENC), прошивка/конфигурация
+  (`update.img` и env, `reboot loader`, `ubinfo`, старый YAML), безопасность и
+  инструменты. Для каждой проблемы указаны проявление, обход и статус;
+  ссылки добавлены в `STRUCTURE.md`, `README_RU.md`, `FEATURES.md` и `AGENTS.md`.
+- `KNOWN_ISSUES.md` — a register of open defects and limitations: critical
+  (`vi1`, librga, missing 640×384 model, YOLOv5 licence), functional (night
+  accuracy, CMA, OSD, IVS, HDR, VENC), flashing/configuration (`update.img`
+  and env, `reboot loader`, `ubinfo`, old YAML), security and tooling. Each
+  issue lists its symptom, workaround and status; links added to
+  `STRUCTURE.md`, `README_RU.md`, `FEATURES.md` and `AGENTS.md`.
+
+### Изменено
+
+- **VPN: флаги сборки и статус (OKO).** `sysdrv/drv_ko/Makefile` собирает
+  `amneziawg` (`M_DIRS`), `sysdrv/cfg/package.mk` получил
+  `CONFIG_SYSDRV_ENABLE_AWG=n` + `RK_ENABLE_AWG`, активный board config —
+  `RK_ENABLE_AWG=y`; встроенный `CONFIG_WIREGUARD=y` не менялся.
+  `/api/status` отдаёт `features.vpn` (хелпер и хотя бы один бинарь `wg`/`awg`).
+  Обновлены `STRUCTURE.md`, `INIT_ORDER.md` (S45oko-vpn, порядок модулей),
+  `FEATURES.md`, `FEATURES_UNVERIFIED.md` (KI-037…041), `TESTBENCH.md`,
+  `bench/README.md`.
+- **VPN: build flags and status (OKO).** `sysdrv/drv_ko/Makefile` builds
+  `amneziawg` (`M_DIRS`), `sysdrv/cfg/package.mk` gained
+  `CONFIG_SYSDRV_ENABLE_AWG=n` + `RK_ENABLE_AWG`, and the active board config
+  sets `RK_ENABLE_AWG=y`; the built-in `CONFIG_WIREGUARD=y` is untouched.
+  `/api/status` exposes `features.vpn` (helper plus at least one `wg`/`awg`
+  binary). Updated `STRUCTURE.md`, `INIT_ORDER.md` (S45oko-vpn, module order),
+  `FEATURES.md`, `FEATURES_UNVERIFIED.md` (KI-037…041), `TESTBENCH.md` and
+  `bench/README.md`.
+- **Версия прошивки из имени файла (OKO).** `/api/flash` больше не использует
+  поле `version`: версия берётся из имени файла (`app-1.0.1.bin`,
+  `app-2.0.1.ihx`; ровно одна тройка `major.minor.patch`, каждый компонент
+  ≤ 255, иначе 400). Для STM32 она упаковывается в метаданные загрузчика
+  (`0x00010001`), для STM8 сервер сверяет её с заголовком OKO8 через
+  `oko-motor check FILE X.Y.Z` и отклоняет несовпадение до создания job.
+  `/api/firmware` показывает STM32 точечно (`1.0.0`) вместо `0x00010000`.
+  `Makefile.stm8` и CMake STM32 кладут версию в имена артефактов
+  (`app-2.0.1.ihx`, `factory-2.0.1.ihx`, `app-1.0.1.bin`), сохраняя
+  `app.ihx`/`app.bin` копиями для ST-Link; в WebUI поле версии удалено.
+- **Firmware version from the file name (OKO).** `/api/flash` no longer uses
+  the `version` field: the version comes from the file name
+  (`app-1.0.1.bin`, `app-2.0.1.ihx`; exactly one `major.minor.patch` triple,
+  each component ≤ 255, otherwise 400). STM32 packs it into the bootloader
+  metadata (`0x00010001`); STM8 compares it with the OKO8 header through
+  `oko-motor check FILE X.Y.Z` and rejects a mismatch before creating a job.
+  `/api/firmware` shows STM32 as `1.0.0` instead of `0x00010000`.
+  `Makefile.stm8` and the STM32 CMake place the version in artifact names
+  (`app-2.0.1.ihx`, `factory-2.0.1.ihx`, `app-1.0.1.bin`) while keeping
+  `app.ihx`/`app.bin` copies for ST-Link; the WebUI version field is gone.
+- **Итоговый `update.img`.** Пересобран после изменения артефактов: sha256
+  `ad0b07ca19e32462540187e770af2a3f1f8bb3b099491a217ded29df8ce625e4`
+  (`output/bench/update-img-sha256.txt`); хеш `a4d93f3f…` выше относится к
+  сборке до этой правки. `build.sh app`/`firmware`, `api_check.py` (84/84) и
+  `ui_check.py` проходят на стенде.
+- **Final `update.img`.** Rebuilt after the artifact change: sha256
+  `ad0b07ca19e32462540187e770af2a3f1f8bb3b099491a217ded29df8ce625e4`
+  (`output/bench/update-img-sha256.txt`); the `a4d93f3f…` hash above belongs
+  to the build before this change. `build.sh app`/`firmware`,
+  `api_check.py` (84/84) and `ui_check.py` pass on the bench.
+
 ### Добавлено
 
+- **VPN: WireGuard и AmneziaWG (OKO).** Out-of-tree модуль `amneziawg.ko`
+  (вендорский слепок `amneziawg-linux-kernel-module` `v3.1.20260906`, без
+  правок) в `sysdrv/drv_ko/amneziawg`; вендорские `wireguard-tools`
+  1.0.20210914 и `amneziawg-tools` 3.1.20260812 в `project/app/vpn-tools`
+  собираются app-тулчейном в `/oem/usr/bin/{wg,awg}` (`wg-quick` отключён).
+  POSIX-хелпер `/usr/bin/oko-vpn` (validate/up/down/status/autostart/watchdog/
+  delete/set-auto) применяет `.conf` через `syncconf`, ведёт split-маршруты,
+  делает guard с откатом default route для `0.0.0.0/0`, хранит профили в
+  `/userdata/vpn`; `S45oko-vpn` запускает autostart и watchdog.
+  `divinus` получил `vpn_conf.c` (парсер `.conf`, отклоняет
+  `PreUp/PostUp/PreDown/PostDown`, знает AWG v3.1), `/api/vpn`,
+  `/api/vpn/import`, `/api/vpn/export`, токен на delete, `features.vpn` и
+  карточку Network → VPN (EN/RU). Добавлены `bench/vpn_check.py` и хостовый
+  тест `tests/vpn_conf_test.c`.
+- **VPN: проверено на стенде (OKO).** 2026-11-06 на DUT .97: модуль
+  `amneziawg` загружается (`dmesg`: `AmneziaWG 3.1.20260906`), `wg`/`awg`
+  версий 1.0.20210914/3.1.20260812; handshake WireGuard и AmneziaWG v3.1 с
+  loopback-пиром, split-маршруты, API `import/up/down/delete/export`, отказ
+  хукам и delete без токена, autostart+watchdog после reboot, guard полного
+  туннеля (positive и auto-revert с восстановлением default). `api_check.py`
+  — 88/88, `ui_check.py` (карточка Network → VPN, EN/RU) — без ошибок.
+  `./build.sh sysdrv`, `app`, `firmware` проходят: `amneziawg.ko` в
+  `/oem/usr/ko` (69 688 Б после strip, vermagic 5.10.160), `oem.img`
+  19 005 440 Б, `rootfs.img` 57 016 320 Б, `update.img` 82 971 210 Б
+  (sha256 `4e6dbc4d…`). Внешний VPN-пир и `ping` через туннель не
+  прогонялись; статус в `FEATURES_UNVERIFIED.md`.
+- **VPN: verified on the bench (OKO).** 2026-11-06 on DUT .97: the
+  `amneziawg` module loads (`dmesg`: `AmneziaWG 3.1.20260906`), `wg`/`awg` are
+  1.0.20210914/3.1.20260812; WireGuard and AmneziaWG v3.1 handshakes with a
+  loopback peer, split routes, API `import/up/down/delete/export`, rejection of
+  hooks and delete without a token, autostart+watchdog after reboot, and the
+  full-tunnel guard (positive and auto-revert restoring the default route).
+  `api_check.py` — 88/88, `ui_check.py` (Network → VPN card, EN/RU) — clean.
+  `./build.sh sysdrv`, `app` and `firmware` pass: `amneziawg.ko` lands in
+  `/oem/usr/ko` (69,688 B after stripping, vermagic 5.10.160), `oem.img` is
+  19,005,440 B, `rootfs.img` 57,016,320 B and `update.img` 82,971,210 B
+  (sha256 `4e6dbc4d…`). An external VPN peer and a tunnel `ping` were not run;
+  status in `FEATURES_UNVERIFIED.md`.
+- **VPN: WireGuard and AmneziaWG (OKO).** An out-of-tree `amneziawg.ko`
+  (vendored `amneziawg-linux-kernel-module` `v3.1.20260906`, unmodified) in
+  `sysdrv/drv_ko/amneziawg`; vendored `wireguard-tools` 1.0.20210914 and
+  `amneziawg-tools` 3.1.20260812 in `project/app/vpn-tools` built by the app
+  toolchain into `/oem/usr/bin/{wg,awg}` (`wg-quick` disabled). The POSIX
+  helper `/usr/bin/oko-vpn` (validate/up/down/status/autostart/watchdog/
+  delete/set-auto) applies a `.conf` through `syncconf`, manages split routes,
+  guards and rolls back the default route for `0.0.0.0/0`, and keeps profiles
+  in `/userdata/vpn`; `S45oko-vpn` starts autostart and the watchdog.
+  `divinus` gained `vpn_conf.c` (`.conf` parser, rejects
+  `PreUp/PostUp/PreDown/PostDown`, supports AWG v3.1), `/api/vpn`,
+  `/api/vpn/import`, `/api/vpn/export`, a delete token, `features.vpn` and the
+  Network → VPN card (EN/RU). Added `bench/vpn_check.py` and the host test
+  `tests/vpn_conf_test.c`.
+- **Помощь фокусировке и прошивка контроллеров (OKO).** `divinus` получил
+  тред AF-статистики (`focus.c`, `hal/plus/rk_af_stats.c` — единственный TU с
+  заголовками rkaiq), геометрию ROI в базисных пунктах (`focus_geom.c`),
+  API `/api/focus` и карточку в Image; мотор STM8 `0x60` на `/dev/i2c-3`
+  (`focus_motor.c`, `focus_proto.c`). Добавлены `/api/flash`, `/api/firmware`,
+  фоновый воркер прошивки (`flash.c`, стоп `S21oko-ec`, приостановка мотора,
+  `oko-flash`), кэш версий STM32/STM8 (`firmware_status.c`) и загрузка NPU в
+  строку CPU OSD. Новые пакеты: `project/app/stm8-motor` (прошивка STM8,
+  загрузчик I2C, `oko-motor`) и `project/app/oko-flash`; отдельный образ
+  `tools/stm8-sdcc`. Разметка STM8: boot `0x8000–0x89FF`, заголовок `0x8A00`,
+  приложение `0x8A10–0x9FFF` (2.5 КиБ / 5.5 КиБ; измерено 2412/4279 байт).
+  Хостовые тесты: `focus_geom_test.c`, `focus_proto_test.c`,
+  `stm8-motor/tests` (CRC, заголовок, кадры, ihx). Стенд:
+  `bench/focus_check.py`, `bench/firmware_check.py`.
+- **Focus assist and controller firmware (OKO).** `divinus` gained the AF
+  statistics thread (`focus.c`, `hal/plus/rk_af_stats.c` is the only TU with
+  rkaiq headers), ROI geometry in basis points (`focus_geom.c`), `/api/focus`
+  and an Image card; the STM8 motor at `0x60` on `/dev/i2c-3`
+  (`focus_motor.c`, `focus_proto.c`). Added `/api/flash`, `/api/firmware`, a
+  background flash worker (`flash.c`, stops `S21oko-ec`, suspends the motor,
+  runs `oko-flash`), a STM32/STM8 version cache (`firmware_status.c`) and NPU
+  load on the OSD CPU line. New packages: `project/app/stm8-motor` (STM8
+  firmware, I2C bootloader, `oko-motor`) and `project/app/oko-flash`; a
+  separate `tools/stm8-sdcc` image. STM8 layout: boot `0x8000–0x89FF`, header
+  `0x8A00`, app `0x8A10–0x9FFF` (2.5 KiB / 5.5 KiB; measured 2412/4279 bytes).
+  Host tests: `focus_geom_test.c`, `focus_proto_test.c`, `stm8-motor/tests`
+  (CRC, header, frames, ihx). Bench: `bench/focus_check.py`,
+  `bench/firmware_check.py`.
+- **Исходники прошивки STM32.** Полный репозиторий
+  `spectrespc/stm32_acpi-ec` на пине
+  `41728ddaf6936d49a5fb65676ca5203dd631b4f6` добавлен как git subtree в
+  `project/app/stm32_acpi-ec/` (загрузчик, приложение, HAL, CMake, тесты,
+  хостовый инструмент). `tools/stm32_push.sh` коммитит только этот каталог и
+  отправляет изменения в `stm32/main`, `tools/stm32_pull.sh` подтягивает
+  upstream; сборка STM32 — отдельная CMake-сборка и в `./build.sh` не входит.
+  **STM32 firmware sources.** The complete `spectrespc/stm32_acpi-ec`
+  repository at commit `41728ddaf6936d49a5fb65676ca5203dd631b4f6` is now a
+  git subtree in `project/app/stm32_acpi-ec/` (bootloader, application, HAL,
+  CMake, tests, host tool). `tools/stm32_push.sh` commits only that directory
+  and pushes to `stm32/main`, `tools/stm32_pull.sh` pulls upstream; the STM32
+  build is a separate CMake build and is not part of `./build.sh`.
+
+- **Исходники прошивки STM8.** Локальные изменения (I2C-загрузчик, команда
+  `0x08 GET_STATE`, `oko-motor check/boot-reset`, тесты и dual-mode
+  `Makefile`) отправлены в `spectrespc/stm8s103_i2c_motor` коммитом
+  `ef106e6513afaf15db71c2cbc57628a9dfb932c3`; репозиторий добавлен как git
+  subtree в `project/app/stm8-motor/`. `tools/stm8_push.sh` коммитит только
+  этот каталог и отправляет изменения в `stm8/main`, `tools/stm8_pull.sh`
+  подтягивает upstream; сборка прошивки — SDCC, `oko-motor` собирается в SDK.
+  **STM8 firmware sources.** The local changes (I2C bootloader, `0x08
+  GET_STATE`, `oko-motor check/boot-reset`, tests and the dual-mode
+  `Makefile`) were pushed to `spectrespc/stm8s103_i2c_motor` as commit
+  `ef106e6513afaf15db71c2cbc57628a9dfb932c3`; the repository is now a git
+  subtree at `project/app/stm8-motor/`. `tools/stm8_push.sh` commits only that
+  directory and pushes to `stm8/main`, `tools/stm8_pull.sh` pulls upstream;
+  firmware uses SDCC while `oko-motor` is built in the SDK.
+
+- **Статусы задач.** В плане и `TO_DO.md` отмечены выполненные пункты;
+  на стенде проверены A6, мотор STM8, загрузчик/обновление STM8, версии,
+  NPU OSD и реальная прошивка STM32 (CLI 1.0.1 → WebUI 1.0.0). Открыты
+  обрыв питания при стирании и оптическая связь объектива с мотором.
+  **Task status.** Completed plan/TO_DO items are marked; the bench verified
+  A6, the STM8 motor, the STM8 bootloader/update, versions, NPU OSD and a real
+  STM32 update (CLI 1.0.1 → WebUI 1.0.0). Still open: power loss during erase
+  and the lens-to-motor optical coupling.
+
+### Исправлено
+
+- **Сборка STM8 и негативные тесты.** Цели `app`/`factory`/`bin` в
+  `Makefile.stm8` сериализованы через `.NOTPARALLEL`, чтобы `make -j` не
+  запускал несколько `mkapp.py` над одними файлами; проверено чистым
+  `make -j8 all`. `firmware_check.py --negative` теперь завершается ошибкой,
+  если `app-2.0.1.ihx` отсутствует, вместо тихого пропуска кейсов.
+- **STM8 build and negative tests.** The `app`/`factory`/`bin` targets in
+  `Makefile.stm8` are serialized with `.NOTPARALLEL` so `make -j` cannot run
+  several `mkapp.py` instances over the same files (verified with a clean
+  `make -j8 all`). `firmware_check.py --negative` now fails when
+  `app-2.0.1.ihx` is missing instead of silently skipping cases.
+
+- **OSD: три строки снова рендерятся.** `oko-osd` снова пишет literal
+  `\n` (backslash + n) в `/tmp/osd-sys.txt`: `region_read_text_file()`
+  читает только первую строку файла, а `text.c` распознаёт только эту
+  последовательность. Вариант с реальными `0x0A` оставлял в кадре лишь
+  `CPU … NPU …`. Проверено `od -c` и тремя текст-полосами в вырезке
+  sys-региона (`output/bench/osd-fix2/`).
+- **OSD: three lines render again.** `oko-osd` writes the literal `\n`
+  (backslash + n) sequence to `/tmp/osd-sys.txt` again:
+  `region_read_text_file()` reads only the first line of the file and
+  `text.c` recognizes only that sequence. Real `0x0A` bytes left only
+  `CPU … NPU …` in the frame. Verified with `od -c` and three text bands in
+  the sys crop (`output/bench/osd-fix2/`).
+- **STM32: слот CBT6 и защита от переразмера.** Установленный загрузчик —
+  CBT6 (128 КиБ, слот 120 КиБ), а не C8T6: он принимает 60 КиБ, а
+  C8T6-сборка приложения даёт `img_size=0` (метаданные читаются из страниц
+  C8T6). Образы пересобраны с `-DMCU=CBT6`; `/api/flash` отклоняет
+  STM32-файлы >120 КиБ до создания job; `oko-ec flash` при ошибке записи
+  отправляет `RESET` и возвращает приложение (проверено: 130 КиБ →
+  `ERR_PARAM` → `RESET` → app 1.0.0).
+- **STM32: CBT6 slot and oversize guard.** The installed bootloader is CBT6
+  (128 KiB, 120 KiB app slot), not C8T6: it accepts a 60 KiB image, while a
+  C8T6 application build reports `img_size=0` (it reads metadata from the
+  C8T6 pages). Images are rebuilt with `-DMCU=CBT6`; `/api/flash` rejects
+  STM32 files >120 KiB before creating a job; `oko-ec flash` sends `RESET`
+  on a write error and returns to the application (verified: 130 KiB →
+  `ERR_PARAM` → `RESET` → app 1.0.0).
+- **STM32: реальная прошивка проверена.** CLI `1.0.1` (`0x00010001`) →
+  `Application started`, `img_size=2324`; затем WebUI `/api/flash` `1.0.0`
+  (`0x00010000`) → job `done`, телеметрия и `flags=0`; после reboot —
+  app 1.0.0. KI-036 закрыт. Финальный `update.img` — sha256 `a4d93f3f…`.
+- **STM32: real flashing verified.** CLI `1.0.1` (`0x00010001`) →
+  `Application started`, `img_size=2324`; then the WebUI `/api/flash`
+  `1.0.0` (`0x00010000`) → job `done`, telemetry and `flags=0`; after reboot
+  the app runs 1.0.0. KI-036 is closed. Final `update.img` sha256
+  `a4d93f3f…`.
+- **STM32: вход в загрузчик и запуск после прошивки.** `oko-ec flash` теперь
+  проверяет роль через `GET_INFO`, при `device_type=2` отправляет
+  `ENTER_UPDATE` (0x0E) и ждёт загрузчик до 5 с, а после `COMMIT` отправляет
+  `RESET` (0x08) и ждёт приложение до 3 с; при неподтверждённом старте
+  печатается предупреждение. Раньше `BEGIN_UPDATE` уходил в работающее
+  приложение (`ERR_CMD`), а после `COMMIT` загрузчик оставался активным.
+  Переход проверен на стенде без записи: `info` → `enter-update` →
+  `info` (bootloader) → `reset` → `info` (app 1.0.0), телеметрия жива.
+  Реальная запись и закрытие KI-036 — в записи выше; финальный `update.img`
+  — sha256 `a4d93f3f…`.
+- **STM32: версия через CMake cache.** `FW_VERSION_STRING` переведён в
+  `CACHE STRING`, поэтому `-DFW_VERSION_STRING=1.0.1` даёт
+  `FW_VERSION=0x00010001`, а не перекрывается значением по умолчанию.
+  Собраны `output/bench/stm32/app-1.0.0.bin` (sha256 `4bb4f433…`) и
+  `app-1.0.1.bin` (sha256 `cb1f8e6e…`) для CBT6.
+- **STM32: bootloader entry and application start after a flash.**
+  `oko-ec flash` now checks the device role via `GET_INFO`, sends
+  `ENTER_UPDATE` (0x0E) when `device_type=2` and waits up to 5 s for the
+  bootloader, then sends `RESET` (0x08) after `COMMIT` and waits up to 3 s for
+  the application; an unconfirmed start produces a warning. Before this,
+  `BEGIN_UPDATE` went to the running application (`ERR_CMD`) and the
+  bootloader stayed active after `COMMIT`. The transition is verified on the
+  bench without writing: `info` → `enter-update` → `info` (bootloader) →
+  `reset` → `info` (app 1.0.0), telemetry still alive. The real write and
+  KI-036 closure are in the entry above; the final `update.img` sha256 is
+  `a4d93f3f…`.
+- **STM32: firmware version through the CMake cache.**
+  `FW_VERSION_STRING` is now a `CACHE STRING`, so
+  `-DFW_VERSION_STRING=1.0.1` yields `FW_VERSION=0x00010001` instead of being
+  overridden by the default. Built `output/bench/stm32/app-1.0.0.bin`
+  (sha256 `4bb4f433…`) and `app-1.0.1.bin` (sha256 `cb1f8e6e…`) for CBT6.
+- **AF-статистика SC230AI.** В IQ включён
+  `af_v31.TuningPara.contrast_af.enable=1` (оба блока, день/ночь); без него
+  AFM отдавал 225 нулевых ячеек. A6 пройден: `status=running`,
+  `cells_used=225`, `metric_avg` 527k–530k за 20 с. ROI на этой сборке
+  применяется выбором ячеек полнокадровой карты (аппаратное окно AFM карту не
+  меняет), поэтому `mode=roi` теперь меняет метрику. Неудачное применение окна
+  повторяется, а `SetAttrib` до 5 раз; нулевая карта один раз включает
+  `contrast_af` как fallback.
+- **SC230AI AF statistics.** The IQ now has
+  `af_v31.TuningPara.contrast_af.enable=1` (both day/night blocks); without it
+  the AFM returned 225 zero cells. A6 passes: `status=running`,
+  `cells_used=225`, `metric_avg` 527k–530k over 20 s. On this build the ROI is
+  applied by selecting cells of the full-frame map (the hardware AFM window
+  does not move the map), so `mode=roi` now changes the metric. A failed window
+  apply is retried, `SetAttrib` is retried up to 5 times, and a zero map enables
+  `contrast_af` once as a fallback.
+- **STM8: роль и версия без boot-команды.** Добавлена общая команда `0x08`
+  (`[role][major][minor][patch]`); `oko-motor`, `focus_motor.c` и
+  `firmware_status.c` сначала читают роль, поэтому `0x10` больше не уходит в
+  работающее приложение, а `info` в загрузчике не принимает `06 00 00` за
+  версию `6.0.0`. Прошивка STM8 пересобрана: boot 2412 Б, app 4279 Б.
+- **STM8: role and version without a boot command.** Added the shared `0x08`
+  command (`[role][major][minor][patch]`); `oko-motor`, `focus_motor.c` and
+  `firmware_status.c` read the role first, so `0x10` never reaches a running
+  application and `info` in the bootloader no longer mistakes `06 00 00` for
+  version `6.0.0`. STM8 firmware rebuilt: boot 2412 B, app 4279 B.
+- **STM8: загрузчик и прошивка по I2C.** Исправлен порядок инициализации I2C
+  в загрузчике (`PE` до `ACK`), IWDG кормится в циклах стирания/записи, а
+  `oko-motor` выдерживает паузу перед чтением статуса (`erase` 500 мс,
+  `write` 40 мс, `finish` 150 мс). `enter-boot`/`boot-reset`/`info` проверены;
+  `app.ihx` заливается через `/api/flash`; `oko-motor move 0 -10` больше не
+  воспринимает `-10` как опцию (`+` в `getopt`). Первичная запись —
+  `factory.ihx` через ST-Link.
+- **STM8: bootloader and I2C flashing.** Fixed the bootloader I2C init order
+  (`PE` before `ACK`), the IWDG is fed in erase/write loops, and `oko-motor`
+  waits before reading a status (`erase` 500 ms, `write` 40 ms, `finish`
+  150 ms). `enter-boot`/`boot-reset`/`info` are verified; `app.ihx` uploads via
+  `/api/flash`; `oko-motor move 0 -10` no longer treats `-10` as an option
+  (`+` in `getopt`). The first write is `factory.ihx` over ST-Link.
+- **Фокус и прошивка: безопасность и устойчивость.** `GET /api/focus`
+  теперь только читает (`map=1`), все изменения (`enable`, `mode`, ROI,
+  `motor`, `move`, `stop`, `reset`) требуют `POST`; WebUI и `focus_check.py`
+  отправляют их POST-запросом с query. Временный файл прошивки создаётся
+  через `mkstemp` с расширением и открывается с `O_NOFOLLOW`; `sha256sum`,
+  `oko-motor check`, `oko-flash` и init-скрипты запускаются через
+  `fork`+`execv` с абсолютными путями (без `popen`/`system`/`execvp`), дочерние
+  процессы не наследуют сокеты divinus. `S21oko-ec` перезапускается только
+  если демон работал до задачи (по `/tmp/oko-ec.pid`). Ошибка
+  `focus_motor_stop_all()` при `motor=0` возвращает 502 вместо ложного
+  «disabled». Строка `/tmp/osd-sys.txt` снова содержит три строки
+  (`\n` исправлен).
+- **Focus and flashing safety.** `GET /api/focus` is read-only (`map=1`); all
+  changes (`enable`, `mode`, ROI, `motor`, `move`, `stop`, `reset`) require
+  `POST`; the WebUI and `focus_check.py` send them as POST queries. The
+  firmware temp file is created with `mkstemp` plus the extension and opened
+  with `O_NOFOLLOW`; `sha256sum`, `oko-motor check`, `oko-flash` and init
+  scripts run via `fork`+`execv` with absolute paths (no
+  `popen`/`system`/`execvp`), and children do not inherit divinus sockets.
+  `S21oko-ec` is restarted only if the daemon was running before the job
+  (checked through `/tmp/oko-ec.pid`). A failed `focus_motor_stop_all()` on
+  `motor=0` returns 502 instead of reporting disabled. `/tmp/osd-sys.txt` is
+  back to three lines (the `\n` escaping is fixed).
+
+- **Прошивка через WebUI.** Присутствие контроллера берётся из кэша
+  `firmware_status`, а не сырой записью в I2C; временный файл сохраняет
+  расширение (`.ihx/.hex/.bin`), поэтому HEX не разбирается как BIN; перед
+  заданием STM8 проверяется `oko-motor check` (магия/CRC/диапазон) и плохой
+  образ отдаёт 400; SNMP-таймстамп STM32 (`ts`) старше 15 с считается
+  отсутствием. Добавлены негативные проверки `firmware_check.py --negative`.
+- **WebUI flashing.** Controller presence comes from the `firmware_status`
+  cache instead of a raw I2C write; the temporary file keeps its extension
+  (`.ihx/.hex/.bin`), so HEX is not parsed as BIN; `oko-motor check`
+  (magic/CRC/range) runs before an STM8 job and a bad image returns 400; an
+  STM32 snapshot (`ts`) older than 15 s counts as absent. Added
+  `firmware_check.py --negative`.
+
+- `tools/rknn-toolkit2/` — Docker-пайплайн YOLOv5n для `rv1106`: образ
+  `rknn-toolkit2` 1.6.0 (колесо с `--no-deps`), отдельный образ для экспорта
+  `airockchip/yolov5`, `export_yolov5.sh`, `convert_rknn.sh`, `convert.py`.
+  Собрана модель 640×384 INT8 (2.6 МиБ, sha256 `8285e1bd…`), активирована на
+  DUT: `input 640x384 NHWC stride 640, 3 4D outputs`; 5 fps — NPU 17%, CPU
+  `divinus` ~28.5%, main 30.3 fps (640×640 для сравнения: NPU 28%, CPU ~66%).
+  Симулятор toolkit на `bus.jpg` даёт 3 person + 1 truck; mAP не измерен.
+  Обновлены `TO_DO.md`, `KNOWN_ISSUES.md`, `FEATURES.md`,
+  `VERIFIED_FUNCTIONS.md` и `STRUCTURE.md`.
+- `tools/rknn-toolkit2/` — Docker pipeline for YOLOv5n on `rv1106`: an
+  `rknn-toolkit2` 1.6.0 image (wheel installed with `--no-deps`), a separate
+  `airockchip/yolov5` export image, `export_yolov5.sh`, `convert_rknn.sh` and
+  `convert.py`. A 640×384 INT8 model was built (2.6 MiB, sha256 `8285e1bd…`)
+  and activated on the DUT: `input 640x384 NHWC stride 640, 3 4D outputs`;
+  at 5 fps — NPU 17%, `divinus` CPU ~28.5%, main 30.3 fps (640×640 control:
+  NPU 28%, CPU ~66%). The toolkit simulator detects 3 persons + 1 truck on
+  `bus.jpg`; mAP is not measured. `TO_DO.md`, `KNOWN_ISSUES.md`,
+  `FEATURES.md`, `VERIFIED_FUNCTIONS.md` and `STRUCTURE.md` were updated.
 - `FEATURES.md` в корне: сводка поддерживаемого функционала — платформа и состав
   образа, видео/стриминг и статусы гейтов, WebUI/API, сеть, `oko-ec`, microSD,
   известные ограничения и команды проверки; продублировано краткой
@@ -425,6 +778,19 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Изменено
 
+- `FEATURES.md` разделён на три файла: `FEATURES.md` — паспорт платформы,
+  разделение по статусу проверки, общие примечания и команды; новый
+  `FEATURES_VERIFIED.md` — только подтверждённые функции и возможности со
+  статусом «работает»; новый `FEATURES_UNVERIFIED.md` — ограниченные и
+  заблокированные возможности, непроверенные комбинации потоков, датчиков и
+  microSD. Ссылки обновлены в `AGENTS.md`, `STRUCTURE.md`, `README_RU.md`,
+  `KNOWN_ISSUES.md` и `TO_DO.md`.
+- `FEATURES.md` is split into three files: `FEATURES.md` now holds the platform
+  passport, the split by verification status, shared notes and commands; the new
+  `FEATURES_VERIFIED.md` lists only confirmed features with the **works** status;
+  the new `FEATURES_UNVERIFIED.md` lists limited and blocked capabilities and
+  unverified stream, sensor and microSD combinations. Links were updated in
+  `AGENTS.md`, `STRUCTURE.md`, `README_RU.md`, `KNOWN_ISSUES.md` and `TO_DO.md`.
 - `FEATURES.md` переработан: вместо разнородных списков и прозы — короткий
   паспорт платформы и одна сводная таблица функционала с колонками «Группа»,
   «Функционал», «Описание», «Управление (API, секция YAML)», «Что добавлено
@@ -756,6 +1122,15 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   NPU, `librkpostisp.so` is loaded and `/live/0` shows no gaps; results are in
   `VERIFIED_FUNCTIONS.md`. Night accuracy and CMA were not measured (no
   target/labels), and the target 640×384 model is not built yet.
+
+- `TO_DO.md` §11 сокращён до незакрытых задач: удалены реализованные фазы
+  NPU-аналитики, исходное состояние, принятые решения и статус; остались модель
+  640×384 с точностью, ночная точность/CMA, лицензия YOLOv5 и вопрос
+  `.aiisp`-моделей через WebUI.
+- `TO_DO.md` §11 is reduced to open work: the implemented NPU phases, initial
+  state, decisions and status were removed; it now lists only the 640×384 model
+  plus accuracy, night accuracy/CMA, the YOLOv5 licence and the `.aiisp` model
+  question for the WebUI.
 
 ### Удалено
 

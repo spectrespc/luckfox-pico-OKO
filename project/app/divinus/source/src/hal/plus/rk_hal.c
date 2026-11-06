@@ -3,6 +3,7 @@
 #include <stdint.h>
 
 #include "rk_hal.h"
+#include "rk_af_stats.h"
 #include "rk_rgn_pack.h"
 #include "../../app_config.h"
 
@@ -47,6 +48,7 @@ static unsigned short _rk_yolo_jpeg_width = 0, _rk_yolo_jpeg_height = 0;
 
 void rk_hal_deinit(void)
 {
+    rk_af_stats_deinit();
     rk_ivs_unload(&rk_ivs);
     rk_vpss_unload(&rk_vpss);
     rk_vi_unload(&rk_vi);
@@ -67,6 +69,9 @@ int rk_hal_init(void)
         return ret;
     if (ret = rk_aiq_load(&rk_aiq))
         return ret;
+    /* Optional: a librkaiq build without AF exports must not fail startup. */
+    if (rk_af_stats_init() == 0)
+        halCapabilities |= HAL_CAP_FOCUS_STATS;
     if (ret = rk_aud_load(&rk_aud))
         return ret;
     if (ret = rk_mb_load(&rk_mb))

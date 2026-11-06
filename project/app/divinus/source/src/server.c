@@ -6,9 +6,16 @@
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 
+#include "flash.h"
+#include "focus.h"
+#include "focus_geom.h"
+#include "focus_motor.h"
+#include "focus_proto.h"
+#include "firmware_status.h"
 #include "gating.h"
 #include "ivs_events.h"
 #include "ntp.h"
+#include "vpn.h"
 #include "analytics/models.h"
 #include "analytics/yolo.h"
 
@@ -233,6 +240,23 @@ static void reply_bad_request(int fd, const char *reason, const char *hint) {
         "Connection: close\r\n\r\n", bodyLen);
     send_to_fd(fd, header, headerLen);
     send_to_fd(fd, body, bodyLen);
+    close_socket_fd(fd);
+}
+
+/* Non-200 JSON responses for the focus/flash APIs. */
+static void reply_status_json(int fd, int code, const char *body) {
+    char header[192];
+    const char *reason = code == 202 ? "Accepted" :
+        (code == 409 ? "Conflict" : (code == 502 ? "Bad Gateway" :
+        (code == 400 ? "Bad Request" : "OK")));
+    int len = (int)strlen(body);
+    int headerLen = snprintf(header, sizeof(header),
+        "HTTP/1.1 %d %s\r\n"
+        "Content-Type: application/json;charset=UTF-8\r\n"
+        "Content-Length: %d\r\n"
+        "Connection: close\r\n\r\n", code, reason, len);
+    send_to_fd(fd, header, headerLen);
+    send_to_fd(fd, (char *)body, len);
     close_socket_fd(fd);
 }
 
@@ -2551,7 +2575,8 @@ void respond_request(http_request_t *req) {
                 } else if (EQUALS(key, "height")) {
                     long v; if (parse_ranged(value, 120, 4096, &v)) { app_config.substream_height = (unsigned int)v; paramsChanged = 1; }
                 } else if (EQUALS(key, "fps")) {
-                    long v; if (parse_ranged(value, 1, 60, &v)) { app_config.substream_fps = (unsigned int)v; paramsChanged = 1; }
+                    long v;
+                    if (parse_ranged(value, 1, 60, &v)) { app_config.substream_fps = (unsigned int)v; paramsChanged = 1; }
                 } else if (EQUALS(key, "gop")) {
                     long v; if (parse_ranged(value, 1, 600, &v)) { app_config.substream_gop = (unsigned int)v; paramsChanged = 1; }
                 } else if (EQUALS(key, "bitrate")) {
@@ -2843,6 +2868,312 @@ void respond_request(http_request_t *req) {
             restartNeeded ? ",\"note\":\"restart required for the new settings\""
                 : "");
         send_and_close(req->clntFd, response, respLen);
+        return;
+    }
+
+    /* OKO: focus assistant — AF statistics metric and optional STM8 motor. */
+    if (EQUALS(req->uri, "/api/focus")) {
+        int withMap = 0;
+        int mutating = 0;
+        if (req->query && *req->query) {
+            int enableReq = -1, motorReq = -1, stopReq = 0, resetReq = 0;
+            int mode = -1;
+            long rx = -1, ry = -1, rw = -1, rh = -1, fps = -1;
+            long speed = -1, move = 0, position = 0;
+            int haveMove = 0, havePosition = 0;
+
+            while (req->query) {
+                char *value = split(&req->query, "&");
+                char *key;
+                if (!value || !*value) continue;
+                key = split(&value, "=");
+                if (!key || !*key || !value) continue;
+                unescape_uri(value);
+
+                if (EQUALS(key, "enable")) {
+                    mutating = 1;
+                    enableReq = query_bool(value);
+                } else if (EQUALS(key, "mode")) {
+                    mutating = 1;
+                    if (EQUALS_CASE(value, "full")) mode = 0;
+                    else if (EQUALS_CASE(value, "roi")) mode = 1;
+                    else {
+                        reply_bad_request(req->clntFd, "unknown focus.mode",
+                            "use full or roi");
+                        return;
+                    }
+                } else if (EQUALS(key, "rx") || EQUALS(key, "ry") ||
+                           EQUALS(key, "rw") || EQUALS(key, "rh")) {
+                    long v;
+                    mutating = 1;
+                    if (!parse_ranged(value, 0, 10000, &v)) {
+                        reply_bad_request(req->clntFd,
+                            "ROI values must be 0..10000", "basis points");
+                        return;
+                    }
+                    if (EQUALS(key, "rx")) rx = v;
+                    else if (EQUALS(key, "ry")) ry = v;
+                    else if (EQUALS(key, "rw")) rw = v;
+                    else rh = v;
+                } else if (EQUALS(key, "fps")) {
+                    long v;
+                    mutating = 1;
+                    if (!parse_ranged(value, 1, 10, &v)) {
+                        reply_bad_request(req->clntFd, "fps must be 1..10", "");
+                        return;
+                    }
+                    fps = v;
+                } else if (EQUALS(key, "motor")) {
+                    mutating = 1;
+                    motorReq = query_bool(value);
+                } else if (EQUALS(key, "speed")) {
+                    long v;
+                    mutating = 1;
+                    if (!parse_ranged(value, 1, 5000, &v)) {
+                        reply_bad_request(req->clntFd,
+                            "speed must be 1..5000 steps/s", "");
+                        return;
+                    }
+                    speed = v;
+                } else if (EQUALS(key, "move")) {
+                    long v;
+                    mutating = 1;
+                    if (!parse_ranged(value, -32768, 32767, &v)) {
+                        reply_bad_request(req->clntFd,
+                            "move must be -32768..32767", "");
+                        return;
+                    }
+                    move = v;
+                    haveMove = 1;
+                } else if (EQUALS(key, "position")) {
+                    long v;
+                    mutating = 1;
+                    if (!parse_ranged(value, -1000000, 1000000, &v)) {
+                        reply_bad_request(req->clntFd,
+                            "position is out of range", "");
+                        return;
+                    }
+                    position = v;
+                    havePosition = 1;
+                } else if (EQUALS(key, "stop")) {
+                    mutating = 1;
+                    stopReq = query_bool(value);
+                } else if (EQUALS(key, "reset")) {
+                    mutating = 1;
+                    resetReq = query_bool(value);
+                } else if (EQUALS(key, "map")) {
+                    withMap = query_bool(value);
+                }
+            }
+
+            if (mutating && !EQUALS(req->method, "POST")) {
+                reply_bad_request(req->clntFd,
+                    "focus changes require POST", "GET is read-only");
+                return;
+            }
+            if (rw >= 0 && rw < FOCUS_BP_MIN_ROI) {
+                reply_bad_request(req->clntFd, "ROI width is too small",
+                    "the minimum is 1000 basis points");
+                return;
+            }
+            if (rh >= 0 && rh < FOCUS_BP_MIN_ROI) {
+                reply_bad_request(req->clntFd, "ROI height is too small",
+                    "the minimum is 1000 basis points");
+                return;
+            }
+
+            if (mode >= 0) app_config.focus_mode = (unsigned int)mode;
+            if (rx >= 0) app_config.focus_roi_x = (unsigned int)rx;
+            if (ry >= 0) app_config.focus_roi_y = (unsigned int)ry;
+            if (rw >= 0) app_config.focus_roi_w = (unsigned int)rw;
+            if (rh >= 0) app_config.focus_roi_h = (unsigned int)rh;
+            if (fps >= 0) app_config.focus_fps = (unsigned int)fps;
+
+            if (motorReq >= 0) {
+                if (motorReq) {
+                    gating_result gate;
+                    app_config.focus_motor = true;
+                    gate = gating_check("focus_motor");
+                    if (!gate.ok) {
+                        app_config.focus_motor = false;
+                        gating_block(req, gate);
+                        return;
+                    }
+                    focus_motor_set_enabled(1);
+                    if (focus_motor_probe() != FM_OK) {
+                        focus_motor_set_enabled(0);
+                        app_config.focus_motor = false;
+                        reply_error(req->clntFd, "blocked",
+                            "the STM8 controller does not answer",
+                            "check focus.device, focus.address and the pull-ups");
+                        return;
+                    }
+                    if (focus_motor_set_all_speeds(app_config.focus_speed) != FM_OK) {
+                        focus_motor_set_enabled(0);
+                        app_config.focus_motor = false;
+                        reply_error(req->clntFd, "blocked",
+                            "the STM8 controller did not accept the speed",
+                            "check focus.speed and the I2C bus");
+                        return;
+                    }
+                } else {
+                    int rc = focus_motor_stop_all();
+                    if (rc != FM_OK) {
+                        char body[320];
+                        int len = snprintf(body, sizeof(body),
+                            "{\"error\":\"i2c\",\"reason\":\"%s\"}",
+                            focus_motor_error(rc));
+                        reply_status_json(req->clntFd, 502, body);
+                        return;
+                    }
+                    focus_motor_set_enabled(0);
+                    app_config.focus_motor = false;
+                }
+            }
+
+            if (enableReq == 1) {
+                gating_result gate = gating_check("focus_metric");
+                if (!gate.ok) {
+                    gating_block(req, gate);
+                    return;
+                }
+                app_config.focus_enable = true;
+                if (focus_start()) {
+                    app_config.focus_enable = false;
+                    reply_error(req->clntFd, "blocked",
+                        "the focus statistics thread could not be started",
+                        "check the kernel log and RKAIQ_ENABLE_AF");
+                    return;
+                }
+            } else if (enableReq == 0) {
+                app_config.focus_enable = false;
+                focus_stop();
+            }
+
+            if (mode >= 0 || rx >= 0 || ry >= 0 || rw >= 0 || rh >= 0 ||
+                fps >= 0) {
+                int curMode;
+                unsigned int cx, cy, cw, ch, cfps;
+                focus_get_config(&curMode, &cx, &cy, &cw, &ch, &cfps);
+                focus_configure(mode >= 0 ? mode : curMode,
+                    rx >= 0 ? (unsigned int)rx : cx,
+                    ry >= 0 ? (unsigned int)ry : cy,
+                    rw >= 0 ? (unsigned int)rw : cw,
+                    rh >= 0 ? (unsigned int)rh : ch,
+                    fps >= 0 ? (unsigned int)fps : cfps);
+            }
+
+            if (stopReq || resetReq || speed >= 0 || haveMove || havePosition) {
+                int rc = FM_OK;
+
+                if (!focus_motor_enabled()) {
+                    reply_error(req->clntFd, "blocked",
+                        "the focus motor is disabled", "set motor=true first");
+                    return;
+                }
+                if (resetReq)
+                    rc = focus_motor_reset();
+                else if (stopReq)
+                    rc = focus_motor_stop_all();
+                else if (speed >= 0)
+                    rc = focus_motor_set_speed(FOCUS_MOTOR_FOCUS,
+                        (uint16_t)speed);
+                else if (havePosition) {
+                    int32_t current = 0;
+                    rc = focus_motor_get_position(FOCUS_MOTOR_FOCUS, &current);
+                    if (rc == FM_OK) {
+                        long target = position;
+                        long delta;
+                        if (target < app_config.focus_min_pos)
+                            target = app_config.focus_min_pos;
+                        if (target > app_config.focus_max_pos)
+                            target = app_config.focus_max_pos;
+                        delta = target - current;
+                        if (delta < -32768) delta = -32768;
+                        if (delta > 32767) delta = 32767;
+                        rc = focus_motor_move(FOCUS_MOTOR_FOCUS, (int16_t)delta);
+                    }
+                } else if (haveMove) {
+                    int32_t current = 0;
+                    rc = focus_motor_get_position(FOCUS_MOTOR_FOCUS, &current);
+                    if (rc == FM_OK) {
+                        long target = (long)current + move;
+                        long delta;
+                        if (target < app_config.focus_min_pos)
+                            target = app_config.focus_min_pos;
+                        if (target > app_config.focus_max_pos)
+                            target = app_config.focus_max_pos;
+                        delta = target - current;
+                        if (delta < -32768) delta = -32768;
+                        if (delta > 32767) delta = 32767;
+                        rc = focus_motor_move(FOCUS_MOTOR_FOCUS, (int16_t)delta);
+                    }
+                }
+
+                if (rc != FM_OK) {
+                    char body[320];
+                    int len = snprintf(body, sizeof(body),
+                        "{\"error\":\"i2c\",\"reason\":\"%s\"}",
+                        focus_motor_error(rc));
+                    reply_status_json(req->clntFd, 502, body);
+                    return;
+                }
+            }
+        }
+
+        {
+            char *body;
+            body = focus_json(withMap);
+            if (!body)
+                reply_error(req->clntFd, "failed", "out of memory", "");
+            else {
+                reply_json(req->clntFd, body, strlen(body));
+                free(body);
+            }
+        }
+        return;
+    }
+
+    /* OKO: controller firmware upload and cached versions. */
+    if (EQUALS(req->uri, "/api/flash")) {
+        if (EQUALS(req->method, "GET")) {
+            char *body = flash_json();
+            if (!body)
+                reply_error(req->clntFd, "failed", "out of memory", "");
+            else {
+                reply_json(req->clntFd, body, strlen(body));
+                free(body);
+            }
+            return;
+        }
+        if (EQUALS(req->method, "POST")) {
+            int code = 500;
+            char *type = request_header("Content-Type");
+            char *body = flash_post(type, req->payload,
+                req->total - req->header_len, &code);
+            if (!body)
+                reply_error(req->clntFd, "failed", "out of memory", "");
+            else {
+                reply_status_json(req->clntFd, code, body);
+                free(body);
+            }
+            return;
+        }
+    }
+
+    if (EQUALS(req->uri, "/api/firmware")) {
+        char *body;
+        if (!EQUALS(req->method, "GET")) {
+            send_http_error(req->clntFd, 405);
+            return;
+        }
+        body = firmware_status_json();
+        if (!body)
+            reply_error(req->clntFd, "failed", "out of memory", "");
+        else {
+            reply_json(req->clntFd, body, strlen(body));
+            free(body);
+        }
         return;
     }
 
@@ -3203,6 +3534,263 @@ void respond_request(http_request_t *req) {
          * response has been sent. */
         if (haveMode)
             system("(sleep 1; /usr/bin/oko-net apply) >/dev/null 2>&1 &");
+        return;
+    }
+
+    /* OKO: VPN profiles (WireGuard and AmneziaWG).
+     *   GET  /api/vpn          — profiles, live counters, availability, token
+     *   POST /api/vpn          — action=up|down|enable|disable|delete
+     *   POST /api/vpn/import   — multipart "file" or form field "text"
+     *   GET  /api/vpn/export   — download a profile (it contains the keys) */
+    if (STARTS_WITH(req->uri, "/api/vpn")) {
+        if (EQUALS(req->uri, "/api/vpn")) {
+            if (EQUALS(req->method, "GET")) {
+                char body[16384];
+                size_t len = vpn_status_json(body, sizeof(body));
+
+                if (!len) {
+                    reply_error(req->clntFd, "failed",
+                        "cannot read the VPN state",
+                        "check /var/log/vpn.log and the profile files");
+                    return;
+                }
+                reply_json(req->clntFd, body, len);
+                return;
+            }
+
+            if (!EQUALS(req->method, "POST")) {
+                send_http_error(req->clntFd, 405);
+                return;
+            }
+
+            {
+                char action[16] = "", profile[64] = "", token[32] = "";
+                char error[VPN_ERROR_MAX];
+                char body[320];
+                int len;
+
+                if (req->query) {
+                    while (req->query) {
+                        char *value = split(&req->query, "&");
+                        char *key;
+
+                        if (!value || !*value) continue;
+                        key = split(&value, "=");
+                        if (!key || !*key || !value) continue;
+                        unescape_uri(value);
+                        if (EQUALS(key, "action"))
+                            snprintf(action, sizeof(action), "%s", value);
+                        else if (EQUALS(key, "profile"))
+                            snprintf(profile, sizeof(profile), "%s", value);
+                        else if (EQUALS(key, "token"))
+                            snprintf(token, sizeof(token), "%s", value);
+                    }
+                }
+                if (!action[0]) {
+                    reply_bad_request(req->clntFd,
+                        "the 'action' parameter is missing",
+                        "use up, down, enable, disable or delete");
+                    return;
+                }
+                if (vpn_action(action, profile, token, error,
+                        sizeof(error))) {
+                    reply_error(req->clntFd, "blocked", error,
+                        "the profile stays in its current state");
+                    return;
+                }
+                if (EQUALS(action, "up"))
+                    len = snprintf(body, sizeof(body),
+                        "{\"action\":\"%s\",\"profile\":\"%s\","
+                        "\"queued\":true,\"note\":"
+                        "\"connecting; the state is polled by the WebUI\"}",
+                        action, profile);
+                else
+                    len = snprintf(body, sizeof(body),
+                        "{\"action\":\"%s\",\"profile\":\"%s\","
+                        "\"applied\":true}", action, profile);
+                HAL_INFO("server", "VPN action '%s' for '%s'\n", action,
+                    profile);
+                reply_json(req->clntFd, body, (size_t)len);
+                return;
+            }
+        }
+
+        if (EQUALS(req->uri, "/api/vpn/export")) {
+            char profile[64] = "", path[256], filename[96];
+            char error[VPN_ERROR_MAX];
+
+            if (!EQUALS(req->method, "GET")) {
+                send_http_error(req->clntFd, 405);
+                return;
+            }
+            if (req->query) {
+                while (req->query) {
+                    char *value = split(&req->query, "&");
+                    char *key;
+
+                    if (!value || !*value) continue;
+                    key = split(&value, "=");
+                    if (!key || !*key || !value) continue;
+                    unescape_uri(value);
+                    if (EQUALS(key, "profile"))
+                        snprintf(profile, sizeof(profile), "%s", value);
+                }
+            }
+            if (vpn_export_path(profile, path, sizeof(path), error,
+                    sizeof(error))) {
+                reply_error(req->clntFd, "blocked", error,
+                    "reload the VPN section");
+                return;
+            }
+            snprintf(filename, sizeof(filename), "%s.conf", profile);
+            send_stream_file(req->clntFd, path, "application/octet-stream",
+                filename, true, 0);
+            return;
+        }
+
+        if (EQUALS(req->uri, "/api/vpn/import")) {
+            char *type = request_header("Content-Type");
+            int body_len = req->total - req->header_len;
+            char hint[8] = "";
+            char name[VPN_PROFILE_NAME_MAX];
+            char error[VPN_ERROR_MAX];
+            char body[320];
+            int len;
+
+            if (!EQUALS(req->method, "POST")) {
+                send_http_error(req->clntFd, 405);
+                return;
+            }
+
+            if (type && STARTS_WITH(type, "multipart/form-data")) {
+                char bound[96], marker[104];
+                char *boundary, *start, *stop;
+                size_t uploaded_len;
+
+                if (body_len <= 0) {
+                    reply_bad_request(req->clntFd,
+                        "the uploaded configuration is empty", "");
+                    return;
+                }
+                if (req->query) {
+                    while (req->query) {
+                        char *value = split(&req->query, "&");
+                        char *key;
+
+                        if (!value || !*value) continue;
+                        key = split(&value, "=");
+                        if (!key || !*key || !value) continue;
+                        unescape_uri(value);
+                        if (EQUALS(key, "type"))
+                            snprintf(hint, sizeof(hint), "%s", value);
+                    }
+                }
+                boundary = strstr(type, "boundary=");
+                if (!boundary) {
+                    reply_bad_request(req->clntFd,
+                        "the multipart boundary is missing",
+                        "select a .conf file");
+                    return;
+                }
+                boundary += strlen("boundary=");
+                {
+                    size_t bound_len = strcspn(boundary, ";\r\n");
+                    if (bound_len >= 2 && boundary[0] == '"' &&
+                        boundary[bound_len - 1] == '"') {
+                        boundary++;
+                        bound_len -= 2;
+                    }
+                    if (bound_len == 0 || bound_len >= sizeof(bound)) {
+                        reply_bad_request(req->clntFd,
+                            "the multipart boundary is invalid", "");
+                        return;
+                    }
+                    snprintf(bound, sizeof(bound), "%.*s", (int)bound_len,
+                        boundary);
+                }
+                start = memstr(req->payload, "\r\n\r\n", body_len, 4);
+                if (!start) {
+                    reply_bad_request(req->clntFd,
+                        "the multipart body has no part header",
+                        "send the configuration as the 'file' field");
+                    return;
+                }
+                start += 4;
+                snprintf(marker, sizeof(marker), "--%s", bound);
+                stop = memstr(start, marker, body_len - (int)(start -
+                    req->payload), (char)strlen(marker));
+                if (stop) {
+                    if (stop - start >= 2) stop -= 2;
+                    else stop = start;
+                } else {
+                    stop = req->payload + body_len;
+                }
+                uploaded_len = (size_t)(stop - start);
+                if (vpn_import_text(start, uploaded_len, hint, name,
+                        sizeof(name), error, sizeof(error))) {
+                    reply_error(req->clntFd, "blocked", error,
+                        "the file must be a wg-quick style .conf");
+                    return;
+                }
+            } else if (type && STARTS_WITH(type,
+                    "application/x-www-form-urlencoded")) {
+                char text[VPN_CONF_MAX_BYTES + 1];
+                size_t text_len = 0;
+
+                text[0] = '\0';
+                if (req->query) {
+                    while (req->query) {
+                        char *value = split(&req->query, "&");
+                        char *key;
+
+                        if (!value || !*value) continue;
+                        key = split(&value, "=");
+                        if (!key || !*key || !value) continue;
+                        unescape_uri(value);
+                        if (EQUALS(key, "text")) {
+                            if (strlen(value) > VPN_CONF_MAX_BYTES) {
+                                reply_bad_request(req->clntFd,
+                                    "the configuration is larger than 8 KiB",
+                                    "");
+                                return;
+                            }
+                            snprintf(text, sizeof(text), "%s", value);
+                            text_len = strlen(text);
+                        } else if (EQUALS(key, "type")) {
+                            snprintf(hint, sizeof(hint), "%s", value);
+                        }
+                    }
+                }
+                if (text_len == 0) {
+                    reply_bad_request(req->clntFd,
+                        "the 'text' field is empty",
+                        "paste the configuration into the text area");
+                    return;
+                }
+                if (vpn_import_text(text, text_len, hint, name,
+                        sizeof(name), error, sizeof(error))) {
+                    reply_error(req->clntFd, "blocked", error,
+                        "script hooks, missing keys and bad endpoints are "
+                        "rejected");
+                    return;
+                }
+            } else {
+                reply_error(req->clntFd, "unsupported",
+                    "the upload must be multipart/form-data or a form",
+                    "send the configuration as a file or as text");
+                return;
+            }
+
+            len = snprintf(body, sizeof(body),
+                "{\"imported\":true,\"name\":\"%s\","
+                "\"note\":\"connect the profile to start the tunnel\"}",
+                name);
+            HAL_INFO("server", "VPN profile '%s' imported\n", name);
+            reply_json(req->clntFd, body, (size_t)len);
+            return;
+        }
+
+        send_http_error(req->clntFd, 404);
         return;
     }
 
@@ -3674,7 +4262,7 @@ if (EQUALS(req->uri, "/api/storage")) {
             "\"ip\":\"%s\",\"sd_free_mb\":%llu,\"sd_total_mb\":%llu,"
             "\"features\":{\"eptz\":%s,\"rotate\":%s,\"substream\":%s,"
             "\"aiisp\":%s,\"ivs\":%s,\"hdr\":%s,\"sd\":%s,"
-            "\"yolo\":%s}}",
+            "\"yolo\":%s,\"vpn\":%s}}",
             chip, si.loads[0] / 65536.0, si.loads[1] / 65536.0, si.loads[2] / 65536.0,
             memory, sensor, hal_temperature_read(), uptime,
             ipaddr,
@@ -3687,7 +4275,8 @@ if (EQUALS(req->uri, "/api/storage")) {
             (halCapabilities & HAL_CAP_IVS) ? "true" : "false",
             app_config.hdr_mode ? "true" : "false",
             gating_sd_mounted() ? "true" : "false",
-            (halCapabilities & HAL_CAP_RKNN) ? "true" : "false");
+            (halCapabilities & HAL_CAP_RKNN) ? "true" : "false",
+            vpn_available() ? "true" : "false");
         send_and_close(req->clntFd, response, respLen);
         return;
     }
@@ -3946,6 +4535,7 @@ void *server_thread(void *vargp) {
 }
 
 int server_start() {
+    flash_init();
     for (int i = 0; i < HTTP_MAX_CLIENTS; i++) {
         client_fds[i].sockFd = -1;
         client_fds[i].type = -1;
@@ -3975,6 +4565,7 @@ int server_start() {
 
 int server_stop() {
     keepRunning = 0;
+    flash_shutdown();
 
     close_socket_fd(server_fd);
     pthread_join(server_thread_id, NULL);

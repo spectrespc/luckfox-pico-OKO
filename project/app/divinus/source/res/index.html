@@ -97,6 +97,13 @@
 	.field input[type=number] { width: 4.6em; }
 	.val { min-width: 2.4em; font-weight: 700; font-size: 12px; }
 
+	.vpn-text { width: 100%; min-height: 9em; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+		font-size: 12px; padding: .45em .55em; border: 1px solid #cbd5e1; border-radius: 5px;
+		background: #fff; color: var(--ink); resize: vertical; }
+	.vpn-text:focus { outline: 0; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(11, 110, 153, .18); }
+	#vpn-live .tel b { font-size: 12px; word-break: break-all; }
+	#vpn-live .tel.warn { background: #fffbeb; border-color: #fde68a; }
+
 	.row2 { display: flex; gap: .4em; }
 	.actions { display: flex; gap: .45em; flex-wrap: wrap; margin-top: .8em; align-items: center; }
 	.btn {
@@ -152,6 +159,16 @@
 	.osd-region .caret { width: 1.25em; text-align: center; font-weight: 700; color: var(--muted); }
 	.osd-head .badge { display: none; font-size: 11px; font-weight: 600; color: #b45309; background: #fef3c7; border-radius: 99px; padding: .05em .5em; }
 	.osd-head .badge.show { display: inline-block; }
+
+	.focus-wrap { display: flex; gap: 1em; flex-wrap: wrap; align-items: flex-start; }
+	.focus-preview { position: relative; flex: 1 1 380px; min-width: 260px; background: #0b1219;
+		border-radius: 6px; overflow: hidden; user-select: none; touch-action: none; }
+	.focus-preview img { display: block; width: 100%; }
+	.focus-box { position: absolute; border: 2px solid #22c55e; background: rgba(34,197,94,.12);
+		display: none; pointer-events: none; box-sizing: border-box; }
+	.focus-side { flex: 1 1 260px; min-width: 240px; }
+	.focus-metric { font-size: 22px; font-weight: 700; margin: .2em 0 .5em; }
+	#fw-versions .tel b { font-size: 13px; }
 
 	#toasts { position: fixed; right: 1em; bottom: 1em; z-index: 60; display: flex; flex-direction: column; gap: .5em; max-width: 22em; }
 	.toast { border-radius: 6px; padding: .55em .8em; font-size: 13px; color: #fff; box-shadow: 0 6px 20px rgba(15,23,42,.25); }
@@ -391,6 +408,44 @@
 					<button type="button" class="btn primary" data-apply="iq" data-ep="iq" disabled data-i18n="apply_iq">Apply IQ</button>
 				</div>
 				<p class="note" data-i18n="hdr_note">HDR requires a restart; it is refused while AIISP is on.</p>
+			</div>
+
+			<div class="card wide">
+				<h3><span data-i18n="focus">Focus assist</span>
+					<span class="badge-state off" id="focus-state">–</span></h3>
+				<div class="focus-wrap">
+					<div class="focus-preview" id="focus-preview">
+						<img id="focus-img" alt="preview" src="/image.jpg" draggable="false">
+						<div class="focus-box" id="focus-box"></div>
+					</div>
+					<div class="focus-side">
+						<div class="field"><label data-i18n="focus_enable">Enable</label>
+							<div class="ctl"><select id="focus_enable">
+								<option value="false">OFF</option><option value="true">ON</option></select></div></div>
+						<div class="field"><label data-i18n="focus_mode">Mode</label>
+							<div class="ctl"><select id="focus_mode">
+								<option value="full" data-i18n="focus_full">Full frame</option>
+								<option value="roi" data-i18n="focus_roi">ROI</option></select></div></div>
+						<div class="field"><label data-i18n="focus_rate">Refresh rate</label>
+							<div class="ctl"><input type="number" id="focus_fps" min="1" max="10"></div></div>
+						<div class="field"><label data-i18n="focus_motor">Motor</label>
+							<div class="ctl"><select id="focus_motor">
+								<option value="false">OFF</option><option value="true">ON</option></select></div></div>
+						<div class="bar"><div id="focus-bar"></div></div>
+						<div class="focus-metric" id="focus-metric">–</div>
+						<div class="actions">
+							<button type="button" class="btn" id="focus-img-btn" data-i18n="refresh_image">Refresh image</button>
+							<button type="button" class="btn" id="focus-stop-btn" data-i18n="focus_stop">Stop</button>
+						</div>
+						<div class="actions">
+							<button type="button" class="btn" id="focus-near-btn" title="near">◀</button>
+							<button type="button" class="btn" id="focus-far-btn" title="far">▶</button>
+							<button type="button" class="btn primary" id="focus-save-btn" data-i18n="focus_apply">Apply</button>
+						</div>
+						<p class="note" data-i18n="focus_note">Drag a rectangle on the preview to measure only that area. Values are relative to the sensor frame; mirror/flip are taken into account.</p>
+						<p class="note" id="focus-motor-note"></p>
+					</div>
+				</div>
 			</div>
 		</div>
 	</section>
@@ -760,6 +815,39 @@
 				<p class="note" data-i18n="network_note">Stored in the U-Boot environment; survives a /userdata reset. Changing the address can disconnect this page.</p>
 			</div>
 
+			<div class="card wide" id="vpn-card">
+				<h3><span data-i18n="vpn">VPN</span>
+					<span class="badge-state off" id="vpn-available">–</span></h3>
+				<div class="field"><label data-i18n="vpn_profile">Profile</label>
+					<div class="ctl">
+						<select id="vpn_profile" onchange="vpnRender()"></select>
+						<button type="button" class="btn" onclick="vpnLoad()" data-i18n="refresh">Refresh</button>
+						<a class="btn" id="vpn-export" href="#" data-i18n="download">Download</a>
+					</div></div>
+				<div class="tel-grid" id="vpn-live"></div>
+				<div class="actions">
+					<button type="button" class="btn primary" id="vpn-connect" onclick="vpnAction('up')" data-i18n="vpn_connect">Connect</button>
+					<button type="button" class="btn" id="vpn-disconnect" onclick="vpnAction('down')" data-i18n="vpn_disconnect">Disconnect</button>
+					<button type="button" class="btn" id="vpn-auto" onclick="vpnToggleAuto()">Autostart: –</button>
+					<button type="button" class="btn danger" id="vpn-delete" onclick="vpnAction('delete')" data-i18n="delete">Delete</button>
+				</div>
+				<h3 style="margin-top:1em"><span data-i18n="vpn_import">Import configuration</span></h3>
+				<div class="field"><label data-i18n="vpn_type">Type</label>
+					<div class="ctl"><select id="vpn_type">
+						<option value="auto" data-i18n="vpn_type_auto">Auto-detect</option>
+						<option value="wg">WireGuard</option><option value="awg">AmneziaWG</option>
+					</select></div></div>
+				<div class="field"><label data-i18n="vpn_paste">Configuration</label>
+					<div class="ctl"><textarea id="vpn_text" class="vpn-text" placeholder="[Interface]&#10;PrivateKey = ...&#10;Address = 10.8.0.2/24&#10;&#10;[Peer]&#10;PublicKey = ...&#10;Endpoint = host:51820&#10;AllowedIPs = 10.8.0.0/24"></textarea></div></div>
+				<div class="field"><label data-i18n="vpn_file">Configuration file</label>
+					<div class="ctl"><input type="file" id="vpn_file" accept=".conf,.txt"></div></div>
+				<div class="actions">
+					<button type="button" class="btn primary" onclick="vpnImportText()" data-i18n="vpn_import_text">Import text</button>
+					<button type="button" class="btn" onclick="vpnImportFile()" data-i18n="vpn_import_file">Import file</button>
+				</div>
+				<p class="note" data-i18n="vpn_note">The configuration is stored in /userdata/vpn and applied by /usr/bin/oko-vpn. Script hooks (PreUp/PostUp/PreDown/PostDown) are rejected; the default route is only replaced for 0.0.0.0/0 with an automatic rollback.</p>
+			</div>
+
 			<div class="card">
 				<h3><span data-i18n="current_link">Current link</span></h3>
 				<div class="field"><label data-i18n="ip_address">IP address</label>
@@ -874,6 +962,27 @@
 				</div>
 				<p class="note" data-i18n="maintenance_note">Restarting the streamer drops the video streams for a few seconds. Rebooting the device takes about half a minute.</p>
 			</div>
+
+			<div class="card wide">
+				<h3><span data-i18n="firmware">Controller firmware</span>
+					<span class="badge-state off" id="fw-state">–</span></h3>
+				<div class="tel-grid" id="fw-versions"></div>
+				<div class="field"><label data-i18n="flash_target">Target</label>
+					<div class="ctl"><select id="flash_target">
+						<option value="stm32">STM32 (0x42)</option>
+						<option value="stm8">STM8 (0x60)</option></select></div></div>
+				<div class="field"><label data-i18n="flash_file">Firmware file</label>
+					<div class="ctl"><input type="file" id="flash_file" accept=".bin,.ihx,.hex"></div></div>
+				<div class="field"><label data-i18n="flash_confirm">Type FLASH</label>
+					<div class="ctl"><input type="text" id="flash_confirm" placeholder="FLASH"></div></div>
+				<div class="actions">
+					<button type="button" class="btn primary" id="flash_start" data-i18n="flash_start">Flash controller</button>
+					<button type="button" class="btn" id="fw_refresh" data-i18n="refresh">Refresh</button>
+				</div>
+				<div class="bar"><div id="flash_bar"></div></div>
+				<div class="log" id="flash_log"></div>
+				<p class="note" data-i18n="flash_note">The daemon is stopped while the controller is flashed. Do not power off the device. The version comes from the file name: app-1.0.1.bin, app-2.0.1.ihx.</p>
+			</div>
 		</div>
 	</section>
 
@@ -934,6 +1043,18 @@ var I18N = {
 		hdr_iq: "HDR and IQ", hdr_apply: "Apply mode", iq_main: "IQ main scene",
 		iq_sub: "IQ sub scene", iq_file: "IQ file", apply_hdr: "Apply HDR",
 		apply_iq: "Apply IQ", hdr_note: "HDR requires a restart; it is refused while AIISP is on.",
+		focus: "Focus assist", focus_enable: "Enable", focus_mode: "Mode",
+		focus_full: "Full frame", focus_roi: "ROI", focus_rate: "Refresh rate",
+		focus_motor: "Motor", focus_stop: "Stop", focus_apply: "Apply",
+		refresh_image: "Refresh image",
+		focus_note: "Drag a rectangle on the preview to measure only that area. Values are relative to the sensor frame; mirror/flip are taken into account.",
+		firmware: "Controller firmware", flash_target: "Target",
+		flash_file: "Firmware file",
+		flash_confirm: "Type FLASH", flash_start: "Flash controller",
+		flash_note: "The daemon is stopped while the controller is flashed. Do not power off the device. The version comes from the file name: app-1.0.1.bin, app-2.0.1.ihx.",
+		fw_app: "application", fw_boot: "bootloader", fw_absent: "no response",
+		flash_running: "Flashing the controller", flash_done: "Firmware flashed",
+		flash_failed: "Firmware flash failed",
 		enabled: "Enabled", width: "Width", height: "Height", fps: "Framerate",
 		gop: "Keyframe interval", bitrate: "Bitrate (kbps)", codec: "Codec",
 		rate_control: "Rate control", profile: "Profile",
@@ -1015,6 +1136,27 @@ var I18N = {
 		confirm_delete: "Delete this recording?",
 		no_recordings: "No recordings yet.",
 		usage: "Used",
+		vpn: "VPN", vpn_profile: "Profile", vpn_type: "Type",
+		vpn_type_auto: "Auto-detect", vpn_import: "Import configuration",
+		vpn_import_text: "Import text", vpn_import_file: "Import file",
+		vpn_paste: "Configuration", vpn_file: "Configuration file",
+		vpn_connect: "Connect", vpn_disconnect: "Disconnect",
+		vpn_ready: "ready", vpn_unavailable: "tools are missing",
+		vpn_no_profiles: "No VPN profiles yet. Import a wg-quick style .conf below.",
+		vpn_endpoint: "Endpoint", vpn_allowedips: "Allowed IPs",
+		vpn_handshake: "Last handshake", vpn_transfer: "Received / sent",
+		vpn_mtu: "MTU", vpn_routes: "Added routes", vpn_guard: "Full-tunnel guard",
+		vpn_guard_ok: "OK", vpn_guard_reverted: "reverted", vpn_guard_na: "not used",
+		vpn_never: "never", vpn_up: "Connected", vpn_down: "Disconnected",
+		vpn_auto_on: "Autostart: ON", vpn_auto_off: "Autostart: OFF",
+		vpn_confirm_delete: "Delete this VPN profile?",
+		vpn_choose_file: "Choose a .conf file first.",
+		vpn_import_required: "Paste a configuration or choose a file.",
+		vpn_import_too_big: "The configuration is larger than 8 KiB.",
+		vpn_imported: "Profile imported", vpn_deleted: "Profile deleted",
+		vpn_connecting: "Connection requested; waiting for the handshake",
+		vpn_queued: "Request sent",
+		vpn_need_select: "Import or select a VPN profile first.",
 		yes: "yes", no: "no"
 	},
 	ru: {
@@ -1066,6 +1208,18 @@ var I18N = {
 		hdr_iq: "HDR и IQ", hdr_apply: "Способ применения", iq_main: "IQ-сцена основного",
 		iq_sub: "IQ-сцена субпотока", iq_file: "Файл IQ", apply_hdr: "Применить HDR",
 		apply_iq: "Применить IQ", hdr_note: "HDR требует перезапуска; отключается при включённом AIISP.",
+		focus: "Помощь фокусировке", focus_enable: "Включить", focus_mode: "Режим",
+		focus_full: "Весь кадр", focus_roi: "Область", focus_rate: "Частота обновления",
+		focus_motor: "Мотор", focus_stop: "Стоп", focus_apply: "Применить",
+		refresh_image: "Обновить кадр",
+		focus_note: "Выделите прямоугольник на предпросмотре, чтобы измерять только эту область. Значения привязаны к кадру сенсора, зеркало и переворот учитываются.",
+		firmware: "Прошивки контроллеров", flash_target: "Цель",
+		flash_file: "Файл прошивки",
+		flash_confirm: "Введите FLASH", flash_start: "Прошить контроллер",
+		flash_note: "На время прошивки демон останавливается. Не выключайте питание. Версия берётся из имени файла: app-1.0.1.bin, app-2.0.1.ihx.",
+		fw_app: "приложение", fw_boot: "загрузчик", fw_absent: "нет ответа",
+		flash_running: "Идёт прошивка контроллера", flash_done: "Прошивка завершена",
+		flash_failed: "Ошибка прошивки",
 		enabled: "Включено", width: "Ширина", height: "Высота", fps: "Частота кадров",
 		gop: "Интервал ключевых кадров", bitrate: "Битрейт (кбит/с)", codec: "Кодек",
 		rate_control: "Управление битрейтом", profile: "Профиль",
@@ -1147,6 +1301,27 @@ var I18N = {
 		confirm_delete: "Удалить эту запись?",
 		no_recordings: "Записей пока нет.",
 		usage: "Занято",
+		vpn: "VPN", vpn_profile: "Профиль", vpn_type: "Тип",
+		vpn_type_auto: "Автоопределение", vpn_import: "Импорт конфигурации",
+		vpn_import_text: "Импорт текста", vpn_import_file: "Импорт файла",
+		vpn_paste: "Конфигурация", vpn_file: "Файл конфигурации",
+		vpn_connect: "Подключить", vpn_disconnect: "Отключить",
+		vpn_ready: "готово", vpn_unavailable: "нет утилит",
+		vpn_no_profiles: "Профилей VPN пока нет. Импортируйте .conf в формате wg-quick ниже.",
+		vpn_endpoint: "Сервер", vpn_allowedips: "Разрешённые IP",
+		vpn_handshake: "Последний handshake", vpn_transfer: "Принято / отправлено",
+		vpn_mtu: "MTU", vpn_routes: "Добавленные маршруты", vpn_guard: "Защита полного туннеля",
+		vpn_guard_ok: "в норме", vpn_guard_reverted: "откат выполнен", vpn_guard_na: "не используется",
+		vpn_never: "не было", vpn_up: "Подключён", vpn_down: "Отключён",
+		vpn_auto_on: "Автозапуск: ВКЛ", vpn_auto_off: "Автозапуск: ВЫКЛ",
+		vpn_confirm_delete: "Удалить этот профиль VPN?",
+		vpn_choose_file: "Сначала выберите файл .conf.",
+		vpn_import_required: "Вставьте конфигурацию или выберите файл.",
+		vpn_import_too_big: "Конфигурация больше 8 КиБ.",
+		vpn_imported: "Профиль импортирован", vpn_deleted: "Профиль удалён",
+		vpn_connecting: "Запрос отправлен; ждём handshake",
+		vpn_queued: "Запрос отправлен",
+		vpn_need_select: "Сначала импортируйте или выберите профиль VPN.",
 		yes: "да", no: "нет"
 	}
 };
@@ -1175,6 +1350,7 @@ function setLang(next) {
 	renderTelemetry(lastTelemetry);
 	updateRecordBadge(lastRecord);
 	refreshAllGroups();
+	if (vpnLast) vpnRender();
 }
 
 /* ============================ helpers ============================ */
@@ -1779,6 +1955,209 @@ function updateNetworkFields() {
 	}
 }
 
+/* ============================ VPN ============================ */
+var vpnLast = null;
+var vpnPollTimer = null;
+
+function vpnEscape(v) {
+	return String(v === undefined || v === null ? '' : v)
+		.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+		.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function vpnFind(name) {
+	if (!vpnLast || !vpnLast.profiles) return null;
+	for (var i = 0; i < vpnLast.profiles.length; i++)
+		if (vpnLast.profiles[i].name === name) return vpnLast.profiles[i];
+	return null;
+}
+
+function vpnProfile() {
+	var sel = $('vpn_profile');
+	if (sel && sel.value) return sel.value;
+	return (vpnLast && vpnLast.profiles && vpnLast.profiles.length)
+		? vpnLast.profiles[0].name : '';
+}
+
+function vpnAge(seconds) {
+	if (seconds === undefined || seconds === null || seconds < 0)
+		return t('vpn_never');
+	if (seconds < 60) return seconds + ' s';
+	if (seconds < 3600) return Math.floor(seconds / 60) + ' min';
+	return Math.floor(seconds / 3600) + ' h ' + Math.floor((seconds % 3600) / 60) + ' min';
+}
+
+function vpnLoad() {
+	getJson('/api/vpn', function (dec) {
+		if (dec && !dec.error) vpnLast = dec;
+		vpnRender();
+	});
+}
+
+function vpnRender() {
+	if (!$('vpn-live')) return;
+	var dec = vpnLast;
+	var sel = $('vpn_profile');
+	var old = sel ? sel.value : '';
+	var available = $('vpn-available');
+	var a = (dec && dec.available) || {};
+	var toolsOk = a.helper && (a.wg || a.awg_bin);
+
+	if (available) {
+		available.className = 'badge-state ' + (toolsOk ? 'on' : 'off');
+		available.textContent = toolsOk ? t('vpn_ready') : t('vpn_unavailable');
+	}
+
+	if (sel) {
+		sel.innerHTML = '';
+		var profiles = (dec && dec.profiles) || [];
+		for (var i = 0; i < profiles.length; i++) {
+			var opt = document.createElement('option');
+			opt.value = profiles[i].name;
+			opt.textContent = profiles[i].name + ' · ' +
+				(profiles[i].type === 'awg' ? 'AmneziaWG' : 'WireGuard') + ' · ' +
+				(profiles[i].state === 'up' ? t('vpn_up') : t('vpn_down'));
+			sel.appendChild(opt);
+		}
+		if (old) sel.value = old;
+		if (!sel.value && profiles.length) sel.value = profiles[0].name;
+	}
+
+	var name = vpnProfile();
+	var p = vpnFind(name);
+	var live = (dec && dec.live && p && dec.live[p.ifname]) || null;
+	var box = $('vpn-live');
+	var html = '';
+
+	if (!p) {
+		html = '<div class="hint">' + vpnEscape(t('vpn_no_profiles')) + '</div>';
+	} else {
+		var up = p.state === 'up';
+		var guard;
+		var guardWarn = false;
+		if (!p.fulltunnel) {
+			guard = t('vpn_guard_na');
+		} else if (p.guard_reverted) {
+			guard = t('vpn_guard_reverted');
+			guardWarn = true;
+		} else {
+			guard = up ? t('vpn_guard_ok') : t('vpn_guard_na');
+		}
+		var routes = (live && live.routes && live.routes.length)
+			? live.routes.join(', ') : '–';
+		var handshake = live ? vpnAge(live.handshake_age) : t('vpn_never');
+		var transfer = live ? (formatSize(live.rx) + ' / ' + formatSize(live.tx)) : '–';
+		var cells = [
+			[t('state'), up ? t('vpn_up') : t('vpn_down'), false],
+			[t('vpn_endpoint'), p.endpoint || '–', false],
+			[t('vpn_allowedips'), p.allowedips || '–', false],
+			[t('vpn_handshake'), handshake, false],
+			[t('vpn_transfer'), transfer, false],
+			[t('vpn_mtu'), live ? String(live.mtu) : '–', false],
+			[t('vpn_routes'), routes, false],
+			[t('vpn_guard'), guard, guardWarn]
+		];
+		for (var j = 0; j < cells.length; j++) {
+			html += '<div class="tel' + (cells[j][2] ? ' warn' : '') + '">' +
+				'<span>' + vpnEscape(cells[j][0]) + '</span>' +
+				'<b>' + vpnEscape(cells[j][1]) + '</b></div>';
+		}
+	}
+	box.innerHTML = html;
+
+	if ($('vpn-connect')) $('vpn-connect').disabled = !p || p.state === 'up' || !p.valid;
+	if ($('vpn-disconnect')) $('vpn-disconnect').disabled = !p || p.state !== 'up';
+	if ($('vpn-delete')) $('vpn-delete').disabled = !p;
+	if ($('vpn-auto')) $('vpn-auto').textContent = !p ? 'Autostart: –' :
+		(p.auto ? t('vpn_auto_on') : t('vpn_auto_off'));
+	if ($('vpn-export')) $('vpn-export').href = p
+		? '/api/vpn/export?profile=' + encodeURIComponent(p.name) : '#';
+}
+
+function vpnAction(action) {
+	var name = vpnProfile();
+	var p = vpnFind(name);
+	if (!name || !p) { toast('err', t('vpn_need_select')); return; }
+	if (action === 'delete' && !confirm(t('vpn_confirm_delete'))) return;
+	var data = { action: action, profile: name };
+	if (action === 'delete') data.token = (vpnLast && vpnLast.token) || '';
+	request('POST', '/api/vpn', encodeForm(data),
+		'application/x-www-form-urlencoded', function (dec) {
+			if (!dec || dec.error) { toastError(dec); vpnLoad(); return; }
+			if (action === 'up') { toast('ok', t('vpn_connecting')); vpnPoll(); }
+			else if (action === 'down') toast('ok', t('vpn_queued'));
+			else if (action === 'delete') toast('ok', t('vpn_deleted'));
+			else toast('ok', t('applied'));
+			vpnLoad();
+		});
+}
+
+function vpnToggleAuto() {
+	var p = vpnFind(vpnProfile());
+	if (!p) { toast('err', t('vpn_need_select')); return; }
+	vpnAction(p.auto ? 'disable' : 'enable');
+}
+
+function vpnPoll() {
+	if (vpnPollTimer) clearInterval(vpnPollTimer);
+	var tries = 0;
+	vpnPollTimer = setInterval(function () {
+		tries++;
+		getJson('/api/vpn', function (dec) {
+			if (dec && !dec.error) { vpnLast = dec; vpnRender(); }
+			var p = vpnFind(vpnProfile());
+			if (tries >= 15 || (p && p.state === 'up')) {
+				clearInterval(vpnPollTimer);
+				vpnPollTimer = null;
+			}
+		});
+	}, 2000);
+}
+
+function vpnImportDone(input) {
+	return function (req) {
+		if (req.readyState !== 4) return;
+		var dec = null;
+		try { dec = JSON.parse(req.responseText); } catch (e) {}
+		if (!dec || dec.error) { toastError(dec); return; }
+		toast('ok', t('vpn_imported'), dec.name || '');
+		if (input) input.value = '';
+		if ($('vpn_text')) $('vpn_text').value = '';
+		vpnLoad();
+	};
+}
+
+function vpnImportFile() {
+	var input = $('vpn_file');
+	var file = input && input.files && input.files[0];
+	if (!file) { toast('err', t('vpn_choose_file')); return; }
+	if (file.size > 8 * 1024) { toast('err', t('vpn_import_too_big')); input.value = ''; return; }
+	var type = $('vpn_type') ? $('vpn_type').value : 'auto';
+	var form = new FormData();
+	form.append('file', file);
+	var req = new XMLHttpRequest();
+	req.onreadystatechange = vpnImportDone(input);
+	req.open('POST', '/api/vpn/import?type=' + encodeURIComponent(type));
+	req.send(form);
+}
+
+function vpnImportText() {
+	var text = $('vpn_text') ? $('vpn_text').value : '';
+	if (!text || !text.replace(/\s+/g, '')) {
+		toast('err', t('vpn_import_required'));
+		return;
+	}
+	if (text.length > 8 * 1024) { toast('err', t('vpn_import_too_big')); return; }
+	var type = $('vpn_type') ? $('vpn_type').value : 'auto';
+	request('POST', '/api/vpn/import', encodeForm({ text: text, type: type }),
+		'application/x-www-form-urlencoded', function (dec) {
+			if (!dec || dec.error) { toastError(dec); return; }
+			toast('ok', t('vpn_imported'), dec.name || '');
+			if ($('vpn_text')) $('vpn_text').value = '';
+			vpnLoad();
+		});
+}
+
 /* ============================ OSD ============================ */
 function osdRegion(i) {
 	var base = 'osd/' + i;
@@ -1955,6 +2334,232 @@ function rebootDevice() {
 	getJson('/api/cmd?reboot', function () { toast('info', t('rebooting')); });
 }
 
+/* ============================ focus assist ============================ */
+var focusState = null, focusMax = 0;
+
+function focusSetBadge(el, cls, text) {
+	if (!el) return;
+	el.className = 'badge-state ' + cls;
+	el.textContent = text;
+}
+
+function focusDrawBox(roi, mode) {
+	var box = $('focus-box');
+	if (!box) return;
+	if (!roi || mode !== 'roi') { box.style.display = 'none'; return; }
+	var x = roi.x / 100, y = roi.y / 100, w = roi.w / 100, h = roi.h / 100;
+	var mir = $('isp_mirror') && $('isp_mirror').value === 'true';
+	var fl = $('isp_flip') && $('isp_flip').value === 'true';
+	if (mir) x = 1 - (x + w);
+	if (fl) y = 1 - (y + h);
+	box.style.left = (x * 100) + '%';
+	box.style.top = (y * 100) + '%';
+	box.style.width = (w * 100) + '%';
+	box.style.height = (h * 100) + '%';
+	box.style.display = 'block';
+}
+
+function focusApplyValues(dec) {
+	if (!dec || dec.error) return;
+	focusState = dec;
+	$('focus_enable').value = dec.enable ? 'true' : 'false';
+	$('focus_mode').value = dec.mode || 'full';
+	$('focus_fps').value = dec.fps || 5;
+	$('focus_motor').value = dec.motor && dec.motor.enabled ? 'true' : 'false';
+	focusSetBadge($('focus-state'),
+		dec.status === 'running' ? 'on' : (dec.status === 'idle' ? 'off' : 'warn'),
+		dec.status);
+	var avg = dec.metric_avg || 0;
+	if (avg > focusMax) focusMax = avg;
+	$('focus-metric').textContent = avg ? avg.toLocaleString() : '–';
+	$('focus-bar').style.width = focusMax ? Math.round(avg * 100 / focusMax) + '%' : '0%';
+	focusDrawBox(dec.roi, dec.mode);
+	var note = $('focus-motor-note');
+	if (note) {
+		var m = dec.motor || {};
+		note.textContent = m.present ? (m.status === 'boot' ? t('fw_boot') : m.device + ' 0x' +
+			Number(m.address).toString(16).toUpperCase() + (m.version ? ' · ' + m.version : '')) :
+			(m.enabled ? t('fw_absent') : '');
+	}
+}
+
+function focusPoll() {
+	if (activeSec !== 'image') return;
+	getJson('/api/focus', function (dec) { focusApplyValues(dec); });
+}
+
+function focusPost(extra) {
+	var q = extra ? ('/api/focus?' + extra) : '/api/focus';
+	request('POST', q, null, null, function (dec, status) {
+		if (!dec || dec.error) { toastError(dec); return; }
+		focusApplyValues(dec);
+	});
+}
+
+function focusApply() {
+	var body = 'enable=' + ($('focus_enable').value === 'true' ? '1' : '0') +
+		'&mode=' + encodeURIComponent($('focus_mode').value) +
+		'&fps=' + encodeURIComponent($('focus_fps').value) +
+		'&motor=' + ($('focus_motor').value === 'true' ? '1' : '0');
+	focusPost(body);
+}
+
+function focusStop() {
+	focusPost('enable=0');
+}
+
+function focusImage() {
+	$('focus-img').src = '/image.jpg?t=' + Date.now();
+	toast('info', t('refresh_image'));
+}
+
+function focusMove(steps) {
+	if (!focusState || !focusState.motor || !focusState.motor.enabled) {
+		toast('err', t('focus_motor'), t('off'));
+		return;
+	}
+	focusPost('move=' + steps);
+}
+
+(function () {
+	var preview = $('focus-preview'), box = $('focus-box'), img = $('focus-img');
+	if (!preview || !box || !img) return;
+	var dragging = false, startX = 0, startY = 0;
+
+	function rect() { return img.getBoundingClientRect(); }
+
+	preview.addEventListener('pointerdown', function (e) {
+		if (e.button !== 0) return;
+		var r = rect();
+		if (!r.width || !r.height) return;
+		dragging = true;
+		startX = Math.max(0, Math.min(r.width, e.clientX - r.left));
+		startY = Math.max(0, Math.min(r.height, e.clientY - r.top));
+		box.style.left = startX + 'px';
+		box.style.top = startY + 'px';
+		box.style.width = '0px';
+		box.style.height = '0px';
+		box.style.display = 'block';
+		preview.setPointerCapture && preview.setPointerCapture(e.pointerId);
+	});
+
+	preview.addEventListener('pointermove', function (e) {
+		if (!dragging) return;
+		var r = rect();
+		var x = Math.max(0, Math.min(r.width, e.clientX - r.left));
+		var y = Math.max(0, Math.min(r.height, e.clientY - r.top));
+		box.style.left = Math.min(x, startX) + 'px';
+		box.style.top = Math.min(y, startY) + 'px';
+		box.style.width = Math.abs(x - startX) + 'px';
+		box.style.height = Math.abs(y - startY) + 'px';
+	});
+
+	function finish(e) {
+		if (!dragging) return;
+		dragging = false;
+		var r = rect();
+		if (!r.width || !r.height) return;
+		var x = Math.max(0, Math.min(r.width, e.clientX - r.left));
+		var y = Math.max(0, Math.min(r.height, e.clientY - r.top));
+		var nx = Math.min(x, startX) / r.width;
+		var ny = Math.min(y, startY) / r.height;
+		var nw = Math.abs(x - startX) / r.width;
+		var nh = Math.abs(y - startY) / r.height;
+		if (nw < 0.03 || nh < 0.03) { box.style.display = 'none'; return; }
+		var mir = $('isp_mirror') && $('isp_mirror').value === 'true';
+		var fl = $('isp_flip') && $('isp_flip').value === 'true';
+		if (mir) nx = 1 - (nx + nw);
+		if (fl) ny = 1 - (ny + nh);
+		var bp = function (v) { return Math.max(0, Math.min(10000, Math.round(v * 10000))); };
+		var body = 'enable=1&mode=roi&rx=' + bp(nx) + '&ry=' + bp(ny) +
+			'&rw=' + bp(nw) + '&rh=' + bp(nh) +
+			'&fps=' + encodeURIComponent($('focus_fps').value) +
+			'&motor=' + ($('focus_motor').value === 'true' ? '1' : '0');
+		focusPost(body);
+	}
+
+	preview.addEventListener('pointerup', finish);
+	preview.addEventListener('pointercancel', function () { dragging = false; });
+})();
+
+/* ============================ controller firmware ============================ */
+var flashWasBusy = false;
+
+function fwCard(label, value, state) {
+	return '<div class="tel"><span>' + label + '</span><b>' + (value || '–') + '</b>' +
+		(state ? '<span>' + state + '</span>' : '') + '</div>';
+}
+
+function renderFirmware(fw) {
+	if (!fw) return;
+	var box = $('fw-versions');
+	if (!box) return;
+	var s32 = fw.stm32 || {}, s8 = fw.stm8 || {};
+	box.innerHTML =
+		fwCard('STM32', s32.version, s32.present ? (s32.state === 'boot' ? t('fw_boot') : t('fw_app')) : t('fw_absent')) +
+		fwCard('STM8', s8.version, s8.present ? (s8.state === 'boot' ? t('fw_boot') : t('fw_app')) : t('fw_absent')) +
+		fwCard('STM8 boot', s8.boot_version, '0x' + Number(s8.address || 0).toString(16).toUpperCase());
+	var state = $('fw-state');
+	var present = s32.present || s8.present;
+	focusSetBadge(state, present ? 'on' : 'off', present ? 'online' : 'offline');
+}
+
+function firmwarePoll() {
+	getJson('/api/firmware', function (dec) {
+		if (dec && !dec.error) renderFirmware(dec);
+	});
+}
+
+function flashRender(dec) {
+	if (!dec || dec.error) return;
+	var job = dec.job;
+	var bar = $('flash_bar'), log = $('flash_log'), state = $('fw-state');
+	if (!job) {
+		bar.style.width = '0%';
+		log.innerHTML = '<div class="hint">' + t('flash_note') + '</div>';
+		flashWasBusy = false;
+		return;
+	}
+	bar.style.width = (job.progress || 0) + '%';
+	var lines = (job.log || []).map(function (l) { return '<div>' + l.replace(/[<>&]/g, '') + '</div>'; });
+	if (job.message) lines.push('<div><b>' + job.message.replace(/[<>&]/g, '') + '</b></div>');
+	log.innerHTML = lines.join('') || '<div class="hint">' + t('flash_running') + '</div>';
+	if (job.state === 'flashing' || job.state === 'queued') {
+		flashWasBusy = true;
+		focusSetBadge(state, 'warn', t('flash_running'));
+	} else {
+		if (flashWasBusy) {
+			if (job.state === 'done') toast('ok', t('flash_done'));
+			else toast('err', t('flash_failed'));
+			firmwarePoll();
+		}
+		flashWasBusy = false;
+		focusSetBadge(state, job.state === 'done' ? 'on' : 'off', job.state);
+	}
+}
+
+function flashPoll() {
+	if (activeSec !== 'system') return;
+	getJson('/api/flash', function (dec) { flashRender(dec); });
+}
+
+function flashStart() {
+	var target = $('flash_target').value;
+	var file = $('flash_file').files[0];
+	var confirmText = $('flash_confirm').value;
+	if (!file) { toast('err', t('flash_file')); return; }
+	var fd = new FormData();
+	fd.append('target', target);
+	fd.append('file', file, file.name);
+	fd.append('confirm', confirmText);
+	request('POST', '/api/flash', fd, null, function (dec, status) {
+		if (!dec || dec.error) { toastError(dec); return; }
+		flashWasBusy = true;
+		flashRender(dec);
+		toast('info', t('flash_running'));
+	});
+}
+
 /* ============================ sections ============================ */
 var SECTION_LOAD = {
 	live: ['record', 'eptz', 'rotate'],
@@ -1973,6 +2578,7 @@ function loadSection(name) {
 	if (name === 'storage') refreshRecordings();
 	if (name === 'streams') loadStreams();
 	if (name === 'events') loadModels();
+	if (name === 'network') vpnLoad();
 }
 
 function showSection(name) {
@@ -1990,6 +2596,8 @@ function showSection(name) {
 		refreshRecordings();
 	} else if (name === 'streams') {
 		loadStreams();
+	} else if (name === 'network') {
+		vpnLoad();
 	}
 	poll();
 }
@@ -2011,6 +2619,11 @@ function poll() {
 		loadTelemetry();
 	} else if (activeSec === 'events') {
 		loadIvsEvents();
+	} else if (activeSec === 'image') {
+		focusPoll();
+	} else if (activeSec === 'system') {
+		firmwarePoll();
+		flashPoll();
 	}
 }
 
@@ -2051,6 +2664,16 @@ function init() {
 
 	var start = (location.hash || '').replace('#', '');
 	showSection(SECTION_LOAD[start] ? start : 'live');
+
+	$('focus-save-btn').onclick = focusApply;
+	$('focus-stop-btn').onclick = focusStop;
+	$('focus-img-btn').onclick = focusImage;
+	$('focus-near-btn').onclick = function () { focusMove(-200); };
+	$('focus-far-btn').onclick = function () { focusMove(200); };
+	$('fw_refresh').onclick = firmwarePoll;
+	$('focus-img').onclick = function (e) { e.preventDefault(); };
+	$('flash_start').onclick = flashStart;
+	flashPoll();
 
 	every5s();
 	setInterval(every5s, 5000);

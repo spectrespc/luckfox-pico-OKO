@@ -50,6 +50,7 @@ struct ec_battery
 };
 
 void ec_set_verbose(int enable);
+int ec_verbose_enabled(void);
 
 /* 0 — успех, -1 — ошибка транспорта/статуса/длины. */
 int ec_get_info(int fd, struct ec_info *out, unsigned delay_us, unsigned retries);

@@ -23,8 +23,8 @@
 Standalone (корень `project/app/stm8-motor`):
 
 ```sh
-make            # build/app.ihx, build/factory.ihx, build/app.bin
-make flash      # ST-Link + factory.ihx
+make            # build/app-2.0.1.ihx, build/factory-2.0.1.ihx, build/app-2.0.1.bin
+make flash      # ST-Link + factory-2.0.1.ihx
 make -C util    # util/motorctl
 make -C tests test
 ```
@@ -40,9 +40,12 @@ docker run --rm -v "$PWD:/work" -w /work/project/app/stm8-motor \
     oko-stm8-sdcc make -f Makefile.stm8 all
 ```
 
-Первая запись — `build/factory.ihx` по ST-Link/SWIM; обновление —
-`oko-motor flash build/app.ihx` или `/api/flash` в WebUI. EEPROM-позиции
-моторов при обновлении flash не стираются.
+Версия берётся из `src/core/main.h` и попадает в имена файлов; безымянные
+`build/app.ihx`/`build/factory.ihx`/`build/app.bin` остаются копиями для
+ST-Link-скриптов. Первая запись — `build/factory-2.0.1.ihx` по ST-Link/SWIM;
+обновление — `oko-motor flash build/app-2.0.1.ihx` или `/api/flash` в WebUI
+(загружать имя с версией). EEPROM-позиции моторов при обновлении flash не
+стираются.
 
 ### Отправка изменений в STM8-репозиторий
 
@@ -87,8 +90,8 @@ Before the import, the local changes (bootloader, `0x08 GET_STATE`,
 Standalone (repository root `project/app/stm8-motor`):
 
 ```sh
-make            # build/app.ihx, build/factory.ihx, build/app.bin
-make flash      # ST-Link + factory.ihx
+make            # build/app-2.0.1.ihx, build/factory-2.0.1.ihx, build/app-2.0.1.bin
+make flash      # ST-Link + factory-2.0.1.ihx
 make -C util    # util/motorctl
 make -C tests test
 ```
@@ -105,9 +108,12 @@ docker run --rm -v "$PWD:/work" -w /work/project/app/stm8-motor \
     oko-stm8-sdcc make -f Makefile.stm8 all
 ```
 
-The first write is `build/factory.ihx` over ST-Link/SWIM; updates use
-`oko-motor flash build/app.ihx` or `/api/flash` in the WebUI. Motor EEPROM
-positions survive a flash update.
+The version comes from `src/core/main.h` and is part of the artifact
+names; the unversioned `build/app.ihx`/`build/factory.ihx`/`build/app.bin`
+remain as copies for ST-Link scripts. The first write is
+`build/factory-2.0.1.ihx` over ST-Link/SWIM; updates use
+`oko-motor flash build/app-2.0.1.ihx` or `/api/flash` in the WebUI (upload the
+versioned name). Motor EEPROM positions survive a flash update.
 
 ### Sending changes to the STM8 repository
 

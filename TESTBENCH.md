@@ -8,7 +8,7 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
 
 | Поле | Значение |
 |---|---|
-| Дата обновления | `2026-11-05` |
+| Дата обновления | `2026-11-06` |
 | Ответственный | `<ФИО>` |
 | Статус | активен |
 | Назначение | сборка прошивки и прошивка SPI NAND для отладки IPC |
@@ -128,9 +128,9 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
 | `env` | U-Boot env (MAC и пр.) | `output/image/env.img` (этой фичей не изменялся) |
 | `idblock`, `uboot` | SPL/DDR, U-Boot | `output/image/idblock.img`, `uboot.img` |
 | `boot` | ядро + DTB | `output/image/boot.img` |
-| `oem` | `/oem/usr/bin/divinus`, `/oem/usr/share/divinus/divinus.yaml`, `/oem/usr/share/rkipc*`, библиотеки | `output/out/oem/` |
+| `oem` | `/oem/usr/bin/divinus`, `/oem/usr/bin/wg`, `/oem/usr/bin/awg`, `/oem/usr/ko/amneziawg.ko`, `/oem/usr/share/divinus/divinus.yaml`, `/oem/usr/share/rkipc*`, библиотеки | `output/out/oem/` |
 | `userdata` | фабричное содержимое раздела; рабочие маркеры и конфиг живут на устройстве | `output/out/userdata/` |
-| `rootfs` | корневая ФС, включая `/etc/init.d/S20oko-osd` и `/usr/bin/oko-osd` | `output/out/rootfs_uclibc_rv1106/` |
+| `rootfs` | корневая ФС, включая `/etc/init.d/S20oko-osd`, `/usr/bin/oko-osd`, `/usr/bin/oko-vpn` и `/etc/init.d/S45oko-vpn` | `output/out/rootfs_uclibc_rv1106/` |
 
 **Порядок:**
 
@@ -190,6 +190,35 @@ diff /tmp/now.sha256 .flashed.sha256   # прошивать только раз�
 загрузки. Если оставить `sd_update.txt` (или добавить `reset`), U-Boot будет
 перепрошивать NAND при каждом старте.
 
+### C. STM8: первичная прошивка через ST-Link
+
+STM8S103F3P6 на плате не имеет USB; первая запись OKO-загрузчика и приложения
+делается ST-Link/V2 по SWIM (PD1), который подключён к USB хоста. Питание
+платы при этом должно быть включено (общий GND), I2C на DUT можно не
+останавливать: в худшем случае `firmware_status` временно покажет `absent`.
+`stm8flash` не входит в дистрибутив и требует libusb; проверенный способ без
+root — собрать и запустить его в привилегированном контейнере с пробросом USB:
+
+```sh
+git clone --depth 1 https://github.com/vdudouyt/stm8flash /tmp/kilo/stm8flash
+docker run --rm --privileged \
+  -v /dev/bus/usb:/dev/bus/usb \
+  -v /tmp/kilo/stm8flash:/src -v "$PWD:/work" -w /src \
+  debian:bookworm-slim bash -lc '
+    apt-get update -qq &&
+    apt-get install -y -qq build-essential libusb-1.0-0-dev pkg-config &&
+    make clean && make RELEASE=1 &&
+    ./stm8flash -c stlinkv2 -p stm8s103f3 -s flash \
+      -w /work/project/app/stm8-motor/build/factory-2.0.1.ihx'
+```
+
+`factory-2.0.1.ihx` содержит загрузчик `0x8000–0x89FF` и приложение
+`0x8A10–0x9FFF`; EEPROM (позиции моторов) не стирается. Проверка после
+записи — `oko-motor -b 3 -a 0x60 version` (ожидается `2.0.1`), затем
+`enter-boot` → `info` → `boot-reset`. Восстановление при неудачной записи —
+тем же `factory-2.0.1.ihx`; приложение можно обновлять без ST-Link через
+`/api/flash` (имя с версией) или `oko-motor flash app-2.0.1.ihx`.
+
 ## 8. Диагностика
 
 Чек-лист после загрузки (по SSH `root@<DHCP-адрес DUT>` или UART; фактический
@@ -213,7 +242,38 @@ v4l2-ctl -d /dev/video0 --stream-mmap --stream-count=60 --stream-poll
 
 # WebUI и API после прошивки: 80 проверок API и headless-проверка разделов
 bench/run.sh api_check.py
-/tmp/pw/bin/python bench/ui_check.py   # нужен Playwright, см. VERIFIED_FUNCTIONS.md §3
+LD_LIBRARY_PATH=/tmp/kilo/libasound/usr/lib/x86_64-linux-gnu \
+  output/bench/venv/bin/python bench/ui_check.py   # Playwright, см. VERIFIED_FUNCTIONS.md §3
+
+# контроллеры: версии, роль STM8, загрузчик
+curl -s -u admin:oko-change-me http://192.168.52.97/api/firmware
+/oem/usr/bin/oko-motor -b 3 -a 0x60 version
+/oem/usr/bin/oko-motor -b 3 -a 0x60 info
+/oem/usr/bin/oko-ec info
+
+# AF-метрика: 20 отсчётов; для SC230AI нужен contrast_af.enable=1 в IQ
+curl -s -X POST -u admin:oko-change-me 'http://192.168.52.97/api/focus?enable=1'
+bench/run.sh focus_check.py --seconds 20 --interval 1 --snapshot
+
+# VPN: модуль по требованию, утилиты и профили
+lsmod | grep amneziawg
+/oem/usr/bin/awg version
+/usr/bin/oko-vpn status
+curl -s -u admin:oko-change-me http://192.168.52.97/api/vpn
+# полный прогон с пиром на хосте (см. bench/README.md, «VPN-пир на хосте»)
+bench/run.sh vpn_check.py --peer-host 192.168.52.1 \
+  --profile output/bench/vpn/awg0.conf
+
+# прошивка через WebUI: негативные проверки (400) и реальный STM8
+bench/run.sh firmware_check.py --negative
+bench/run.sh firmware_check.py --flash --target stm8 \
+  --file project/app/stm8-motor/build/app-2.0.1.ihx --confirm FLASH
+
+# NPU в OSD: строка должна появиться после старта YOLO
+cat /tmp/osd-sys.txt; cat /proc/rknpu/load
+
+# RTSP отдаёт кадры только при stream.enable=true в /userdata/divinus.yaml
+grep -A2 '^stream:' /userdata/divinus.yaml
 
 # новая разметка: boot 0x600000, oem 0x2800000, userdata 0x2800000, rootfs 0xA800000
 cat /proc/cmdline
@@ -235,6 +295,32 @@ ls /oem/usr/bin/sample_* /oem/usr/bin/simple_* 2>/dev/null  # пусто
 
 # I2C3-M1: 100 kHz = 0x000186a0
 hexdump -C /sys/class/i2c-adapter/i2c-3/of_node/clock-frequency
+
+# помощь фокусировке: AF-статистика (A6), мотор 0x60 и NPU в OSD
+bench/run.sh focus_check.py
+bench/run.sh focus_check.py --enable --polls 10
+curl -s -u admin:oko-change-me 'http://192.168.52.97/api/focus?map=1'
+i2cdetect -y 3 | grep -E ' 42 | 60 '
+cat /tmp/osd-sys.txt
+oko-motor info
+# прошивки контроллеров (без --flash — только версии)
+bench/run.sh firmware_check.py
+# STM32: проверка перехода в загрузчик без записи (образ не меняется)
+/etc/init.d/S21oko-ec stop
+/oem/usr/bin/oko-ec info            # device_type=2 (application)
+/oem/usr/bin/oko-ec enter-update    # 0x0E, пауза 3 с
+/oem/usr/bin/oko-ec info            # device_type=1 (bootloader)
+/oem/usr/bin/oko-ec reset
+sleep 2
+/oem/usr/bin/oko-ec info            # снова device_type=2, версия/ячейки
+/etc/init.d/S21oko-ec start
+# STM32: реальная прошивка (CBT6, слот 120 КиБ, версия 1.0.0 = rollback)
+bench/run.sh firmware_check.py --flash --target stm32 \
+  --file output/bench/stm32/app-1.0.0.bin --confirm FLASH
+# ожидается job done; затем /api/firmware, oko-ec info/battery, power-cycle
+# STM8: первая запись factory-2.0.1.ihx по ST-Link, далее через WebUI/oko-motor
+ls -l project/app/stm8-motor/build/app-2.0.1.ihx \
+      project/app/stm8-motor/build/factory-2.0.1.ihx
 
 # Ethernet: MAC и настройки в env-разделе U-Boot
 fw_printenv oko_mac oko_net_mode oko_ipaddr oko_netmask oko_gateway oko_dns
@@ -380,6 +466,25 @@ dmesg | tail -50
   появился `mmap part 1 failed!`, значит патч `compat.c` не применён; см.
   `project/app/divinus/README.md`. Второй патч (`region.c`, `@file`-провайдер OSD)
   повторяется тем же порядком.
+
+- STM8S103F3P6 подключён к I2C3 по адресу `0x60` и к ST-Link/V2 по SWIM;
+  первая прошивка — `factory-2.0.1.ihx` (§7C), далее `oko-motor flash` или
+  `/api/flash`. Версия обеих прошивок берётся из имени файла
+  (`app-1.0.1.bin`, `app-2.0.1.ihx`); безымянный `app.bin`/`app.ihx`
+  отклоняется, а несовпадение имени с заголовком OKO8 — тоже 400.
+  EEPROM-позиции моторов при прошивке flash не стираются.
+- AF-статистика SC230AI требует `af_v31.TuningPara.contrast_af.enable=1`
+  в IQ (оба блока). Метрика в `/api/focus` — по 225 ячейкам; ROI применяется
+  выбором ячеек, AFM-карта полнокадровая. Малые ходы мотора метрику не
+  меняют: оптическая связь объектива на стенде не подтверждена.
+- RTSP молчит (OPTIONS без ответа), если `stream.enable=false` в
+  `/userdata/divinus.yaml`; для проверки OSD/потока включить и перезагрузить.
+- Прошивка через WebUI идёт в фоне; `POST /api/flash` без `confirm=FLASH`,
+  без версии в имени, с чужим расширением, битым `OKO8`, несовпадением
+  имени/заголовка или большим файлом отдаёт 400, повторный
+  POST во время работы — 409. Демон `S21oko-ec` на время задачи
+  останавливается; при обрыве хостового процесса STM8 остаётся в загрузчике
+  и принимает повторную загрузку.
 
 ## 10. Правила ведения
 

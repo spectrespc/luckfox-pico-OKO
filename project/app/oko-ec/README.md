@@ -59,9 +59,21 @@ HAL, сборка) не копируется.
   `0x3220` — INA3221; для INA3221 каналы 1–3 выбираются `--ina-channel`) и
   SHT21 (no-hold `0xE3`/`0xE5`, пауза 90/40 мс, CRC8, 2 повтора при ошибке CRC).
 - `source/daemon.c/.h` — цикл (по умолчанию 2 с), атомарная запись
-  `/tmp/oko-ec.json` и `/tmp/oko-ec.osd` через `.tmp` + `rename`, PID-файл
+  `/tmp/oko-ec.json` и `/tmp/oko-ec.osd` через `.tmp` + `rename`, PID-файл;
+  в JSON добавлены `info_ok`/`device_type`/`proto`/`version`/`img_size`/`flags`
+  (версия STM32 доступна и в загрузчике), а цикл берёт `flock`
+  `/run/oko-ec.lock`, чтобы `oko-ec flash` не пересекался с опросом
   `/tmp/oko-ec.pid`, лог только при смене состояния устройства.
 - `tests/sensors_math_test.c` — хостовый тест, в сборку пакета не входит.
+
+`oko-ec flash` и демон сериализуются через `flock` `/run/oko-ec.lock`: демон
+пропускает цикл, пока флешер держит блокировку, а `oko-flash --target stm32`
+вызывает `oko-ec flash` только после остановки `S21oko-ec`. При обновлении
+через WebUI `divinus` (`flash.c`) делает то же самое: останавливает демон,
+приостанавливает опрос STM8, запускает `oko-flash` и восстанавливает демон
+после завершения. `oko-flash --target stm8` вместо `oko-ec` вызывает
+`oko-motor flash` (I2C-загрузчик STM8), поэтому `oko-ec` протокол STM32 не
+меняется.
 
 ## Протокол и адреса
 
@@ -84,6 +96,35 @@ HAL, сборка) не копируется.
 - Без внешних pull-up (типично 2.2–4.7 кОм к 3.3 В) шина не поднимется:
   в DTS `pcfg_pull_none_smt`.
 
+## Порядок прошивки STM32
+
+`oko-ec flash <file.bin> <version>` сам проводит устройство по всем ролям:
+
+1. `GET_INFO` (0x01): если `device_type=1` — загрузчик уже активен; если
+   `device_type=2` — отправить `ENTER_UPDATE` (0x0E) и ждать до 5 с, пока
+   `GET_INFO` не вернёт `device_type=1`.
+2. `BEGIN_UPDATE` (0x02) → `WRITE_DATA` (0x03) → `VERIFY_UPDATE` (0x04) →
+   `COMMIT` (0x05).
+3. `RESET` (0x08) и ожидание приложения до 3 с (`device_type=2`). Если
+   приложение не подтвердило запуск, образ уже записан: печатается
+   предупреждение, надо повторить `oko-ec reset` или передёрнуть питание.
+   При ошибке записи `oko-ec flash` сам отправляет `RESET` и пытается
+   вернуть предыдущее приложение (если образ не был затёрт).
+
+До этого исправления `BEGIN_UPDATE` уходил в работающее приложение (оно
+принимает только `ENTER_UPDATE`) и получал `ERR_CMD`, а после `COMMIT`
+загрузчик оставался активным.
+
+Проверка перехода без записи (безопасно, образ не меняется):
+
+```sh
+oko-ec info            # device_type: 2 (application)
+oko-ec enter-update    # 0x0E, пауза 3 с
+oko-ec info            # device_type: 1 (bootloader)
+oko-ec reset
+oko-ec info            # снова device_type: 2
+```
+
 ## Правила обновления
 
 1. Клонировать upstream, перейти на новый коммит и скопировать пять файлов
@@ -92,7 +133,9 @@ HAL, сборка) не копируется.
 3. **Повторно применить локальные изменения**:
    - `i2c_transport.c/.h` — timed/probe/verbose, обёртка старой функции;
    - `main.c` — новые команды, опции, целочисленный вывод размеров/прогресса
-     OTA, совместимость `ec <i2c-dev> <cmd>` и `motor`;
+     OTA, совместимость `ec <i2c-dev> <cmd>` и `motor`; локально добавлены
+     `ensure_bootloader()`/`wait_for_role()` (0x0E перед записью, `RESET`
+     0x08 после `COMMIT`) — перенести их при обновлении upstream;
    - `ec_proto.*`, `sensors_math.*`, `sensors.*`, `daemon.*` — локальные файлы,
      upstream их не содержит; при смене протокола сверить длины и поля с
      `docs/protocol.md` upstream.

@@ -7903,7 +7903,7 @@
 									"code":	32
 								},
 								"contrast_af":	{
-									"enable":	0,
+									"enable":	1,
 									"Afss":	"CalibDbV2_AFSS_ADAPTIVE_RANGE",
 									"FullDir":	"CalibDbV2_AF_ADAPTIVE_SEARCH",
 									"FullRangeTbl":	[0, 4, 64],
@@ -15739,7 +15739,7 @@
 									"code":	32
 								},
 								"contrast_af":	{
-									"enable":	0,
+									"enable":	1,
 									"Afss":	"CalibDbV2_AFSS_ADAPTIVE_RANGE",
 									"FullDir":	"CalibDbV2_AF_ADAPTIVE_SEARCH",
 									"FullRangeTbl":	[0, 4, 64],

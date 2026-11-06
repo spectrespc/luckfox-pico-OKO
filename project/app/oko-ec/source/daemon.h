@@ -19,6 +19,12 @@ struct oko_snapshot
     struct
     {
         int ok;
+        int info_ok;
+        uint8_t device_type;
+        uint8_t proto;
+        uint32_t version;
+        uint32_t img_size;
+        uint8_t flags;
         uint16_t voltage_mv;
         int16_t current_ma;
         int16_t temp_c10;

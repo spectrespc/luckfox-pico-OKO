@@ -112,6 +112,9 @@ export RK_ENABLE_ROCKCHIP_TEST=y
 # enable rockchip wifi
 export RK_ENABLE_WIFI=y
 
+# enable AmneziaWG kernel module (in-tree WireGuard stays built in)
+export RK_ENABLE_AWG=y
+
 # config wifi ssid and passwd
 export LF_WIFI_SSID="Your wifi ssid"
 export LF_WIFI_PSK="Your wifi password"

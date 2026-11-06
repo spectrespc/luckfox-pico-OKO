@@ -143,6 +143,22 @@ struct AppConfig {
     unsigned int yolo_post_seconds;
     unsigned int yolo_max_frames;
 
+    // [focus]
+    bool focus_enable;
+    unsigned int focus_fps;
+    unsigned int focus_mode;            /* 0 full, 1 roi */
+    unsigned int focus_roi_x, focus_roi_y, focus_roi_w, focus_roi_h;
+    bool focus_skip_highlit;
+    bool focus_motor;
+    char focus_device[64];
+    unsigned int focus_address;
+    unsigned int focus_speed;
+    int focus_min_pos, focus_max_pos;
+
+    // [flash]
+    bool flash_enable;
+    unsigned int flash_max_bytes;
+
     // [iq]
     char iq_main_scene[32];
     char iq_sub_scene[32];

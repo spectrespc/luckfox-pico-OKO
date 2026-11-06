@@ -105,19 +105,20 @@ BootROM → U-Boot → ядро Linux → busybox init → init-скрипты �
 | 11 | `S35iptables` | правила firewall | сеть ещё не обязательна |
 | 12 | `S40network` | базовая настройка сети | — |
 | 13 | `S41dhcpcd` | заглушка OKO; DHCP управляется `/usr/bin/oko-net` | после `S40network` |
-| 14 | `S49ntp` | синхронизация времени | требует рабочей сети; `divinus` (запущен раньше, из `S21appinit`) через 10 с учитывает `ntp_enable`/`ntp_server` и может остановить этот демон |
-| 15 | `S50sshd` | SSH-сервер | сеть |
-| 16 | `S50telnet` | telnet-сервер | сеть |
-| 17 | `S50usbdevice` | настройка USB-режима (gadget) | — |
-| 18 | `S60micinit` | настройка микрофонного тракта через `amixer` | аудио-модули ядра |
-| 19 | `S99_auto_reboot` | скрипты rockchip_test (auto-reboot / power-lost) | `/oem/rockchip_test`, `/data/cfg` |
-| 20 | `S99hciinit` | `hciattach` для AIC8800 и поднятие `wlan0` | зависит от `aic8800_fdrv` |
-| 21 | `S99luckfoxconfigload` | `luckfox-config load` — восстановление настроек | `/userdata` |
-| 22 | `S99luckfoxcustomoverlay` | применение пользовательского DT-overlay из `/mnt/cfg` | `dtc`, `configfs` |
-| 23 | `S99oko-test` | тестовый маркер OKO: пишет `/tmp/oko-test-ok` и строку в `/dev/kmsg` | оверлей OKO, `MARKER` в скрипте |
-| 24 | `S99python` | запуск `/root/main.py` или `/root/boot.py` | `/usr/bin/python` |
-| 25 | `S99rtcinit` | калибровка RTC при «нулевом» времени | — |
-| 26 | `S99usb0config` | назначение IP `172.32.0.93` интерфейсу `usb0` | может перезапускать `S50usbdevice` |
+| 14 | `S45oko-vpn` | autostart профилей VPN с `auto=1` и watchdog | оверлей OKO; после `S41dhcpcd` (ждёт default route до 60 с), требует `/oem/usr/bin/{wg,awg}`, `/usr/bin/oko-vpn` и `/userdata/vpn`; opt-out — нет профилей с `auto=1` |
+| 15 | `S49ntp` | синхронизация времени | требует рабочей сети; `divinus` (запущен раньше, из `S21appinit`) через 10 с учитывает `ntp_enable`/`ntp_server` и может остановить этот демон |
+| 16 | `S50sshd` | SSH-сервер | сеть |
+| 17 | `S50telnet` | telnet-сервер | сеть |
+| 18 | `S50usbdevice` | настройка USB-режима (gadget) | — |
+| 19 | `S60micinit` | настройка микрофонного тракта через `amixer` | аудио-модули ядра |
+| 20 | `S99_auto_reboot` | скрипты rockchip_test (auto-reboot / power-lost) | `/oem/rockchip_test`, `/data/cfg` |
+| 21 | `S99hciinit` | `hciattach` для AIC8800 и поднятие `wlan0` | зависит от `aic8800_fdrv` |
+| 22 | `S99luckfoxconfigload` | `luckfox-config load` — восстановление настроек | `/userdata` |
+| 23 | `S99luckfoxcustomoverlay` | применение пользовательского DT-overlay из `/mnt/cfg` | `dtc`, `configfs` |
+| 24 | `S99oko-test` | тестовый маркер OKO: пишет `/tmp/oko-test-ok` и строку в `/dev/kmsg` | оверлей OKO, `MARKER` в скрипте |
+| 25 | `S99python` | запуск `/root/main.py` или `/root/boot.py` | `/usr/bin/python` |
+| 26 | `S99rtcinit` | калибровка RTC при «нулевом» времени | — |
+| 27 | `S99usb0config` | назначение IP `172.32.0.93` интерфейсу `usb0` | может перезапускать `S50usbdevice` |
 
 `S20linkmount` генерируется в `project/build.sh` (при разборе таблицы разделов) в файл
 `$RK_PROJECT_OUTPUT/S20linkmount` с `bootmedium=$RK_BOOT_MEDIUM`. Для `spi_nand` он:
@@ -277,6 +278,12 @@ AIC8800 (`aic_load_fw` → `aic8800_fdrv`), AP6XXX (`bcmdhd`), RTL8723BS
 (`cfg80211` + `mac80211` + `r8723bs`), RTL8723DS, RTL8189FS, RTL8188FU, ATBM и др.
 Загрузка WiFi не блокирует запуск `rkipc`.
 
+`amneziawg.ko` в этот список **не входит**: модуль лежит в `/oem/usr/ko`, но
+загружается по требованию из `/usr/bin/oko-vpn` при первом `up` профиля
+`type=awg` (`insmod /oem/usr/ko/amneziawg.ko`). Встроенный `wireguard` ядра
+(`CONFIG_WIREGUARD=y`) используется для профилей `type=wg` и не требует
+отдельного модуля.
+
 ## 7. Зависимости
 
 ### Разделы и файловая система
@@ -332,6 +339,9 @@ AIC8800 (`aic_load_fw` → `aic8800_fdrv`), AP6XXX (`bcmdhd`), RTL8723BS
   `/tmp/osd-dyn.txt`, `/tmp/osd-gps.txt`, `/tmp/osd-sys.txt` и
   `/tmp/osd-msg.txt` пишет демон
   `oko-osd`, который запускает `S20oko-osd` вместе с FIFO `/tmp/osd.fifo`;
+  `@file` читается только до первого реального перевода строки, поэтому
+  переносы внутри строки задаются literal `\n` (backslash + n), как в
+  `oko-osd`; реальные `0x0A` оставят в кадре только первую строку;
   эмулированные `GPS`, температура, батарея, `LTE` и `WiFi` (dBm + полосы)
   обновляются раз в 15 с;
 - размер шрифта всех OSD-регионов задан `regN_size: 24.0`, цвет текста —
@@ -392,6 +402,27 @@ AIC8800 (`aic_load_fw` → `aic8800_fdrv`), AP6XXX (`bcmdhd`), RTL8723BS
   температура/SOC/ячейки) и INA3221 (напряжение/ток/мощность); при ошибке
   датчиков или остановленном демоне возвращается к симуляции `T`/`BAT`.
 
+- демон берёт неблокирующий `flock` `/run/oko-ec.lock` на каждый цикл;
+  `oko-ec flash` держит тот же лок exclusive, поэтому демон пропускает циклы,
+  пока идёт обновление STM32.
+- `oko-osd` читает `/proc/rknpu/load` (если `rknpu.ko` загружен) и добавляет
+  ` NPU NN%` к строке `CPU`; четвёртая строка OSD не добавляется.
+
+### Прошивка контроллеров и STM8
+
+- `divinus` (`/api/flash`) запускает `oko-flash` в фоновом потоке: сначала
+  `S21oko-ec stop`, затем `focus_motor_suspend(1)` и `oko-motor`/`oko-ec flash`,
+  после — `S21oko-ec start`, `focus_motor_suspend(0)`, `focus_motor_probe()` и
+  принудительное обновление `firmware_status`.
+- `oko-motor` и `divinus` сериализуют доступ к STM8 локом
+  `/run/oko-motor.lock` (divinus — shared на чтение, `oko-motor` — exclusive).
+- STM8 (адрес `0x60` на `/dev/i2c-3`): приложение при команде `0x07` пишет
+  `0x42` в EEPROM `0x4010`, перестаёт кормить IWDG и сбрасывается; загрузчик
+  стирает магию и остаётся в режиме обновления. Разметка: boot
+  `0x8000–0x89FF`, заголовок `0x8A00`, приложение `0x8A10–0x9FFF`.
+- `firmware_status` (0.2 Гц) читает `/tmp/oko-ec.json` для STM32 и `0x60`
+  для STM8; во время прошивки STM8 пропускается (`focus_motor_suspended`).
+
 ### Модули ядра
 
 - `video_rkisp` / `video_rkcif` зависят от `videobuf2-*` и модуля сенсора.
@@ -413,11 +444,20 @@ AIC8800 (`aic_load_fw` → `aic8800_fdrv`), AP6XXX (`bcmdhd`), RTL8723BS
   1. задать `RK_ENABLE_MOTOR=y` в board config;
   2. добавить в DTS узел `motor` с GPIO (пример —
      `sysdrv/drv_ko/motor/ReadMe`: `motorA…motorH-gpios` на `gpio1` PC0–PC7).
+- **`amneziawg.ko` — условный модуль по требованию.** Флаг `RK_ENABLE_AWG=y`
+  в активном board config включает сборку `drv_ko/amneziawg`; файл попадает в
+  `/oem/usr/ko`, но `insmod_ko.sh` его не загружает. `oko-vpn` делает `insmod`
+  при первом профиле `type=awg`; `lsmod` до этого пуст. Модуль и утилита `awg`
+  должны быть одного поколения (v3.1), иначе пир отвергнет handshake.
 - `hpmcu_wrap.bin` — прошивка встроенного MCU, загружается драйвером `rockit`.
 
 ### Сеть
 
 - `RkLunch.sh` вызывает `oko-net apply`; `S41dhcpcd` заменён заглушкой.
+- `S45oko-vpn` выполняется после `S41dhcpcd`, ждёт default route до 60 с,
+  запускает `oko-vpn autostart` (профили с `auto=1`) и `oko-vpn watchdog 30`.
+  Профили и состояние маршрутов — `/userdata/vpn` (теряются при полной
+  прошивке `update.img`, как и остальной `/userdata`).
   MAC хранится в env (`oko_mac`), поэтому не зависит от `/userdata` и
   переживает полную прошивку; DHCP-клиент один (`dhcpcd`), его client ID —
   MAC, а не DUID из `/var/db/dhcpcd` (иначе после перепрошивки менялся бы

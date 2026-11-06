@@ -134,6 +134,7 @@ LBA не совпадут.
 | HDR2/HDR3 | заблокировано: prepare падает на SC230AI | `POST /api/hdr` вернёт причину |
 | OSD на main+sub+JPEG | заблокировано: multi-attach не прошёл гейт | `osd.scope` |
 | microSD: mount/unmount/format | формат FAT32/MBR из WebUI, mount/unmount, запись и hotplug проверены на стенде 2026-11-04 | `/api/storage`, `oko-sdcard`, `[record]` |
+| VPN: WireGuard / AmneziaWG | собрано (модуль, `wg`/`awg`, API, WebUI); полный прогон с пиром — в `bench/vpn_check.py`, статус «ограничено» | WebUI `Network` → VPN, `/api/vpn`, `/usr/bin/oko-vpn`, профили в `/userdata/vpn` |
 
 Ethernet в WebUI (Network → Ethernet) переключается между DHCP и статическим
 IPv4. Настройки (`mode`, `ipaddr`, `netmask`, `gateway`, `dns`) и постоянный
@@ -145,6 +146,15 @@ MAC (`oko_mac`) хранятся в env-разделе U-Boot (`fw_printenv`/`fw
 DHCP-клиент один — `dhcpcd` с client ID по MAC; vendor-`S41dhcpcd` заменён
 заглушкой, а DUID из `/var/db/dhcpcd` больше не используется. `oko-net apply`
 применяет настройки при загрузке.
+
+VPN (Network → VPN) импортирует готовый `.conf` файлом или текстом и хранит
+профили в `/userdata/vpn` (не более двух: `wg0` для WireGuard, `awg0` для
+AmneziaWG). Конфигурацию применяет `/usr/bin/oko-vpn`, а не `wg-quick`:
+скриптовые хуки `PreUp`/`PostUp`/`PreDown`/`PostDown` отклоняются, маршруты
+строятся по `AllowedIPs`, для `0.0.0.0/0` включается guard с откатом default
+route через 15 с, автозапуск выполняет `S45oko-vpn` с watchdog. Модуль
+`amneziawg.ko` (AWG v3.1) грузится по требованию; встроенный WireGuard ядра
+не менялся. Полная прошивка `update.img` стирает профили вместе с `/userdata`.
 
 Модель AIISP ставится в образ по `RK_AIISP_MODEL` в BoardConfig. Карта microSD
 монтируется udev-скриптом `oko-sdcard` в `/mnt/sdcard`; запись разрешена только
@@ -176,7 +186,7 @@ oko-ec --ina-channel 2 ina226   # канал 1..3 (только INA3221)
 oko-ec sht21                # температура и влажность
 oko-ec sensors              # все три устройства одним блоком
 oko-ec --json sensors       # одна строка JSON
-oko-ec flash app.bin 0x00010001   # OTA STM32 через загрузчик
+oko-ec flash app-1.0.1.bin 0x00010001   # OTA STM32 через загрузчик
 oko-ec reset                # перезагрузка STM32
 ```
 
@@ -186,6 +196,14 @@ oko-ec reset                # перезагрузка STM32
 шунт — из `OKO_EC_SHUNT_MOHM`, канал INA3221 — из `OKO_EC_INA_CHANNEL`).
 Для демона канал задаётся переменной `INA_CHANNEL` в `S21oko-ec`.
 
+Исходники прошивок контроллеров лежат в git subtree:
+`project/app/stm32_acpi-ec/` (`spectrespc/stm32_acpi-ec`, отдельная
+CMake-сборка) и `project/app/stm8-motor/` (`spectrespc/stm8s103_i2c_motor`,
+SDCC). Правки отправляются `tools/stm32_push.sh "сообщение"` /
+`tools/stm8_push.sh "сообщение"`, обновление — `tools/stm32_pull.sh` /
+`tools/stm8_pull.sh`; подробности в `project/app/STM32_FIRMWARE.md` и
+`project/app/STM8_FIRMWARE.md`.
+
 Демон запускается `S21oko-ec` при наличии `/dev/i2c-3` и утилиты; opt-out —
 `/userdata/oko-ec.disable`. Он пишет `/tmp/oko-ec.json` (полные данные) и
 `/tmp/oko-ec.osd` (`TS`/`OK`/`SHT`/`EC`/`INA`/`T`/`BAT`) каждые 2 с. `oko-osd`
@@ -194,6 +212,46 @@ oko-ec reset                # перезагрузка STM32
 (напряжение, ток, мощность) и LTE/WiFi. Без демона или при отсутствии всех
 датчиков OSD работает на прежней симуляции.
 
+
+## Фокус и прошивка контроллеров
+
+`divinus` получил помощь фокусировке (AF-статистика `librkaiq`, ROI в базисных
+пунктах, мотор STM8 на `0x60`) и фоновую прошивку контроллеров STM32/STM8 с
+WebUI. API: `/api/focus`, `/api/flash`, `/api/firmware`; конфиг — секции
+`[focus]` и `[flash]` в `divinus.yaml`. Команды стенда:
+
+```sh
+bench/run.sh focus_check.py --enable --seconds 20 --snapshot
+bench/run.sh firmware_check.py
+bench/run.sh firmware_check.py --negative
+```
+
+Прошивка STM8 собирается отдельным образом (SDCC нет в основном builder):
+
+```sh
+docker build -t oko-stm8-sdcc tools/stm8-sdcc
+docker run --rm -v "$PWD:/work" -w /work/project/app/stm8-motor \
+  oko-stm8-sdcc make -f Makefile.stm8 all
+```
+
+Разметка STM8: boot `0x8000–0x89FF`, заголовок `0x8A00`, приложение
+`0x8A10–0x9FFF`; первая запись — `factory-2.0.1.ihx` по ST-Link, дальше
+`oko-motor flash`/`/api/flash`. Версия прошивки берётся из имени файла
+(`app-1.0.1.bin`, `app-2.0.1.ihx`); безымянные `app.ihx`/`app.bin` — только
+для ST-Link.
+
+Проверено на стенде 2026-11-06: A6 пройден (`status=running`,
+`cells_used=225`, `metric_avg` 527k–530k за 20 с) при
+`af_v31.TuningPara.contrast_af.enable=1` в IQ SC230AI; ROI меняет метрику.
+STM8: upstream `2.0.0` заменён `factory-2.0.1.ihx` через ST-Link, загрузчик
+I2C, `enter-boot`/`info`/`boot-reset` и обновление `app-2.0.1.ihx` через
+`/api/flash` работают (версия из имени сверяется с заголовком OKO8),
+приложение стартует после power-cycle. STM32 (CBT6): реальная прошивка
+проверена — WebUI `app-1.0.1.bin` → `/api/firmware` `1.0.1`, rollback
+`app-1.0.0.bin` → `1.0.0` (точечно), `img_size=2324`, `flags=0`, телеметрия
+и reboot. Открытые пункты — `KNOWN_ISSUES.md` (KI-032…035) и
+`FEATURES_UNVERIFIED.md`.
+
 ## Документация проекта
 
 | Файл | Содержание |
@@ -201,10 +259,13 @@ oko-ec reset                # перезагрузка STM32
 | `STRUCTURE.md` | структура репозитория: папки, ключевые файлы, назначение |
 | `INIT_ORDER.md` | порядок инициализации: U-Boot → ядро → busybox init → модули → `divinus`/`rkipc` |
 | `TESTBENCH.md` | паспорт тестового стенда: железо, сеть, учётки, прошивка, диагностика |
-| `FEATURES.md` | поддерживаемый функционал: платформа, видео, сеть, `oko-ec`, microSD, ограничения и команды проверки |
+| `FEATURES.md` | точка входа в описание функционала: паспорт платформы, разделение по статусу проверки, общие примечания и команды |
+| `FEATURES_VERIFIED.md` | подтверждённые функции: видео, сеть, `oko-ec`, WebUI/API, microSD |
+| `FEATURES_UNVERIFIED.md` | ограниченные и заблокированные возможности, непроверенные комбинации |
 | `VERIFIED_FUNCTIONS.md` | реестр проверенных на стенде функций: статус, доказательство, ограничения |
+| `KNOWN_ISSUES.md` | известные ошибки и ограничения: критичные, функциональные, прошивка, безопасность, инструменты |
 | `CHANGELOG.md` | история изменений OKO-форка (Keep a Changelog + SemVer) |
-| `bench/README.md` | утилиты стенда: UART/SSH-команды, проверка OSD по RTSP, venv |
+| `bench/README.md` | утилиты стенда: UART/SSH-команды, проверка OSD по RTSP, фокус и прошивка контроллеров, venv |
 | `README.md`, `README_CN.md` | вендорская документация SDK (EN/CN) |
 | `UPDATE_LOG.md`, `UPDATE_LOG_CN.md` | вендорская история версий SDK (EN/CN) |
 
