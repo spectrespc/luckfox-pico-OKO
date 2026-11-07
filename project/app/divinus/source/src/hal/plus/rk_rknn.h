@@ -16,6 +16,13 @@
 #include "rk_common.h"
 #include "rknn_api.h"
 
+/* Two runtimes may live in one process: AIISP/rockiva are prebuilt against
+ * librknnmrt.so 1.6.0, while a model converted by toolkit 2.x needs the 2.x
+ * runtime.  Both vendor files carry SONAME librknnmrt.so, so the 2.x copy is
+ * re-stamped to librknnmrt2.so and loaded by an absolute path. */
+#define RK_RKNN_RUNTIME1_PATH "/oem/usr/lib/librknnmrt.so"
+#define RK_RKNN_RUNTIME2_PATH "/oem/usr/lib/librknnmrt2.so"
+
 typedef struct {
     void *handle;
 
@@ -34,9 +41,19 @@ typedef struct {
         rknn_mem_sync_mode mode);
 } rk_rknn_impl;
 
-static int rk_rknn_load(rk_rknn_impl *rknn_lib) {
-    if (!(rknn_lib->handle = dlopen("librknnmrt.so", RTLD_LAZY | RTLD_GLOBAL)))
-        HAL_ERROR("rk_rknn", "Failed to load library!\nError: %s\n", dlerror());
+extern rk_rknn_impl rk_rknn;
+extern rk_rknn_impl rk_rknn2;
+
+/* Selected runtime implementation, or NULL when that library is missing. */
+rk_rknn_impl *rk_rknn_for_runtime(int runtime);
+int rk_rknn_runtime_available(int runtime);
+
+static int rk_rknn_load(rk_rknn_impl *rknn_lib, const char *path, int local) {
+    int flags = RTLD_LAZY | (local ? RTLD_LOCAL : RTLD_GLOBAL);
+
+    if (!(rknn_lib->handle = dlopen(path, flags)))
+        HAL_ERROR("rk_rknn", "Failed to load %s!\nError: %s\n", path,
+            dlerror());
 
     if (!(rknn_lib->fnInit = (int(*)(rknn_context *context, void *model,
             unsigned int size, unsigned int flag, rknn_init_extend *extend))

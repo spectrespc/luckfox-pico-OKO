@@ -13,6 +13,17 @@ rk_ivs_impl     rk_ivs;
 rk_mb_impl      rk_mb;
 rk_rgn_impl     rk_rgn;
 rk_rknn_impl    rk_rknn;
+rk_rknn_impl    rk_rknn2;
+
+rk_rknn_impl *rk_rknn_for_runtime(int runtime) {
+    if (runtime == 2)
+        return rk_rknn2.handle ? &rk_rknn2 : NULL;
+    return rk_rknn.handle ? &rk_rknn : NULL;
+}
+
+int rk_rknn_runtime_available(int runtime) {
+    return rk_rknn_for_runtime(runtime) != NULL;
+}
 rk_sys_impl     rk_sys;
 rk_venc_impl    rk_venc;
 rk_vi_impl      rk_vi;
@@ -54,6 +65,7 @@ void rk_hal_deinit(void)
     rk_vi_unload(&rk_vi);
     rk_venc_unload(&rk_venc);
     rk_rknn_unload(&rk_rknn);
+    rk_rknn_unload(&rk_rknn2);
     rk_rgn_unload(&rk_rgn);
     rk_mb_unload(&rk_mb);
     rk_aud_unload(&rk_aud);
@@ -91,10 +103,21 @@ int rk_hal_init(void)
 
     /* NPU analytics is optional as well: the image may not carry the mini
      * runtime, and a missing librknnmrt must not stop the camera. */
-    if (rk_rknn_load(&rk_rknn))
-        HAL_DANGER("rk_hal", "RKNN is unavailable, YOLO detection disabled\n");
+    if (rk_rknn_load(&rk_rknn, RK_RKNN_RUNTIME1_PATH, 0))
+        HAL_DANGER("rk_hal", "RKNN 1.x is unavailable, YOLO detection disabled\n");
     else
         halCapabilities |= HAL_CAP_RKNN;
+
+    /* The 2.x runtime is an optional second copy under a distinct SONAME.
+     * It is loaded RTLD_LOCAL so its rknn_* symbols cannot interpose the
+     * 1.6.0 copy that AIISP/rockiva already use. */
+    if (!rk_rknn_load(&rk_rknn2, RK_RKNN_RUNTIME2_PATH, 1)) {
+        halCapabilities |= HAL_CAP_RKNN2;
+        HAL_INFO("rk_hal", "RKNN 2.x runtime loaded from %s\n",
+            RK_RKNN_RUNTIME2_PATH);
+    } else {
+        HAL_INFO("rk_hal", "RKNN 2.x runtime is not installed\n");
+    }
 
 
     if (rk_vpss.fnSetChnCrop) halCapabilities |= HAL_CAP_EPTZ;
