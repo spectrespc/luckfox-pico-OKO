@@ -622,10 +622,11 @@ char *focus_json(int with_map)
         goto fail;
 
     if (append(&p, &left,
-        ",\"af\":{\"state\":\"%s\",\"position\":%d,\"best_position\":%d,"
+        ",\"af\":{\"state\":\"%s\",\"scope\":\"%s\",\"position\":%d,"
+        "\"best_position\":%d,"
         "\"metric\":%llu,\"best_metric\":%llu,\"progress\":%d,"
         "\"done\":%s,\"error\":\"%s\"}",
-        af.state, af.position, af.best_position,
+        af.state, af.scope, af.position, af.best_position,
         af.metric, af.best_metric, af.progress,
         af.done ? "true" : "false", af.error))
         goto fail;

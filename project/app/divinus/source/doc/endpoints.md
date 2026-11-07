@@ -630,7 +630,7 @@ mutating key returns HTTP 400. Changes are applied live and are not saved to
 | POST | `home` | Start the background homing job for `focus`, `zoom` or `both` |
 | POST | `zero` | Force the position of `focus`, `zoom` or `both` to `value` without moving |
 | POST | `value` | Target for `zero`, `-1000000..1000000`, default `0` |
-| POST | `af` | `1` starts the auto-focus search, `cancel` stops it, `0` leaves the job alone |
+| POST | `af` | `1` starts the full auto-focus search, `fine` runs the micro-fine sweep around the current position, `cancel` stops either job, `0` leaves the job alone |
 | GET | `map=1` | Add the 225-cell arrays `fv_h1/fv_h2/fv_v1/fv_v2/luma/highlit` |
 
 `home` and `zero` need STM8 application firmware **2.0.2** or **2.1.1** (the
@@ -665,6 +665,15 @@ home/zero job or a firmware upload runs returns HTTP 409; the same 409 is
 returned when starting home/zero or a manual move during a search, and
 `POST /api/flash` refuses to start while the search runs.
 
+`af=fine` is the short local correction used by the WebUI Autofocus button: the
+worker skips the direction probe and the coarse pass, sweeps the window
+`[pos−af_coarse, pos+af_coarse]` (clamped to the safe travel bounds) on the
+`af_fine` grid and moves to the best point. It always ends with
+`af.state="done"` — `af_min_gain_pct` and "peak not found" apply only to the
+full search — and reports `af.scope="fine"` so the UI can label the job. It
+uses the same `enable=1`/`motor=1` arming, the same 409 mutual exclusions and
+the same `af=cancel`/`stop=1` cancellation as `af=1`.
+
 **Response**
 ```json
 {"enable":true,"available":true,"status":"running","mode":"roi",
@@ -679,9 +688,9 @@ returned when starting home/zero or a manual move during a search, and
           "zoom":{"position":410,"status":"idle","speed":300}},
  "home":{"state":"done","motor":"focus","travel":2960,"done":true,
          "error":""},
- "af":{"state":"done","position":1180,"best_position":1180,
-       "metric":201433,"best_metric":201433,"progress":100,
-       "done":true,"error":""}}
+ "af":{"state":"done","scope":"full","position":1180,
+       "best_position":1180,"metric":201433,"best_metric":201433,
+       "progress":100,"done":true,"error":""}}
 ```
 
 `status` is `idle`, `running`, `no_stats`, `unsupported` or `error`. The
@@ -690,7 +699,8 @@ per-motor `focus`/`zoom` objects carry the live position, status (`idle`,
 stays for older WebUI builds and mirrors `focus.position`. `home.state` is
 `idle`, `running`, `done` or `error`; `home.travel` is the number of steps moved
 by the current or last job and `home.error` explains a failure. `af.state` is
-`idle`, `running`, `done` or `error`; `af.position`/`af.metric` describe the
+`idle`, `running`, `done` or `error`; `af.scope` is `full` or `fine`;
+`af.position`/`af.metric` describe the
 current sample, `af.best_position`/`af.best_metric` the best one, and
 `af.progress` is 0..100. The ROI is
 applied by aggregating the cells of the full-frame AF map whose centres lie

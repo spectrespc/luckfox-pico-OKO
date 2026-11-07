@@ -237,6 +237,41 @@ def focus_af_checks(failures, checks):
               (mode, af.get("state"), af.get("best_position"),
                af.get("best_metric")))
 
+    # Micro-fine sweep around the current position (af=fine).  The lens may
+    # only move inside +-af_coarse of the start position, and the job always
+    # ends with "done" because it is a local correction, not a full search.
+    checks += 1
+    _status, before = get_focus()
+    start_pos = (((before.get("motor") or {}).get("focus") or {})
+                 .get("position"))
+    status, dec = start_af("enable=1&motor=1&af=fine&fps=5")
+    af = dec.get("af") or {}
+    if af.get("state") != "running":
+        failures.append("AF fine did not start: %r" % af)
+    else:
+        print("POST af=fine -> running scope %r" % af.get("scope"))
+        checks += 1
+        if af.get("scope") != "fine":
+            failures.append("AF fine scope is %r" % af.get("scope"))
+        curve = []
+        dec = wait_af(180, curve)
+        write_af_curve(curve, "fine")
+        af = dec.get("af") or {}
+        checks += 1
+        if af.get("state") != "done":
+            failures.append("AF fine: state %r error %r" %
+                            (af.get("state"), af.get("error")))
+        elif not isinstance(start_pos, int):
+            failures.append("AF fine: no start position (%r)" % start_pos)
+        else:
+            delta = abs((af.get("best_position") or 0) - start_pos)
+            print("AF fine -> state %s best %s start %s delta %d" %
+                  (af.get("state"), af.get("best_position"), start_pos,
+                   delta))
+            if delta > 150 + 25:
+                failures.append("AF fine moved %d steps (window is 175)" %
+                                delta)
+
     # Cancel path: start and cancel immediately.
     checks += 1
     status, dec = start_af()

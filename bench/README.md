@@ -21,8 +21,8 @@ bench/run.sh dut.py 'mount | grep -w " / "'
 | `serial_exec.py` | вход в консоль по UART (`/dev/ttyACM*`, 115200 8N1) и выполнение команд на DUT |
 | `dut.py` | выполнение команд по SSH через `paramiko` |
 | `osd_check.py` | захват кадров RTSP (`--path`, по умолчанию `/live/0`), попарный диф боксов OSD-регионов, сохранение полных кадров и кропов |
-| `api_check.py` | матрица HTTP API: GET всех эндпоинтов, POST no-op, экспорт конфига и журнала, негативные проверки (статика, имена файлов, NTP); opt-in `OKO_FOCUS_MOTOR_TESTS=1`/`OKO_FOCUS_AF_TESTS=1` — движение моторов и автофокус с записью AF-кривых |
-| `ui_check.py` | WebUI в headless Chromium: восемь разделов, EN/RU, Apply/dirty-state, автозапуск предпросмотра, двухшаговый выбор ROI и строка автофокуса в «Видео», мобильная раскладка, скриншоты (нужен Playwright) |
+| `api_check.py` | матрица HTTP API: GET всех эндпоинтов, POST no-op, экспорт конфига и журнала, негативные проверки (статика, имена файлов, NTP); opt-in `OKO_FOCUS_MOTOR_TESTS=1`/`OKO_FOCUS_AF_TESTS=1` — движение моторов и автофокус (`af=1` full/ROI и micro-fine `af=fine`) с записью AF-кривых |
+| `ui_check.py` | WebUI в headless Chromium: восемь разделов, EN/RU, Apply/dirty-state, автозапуск предпросмотра, двухшаговый выбор ROI и строка автофокуса в «Видео», кнопка «Автофокус» (`af=fine`), раскладка под окно на 1440×900 и мобильная 390×844 (нижний навбар 4×2), скриншоты (нужен Playwright) |
 | `deploy_divinus.py` | копирование свежесобранного `divinus` в `/oem/usr/bin` по SSH и graceful restart (быстрая итерация, не замена прошивке) |
 | `focus_check.py` | `/api/focus`: статус AF-метрики, ROI, мотор; `--enable`, `--roi x,y,w,h`, `--move`, `--seconds/--interval/--snapshot/--strict`, CSV в `--out` (по умолчанию `output/bench/focus`); код 2 — API жив, но снимок не снят, код 1 — метрика нулевая |
 | `firmware_check.py` | `/api/firmware` и `/api/flash`: версии STM32/STM8, состояние задачи; `--flash --confirm FLASH` запускает прошивку, `--negative` прогоняет проверки валидации (400) |
@@ -47,8 +47,9 @@ bench/run.sh osd_check.py --regions 'telemetry:0,16,760,160;gps:1500,16,1920,64'
 bench/run.sh api_check.py
 # движение моторов и реальный автофокус — только по явному разрешению:
 # OKO_FOCUS_MOTOR_TESTS=1 (home/zero, шаги, скорости)
-# OKO_FOCUS_AF_TESTS=1 (AF full + ROI, кривые в output/bench/af_curve_*.csv;
-# нужна контрастная сцена, иначе job честно вернёт "peak not found")
+# OKO_FOCUS_AF_TESTS=1 (AF full + ROI + micro-fine af=fine; кривые в
+# output/bench/af_curve_*.csv; для full/ROI нужна контрастная сцена, иначе
+# job честно вернёт "peak not found"; af=fine всегда завершается done)
 OKO_FOCUS_MOTOR_TESTS=1 OKO_FOCUS_AF_TESTS=1 bench/run.sh api_check.py
 
 # помощь фокусировке: 20 отсчётов, CSV и снимок; --strict падает на статичной метрике
@@ -88,6 +89,11 @@ bench/run.sh deploy_divinus.py
 python3 -m venv /tmp/pw && /tmp/pw/bin/pip install playwright
 /tmp/pw/bin/playwright install chromium
 /tmp/pw/bin/python bench/ui_check.py
+# проверяет раскладку: страница не скроллится ни на одной из 8 вкладок
+# (1440×900 и 390×844), Live в две колонки на десктопе, нижний навбар 4×2
+# на мобильном, короткие подписи, скрытые uptime/load/SoC и кнопки ≥ 40 px;
+# с OKO_FOCUS_AF_TESTS=1 дополнительно жмёт «Автофокус» и ждёт scope=fine
+OKO_FOCUS_AF_TESTS=1 bench/run.sh ui_check.py
 ```
 
 `ui_check.py` не входит в `requirements.txt`: Playwright тянет браузер (~120 МБ),

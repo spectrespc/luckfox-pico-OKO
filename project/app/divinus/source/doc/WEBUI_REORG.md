@@ -48,20 +48,34 @@
 +--------------------------------------------------------------------------------+
 | Divinus | IP 192.168.52.97 | Uptime 20:04 | Load 0.42 | 59.5 C | SD mounted | EN RU |
 +----------+---------------------------------------------------------------------+
-| Live     | Preview: [MP4] [MJPEG] [Stop] [Snapshot]                            |
-| Image    | +---------------------+  +---------------------+                     |
-| Streams  | | Recording           |  | Zoom / rotation     |                     |
+| Live     | +-----------------------------+  +----------------------------+    |
+| Image    | | Preview [MP4][MJPEG][Stop]  |  | Focus assist (own scroll)  |    |
+| Streams  | +-----------------------------+  +----------------------------+    |
 | Events   | +---------------------+  +---------------------+                     |
-| Storage  | +---------------------+  +---------------------+                     |
-| Network  | | Event log (IVS)     |  | Telemetry (oko-ec)  |                     |
+| Storage  | | Recording           |  | Zoom / rotation     |                     |
+| Network  | +---------------------+  +---------------------+                     |
 | OSD      | +---------------------+  +---------------------+                     |
-| System   |                                                                     |
+| System   | | Event log (IVS)     |  | Telemetry (oko-ec)  |                     |
 +----------+---------------------------------------------------------------------+
 ```
 
 Восемь разделов: **Live, Image, Streams, Events, Storage, Network, OSD,
-System**. Мобильная раскладка (<40em) превращает sidebar в горизонтальные
-табы, статус-строка переносится, карточки идут в одну колонку.
+System**. Ширина ≥ 60em даёт в Live две колонки (превью слева, карточка
+фокуса справа, `#focus-card` со своей прокруткой); ниже — одна колонка.
+Мобильная раскладка (≤ 40em) автоматическая: навигация уходит вниз сеткой
+4×2 с короткими подписями, статус-строка оставляет IP и SD, кнопки не ниже
+44 px, тосты поднимаются над навбаром.
+
+### 2.1. Каркас под окно
+
+`html, body { height: 100% }`, `body` — flex-колонка высотой `100vh`
+(`100dvh` через `@supports`) с `overflow: hidden`; `#layout` — flex-строка
+`flex: 1 1 auto; min-height: 0`. Прокручиваются только `#sidebar` и
+`#content`, страница целиком не скроллится. Широкие таблицы получают
+`.card table { display: block; overflow-x: auto }`, поэтому длинный архив не
+расширяет шелл. Высота превью в Live — `calc(100dvh - 250px)` в двух
+колонках и `calc(100dvh - 430px)` в одной; `#focus-card` ограничена
+`calc(100dvh - 130px)`.
 
 ### 3. Модель Apply / Save / Restart
 
@@ -190,7 +204,12 @@ restricted to `/mnt/sdcard/`, and an unparsable configuration is rolled back fro
 fps, ROI over the live video, live metric) and **System → Controller firmware /
 Firmware versions** (STM32/STM8 upload with `confirm=FLASH`, progress and log;
 cached versions with a 10 s refresh). Firmware runs in a worker so the HTTP
-thread never blocks; the form is disabled while a job is busy.
+thread never blocks; the form is disabled while a job is busy. The shell is
+exactly one viewport tall (only `#content` and `#sidebar` scroll); screens
+≥ 60em show Live as two columns, and the ≤ 40em breakpoint turns the sidebar
+into a bottom 4×2 grid with short labels, 44 px targets and a trimmed status
+line. The Live focus card also has an Autofocus button that runs the
+micro-fine `af=fine` sweep (±`af_coarse`, step `af_fine`, always `done`).
 
 The ipcweb catalog was used as a reference: take-photo/record control, archive
 listing, log export, config export/import, reboot and NTP are ported; JWT and

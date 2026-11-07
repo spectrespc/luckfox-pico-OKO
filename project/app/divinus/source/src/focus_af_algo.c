@@ -39,3 +39,34 @@ int af_pick_direction(unsigned long long start, unsigned long long plus,
         return 1;
     return 0;
 }
+
+void af_window(int32_t pos, int32_t lo, int32_t hi, int32_t span,
+               int32_t *out_lo, int32_t *out_hi)
+{
+    long long a, b;
+
+    if (hi < lo)
+    {
+        int32_t t = lo;
+        lo = hi;
+        hi = t;
+    }
+    if (span < 0)
+        span = 0;
+    if ((long long)span > (long long)hi - lo)
+        span = hi - lo;
+    if (pos < lo)
+        pos = lo;
+    if (pos > hi)
+        pos = hi;
+    a = (long long)pos - span;
+    b = (long long)pos + span;
+    if (a < lo)
+        a = lo;
+    if (b > hi)
+        b = hi;
+    if (a > b)
+        a = b;
+    *out_lo = (int32_t)a;
+    *out_hi = (int32_t)b;
+}

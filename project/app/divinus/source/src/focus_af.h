@@ -10,6 +10,7 @@
 
 typedef struct {
     char state[12];              /* idle | running | done | error */
+    char scope[8];               /* full | fine                          */
     int position;                /* current focus position               */
     int best_position;           /* best position found so far           */
     unsigned long long metric;   /* metric at the current position       */
@@ -25,10 +26,11 @@ void focus_af_shutdown(void);
 /* 1 while a search is running. */
 int focus_af_running(void);
 
-/* Starts a search.  Only motor 0 (focus) is supported.
+/* Starts a search.  Only motor 0 (focus) is supported.  `scope` 0 is the full
+ * coarse/fine search, 1 is the micro-fine sweep around the current position.
  * Returns 0 on success, -1 when a job is already running, -2 when the worker
  * could not be started or the motor is invalid. */
-int focus_af_start(int motor);
+int focus_af_start(int motor, int scope);
 
 /* Asks the worker to stop after the current move/sample; the final state is
  * "error" with error "cancelled".  Safe to call when no job is running. */

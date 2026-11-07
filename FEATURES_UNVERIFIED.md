@@ -79,7 +79,14 @@
   объектив стенда оптически не связан с фокусным мотором, поэтому кривая
   плоская и сходимость на реальной сцене не подтверждена. Кривые сохранены
   в `output/bench/af_curve_*.csv`; после прогона на настоящем объективе
-  пункты §5.1 в `TO_DO.md` можно закрывать.
+  пункты §5.1 в `TO_DO.md` можно закрывать. Micro-fine `af=fine` (кнопка
+  «Автофокус», окно ±`af_coarse` шагом `af_fine`, безусловный `done`,
+  `af.scope="fine"`) проверен только механически — окно, состояние, scope и
+  кривая; резкость на реальной сцене не проверялась по той же причине.
+  Компоновка WebUI (шелл под окно, две колонки Live, нижний навбар 4×2 на
+  ≤ 40em) проверена headless-Chromium на 1440×900 и 390×844, но не на
+  физическом телефоне: iOS safe-area, реальные touch-цели и поворот экрана
+  не прогонялись.
 - **Прошивка контроллеров.** Фоновый воркер останавливает `S21oko-ec`,
   приостанавливает мотор, запускает `oko-flash` и перезапускает демон.
   Реальная прошивка STM32 (CBT6, WebUI `app-1.0.1.bin` → `/api/firmware`
@@ -176,7 +183,14 @@ Status as of 2026-11-06.
   344 332 over 0…500 for ROI): the bench lens is not optically coupled to the
   focus motor, so the curve is flat and convergence on a real scene is not
   confirmed. The curves are saved in `output/bench/af_curve_*.csv`; the §5.1
-  boxes in `TO_DO.md` can be closed after a run on the real lens.
+  boxes in `TO_DO.md` can be closed after a run on the real lens. The
+  micro-fine `af=fine` (Autofocus button: ±`af_coarse` window, `af_fine`
+  step, unconditional `done`, `af.scope="fine"`) was verified only
+  mechanically — window, state, scope and curve; sharpness on a real scene
+  was not tested for the same reason. The WebUI shell (one-viewport layout,
+  two-column Live, bottom 4×2 navbar at ≤ 40em) was checked with headless
+  Chromium at 1440×900 and 390×844, but not on a physical phone: iOS
+  safe-area, real touch targets and screen rotation were not exercised.
 - **Controller flashing.** The background worker stops `S21oko-ec`, suspends the
   focus motor, runs `oko-flash` and restarts the daemon. Real STM32 (CBT6,
   WebUI `app-1.0.1.bin` → `/api/firmware` `1.0.1`, rollback `1.0.0`) and STM8

@@ -230,6 +230,12 @@ oneshot, tracking. Минусы: требуется именно VCM и прав
       плюс таймаут и проверка `nFAULT`/статуса. Свои пороги:
       `af_patience` подряд неулучшений, `af_timeout_s`, `status==error`
       (nFAULT) и упор в границы `0..max_pos`;
+- [x] micro-fine донастройка (`af=fine`, кнопка «Автофокус» в Live): окно
+      ±`af_coarse` вокруг текущей позиции, шаг `af_fine`, безусловный
+      `done` (без «peak not found»), `af.scope="fine"` в `GET /api/focus`;
+      чистая функция `af_window()` и хост-тест. На стенде подтверждена
+      механика (окно, `done`, scope, кривая), но не резкость: объектив
+      стенда оптически не связан с фокусным мотором;
 - [x] хранить позицию в приложении и/или читать из EEPROM STM8;
       реализовано чтение позиции через `/api/focus` (EEPROM STM8 — upstream);
 - [x] опционально логировать `getSearchPath`, чтобы снимать AF-кривые.
@@ -378,8 +384,8 @@ oneshot, tracking. Минусы: требуется именно VCM и прав
 | `project/app/divinus/source/src/...` (I2C) | клиент STM8 (`focus_motor.c`, `focus_proto.c`): `/dev/i2c-3`, `set speed` / `move` / `get position` / `get status` / `version` / `SET_POS 0x09` для обоих моторов |
 | `project/app/divinus/source/src/focus_home.c` | асинхронный job прижатия к упору и обнуления позиции (`home`/`zero`), состояние в `GET /api/focus` |
 | `project/app/divinus/source/src/focus_af.c` | асинхронный поиск автофокуса: зонд направления, coarse+fine по метрике AF, взаимные блокировки с home/zero/flash, `af` в `GET /api/focus` |
-| `project/app/divinus/source/src/focus_af_algo.c` | чистые решающие правила (`af_tracker_*`, `af_pick_direction`), хостовый тест `tests/focus_af_test.c` |
-| `project/app/divinus/source/src/...` (HTTP) | `/api/focus`: `enable`, `mode`, `roi`, `fps`, `motor` (`true/false` — драйвер, `focus/zoom/both` — устаревшая шкала), `scale`, `speed`, `move`, `position`, `home`, `zero`, `value`, `stop`, `reset`, `af` (`1`/`cancel`) |
+| `project/app/divinus/source/src/focus_af_algo.c` | чистые решающие правила (`af_tracker_*`, `af_pick_direction`, `af_window`), хостовый тест `tests/focus_af_test.c` |
+| `project/app/divinus/source/src/...` (HTTP) | `/api/focus`: `enable`, `mode`, `roi`, `fps`, `motor` (`true/false` — драйвер, `focus/zoom/both` — устаревшая шкала), `scale`, `speed`, `move`, `position`, `home`, `zero`, `value`, `stop`, `reset`, `af` (`1`/`fine`/`cancel`) |
 | `project/app/divinus/source/doc/endpoints.md` | описать endpoint, новые поля JSON и коды ошибок (сделано) |
 
 **Реализовано:** ручное управление обоими моторами в карточке Focus assist
@@ -388,7 +394,8 @@ oneshot, tracking. Минусы: требуется именно VCM и прав
 асинхронным job’ом и индикатором, гейт версии прошивки STM8 (2.0.2/2.1.1).
 Автовзведение драйвера перенесено в сами команды (`motor=1`), двухшаговый
 выбор ROI и запуск автофокуса кнопкой «Применить». AF-алгоритм реализован
-(`focus_af.c`), но требует подтверждения на стенде с контрастной сценой.
+(`focus_af.c`), плюс micro-fine `af=fine` с кнопкой «Автофокус», но
+сходимость требует подтверждения на стенде с контрастной сценой.
 
 Замечания:
 

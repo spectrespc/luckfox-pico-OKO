@@ -76,8 +76,66 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   but the metric does not depend on the motor position (the bench lens is not
   coupled to the drive), so convergence is not confirmed; the curves are in
   `output/bench/af_curve_*.csv`.
+- **Micro-fine автофокус и мобильный режим WebUI (OKO).** `POST
+  /api/focus?af=fine` запускает локальную донастройку: окно
+  `[pos−af_coarse, pos+af_coarse]` с клампом по безопасным границам, шаг
+  `af_fine`, безусловный `done` без проверки `af_min_gain_pct`; в
+  `GET /api/focus` добавлено поле `af.scope` (`full`/`fine`). В карточке
+  Live появилась кнопка «Автофокус» рядом с jog-кнопками; на время job'а
+  она блокируется вместе с остальными ручными кнопками, STOP по-прежнему
+  отменяет поиск. Чистая функция `af_window()` покрыта
+  `tests/focus_af_test.c`. На ширине ≤ 40em WebUI автоматически включает
+  мобильный режим: нижняя навигация 4×2 с короткими подписями
+  (`nav_short_*`), кнопки не ниже 44 px, компактная статус-строка (только
+  IP и SD), тосты над навбаром и `font-size: 16px` у полей (анти-zoom iOS).
+  Обновлены `bench/api_check.py` (`af=fine`, кривая
+  `output/bench/af_curve_fine_*.csv`), `bench/ui_check.py` (раскладка всех
+  вкладок на 1440×900 и 390×844, две колонки Live, нижний навбар, кнопка
+  «Автофокус»), `bench/README.md`, `endpoints.md`, divinus `README.md`,
+  `WEBUI_REORG.md`, `TO_DO.md`, `FEATURES_UNVERIFIED.md` и `TESTBENCH.md`.
+- **Micro-fine auto-focus and the mobile WebUI (OKO).** `POST
+  /api/focus?af=fine` runs a local correction: the window
+  `[pos−af_coarse, pos+af_coarse]` clamped to the safe travel bounds, the
+  `af_fine` step and an unconditional `done` without the `af_min_gain_pct`
+  check; `GET /api/focus` gained `af.scope` (`full`/`fine`). The Live card
+  has an Autofocus button next to the jog buttons; it is locked together with
+  the other manual controls while a job runs, and STOP still cancels the
+  search. The pure `af_window()` helper is covered by
+  `tests/focus_af_test.c`. At ≤ 40em the WebUI switches to the mobile mode
+  automatically: a bottom 4×2 navbar with short labels (`nav_short_*`),
+  targets of at least 44 px, a trimmed status line (IP and SD only), toasts
+  above the navbar and 16 px form fields (anti-zoom on iOS). Updated
+  `bench/api_check.py` (`af=fine`, `output/bench/af_curve_fine_*.csv`),
+  `bench/ui_check.py` (all tabs fit at 1440×900 and 390×844, two-column
+  Live, bottom navbar, Autofocus button), `bench/README.md`, `endpoints.md`,
+  divinus `README.md`, `WEBUI_REORG.md`, `TO_DO.md`,
+  `FEATURES_UNVERIFIED.md` and `TESTBENCH.md`.
 
 ### Изменено
+
+- **WebUI: каркас под высоту окна и две колонки Live (OKO).** Страница
+  больше не прокручивается целиком: `body` — flex-колонка высотой
+  `100vh`/`100dvh` с `overflow: hidden`, `#layout` растягивается
+  (`flex: 1 1 auto; min-height: 0`), а прокручиваются только `#sidebar` и
+  `#content`; широкие таблицы получили `.card table { display: block;
+  overflow-x: auto }`. На ≥ 60em «Видео» — две колонки: превью слева,
+  `#focus-card` справа со своей прокруткой (`max-height:
+  calc(100dvh - 130px)`). Высота превью изменена с `100vh - 520px` на
+  `100dvh - 250px` в двух колонках и `100dvh - 430px` в одной (фолбэк
+  `100vh`); рамка ROI по-прежнему позиционируется от медиаэлемента.
+  Обновлены `bench/ui_check.py` (проверка отсутствия скролла страницы на
+  всех вкладках, две колонки, нижний навбар) и `bench/README.md`.
+- **WebUI: viewport shell and two-column Live (OKO).** The page no longer
+  scrolls as a whole: `body` is a `100vh`/`100dvh` flex column with
+  `overflow: hidden`, `#layout` stretches (`flex: 1 1 auto; min-height: 0`)
+  and only `#sidebar` and `#content` scroll; wide tables use
+  `.card table { display: block; overflow-x: auto }`. At ≥ 60em Live is two
+  columns: the preview on the left and `#focus-card` on the right with its
+  own scroll (`max-height: calc(100dvh - 130px)`). The preview height changed
+  from `100vh - 520px` to `100dvh - 250px` in two columns and
+  `100dvh - 430px` in one column (`100vh` fallback); the ROI box is still
+  positioned from the media element. Updated `bench/ui_check.py` (no page
+  scroll on any tab, two columns, bottom navbar) and `bench/README.md`.
 
 - **WebUI «Видео»: размер предпросмотра, автовзведение привода и выбор
   зоны (OKO).** `#preview` и его `video`/`img` ограничены по высоте

@@ -269,7 +269,8 @@ curl -s -u admin:oko-change-me http://192.168.52.97/api/firmware
 # AF-метрика: 20 отсчётов; для SC230AI нужен contrast_af.enable=1 в IQ
 curl -s -X POST -u admin:oko-change-me 'http://192.168.52.97/api/focus?enable=1&motor=1'
 bench/run.sh focus_check.py --seconds 20 --interval 1 --snapshot
-# автофокус по контрастной сцене (opt-in): full + ROI, кривые в output/bench/
+# автофокус по контрастной сцене (opt-in): full + ROI + micro-fine (af=fine),
+# кривые в output/bench/
 OKO_FOCUS_MOTOR_TESTS=1 OKO_FOCUS_AF_TESTS=1 bench/run.sh api_check.py
 
 # VPN: модуль по требованию, утилиты и профили

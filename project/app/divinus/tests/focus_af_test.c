@@ -60,10 +60,46 @@ static void test_tracker(void)
           "reset keeps the seed sample");
 }
 
+static void test_window(void)
+{
+    int32_t lo, hi;
+
+    af_window(500, 100, 900, 150, &lo, &hi);
+    check(lo == 350 && hi == 650, "window centres on the position");
+
+    af_window(200, 100, 900, 150, &lo, &hi);
+    check(lo == 100 && hi == 350, "window stops at the low bound");
+
+    af_window(800, 100, 900, 150, &lo, &hi);
+    check(lo == 650 && hi == 900, "window stops at the high bound");
+
+    af_window(500, 100, 900, 5000, &lo, &hi);
+    check(lo == 100 && hi == 900, "window never exceeds the scale");
+
+    af_window(500, 100, 900, 0, &lo, &hi);
+    check(lo == 500 && hi == 500, "span 0 is a single point");
+
+    af_window(500, 100, 900, -10, &lo, &hi);
+    check(lo == 500 && hi == 500, "a negative span stays a single point");
+
+    af_window(50, 100, 900, 25, &lo, &hi);
+    check(lo == 100 && hi == 125, "a position below the scale is clamped");
+
+    af_window(1000, 100, 900, 25, &lo, &hi);
+    check(lo == 875 && hi == 900, "a position above the scale is clamped");
+
+    af_window(500, 100, 900, 400, &lo, &hi);
+    check(lo == 100 && hi == 900, "a span as wide as the scale is kept");
+
+    af_window(500, 100, 900, 401, &lo, &hi);
+    check(lo == 100 && hi == 900, "a span wider than the scale is clamped");
+}
+
 int main(void)
 {
     test_direction();
     test_tracker();
+    test_window();
     if (failures)
     {
         fprintf(stderr, "%d failure(s)\n", failures);

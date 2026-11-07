@@ -20,6 +20,24 @@ SHOTS = os.path.join("output", "bench", "ui")
 SECTIONS = ["live", "image", "streams", "events", "storage", "network", "osd", "system"]
 
 
+def check_fit(page, label, failures):
+    """The shell is one viewport tall on every tab: only #content scrolls."""
+    for sec in SECTIONS:
+        page.click('#sidebar button[data-sec="%s"]' % sec)
+        page.wait_for_timeout(350)
+        horizontal = page.evaluate(
+            "() => document.documentElement.scrollWidth - window.innerWidth")
+        vertical = page.evaluate(
+            "() => document.body.scrollHeight - window.innerHeight")
+        if horizontal > 1:
+            failures.append("%s %s: horizontal page overflow %d" %
+                            (label, sec, horizontal))
+        if vertical > 1:
+            failures.append("%s %s: vertical page overflow %d" %
+                            (label, sec, vertical))
+    print("%s fit: checked %d tabs" % (label, len(SECTIONS)))
+
+
 def main():
     os.makedirs(SHOTS, exist_ok=True)
     failures = []
@@ -67,7 +85,7 @@ def main():
         page.wait_for_timeout(1500)
         for selector in ("#preview", "#focus-box", "#focus_enable",
                          "#focus-metric", "#focus-state", "#focus-save-btn",
-                         "#focus-select-btn", "#af-state"):
+                         "#focus-select-btn", "#af-state", "#af-fine-btn"):
             if page.locator(selector).count() == 0:
                 failures.append("live focus element %s is missing" % selector)
         if page.locator("#focus_motor").count() != 0:
@@ -76,6 +94,15 @@ def main():
                 "() => document.getElementById('preview')"
                 ".contains(document.getElementById('focus-box'))"):
             failures.append("#focus-box is not inside #preview")
+
+        # Desktop: Live is two columns, the focus panel sits to the right of
+        # the preview card.
+        preview_box = page.locator("#preview-card").bounding_box()
+        focus_box = page.locator("#focus-card").bounding_box()
+        print("desktop columns: preview right %.0f, focus left %.0f" %
+              (preview_box["x"] + preview_box["width"], focus_box["x"]))
+        if focus_box["x"] < preview_box["x"] + preview_box["width"] - 5:
+            failures.append("Live is not two columns at 1440px")
 
         # Auto-start cascade: a video element, an MJPEG image or a snapshot
         # must appear without pressing a button (headless Chromium may have no
@@ -157,11 +184,44 @@ def main():
             print("af running in the UI:", running)
             if running:
                 if not page.is_disabled("#manual-focus-dec") or \
-                   not page.is_disabled("#home-focus-btn"):
+                   not page.is_disabled("#home-focus-btn") or \
+                   not page.is_disabled("#af-fine-btn"):
                     failures.append("manual buttons stay enabled during AF")
                 if page.is_disabled("#manual-stop-btn"):
                     failures.append("STOP is disabled during AF")
             page.evaluate("focusPost('af=cancel&stop=1&motor=0&enable=0')")
+            page.wait_for_timeout(800)
+
+        # Opt-in: the Autofocus button runs the micro-fine scope and is
+        # locked like the other controls while that job runs.
+        if movable and os.environ.get("OKO_FOCUS_AF_TESTS") == "1":
+            page.locator("#af-fine-btn").scroll_into_view_if_needed()
+            page.wait_for_timeout(300)
+            fine_check = (
+                "() => { var s = focusState; return !!(s && s.af && "
+                "(s.af.state === 'running' || s.af.state === 'done') && "
+                "s.af.scope === 'fine'); }")
+            page.click("#af-fine-btn")
+            page.wait_for_timeout(900)
+            page.evaluate("focusPoll()")
+            page.wait_for_timeout(400)
+            fine = page.evaluate(fine_check)
+            if not fine:
+                # The cancelled worker may still have been unwinding.
+                page.click("#af-fine-btn")
+                page.wait_for_timeout(900)
+                page.evaluate("focusPoll()")
+                page.wait_for_timeout(400)
+                fine = page.evaluate(fine_check)
+            print("Autofocus button af=fine:", fine)
+            if not fine:
+                failures.append("the Autofocus button did not start af=fine")
+            if page.evaluate("() => { var s = focusState; return !!(s && "
+                             "s.af && s.af.state === 'running'); }"):
+                if not page.is_disabled("#af-fine-btn"):
+                    failures.append("the Autofocus button stays enabled "
+                                    "during AF")
+            page.evaluate("focusPost('af=cancel&stop=1&motor=0')")
             page.wait_for_timeout(800)
         # Zone selection is two-step: dragging outside the mode only shows a
         # hint, "Select zone" enters the mode, a tiny rectangle is discarded,
@@ -433,12 +493,13 @@ def main():
         page.wait_for_timeout(300)
 
         # Layout: no horizontal overflow on desktop, untouched Apply buttons
-        # disabled, and the mobile breakpoint turns the sidebar into a row.
+        # disabled, and every tab fits in the window (only #content scrolls).
         overflow = page.evaluate(
             "() => document.documentElement.scrollWidth - window.innerWidth")
         print("desktop overflow:", overflow)
         if overflow > 1:
             failures.append("horizontal overflow at 1440px: %d" % overflow)
+        check_fit(page, "desktop 1440x900", failures)
 
         enabled = page.evaluate(
             "() => Array.from(document.querySelectorAll('[data-apply]'))"
@@ -447,10 +508,20 @@ def main():
         if enabled:
             failures.append("%d Apply buttons are enabled without edits" % enabled)
 
+        # Mobile: the automatic breakpoint moves the navigation into a bottom
+        # 4x2 grid with short labels, drops the noisy status fields and keeps
+        # every tab inside one viewport.
         page.set_viewport_size({"width": 390, "height": 844})
         page.wait_for_timeout(800)
-        page.click('#sidebar button[data-sec="system"]')
-        page.wait_for_timeout(800)
+        page.click("#lang-ru")
+        page.wait_for_timeout(400)
+        mobile_label = page.inner_text('#sidebar button[data-sec="live"]')
+        print("mobile RU nav label:", mobile_label)
+        if mobile_label.strip() != "Видео":
+            failures.append("mobile nav did not use the short RU label: %r"
+                            % mobile_label)
+        page.click("#lang-en")
+        page.wait_for_timeout(300)
         mobile_overflow = page.evaluate(
             "() => document.documentElement.scrollWidth - window.innerWidth")
         sidebar_box = page.locator("#sidebar").bounding_box()
@@ -458,8 +529,16 @@ def main():
               sidebar_box["width"], "x", sidebar_box["height"])
         if mobile_overflow > 1:
             failures.append("horizontal overflow at 390px: %d" % mobile_overflow)
-        if sidebar_box["height"] > 90:
-            failures.append("sidebar did not collapse into a row on mobile")
+        if sidebar_box["y"] + sidebar_box["height"] < 844 - 2:
+            failures.append("the mobile navbar is not anchored to the bottom")
+        if not page.is_hidden(".sb-load") or not page.is_hidden(".sb-temp"):
+            failures.append("mobile statusline still shows load/temperature")
+        button_height = page.eval_on_selector(
+            "#sidebar button", "b => b.getBoundingClientRect().height")
+        print("mobile nav button height:", button_height)
+        if button_height < 40:
+            failures.append("mobile nav buttons are smaller than 40px")
+        check_fit(page, "mobile 390x844", failures)
         page.screenshot(path=os.path.join(SHOTS, "mobile-system.png"), full_page=True)
 
         browser.close()

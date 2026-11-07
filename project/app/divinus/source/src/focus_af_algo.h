@@ -7,6 +7,7 @@
  * threads and configuration lets the host test in tests/focus_af_test.c cover
  * the direction probe and the patience stop exactly as the firmware runs
  * them. */
+#include <stdint.h>
 
 typedef struct {
     unsigned int patience;          /* consecutive non-improvements to stop */
@@ -30,3 +31,10 @@ int af_tracker_update(af_tracker *tracker, unsigned long long metric,
  * point is a local peak and the coarse pass can be skipped). */
 int af_pick_direction(unsigned long long start, unsigned long long plus,
                       unsigned long long minus);
+
+/* Micro-fine window around `pos`: [pos - span, pos + span], clamped to
+ * [lo, hi].  `pos` outside the scale is clamped into it first.  `span` is
+ * clamped to the scale width, so *out_lo <= *out_hi always; span 0 yields a
+ * single point. */
+void af_window(int32_t pos, int32_t lo, int32_t hi, int32_t span,
+               int32_t *out_lo, int32_t *out_hi);

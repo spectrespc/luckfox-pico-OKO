@@ -27,6 +27,7 @@
 static pthread_mutex_t af_lock = PTHREAD_MUTEX_INITIALIZER;
 static focus_af_status job;
 static int busy;
+static int job_scope;             /* 0 full search, 1 micro-fine sweep */
 static int thread_valid;
 static pthread_t worker_thread;
 static volatile int cancel_flag;
@@ -308,6 +309,53 @@ static int af_bounds(int *lo, int *hi)
     return 0;
 }
 
+/* Samples [bl, bh] on a `fine` grid and keeps the best point in the tracker.
+ * The first and last positions are always sampled, even when the interval is
+ * not an exact multiple of the step.  Returns 0 or -1 when the job failed and
+ * the worker must finish. */
+static int af_fine_sweep(int32_t bl, int32_t bh, int fine,
+                         af_tracker *tracker, int *points_done,
+                         int points_total)
+{
+    unsigned long long metric;
+    int32_t p;
+
+    if (fine < 1)
+        fine = 1;
+    if (af_move_to(bl) != 0)
+        return -1;
+    if (af_sample(&metric) != 0)
+        return -1;
+    (*points_done)++;
+    af_tracker_update(tracker, metric, bl);
+    job_update(bl, metric, tracker->best_position, tracker->best_metric,
+               *points_done * 100 / points_total);
+
+    for (p = bl + fine; p <= bh; p += fine)
+    {
+        if (af_move_to(p) != 0)
+            return -1;
+        if (af_sample(&metric) != 0)
+            return -1;
+        (*points_done)++;
+        af_tracker_update(tracker, metric, p);
+        job_update(p, metric, tracker->best_position, tracker->best_metric,
+                   *points_done * 100 / points_total);
+    }
+    if ((bh - bl) % fine != 0)
+    {
+        if (af_move_to(bh) != 0)
+            return -1;
+        if (af_sample(&metric) != 0)
+            return -1;
+        (*points_done)++;
+        af_tracker_update(tracker, metric, bh);
+        job_update(bh, metric, tracker->best_position, tracker->best_metric,
+                   *points_done * 100 / points_total);
+    }
+    return 0;
+}
+
 static void *af_worker(void *arg)
 {
     int32_t start_pos = 0, scan_pos, current_pos, best_pos;
@@ -316,6 +364,7 @@ static void *af_worker(void *arg)
     af_tracker tracker;
     int lo, hi, coarse, fine, patience, probe, dir;
     int points_total, points_done = 0;
+    int fine_mode = job_scope;
 
     (void)arg;
     coarse = (int)app_config.af_coarse;
@@ -362,6 +411,30 @@ static void *af_worker(void *arg)
     points_done++;
     best_pos = start_pos;
     best_metric = start_metric;
+
+    /* Micro-fine mode: no direction probe and no coarse pass, just a local
+       sweep around the current position.  It always reports "done": the lens
+       is nudged to the best point in the window even when the scene is flat,
+       because the caller asked for a small correction, not a full search. */
+    if (fine_mode)
+    {
+        int32_t bl, bh;
+
+        af_window(start_pos, lo, hi, coarse, &bl, &bh);
+        points_total = 2 + (int)((bh - bl) / fine);
+        af_tracker_reset(&tracker, (unsigned int)patience, start_metric,
+                         start_pos);
+        if (af_fine_sweep(bl, bh, fine, &tracker, &points_done,
+                          points_total) != 0)
+            goto finished;
+        best_metric = tracker.best_metric;
+        best_pos = tracker.best_position;
+        if (af_move_to(best_pos) != 0)
+            goto finished;
+        job_update(best_pos, best_metric, best_pos, best_metric, 100);
+        job_set_state("done", 1, 100);
+        goto finished;
+    }
 
     if (start_metric == 0)
     {
@@ -467,7 +540,6 @@ static void *af_worker(void *arg)
     {
         int32_t bl = best_pos - coarse;
         int32_t bh = best_pos + coarse;
-        int32_t p;
 
         if (dir == 0)
         {
@@ -479,43 +551,9 @@ static void *af_worker(void *arg)
         if (bh > hi)
             bh = hi;
 
-        if (af_move_to(bl) != 0)
+        if (af_fine_sweep(bl, bh, fine, &tracker, &points_done,
+                          points_total) != 0)
             goto finished;
-        if (af_sample(&metric) != 0)
-            goto finished;
-        points_done++;
-        af_tracker_update(&tracker, metric, bl);
-        best_metric = tracker.best_metric;
-        best_pos = tracker.best_position;
-        job_update(bl, metric, best_pos, best_metric,
-                   points_done * 100 / points_total);
-
-        for (p = bl + fine; p <= bh; p += fine)
-        {
-            if (af_move_to(p) != 0)
-                goto finished;
-            if (af_sample(&metric) != 0)
-                goto finished;
-            points_done++;
-            af_tracker_update(&tracker, metric, p);
-            best_metric = tracker.best_metric;
-            best_pos = tracker.best_position;
-            job_update(p, metric, best_pos, best_metric,
-                       points_done * 100 / points_total);
-        }
-        if ((bh - bl) % fine != 0)
-        {
-            if (af_move_to(bh) != 0)
-                goto finished;
-            if (af_sample(&metric) != 0)
-                goto finished;
-            points_done++;
-            af_tracker_update(&tracker, metric, bh);
-            best_metric = tracker.best_metric;
-            best_pos = tracker.best_position;
-            job_update(bh, metric, best_pos, best_metric,
-                       points_done * 100 / points_total);
-        }
     }
 
     best_metric = tracker.best_metric;
@@ -552,7 +590,9 @@ int focus_af_init(void)
     pthread_mutex_lock(&af_lock);
     memset(&job, 0, sizeof(job));
     snprintf(job.state, sizeof(job.state), "idle");
+    snprintf(job.scope, sizeof(job.scope), "full");
     busy = 0;
+    job_scope = 0;
     cancel_flag = 0;
     deadline_ms = 0;
     pthread_mutex_unlock(&af_lock);
@@ -579,7 +619,7 @@ int focus_af_running(void)
     return value;
 }
 
-int focus_af_start(int motor)
+int focus_af_start(int motor, int scope)
 {
     if (motor != AF_MOTOR_FOCUS)
         return -2;
@@ -592,8 +632,10 @@ int focus_af_start(int motor)
     }
     busy = 1;
     cancel_flag = 0;
+    job_scope = scope ? 1 : 0;
     deadline_ms = now_ms() + (long long)app_config.af_timeout_s * 1000;
     snprintf(job.state, sizeof(job.state), "running");
+    snprintf(job.scope, sizeof(job.scope), "%s", job_scope ? "fine" : "full");
     job.position = 0;
     job.best_position = 0;
     job.metric = 0;

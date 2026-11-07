@@ -2931,7 +2931,7 @@ void respond_request(http_request_t *req) {
             long zeroValue = 0;
             int haveZeroValue = 0;
             int motorSel = FOCUS_MOTOR_FOCUS; /* scale for move/speed/position */
-            int afReq = 0;                    /* 0 none, 1 start, 2 cancel    */
+            int afReq = 0;              /* 0 none, 1 full, 2 cancel, 3 fine */
 
             while (req->query) {
                 char *value = split(&req->query, "&");
@@ -3012,6 +3012,8 @@ void respond_request(http_request_t *req) {
                     mutating = 1;
                     if (EQUALS_CASE(value, "cancel"))
                         afReq = 2;
+                    else if (EQUALS_CASE(value, "fine"))
+                        afReq = 3;
                     else if (query_bool(value))
                         afReq = 1;
                     else if (EQUALS(value, "0") ||
@@ -3021,7 +3023,7 @@ void respond_request(http_request_t *req) {
                         afReq = 0;
                     else {
                         reply_bad_request(req->clntFd,
-                            "af must be 0, 1 or cancel", "");
+                            "af must be 0, 1, fine or cancel", "");
                         return;
                     }
                 } else if (EQUALS(key, "home") || EQUALS(key, "zero")) {
@@ -3388,7 +3390,7 @@ void respond_request(http_request_t *req) {
                 }
             }
 
-            if (afReq == 1) {
+            if (afReq == 1 || afReq == 3) {
                 fm_snapshot snap;
                 int rc;
 
@@ -3442,7 +3444,7 @@ void respond_request(http_request_t *req) {
                         "leave the bootloader and retry");
                     return;
                 }
-                rc = focus_af_start(FOCUS_MOTOR_FOCUS);
+                rc = focus_af_start(FOCUS_MOTOR_FOCUS, afReq == 3 ? 1 : 0);
                 if (rc == -1) {
                     char body[160];
                     snprintf(body, sizeof(body),
