@@ -123,10 +123,11 @@
   поэтому ток/мощность могут быть нулевыми. Канал выбирается `--ina-channel`.
   Статус: **особенность стенда**.
 
-- **KI-021. `motor.ko` отсутствует в образе.**
-  `RK_ENABLE_MOTOR` не задан, строка `insmod motor.ko` пропускается.
-  Автофокус/моторы этим драйвером сейчас не управляются.
-  Статус: **по конфигурации**.
+- **KI-021. `motor.ko` удалён из форка (2026-11-07).**
+  Драйвер 28BYJ-48 для pan/tilt не использовался; удалены каталог
+  `sysdrv/drv_ko/motor`, строка `__insmod motor.ko`, `M_DIRS` и
+  `CONFIG_SYSDRV_ENABLE_MOTOR`. Привод фокуса/зума — STM8 по I2C.
+  Статус: **закрыто (2026-11-07)**.
 
 - **KI-022. `post_chk` использует `rkipc-300w.ini` для SC230AI.**
   Шаблон рассчитан на сенсор 3 МП; при некорректной геометрии кадра ini нужно
@@ -396,9 +397,10 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   `VIN+`/`VIN-`/`VBUS` are not wired to a load, so current/power may read zero.
   Status: **bench limitation**.
 
-- **KI-021. `motor.ko` is absent.** `RK_ENABLE_MOTOR` is unset and the
-  `insmod motor.ko` line is skipped; focus/motor control is not active.
-  Status: **configuration**.
+- **KI-021. `motor.ko` was removed from the fork (2026-11-07).**
+  The 28BYJ-48 pan/tilt driver was unused; the `sysdrv/drv_ko/motor` tree, the
+  `__insmod motor.ko` line, `M_DIRS` and `CONFIG_SYSDRV_ENABLE_MOTOR` are gone.
+  Focus/zoom is driven by the STM8 over I2C. Status: **closed (2026-11-07)**.
 
 - **KI-022. `post_chk` uses `rkipc-300w.ini` for SC230AI.** The template
   targets a 3 MP sensor; choose another ini if the frame geometry is wrong.

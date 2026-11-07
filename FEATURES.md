@@ -1,10 +1,10 @@
 # Поддерживаемый функционал OKO
 
 Точка входа в описание возможностей прошивки OKO для Luckfox Pico Pro Max
-(RV1106, SPI NAND, Buildroot) с сенсором SC230AI: паспорт платформы, разделение
-функционала по статусу проверки, общие примечания и команды проверки.
+(RV1106, SPI NAND, Buildroot) с сенсором SC230AI: паспорт платформы, индекс по
+файлам статусов проверки и краткие команды проверки.
 
-Статус на 2026-11-06. Пометки: **работает** — проверено на стенде;
+Статус на 2026-11-07. Пометки: **работает** — проверено на стенде;
 **ограничено** — работает с оговоркой; **заблокировано** — отказ с причиной.
 
 | Файл | Содержание |
@@ -37,56 +37,16 @@
 bench/run.sh api_check.py
 bench/run.sh ui_check.py            # нужен Playwright + Chromium
 
-# статус и потоки
-curl -u admin:oko-change-me http://192.168.52.97/api/status
-curl -u admin:oko-change-me http://192.168.52.97/api/streams
-
-# сеть и накопитель
-curl -u admin:oko-change-me http://192.168.52.97/api/network
-curl -u admin:oko-change-me http://192.168.52.97/api/storage
-
-# VPN: профили, живое состояние, импорт из .conf (Network → VPN)
-curl -u admin:oko-change-me http://192.168.52.97/api/vpn
-# полный прогон с пиром на хосте: bench/README.md, раздел «VPN-пир на хосте»
-bench/run.sh vpn_check.py --peer-host 192.168.52.1 \
-  --profile output/bench/vpn/awg0.conf
-
-# архив, телеметрия и NTP
-curl -u admin:oko-change-me http://192.168.52.97/api/recordings
-curl -u admin:oko-change-me http://192.168.52.97/api/telemetry
-curl -u admin:oko-change-me http://192.168.52.97/api/time
-
-# RTSP (пути /live/0 и /live/1)
-ffprobe -v error -rtsp_transport tcp \
-  rtsp://admin:oko-change-me@192.168.52.97:554/live/0
-
-# I2C и телеметрия на устройстве
-i2cdetect -y 3
-oko-ec sensors
-cat /tmp/oko-ec.osd
-
-# NPU-аналитика
-curl -u admin:oko-change-me http://192.168.52.97/api/yolo
-curl -u admin:oko-change-me http://192.168.52.97/api/models
-cat /proc/rknpu/load
-df -h /userdata
-
-# помощь фокусировке и прошивка контроллеров (проверено на стенде 2026-11-06)
-bench/run.sh focus_check.py --enable --seconds 20 --snapshot --out output/bench/focus
-bench/run.sh firmware_check.py
+# помощь фокусировке и прошивка контроллеров
+bench/run.sh focus_check.py --enable --seconds 20 --snapshot
 bench/run.sh firmware_check.py --negative
-curl -u admin:oko-change-me 'http://192.168.52.97/api/focus?map=1'
-curl -u admin:oko-change-me http://192.168.52.97/api/flash
-curl -u admin:oko-change-me http://192.168.52.97/api/firmware
 
-# STM8: сборка прошивки и образы (SDCC в отдельном контейнере)
-docker build -t oko-stm8-sdcc tools/stm8-sdcc
-docker run --rm -v "$PWD:/work" -w /work/project/app/stm8-motor \
-  oko-stm8-sdcc make -f Makefile.stm8 all
+# статус платы
+curl -u admin:oko-change-me http://192.168.52.97/api/status
 ```
 
-Процедура прошивки и адреса стенда — в `TESTBENCH.md`; подробные доказательства,
-снимки экрана и команды воспроизведения — в `VERIFIED_FUNCTIONS.md`.
+Полный набор команд — `TESTBENCH.md` §8 и `VERIFIED_FUNCTIONS.md` §3; процедура
+прошивки и адреса стенда — `TESTBENCH.md`.
 
 ### Общие примечания
 
@@ -126,30 +86,17 @@ docker run --rm -v "$PWD:/work" -w /work/project/app/stm8-motor \
   `FEATURES_UNVERIFIED.md`.
 - Ограничения и непроверенные комбинации потоков, YOLO, датчиков и microSD
   собраны в `FEATURES_UNVERIFIED.md`.
-- Помощь фокусировке (`/api/focus`, `[focus]`) проверена на стенде: A6
-  пройден, `metric_avg` 527k–530k за 20 с, ROI меняет метрику. Для SC230AI
-  обязателен `af_v31.TuningPara.contrast_af.enable=1` в IQ. STM8: upstream
-  `2.0.0` заменён `factory-2.0.1.ihx` через ST-Link, загрузчик I2C, обновление
-  `app-2.0.1.ihx` через WebUI (версия из имени сверяется с заголовком OKO8) и
-  восстановление после обрыва проверены. STM32: реальная прошивка проверена
-  (CBT6, WebUI `app-1.0.1.bin` → rollback `app-1.0.0.bin`; `/api/firmware`
-  показывает точечно `1.0.0`; `img_size=2324`, `flags=0`, телеметрия и
-  reboot). См. `FEATURES_VERIFIED.md`,
-  `FEATURES_UNVERIFIED.md` и `KNOWN_ISSUES.md` (KI-032…036). Ручное
-  управление focus/zoom, `home`/`zero` (команда STM8 `SET_POS 0x09`,
-  прошивка 2.0.2/2.1.1) и гейт версии добавлены в той же карточке Focus
-  assist; драйвер взводится самими командами (`motor=1`), зона выбирается
-  двухшагово («Выделить зону» → «Применить»), «Применить» запускает
-  автофокус (`focus_af.c`, вариант B) и записывает метрику в `GET /api/focus`.
-  Физический прогон автофокуса на контрастной сцене ещё за стендом.
+- Помощь фокусировке, STM8/STM32, WebUI и прочие подтверждённые функции —
+  в `FEATURES_VERIFIED.md`; ограничения — в `FEATURES_UNVERIFIED.md`; открытые
+  дефекты и обходы — в `KNOWN_ISSUES.md`.
 
 ## English
 
 Entry point for OKO capabilities on the Luckfox Pico Pro Max (RV1106, SPI NAND,
-Buildroot) with the SC230AI sensor: platform passport, feature split by
-verification status, shared notes and verification commands.
+Buildroot) with the SC230AI sensor: platform passport, an index of the
+verification-status files and short verification commands.
 
-Status as of 2026-11-06. Markers: **works**, **limited**, **blocked**.
+Status as of 2026-11-07. Markers: **works**, **limited**, **blocked**.
 
 | File | Content |
 |---|---|

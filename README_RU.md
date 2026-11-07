@@ -3,8 +3,6 @@
 Русскоязычная точка входа в репозиторий проекта **OKO** — форк SDK Luckfox Pico
 (Rockchip RV1103/RV1106). Доработки форка: IPC-камера на сенсоре **SC230AI**,
 сборка в Docker и автономная загрузка с **SPI NAND**.
-Вендорский SDK уже содержит драйвер шагового двигателя **28BYJ-48**; в текущей
-конфигурации он выключен (см. «Полезные команды»).
 
 Вендорская документация SDK не изменена и лежит рядом: `README.md` (EN),
 `README_CN.md` (CN), история версий SDK — `UPDATE_LOG.md` / `UPDATE_LOG_CN.md`.
@@ -33,7 +31,6 @@
 | `RK_BOOTARGS_CMA_SIZE` | `66M` | CMA для медиастека |
 | `RK_ENABLE_WIFI` | `y` | WiFi-модули в `/oem/usr/ko` |
 | `RK_AIISP_MODEL` | `rkmodel_1080_1920.aiisp` | в `/oem/usr/lib` ставится только эта модель AIISP |
-| `RK_ENABLE_MOTOR` | **не задан** | драйвер мотора не собирается (см. ниже) |
 
 В образ активной SC230AI-платы попадают только `sc230ai.ko` и IQ-файл
 `sc230ai_CMK-OT2115-PC1_30IRC-F16.json`. Неиспользуемые сенсоры (SC3336,
@@ -235,16 +232,16 @@ docker run --rm -v "$PWD:/work" -w /work/project/app/stm8-motor \
 ```
 
 Разметка STM8: boot `0x8000–0x89FF`, заголовок `0x8A00`, приложение
-`0x8A10–0x9FFF`; первая запись — `factory-2.0.1.ihx` по ST-Link, дальше
+`0x8A10–0x9FFF`; первая запись — `factory-2.1.1.ihx` по ST-Link, дальше
 `oko-motor flash`/`/api/flash`. Версия прошивки берётся из имени файла
-(`app-1.0.1.bin`, `app-2.0.1.ihx`); безымянные `app.ihx`/`app.bin` — только
+(`app-1.0.1.bin`, `app-2.1.1.ihx`); безымянные `app.ihx`/`app.bin` — только
 для ST-Link.
 
 Проверено на стенде 2026-11-06: A6 пройден (`status=running`,
 `cells_used=225`, `metric_avg` 527k–530k за 20 с) при
 `af_v31.TuningPara.contrast_af.enable=1` в IQ SC230AI; ROI меняет метрику.
-STM8: upstream `2.0.0` заменён `factory-2.0.1.ihx` через ST-Link, загрузчик
-I2C, `enter-boot`/`info`/`boot-reset` и обновление `app-2.0.1.ihx` через
+STM8: upstream `2.0.0` заменён `factory-2.1.1.ihx` через ST-Link, загрузчик
+I2C, `enter-boot`/`info`/`boot-reset` и обновление `app-2.1.1.ihx` через
 `/api/flash` работают (версия из имени сверяется с заголовком OKO8),
 приложение стартует после power-cycle. STM32 (CBT6): реальная прошивка
 проверена — WebUI `app-1.0.1.bin` → `/api/firmware` `1.0.1`, rollback
@@ -259,7 +256,7 @@ I2C, `enter-boot`/`info`/`boot-reset` и обновление `app-2.0.1.ihx` ч
 | `STRUCTURE.md` | структура репозитория: папки, ключевые файлы, назначение |
 | `INIT_ORDER.md` | порядок инициализации: U-Boot → ядро → busybox init → модули → `divinus`/`rkipc` |
 | `TESTBENCH.md` | паспорт тестового стенда: железо, сеть, учётки, прошивка, диагностика |
-| `FEATURES.md` | точка входа в описание функционала: паспорт платформы, разделение по статусу проверки, общие примечания и команды |
+| `FEATURES.md` | точка входа в описание функционала: паспорт платформы, индекс по файлам статусов и краткие команды проверки |
 | `FEATURES_VERIFIED.md` | подтверждённые функции: видео, сеть, `oko-ec`, WebUI/API, microSD |
 | `FEATURES_UNVERIFIED.md` | ограниченные и заблокированные возможности, непроверенные комбинации |
 | `VERIFIED_FUNCTIONS.md` | реестр проверенных на стенде функций: статус, доказательство, ограничения |
@@ -289,11 +286,6 @@ sh /oem/usr/ko/insmod_ko.sh      # ручная перезагрузка мод�
   30 fps); вернуть штатный `rkipc` —
   `touch /userdata/rkipc.enable && reboot`. Подробности — `INIT_ORDER.md`,
   `TESTBENCH.md` и `project/app/divinus/README.md`.
-- Драйвер мотора 28BYJ-48: исходники в `sysdrv/drv_ko/motor`, строка
-  `__insmod motor.ko` есть в `sysdrv/drv_ko/insmod_ko.sh`, но модуль **пока
-  выключен**: `RK_ENABLE_MOTOR` не задан, `motor.ko` не собирается и в
-  `/oem/usr/ko/` отсутствует. Для включения нужен `RK_ENABLE_MOTOR=y` и узел
-  `motor` с GPIO в DTS (см. `sysdrv/drv_ko/motor/ReadMe` и `INIT_ORDER.md`).
 
 ## Важные примечания
 

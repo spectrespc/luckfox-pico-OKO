@@ -8,17 +8,17 @@ agent: code
 - Активный BoardConfig: !`readlink -f .BoardConfig.mk`
 - Документы: !`ls -l STRUCTURE.md INIT_ORDER.md TESTBENCH.md 2>&1`
 - Init-скрипты: !`ls output/out/rootfs_uclibc_rv1106/etc/init.d/S??* 2>&1`
-- Модули в артефакте: !`ls output/out/oem/usr/ko/ 2>/dev/null | grep -E 'motor|hpmcu'`
+- Модули в артефакте: !`ls output/out/oem/usr/ko/ 2>/dev/null | grep -E 'hpmcu|amneziawg'`
 
 ## Чек-лист сверки
 
 | Документ | Раздел | Сверить с |
 |---|---|---|
-| `INIT_ORDER.md` | §1 | симлинк `.BoardConfig.mk` и значения в целевом `.mk` (`RK_CHIP`, `RK_BOOT_MEDIUM`, `RK_KERNEL_DTS`, `RK_ENABLE_MOTOR`) |
+| `INIT_ORDER.md` | §1 | симлинк `.BoardConfig.mk` и значения в целевом `.mk` (`RK_CHIP`, `RK_BOOT_MEDIUM`, `RK_KERNEL_DTS`, `RK_ENABLE_WIFI`) |
 | `INIT_ORDER.md` | §2 | фрагмент `rv1106-sc230ai.config`, DTS, bootargs |
 | `INIT_ORDER.md` | §4 | `ls output/out/rootfs_uclibc_rv1106/etc/init.d/S??*` и оверлей `project/cfg/BoardConfig_IPC/overlay/overlay-luckfox-buildroot-init/etc/init.d/` |
 | `INIT_ORDER.md` | §6 | `grep -n '__insmod\|insmod_wifi' sysdrv/drv_ko/insmod_ko.sh` |
-| `INIT_ORDER.md` | §7 | статус motor: `grep -n RK_ENABLE_MOTOR "$(readlink -f .BoardConfig.mk)"` |
+| `INIT_ORDER.md` | §7 | состав `sysdrv/drv_ko` и `M_DIRS`: `ls sysdrv/drv_ko`, `grep -n M_DIRS sysdrv/drv_ko/Makefile` |
 | `TESTBENCH.md` | §4–§5 | адреса DUT и шлюза в `bench/*.py`, `start.sh`, `docker-compose.yml` |
 | `TESTBENCH.md` | §1 | «Дата обновления» — должна соответствовать дате последней правки дока |
 | `STRUCTURE.md` | Корневые папки/файлы | `ls` корня репозитория |

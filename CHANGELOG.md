@@ -136,6 +136,24 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Изменено
 
+- **Документация: TO_DO и FEATURES приведены к индексу (OKO).** `TO_DO.md`
+  сокращён до открытых работ: убраны закрытые чек-листы фаз 0–4 и вариантов A/B,
+  механика объектива зафиксирована текстом, обновлены §6 («Открытые работы по
+  фокусу») и §11.5. `FEATURES_UNVERIFIED.md` вычищен от закрытых примечаний и
+  дублей строк таблицы, версии STM8 актуализированы. `FEATURES.md` оставлен
+  тонким индексом: паспорт платформы, 5 команд проверки и ссылки на
+  `TESTBENCH.md` §8 / `VERIFIED_FUNCTIONS.md` §3; дублирующие примечания
+  удалены. Обновлены `AGENTS.md`, `STRUCTURE.md`, `README_RU.md` и
+  `.kilo/command/docs-check.md` / `.kilo/skills/oko-docs/SKILL.md`.
+- **Docs: TO_DO and FEATURES reduced to an index (OKO).** `TO_DO.md` is cut
+  down to open work: the closed checklists of phases 0–4 and variants A/B are
+  gone, the lens mechanics are recorded as text, and §6 ("Open focus work") and
+  §11.5 are updated. `FEATURES_UNVERIFIED.md` is cleaned of closed notes and
+  table-row duplicates, and the STM8 versions are brought up to date.
+  `FEATURES.md` is now a thin index: the platform passport, five verification
+  commands and links to `TESTBENCH.md` §8 / `VERIFIED_FUNCTIONS.md` §3; the
+  duplicated notes are removed. `AGENTS.md`, `STRUCTURE.md`, `README_RU.md` and
+  `.kilo/command/docs-check.md` / `.kilo/skills/oko-docs/SKILL.md` are updated.
 - **Подтверждение SD-инкремента прогонами стенда (OKO).** Прогоны 2026-11-07
   подтвердили заявленное: `bench/ui_check.py` печатает
   `SD summary: 14.8 GiB / 14.8 GiB (raw 15177/15171 MiB)` и завершается
@@ -275,6 +293,28 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   "2.1.1"). Bus contention now waits for at most ~100 ms; a zero version reply
   right after `SET_POS` is re-read, and the auto-focus retries the position
   read before treating the scale as corrupted.
+
+### Удалено
+
+- **Драйвер `motor.ko` (28BYJ-48, pan/tilt) удалён из форка (OKO).** Удалён
+  каталог `sysdrv/drv_ko/motor` (исходники, `sample`, `src`), `motor` убран из
+  `M_DIRS` в `sysdrv/drv_ko/Makefile`, из `sysdrv/drv_ko/insmod_ko.sh` убрана
+  строка `__insmod motor.ko`, из `sysdrv/cfg/package.mk` — блок
+  `CONFIG_SYSDRV_ENABLE_MOTOR`/`RK_ENABLE_MOTOR`. В образ модуль никогда не
+  попадал; привод фокуса/зума — STM8 по I2C. KI-021 закрыт (2026-11-07).
+  Обновлены `STRUCTURE.md`, `INIT_ORDER.md` (§1, §6, §7, §8), `TESTBENCH.md`
+  (§1, §8, §9), `README_RU.md`, `KNOWN_ISSUES.md`, `AGENTS.md` и файлы в
+  `.kilo/`.
+- **The `motor.ko` driver (28BYJ-48, pan/tilt) is removed from the fork
+  (OKO).** The `sysdrv/drv_ko/motor` tree (sources, `sample`, `src`) is gone,
+  `motor` is dropped from `M_DIRS` in `sysdrv/drv_ko/Makefile`, the
+  `__insmod motor.ko` line is removed from `sysdrv/drv_ko/insmod_ko.sh`, and
+  the `CONFIG_SYSDRV_ENABLE_MOTOR`/`RK_ENABLE_MOTOR` block is removed from
+  `sysdrv/cfg/package.mk`. The module never reached the image; focus/zoom is
+  driven by the STM8 over I2C. KI-021 is closed (2026-11-07). `STRUCTURE.md`,
+  `INIT_ORDER.md` (§1, §6, §7, §8), `TESTBENCH.md` (§1, §8, §9),
+  `README_RU.md`, `KNOWN_ISSUES.md`, `AGENTS.md` and the files under `.kilo/`
+  are updated.
 
 ## [0.2.0] — 2026-11-07
 

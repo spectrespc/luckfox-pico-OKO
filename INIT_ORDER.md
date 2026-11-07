@@ -34,7 +34,6 @@ BootROM → U-Boot → ядро Linux → busybox init → init-скрипты �
 | `RK_BOOTARGS_CMA_SIZE` | `66M` | в cmdline попадает как `rk_dma_heap_cma=66M` |
 | `RK_CAMERA_SENSOR_IQFILES` | `sc230ai_CMK-OT2115-PC1_30IRC-F16.json` | IQ-файл сенсора |
 | `RK_ENABLE_WIFI` | `y` | WiFi-модули собираются и копируются в `/oem/usr/ko` |
-| `RK_ENABLE_MOTOR` | **не задан** | `motor.ko` не собирается (см. раздел 7) |
 | `RK_POST_BUILD_SCRIPT` | **не задан** | init-скрипты не переписываются пост-скриптом |
 
 Используется автономная загрузка из SPI NAND: ядро и корневая ФС находятся
@@ -266,11 +265,10 @@ esac
 | 10 | видео-кодек | `mpp_vcodec.ko` |
 | 11 | NPU | `rknpu.ko` |
 | 12 | аудио | `snd-soc-rv1106.ko` |
-| 13 | мотор (условно) | `motor.ko` — в текущей прошивке отсутствует (см. раздел 7) |
-| 14 | определение высоты сенсора | парсинг `Input Format` из `/proc/rkisp-vir0` или `/proc/rkisp0` в `sensor_height` |
-| 15 | медиа-сервер | `rockit.ko mcu_fw_path="./hpmcu_wrap.bin" mcu_fw_addr=0xff6fe000 isp_max_h=$sensor_height` |
-| 16 | видео-энкодер | `rve.ko` |
-| 17 | возобновление udev | `udevadm control --start-exec-queue` |
+| 13 | определение высоты сенсора | парсинг `Input Format` из `/proc/rkisp-vir0` или `/proc/rkisp0` в `sensor_height` |
+| 14 | медиа-сервер | `rockit.ko mcu_fw_path="./hpmcu_wrap.bin" mcu_fw_addr=0xff6fe000 isp_max_h=$sensor_height` |
+| 15 | видео-энкодер | `rve.ko` |
+| 16 | возобновление udev | `udevadm control --start-exec-queue` |
 | 18 | WiFi (фоном) | `$(pwd)/insmod_wifi.sh &` |
 
 `insmod_wifi.sh` определяет чип по `uevent` SDIO/USB и загружает соответствующий набор:
@@ -436,14 +434,6 @@ AIC8800 (`aic_load_fw` → `aic8800_fdrv`), AP6XXX (`bcmdhd`), RTL8723BS
   модулей. Вендорские исходники и DTS других плат не изменяются.
 - WiFi-модули зависят от `cfg80211`, а для RTL8723BS — ещё и от `mac80211` и
   крипто-модулей (`libarc4`, `aes_generic` и т.п.); состав определяется чипом.
-- **`motor.ko` — условный модуль.** Флаг `RK_ENABLE_MOTOR` в активной конфигурации не
-  задан, поэтому в `sysdrv/cfg/package.mk` остаётся
-  `CONFIG_SYSDRV_ENABLE_MOTOR=n`, модуль не собирается и отсутствует в
-  `/oem/usr/ko/`. Строка `__insmod motor.ko` в `insmod_ko.sh` пропускается проверкой
-  `-f`. Для включения нужно:
-  1. задать `RK_ENABLE_MOTOR=y` в board config;
-  2. добавить в DTS узел `motor` с GPIO (пример —
-     `sysdrv/drv_ko/motor/ReadMe`: `motorA…motorH-gpios` на `gpio1` PC0–PC7).
 - **`amneziawg.ko` — условный модуль по требованию.** Флаг `RK_ENABLE_AWG=y`
   в активном board config включает сборку `drv_ko/amneziawg`; файл попадает в
   `/oem/usr/ko`, но `insmod_ko.sh` его не загружает. `oko-vpn` делает `insmod`
@@ -476,7 +466,6 @@ AIC8800 (`aic_load_fw` → `aic8800_fdrv`), AP6XXX (`bcmdhd`), RTL8723BS
 | Загрузка модулей | `sysdrv/drv_ko/insmod_ko.sh` |
 | WiFi | `sysdrv/drv_ko/wifi/insmod_wifi.sh` |
 | Приложение | `project/app/rkipc/rkipc/src/rv1106_ipc/RkLunch.sh` |
-| Мотор | `sysdrv/drv_ko/motor/ReadMe`, `sysdrv/cfg/package.mk` |
 | Сверка артефакта | `output/out/rootfs_uclibc_rv1106/etc/init.d/`, `output/out/oem/usr/ko/` |
 
 Быстрая проверка после изменений:

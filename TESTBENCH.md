@@ -23,7 +23,7 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
 | Носитель загрузки | SPI NAND (`RK_BOOT_MEDIUM=spi_nand`) |
 | Корневая ФС | Buildroot, busybox init |
 | Сенсор | SC230AI (MIPI CSI, драйвер `sc230ai`, 1080p30 / 480p120; `HDR_X2` экспериментально; `divinus` кодирует 30 fps) |
-| Двигатель | шаговый 28BYJ-48 через GPIO-драйвер `motor_24byj48` — **выключен** (`RK_ENABLE_MOTOR` не задан) |
+| Двигатель | `STM8S003F3P6` на I2C (адрес `0x60`, `/dev/i2c-3`, 100 кГц) — привод фокуса/зума |
 | Питание | `<источник, напряжение, ток>` |
 | Подключение к ПК | USB (OTG) + UART; Maskrom — `<кнопка / перемычка>` |
 | Серийный номер / метка | `<S/N>` |
@@ -209,15 +209,15 @@ docker run --rm --privileged \
     apt-get install -y -qq build-essential libusb-1.0-0-dev pkg-config &&
     make clean && make RELEASE=1 &&
     ./stm8flash -c stlinkv2 -p stm8s103f3 -s flash \
-      -w /work/project/app/stm8-motor/build/factory-2.0.1.ihx'
+      -w /work/project/app/stm8-motor/build/factory-2.1.1.ihx'
 ```
 
-`factory-2.0.1.ihx` содержит загрузчик `0x8000–0x89FF` и приложение
+`factory-2.1.1.ihx` содержит загрузчик `0x8000–0x89FF` и приложение
 `0x8A10–0x9FFF`; EEPROM (позиции моторов) не стирается. Проверка после
-записи — `oko-motor -b 3 -a 0x60 version` (ожидается `2.0.1`), затем
+записи — `oko-motor -b 3 -a 0x60 version` (ожидается `2.1.1`), затем
 `enter-boot` → `info` → `boot-reset`. Восстановление при неудачной записи —
-тем же `factory-2.0.1.ihx`; приложение можно обновлять без ST-Link через
-`/api/flash` (имя с версией) или `oko-motor flash app-2.0.1.ihx`.
+тем же `factory-2.1.1.ihx`; приложение можно обновлять без ST-Link через
+`/api/flash` (имя с версией) или `oko-motor flash app-2.1.1.ihx`.
 
 ## 8. Диагностика
 
@@ -356,9 +356,9 @@ sleep 2
 bench/run.sh firmware_check.py --flash --target stm32 \
   --file output/bench/stm32/app-1.0.0.bin --confirm FLASH
 # ожидается job done; затем /api/firmware, oko-ec info/battery, power-cycle
-# STM8: первая запись factory-2.0.1.ihx по ST-Link, далее через WebUI/oko-motor
-ls -l project/app/stm8-motor/build/app-2.0.1.ihx \
-      project/app/stm8-motor/build/factory-2.0.1.ihx
+# STM8: первая запись factory-2.1.1.ihx по ST-Link, далее через WebUI/oko-motor
+ls -l project/app/stm8-motor/build/app-2.1.1.ihx \
+      project/app/stm8-motor/build/factory-2.1.1.ihx
 
 # Ethernet: MAC и настройки в env-разделе U-Boot
 fw_printenv oko_mac oko_net_mode oko_ipaddr oko_netmask oko_gateway oko_dns
@@ -449,7 +449,6 @@ dmesg | tail -50
 | `/userdata/divinus.yaml` перезаписан после загрузки | ожидаемо: `S20oko-osd` заменяет конфиг без `reg0_text`/`reg0_size`/`reg0_color`/`reg3_text` фабричным (старый формат); первый прежний файл сохраняется как `divinus.yaml.bak` |
 | Запущены и `divinus`, и `rkipc` | маркер появился после старта `rkipc`; перезагрузить DUT (ветки взаимоисключающие) |
 | Нет `/dev/video*` | `insmod_ko.sh` не выполнился или `sc230ai.ko` отсутствует |
-| `motor.ko` не грузится | ожидаемо: драйвер выключен в конфигурации |
 | `oko-ec scan` не находит `0x40`/`0x41`/`0x42` | нет внешних pull-up на `GPIO1_D2`/`GPIO1_D3`, неверный pinmux (I2C3-M1 вместо M0) или INA3221 с другой перемычкой `A0` (ожидается `0x41`) |
 | `oko-ec ina226` показывает нули | силовые входы INA3221 (`VIN+`/`VIN-`, `VBUS`) не подключены к нагрузке/шине; обмен по I2C при этом работает |
 | `oko-ec ina226` показывает не тот канал | нагрузка подключена к другому каналу INA3221: `--ina-channel 1..3` (по умолчанию 1) |
@@ -460,8 +459,8 @@ dmesg | tail -50
 
 - `IMAGE/` содержит релиз для **RV1103 Pico Mini**; он не соответствует активной
   конфигурации `RV1106 Pro Max` и является устаревшим артефактом.
-- Драйвер мотора `motor.ko` в прошивке отсутствует: `RK_ENABLE_MOTOR` не задан,
-  строка `__insmod motor.ko` в `insmod_ko.sh` пропускается проверкой `-f`.
+- Драйвер `motor_24byj48` (`motor.ko`, шаговик 28BYJ-48) удалён из форка
+  2026-11-07: в истории прошивок его не было, привод фокуса — STM8 по I2C.
 - `insmod_ko.sh` вызывается из `RkLunch.sh`, который запускает `S21appinit`;
   каталог `/oem/usr/etc/init.d/` пуст, вся логика приложения зашита в `post_chk`.
   Подробнее — `INIT_ORDER.md`.
@@ -506,9 +505,9 @@ dmesg | tail -50
   повторяется тем же порядком.
 
 - STM8S103F3P6 подключён к I2C3 по адресу `0x60` и к ST-Link/V2 по SWIM;
-  первая прошивка — `factory-2.0.1.ihx` (§7C), далее `oko-motor flash` или
+  первая прошивка — `factory-2.1.1.ihx` (§7C), далее `oko-motor flash` или
   `/api/flash`. Версия обеих прошивок берётся из имени файла
-  (`app-1.0.1.bin`, `app-2.0.1.ihx`); безымянный `app.bin`/`app.ihx`
+  (`app-1.0.1.bin`, `app-2.1.1.ihx`); безымянный `app.bin`/`app.ihx`
   отклоняется, а несовпадение имени с заголовком OKO8 — тоже 400.
   EEPROM-позиции моторов при прошивке flash не стираются.
 - AF-статистика SC230AI требует `af_v31.TuningPara.contrast_af.enable=1`

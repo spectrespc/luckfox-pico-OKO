@@ -16,7 +16,7 @@ Workflow для задач, где нужны `STRUCTURE.md`, `INIT_ORDER.md`, `
 | Активная плата, BoardConfig, сборка образа | `INIT_ORDER.md` §1, §2; `README_RU.md` (Сборка) | `readlink -f .BoardConfig.mk`, `grep -n` по `.mk` |
 | U-Boot, ядро, DTS, cmdline, оверлеи | `INIT_ORDER.md` §1–§2, §8 | `project/cfg/BoardConfig_IPC/overlay/...`, DTS в `sysdrv/source/kernel/arch/arm/boot/dts/` |
 | Init-скрипты, inittab, порядок S* | `INIT_ORDER.md` §3–§5 | `project/build.sh`, `sysdrv/source/buildroot/.../busybox/inittab` |
-| Модули ядра, `insmod_ko.sh`, motor | `INIT_ORDER.md` §6–§7 | `sysdrv/drv_ko/insmod_ko.sh`, `sysdrv/cfg/package.mk`, `RK_ENABLE_MOTOR` |
+| Модули ядра, `insmod_ko.sh` | `INIT_ORDER.md` §6–§7 | `sysdrv/drv_ko/insmod_ko.sh`, `sysdrv/cfg/package.mk`, `M_DIRS` |
 | `rkipc`, IQ-файлы, `rkipc.ini` | `INIT_ORDER.md` §5, §7 | `project/app/rkipc/.../RkLunch.sh`, `/oem`, `/userdata` |
 | Железо, serial, сеть, прошивка | `TESTBENCH.md` §1–§8 | `bench/*.py`, `start.sh`, `docker-compose.yml` |
 | Диагностика после загрузки | `TESTBENCH.md` §8–§9 | `lsmod`, `/proc/rkisp-vir0`, логи |
@@ -42,8 +42,8 @@ Workflow для задач, где нужны `STRUCTURE.md`, `INIT_ORDER.md`, `
 # активная конфигурация
 readlink -f .BoardConfig.mk
 
-# ключевые параметры платы (RK_CHIP, RK_BOOT_MEDIUM, RK_ENABLE_MOTOR и т.п.)
-grep -nE 'RK_(CHIP|BOOT_MEDIUM|KERNEL_DTS|ENABLE_MOTOR|ENABLE_WIFI|APP_TYPE)' \
+# ключевые параметры платы (RK_CHIP, RK_BOOT_MEDIUM, RK_ENABLE_WIFI и т.п.)
+grep -nE 'RK_(CHIP|BOOT_MEDIUM|KERNEL_DTS|ENABLE_WIFI|APP_TYPE)' \
   "$(readlink -f .BoardConfig.mk)"
 
 # фактический порядок модулей
@@ -53,7 +53,7 @@ grep -n '__insmod\|insmod_wifi' sysdrv/drv_ko/insmod_ko.sh
 ls output/out/rootfs_uclibc_rv1106/etc/init.d/S??* 2>/dev/null
 
 # наличие условных модулей в артефакте
-ls output/out/oem/usr/ko/ 2>/dev/null | grep -E 'motor|hpmcu'
+ls output/out/oem/usr/ko/ 2>/dev/null | grep -E 'hpmcu|amneziawg'
 
 # сетевые параметры стенда
 grep -n '192\.168\.52' bench/*.py
