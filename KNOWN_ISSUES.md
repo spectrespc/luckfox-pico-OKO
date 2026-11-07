@@ -261,6 +261,16 @@
   `min_pos = 0`, а `home`/`zero` отклоняют заведомо битые значения. Статус:
   **открыто, обход встроен**.
 
+- **KI-043. Включение AF-метрики из WebUI зависит от STM8.**
+  Кнопка «Применить» в карточке «Помощь фокусировке» всегда отправляет
+  `motor=1` (`index.html`, `focusApply`), а сервер сначала взводит привод
+  (`server.c`, блок `motor`) и только затем применяет `enable`; при
+  отсутствующем или занятом контроллере (I2C-шина, бутлоадер) запрос
+  завершается `blocked`, и метрику включить нельзя, хотя самому измерению
+  привод не нужен. Обход: `POST /api/focus?enable=1&mode=full` (или `roi`)
+  без `motor` — метрика включается и опрашивается. Статус: **открыто**,
+  правка сервера не входит в инкремент по решению пользователя.
+
 ### Безопасность
 
 - **KI-029. WebUI работает по HTTP Basic без HTTPS.**
@@ -281,7 +291,7 @@
 
 ## English
 
-Updated: `2026-11-06`. This file lists open problems, confirmed limitations and
+Updated: `2026-11-07`. This file lists open problems, confirmed limitations and
 recently closed entries (KI-036).
 Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
 `FEATURES_VERIFIED.md` / `FEATURES_UNVERIFIED.md`, bench procedures in
@@ -507,6 +517,16 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   send `SET_POS(0)` after the overshoot without reading the negative position;
   manual control is bounded by `min_pos = 0`, and `home`/`zero` reject values
   that are visibly corrupted. Status: **open, workaround in place**.
+
+- **KI-043. Enabling the AF metric from the WebUI depends on the STM8.**
+  The "Apply" button in the Focus assist card always sends `motor=1`
+  (`index.html`, `focusApply`), and the server arms the driver (`server.c`,
+  the `motor` block) before it applies `enable`; with a missing or busy
+  controller (I2C bus, bootloader) the request ends `blocked` and the metric
+  cannot be enabled, although the measurement itself needs no driver.
+  Workaround: `POST /api/focus?enable=1&mode=full` (or `roi`) without
+  `motor` enables and polls the metric. Status: **open**; the server change
+  is out of this increment by the user's decision.
 
 ### Security
 

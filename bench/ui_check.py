@@ -295,6 +295,37 @@ def main():
             if page.text_content("#focus-select-btn").strip() not in \
                     ("Select zone", "Выделить зону"):
                 failures.append("Escape did not leave the selection mode")
+
+            # The focus card participates in the shared Apply/dirty model: an
+            # unsaved "Enable" must not be overwritten by the 2 s poll.
+            page.wait_for_timeout(2200)
+            current = page.evaluate(
+                "() => document.getElementById('focus_enable').value")
+            target = "false" if current == "true" else "true"
+            page.select_option("#focus_enable", target)
+            page.wait_for_timeout(300)
+            save_btn = page.locator("#focus-save-btn")
+            dirty_dot = page.locator(
+                '#sidebar button[data-sec="live"].dirty').count()
+            print("focus dirty dot:", dirty_dot,
+                  "save disabled:", save_btn.is_disabled())
+            if save_btn.is_disabled():
+                failures.append("focus Apply stayed disabled after an edit")
+            if not dirty_dot:
+                failures.append(
+                    "navigation dot did not appear for a dirty focus card")
+            page.wait_for_timeout(3200)
+            kept = page.evaluate(
+                "() => document.getElementById('focus_enable').value")
+            print("focus enable after a poll cycle:", kept)
+            if kept != target:
+                failures.append(
+                    "the poll overwrote the unsaved focus enable value")
+            page.evaluate("() => focusApplyValues(focusState || {}, true)")
+            page.wait_for_timeout(200)
+            if page.locator('#sidebar button[data-sec="live"].dirty').count():
+                failures.append(
+                    "the focus dirty dot did not clear after the revert")
         else:
             failures.append("no preview media element to drag the ROI on")
         page.screenshot(path=os.path.join(SHOTS, "live-focus.png"), full_page=True)

@@ -87,6 +87,12 @@ System**. Ширина ≥ 60em даёт в Live две колонки (прев
    «restart» показывает баннер «требуется перезапуск».
 5. `Save` (`/api/cmd?save`) пишет YAML, `Restart` (`/api/cmd?restart`) делает
    graceful `execvp`, `Reboot` (`/api/cmd?reboot`) перезагружает плату.
+6. Карточка Live → Focus assist подключена к той же модели: `#focus_enable`,
+   `#focus_mode`, `#focus_fps` образуют группу `focus`, `#focus-save-btn`
+   помечен `data-apply="focus"` и выключается на чистом снапшоте (или пока
+   ждёт выделенная зона). Двухсекундный опрос `focusPoll` пишет живые
+   значения только при отсутствии несохранённой правки; изменения
+   принудительно принимаются после успешного `Apply`, STOP и `af=fine`.
 
 ### 4. Разделы и используемые endpoint'ы
 
@@ -183,6 +189,9 @@ JWT и роли вместо Basic-auth, HTTPS, обновление проши�
 - `osd.scope=all` и HDR по-прежнему блокируются гейтами; UI показывает причину.
 - Импорт конфигурации пишет файл и сохраняет предыдущий как `.bak`; битый файл
   откатывается при следующем старте.
+- Включение AF-метрики из WebUI требует контроллера STM8: `Apply` шлёт
+  `motor=1`, и при занятой шине запрос отклоняется (`blocked`, KI-043).
+  Обход — `POST /api/focus?enable=1&mode=full` без `motor`.
 
 ## English
 
@@ -216,6 +225,12 @@ exactly one viewport tall (only `#content` and `#sidebar` scroll); screens
 into a bottom 4×2 grid with short labels, 44 px targets and a trimmed status
 line. The Live focus card also has an Autofocus button that runs the
 micro-fine `af=fine` sweep (±`af_coarse`, step `af_fine`, always `done`).
+The focus card participates in the same `Apply`/dirty model: `enable`, `mode`
+and `fps` form the `focus` group, its `Apply` button is `data-apply="focus"`
+and is disabled on a clean snapshot (or while a selected zone waits to be
+applied); the 2 s `focusPoll` refreshes those fields only when there is no
+unsaved edit, and the edit is accepted after a successful Apply, STOP or
+`af=fine`.
 
 **System → Status** is a read-only card: Chip, Sensor, Memory, SD card capacity
 and free space (`sd_total_mb`/`sd_free_mb` from `/api/status` in MiB, rendered as
@@ -233,4 +248,7 @@ Limitations: Basic-auth has no logout and no HTTPS (passwords travel with every
 request and are stored as plain text in `divinus.yaml`), RTSP/ONVIF/WebUI
 passwords are never read back, RTSP port/audio codec/ONVIF/SmartP need a
 restart, OSD text is Latin-only, NTP takes over ten seconds after boot (after
-`S49ntp`), and HDR/`osd.scope=all` remain gated with the reason shown in the UI.
+`S49ntp`), HDR/`osd.scope=all` remain gated with the reason shown in the UI, and
+enabling the AF metric from the WebUI needs the STM8 controller because Apply
+sends `motor=1`; a busy bus returns `blocked` (KI-043, workaround
+`POST /api/focus?enable=1&mode=full` without `motor`).

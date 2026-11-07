@@ -224,6 +224,40 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Исправлено
 
+- **WebUI: опрос больше не сбрасывает «Включить» в «Помощи фокусировке» (OKO).**
+  Поля `#focus_enable`/`#focus_mode`/`#focus_fps` подключены к общей модели
+  `groups`/`snapshots` (`data-group="focus"`), кнопка «Применить» помечена
+  `data-apply="focus"`/`data-ep="focus"`, снапшот снимается в `init()`.
+  `focusApplyValues(dec, force)` пишет поля только при отсутствии
+  несохранённой правки или по `force`; `focusPoll` раз в 2 с больше не
+  затирает выбор, жёлтая точка и доступность «Применить» считаются через
+  `groupDirty`, причём кнопка активна и при ожидающей выделенной зоне
+  (`pendingRoi`). Явные действия (`focusStop`, «Автофокус» `af=fine`,
+  успешное «Применить») применяют состояние сервера принудительно; при
+  отказе сервера правка сохраняется и точку можно применить повторно.
+  `bench/ui_check.py` получил регресс-проверку «несохранённый выбор
+  переживает цикл опроса» без POST и без движения объектива. Добавлена
+  запись KI-043 (включение метрики из WebUI зависит от STM8: `Apply` шлёт
+  `motor=1`; обход — `POST /api/focus?enable=1&mode=full` без `motor`).
+  Обновлены `KNOWN_ISSUES.md`, `bench/README.md`, `project/app/divinus/README.md`
+  и `WEBUI_REORG.md` (RU+EN).
+- **WebUI: the poll no longer resets "Enable" in Focus assist (OKO).** The
+  `#focus_enable`/`#focus_mode`/`#focus_fps` fields now belong to the shared
+  `groups`/`snapshots` model (`data-group="focus"`), the Apply button carries
+  `data-apply="focus"`/`data-ep="focus"`, and the baseline snapshot is taken in
+  `init()`. `focusApplyValues(dec, force)` writes the fields only when there is
+  no unsaved edit or when `force` is set; the 2 s `focusPoll` no longer
+  overwrites the selection, the navigation dot and Apply state come from
+  `groupDirty`, and Apply stays enabled while a zone selection is pending
+  (`pendingRoi`). Explicit actions (`focusStop`, the `af=fine` Autofocus
+  button, a successful Apply) accept the server state forcibly; on a server
+  rejection the edit is kept and can be applied again. `bench/ui_check.py`
+  gained a regression check "an unsaved value survives a poll cycle" that
+  sends no POST and does not move the lens. New KI-043: enabling the metric
+  from the WebUI depends on the STM8 because Apply sends `motor=1`
+  (workaround: `POST /api/focus?enable=1&mode=full` without `motor`).
+  `KNOWN_ISSUES.md`, `bench/README.md`, `project/app/divinus/README.md` and
+  `WEBUI_REORG.md` (RU+EN) are updated.
 - **I2C STM8: сериализация транзакций (OKO).** Каждая I2C-транзакция
   в `focus_motor.c` теперь берёт внутрипроцессный мьютекс, помимо
   advisory-flock. Раньше опрос версии (`firmware_status`, shared-блок) и

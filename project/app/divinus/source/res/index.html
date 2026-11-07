@@ -302,14 +302,14 @@
 				<div class="focus-wrap">
 					<div class="focus-side">
 						<div class="field"><label data-i18n="focus_enable">Enable</label>
-							<div class="ctl"><select id="focus_enable">
+							<div class="ctl"><select id="focus_enable" data-group="focus" data-k="enable">
 								<option value="false">OFF</option><option value="true">ON</option></select></div></div>
 						<div class="field"><label data-i18n="focus_mode">Mode</label>
-							<div class="ctl"><select id="focus_mode">
+							<div class="ctl"><select id="focus_mode" data-group="focus" data-k="mode">
 								<option value="full" data-i18n="focus_full">Full frame</option>
 								<option value="roi" data-i18n="focus_roi">ROI</option></select></div></div>
 						<div class="field"><label data-i18n="focus_rate">Refresh rate</label>
-							<div class="ctl"><input type="number" id="focus_fps" min="1" max="10"></div></div>
+							<div class="ctl"><input type="number" id="focus_fps" min="1" max="10" data-group="focus" data-k="fps"></div></div>
 						<div class="bar"><div id="focus-bar"></div></div>
 						<div class="focus-metric" id="focus-metric">–</div>
 						<div class="actions">
@@ -319,7 +319,7 @@
 							<button type="button" class="btn" id="focus-near-btn" title="near">◀</button>
 							<button type="button" class="btn" id="focus-far-btn" title="far">▶</button>
 							<button type="button" class="btn" id="focus-select-btn">Select zone</button>
-							<button type="button" class="btn primary" id="focus-save-btn" data-i18n="focus_apply">Apply</button>
+							<button type="button" class="btn primary" id="focus-save-btn" data-apply="focus" data-ep="focus" data-i18n="focus_apply">Apply</button>
 						</div>
 						<h4 data-i18n="manual_lens">Manual lens control</h4>
 						<div class="field"><label data-i18n="manual_step">Step</label>
@@ -1584,6 +1584,7 @@ function refreshGroup(g) {
 function refreshAllGroups() {
 	for (var g in groups) if (has(groups, g)) refreshGroup(g);
 	updateNavDots();
+	focusRefreshApply();
 }
 
 function snapshotGroup(g) { snapshots[g] = collectGroup(g); refreshGroup(g); }
@@ -2625,6 +2626,15 @@ function focusSelectionUpdate() {
 	var btn = $('focus-select-btn');
 	if (btn) btn.textContent = !roiSelecting ? t('select_zone') :
 		(pendingRoi ? t('zone_done') : t('zone_cancel'));
+	focusRefreshApply();
+}
+
+/* The generic Apply button switches off whenever the group matches its
+   snapshot.  The focus card must stay enabled while a two-step zone selection
+   is pending even if the three fields are clean. */
+function focusRefreshApply() {
+	var b = $('focus-save-btn');
+	if (b) b.disabled = !groupDirty('focus') && !pendingRoi;
 }
 
 function focusSelectionCancel() {
@@ -2667,12 +2677,16 @@ function focusAfText(af) {
 	return t('af_error') + (af.error ? ': ' + af.error : '');
 }
 
-function focusApplyValues(dec) {
+function focusApplyValues(dec, force) {
 	if (!dec || dec.error) return;
 	focusState = dec;
-	$('focus_enable').value = dec.enable ? 'true' : 'false';
-	$('focus_mode').value = dec.mode || 'full';
-	$('focus_fps').value = dec.fps || 5;
+	if (force || !groupDirty('focus')) {
+		$('focus_enable').value = dec.enable ? 'true' : 'false';
+		$('focus_mode').value = dec.mode || 'full';
+		$('focus_fps').value = dec.fps || 5;
+		if (groups.focus) snapshotGroup('focus');
+		refreshAllGroups();
+	}
 	focusSetBadge($('focus-state'),
 		dec.status === 'running' ? 'on' : (dec.status === 'idle' ? 'off' : 'warn'),
 		dec.status);
@@ -2700,11 +2714,11 @@ function focusPoll() {
 	getJson('/api/focus', function (dec) { focusApplyValues(dec); });
 }
 
-function focusPost(extra) {
+function focusPost(extra, force) {
 	var q = extra ? ('/api/focus?' + extra) : '/api/focus';
 	request('POST', q, null, null, function (dec, status) {
-		if (!dec || dec.error) { toastError(dec); return; }
-		focusApplyValues(dec);
+		if (!dec || dec.error) { toastError(dec); focusRefreshApply(); return; }
+		focusApplyValues(dec, force);
 	});
 }
 
@@ -2731,20 +2745,23 @@ function focusApply() {
 			'&fps=' + fps + '&motor=1';
 		if (enable) body += '&af=1';
 	}
+	var b = $('focus-save-btn');
+	if (b) b.disabled = true;
 	request('POST', '/api/focus?' + body, null, null, function (dec, status) {
-		if (!dec || dec.error) { toastError(dec); return; }
+		if (!dec || dec.error) { toastError(dec); focusRefreshApply(); return; }
 		if (appliedRoi) {
 			roiSelecting = false;
 			pendingRoi = null;
 			$('focus_mode').value = 'roi';
 			focusSelectionUpdate();
 		}
-		focusApplyValues(dec);
+		focusApplyValues(dec, true);
+		focusRefreshApply();
 	});
 }
 
 function focusStop() {
-	focusPost('enable=0&af=cancel');
+	focusPost('enable=0&af=cancel', true);
 }
 
 function focusMove(steps) {
@@ -3100,6 +3117,9 @@ function init() {
 
 	buildOsd();
 	initGroups();
+	/* Baseline for the focus card: without it the very first edit before the
+	   2 s poll would look clean and be overwritten. */
+	snapshotGroup('focus');
 
 	var btns = document.querySelectorAll('[data-apply]');
 	for (var i = 0; i < btns.length; i++) {
@@ -3141,7 +3161,7 @@ function init() {
 	$('manual-zoom-inc').onclick = function () { focusManualMove('zoom', 1); };
 	$('manual-stop-btn').onclick = focusManualStop;
 	$('af-fine-btn').onclick = function () {
-		focusPost('enable=1&motor=1&af=fine');
+		focusPost('enable=1&motor=1&af=fine', true);
 	};
 	$('manual_speed').onchange = focusManualSpeed;
 	$('home-focus-btn').onclick = function () { focusHome('focus'); };
