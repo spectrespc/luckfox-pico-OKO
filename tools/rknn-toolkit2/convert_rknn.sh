@@ -26,7 +26,7 @@ docker run --rm \
     -v "$CALIB":/calib:ro \
     -v "$ROOT/tools/rknn-toolkit2":/scripts:ro \
     -v "$WORK":/work \
-    -w /work oko-rknn-toolkit2:1.6.0 \
+    -w /work "${RKNN_TOOLKIT_IMAGE:-oko-rknn-toolkit2:1.6.0}" \
     python /scripts/convert.py "/onnx/$(basename -- "$ONNX")" \
         /work/dataset.txt "/work/$(basename -- "$OUTPUT")"
 

@@ -27,7 +27,7 @@
 | Разделы | `env` 256K, `idblock` 256K, `uboot` 512K, `boot` 6M, `oem` 40M, `userdata` 40M, `rootfs` 168M |
 | Активный DTS | `rv1106g-luckfox-pico-pro-max-sc230ai.dts` |
 | Медиастек | `divinus` (OpenIPC), H.265/H.264, JPEG, RTSP, WebUI |
-| NPU-стек | драйвер `rknpu` 0.9.8 (`20240828`, non-IOMMU), мини-рантайм `librknnmrt.so` 1.6.0 |
+| NPU-стек | драйвер `rknpu` 0.9.8 (`20240828`, non-IOMMU), мини-рантайм `librknnmrt.so` 1.6.0; опционально второй `librknnmrt2.so` 2.3.2 (`yolo.runtime: 2`) |
 | Сборка | Docker (`./start.sh`), результат — `output/image/update.img` |
 
 ### Как проверить
@@ -157,8 +157,9 @@ kernel 5.10.160. Partitions: `env` 256K, `idblock` 256K, `uboot` 512K, `boot` 6M
 `oem` 40M, `userdata` 40M, `rootfs` 168M. Active DTS:
 `rv1106g-luckfox-pico-pro-max-sc230ai.dts`. Media stack: `divinus` (OpenIPC),
 H.265/H.264, JPEG, RTSP, WebUI. NPU stack: `rknpu` driver 0.9.8 (`20240828`,
-non-IOMMU) with the `librknnmrt.so` 1.6.0 mini-runtime. Build: Docker
-(`./start.sh`), output `output/image/update.img`.
+non-IOMMU) with the `librknnmrt.so` 1.6.0 mini-runtime and an optional second
+`librknnmrt2.so` 2.3.2 (`yolo.runtime: 2`). Build: Docker (`./start.sh`),
+output `output/image/update.img`.
 
 Shared notes: see the Russian section above; open defects are in
 `KNOWN_ISSUES.md`, and unverified stream combinations, YOLO, sensors and

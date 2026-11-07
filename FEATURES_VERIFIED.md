@@ -70,6 +70,12 @@
   заблокирован — см. `FEATURES_UNVERIFIED.md`. Ящики в поток/JPEG не рисуются.
   AIISP и YOLO на `vpss3` работают одновременно (стенд, демо 640×640:
   main 30–33 fps, NPU 28%, без пропусков).
+- Второй рантайм RKNN 2.3.2 (`librknnmrt2.so`, SONAME изменён): включается
+  `yolo.runtime: 2`, модель собирается `tools/rknn-toolkit2/Dockerfile.toolkit2`
+  и активируется без рестарта. AIISP/RockIVA продолжают работать на 1.6.0 в
+  том же процессе; переключение `runtime=1` ↔ `runtime=2` проверено, 2-часовой
+  soak без утечек. Активация модели «чужого» рантайма отклоняется с причиной.
+  mAP 2.x-модели на размеченном наборе не измерялся.
 - librga на образе непригодна (легаси `c_RkRgaBlit` — SIGSEGV, im2d
   `importbuffer_fd` не импортирует ни MMZ-, ни dma-heap-fd, RGA по куче
   вешала плату), поэтому NV12→RGB888 считается на CPU: на 5 fps — ~21.5%
@@ -148,6 +154,13 @@ Status as of 2026-11-06.
   `FEATURES_UNVERIFIED.md`. Boxes are not drawn into the stream or JPEGs.
   AIISP and YOLO on `vpss3` run together (bench, 640×640 demo: main 30–33 fps,
   NPU 28%, no drops).
+- A second RKNN 2.3.2 runtime (`librknnmrt2.so`, distinct SONAME) is available
+  via `yolo.runtime: 2`; models are built with
+  `tools/rknn-toolkit2/Dockerfile.toolkit2` and activated without a restart.
+  AIISP/RockIVA keep using 1.6.0 in the same process; switching `runtime=1` ↔
+  `runtime=2` was verified, as was a 2-hour soak. Activating a model recorded
+  for the other runtime is refused with a reason. The 2.x model mAP has not
+  been measured on a labelled set.
 - librga is unusable on this image (legacy `c_RkRgaBlit` → SIGSEGV, im2d
   `importbuffer_fd` imports neither MMZ nor dma-heap fds, and RGA on the heap
   hung the board), so NV12→RGB888 runs on the CPU: at 5 fps ~21.5% of one core

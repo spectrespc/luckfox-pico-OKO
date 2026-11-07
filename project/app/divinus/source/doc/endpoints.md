@@ -564,6 +564,7 @@ NPU object detection settings (the `[yolo]` section of `divinus.yaml`).
 | GET | – | Current settings and `running` |
 | POST | `enable` | Start/stop the detector immediately |
 | POST | `source` | `vpss3` (default) or `vi0`; `vi1` and unknown values are rejected with HTTP 400 |
+| POST | `runtime` | `1` = `librknnmrt.so` 1.6.0 (default), `2` = `librknnmrt2.so` 2.x. Applied to the next activation, no restart |
 | POST | `input_width`, `input_height` | Must match the active model |
 | POST | `fps`, `conf_threshold`, `nms_threshold`, `classes` | Detection tuning |
 | POST | `pre_seconds`, `post_seconds`, `max_frames` | Event package bounds |
@@ -573,16 +574,24 @@ carrying `"note":"restart required..."` means that only the listed fields need a
 restart; `enable` is applied live. Example:
 
 ```json
-{"enable":true,"source":"vpss3","model":"/userdata/models/yolov5n.rknn",
+{"enable":true,"source":"vpss3","runtime":2,
+ "model_dir":"/userdata/models","model":"/userdata/models/yolov5n-r2.rknn",
  "input_width":640,"input_height":384,"fps":5,"conf_threshold":0.35,
  "nms_threshold":0.45,"classes":80,"pre_seconds":3,"post_seconds":2,
  "max_frames":20,"running":true}
 ```
 
-Enabling is refused with `{"error":"blocked","reason":...}` when the NPU
-runtime, the model file or VPSS channel 3 is unavailable. Setting
-`source=vi1` (VI selfpath hangs the RV1106 board) or any unknown value is
-rejected with HTTP 400 and `{"error":"invalid",...}`.
+`model_dir` is the `yolo.model_dir` value from `divinus.yaml`; the model path
+is changed only by `/api/models/activate`. Two runtimes can be installed at
+once: `runtime=1` uses `librknnmrt.so` (1.6.0, also used by AIISP/RockIVA),
+`runtime=2` uses `librknnmrt2.so` (2.x). A runtime change does not restart the
+process or the current context; it applies to the next activation.
+
+Enabling is refused with `{"error":"blocked","reason":...}` when the selected
+NPU runtime, the model file or VPSS channel 3 is unavailable. Setting
+`source=vi1` (VI selfpath hangs the RV1106 board), an unknown source or a
+runtime outside `1..2` is rejected with HTTP 400 and
+`{"error":"invalid",...}`.
 
 #### `/api/focus`
 
@@ -706,13 +715,25 @@ the socket without a response.
 {"dir":"/userdata/models","quota":3145728,"free":1417216,
  "active":"yolov5n.rknn","models":[
   {"name":"yolov5n.rknn","size":1990000,"sha256":"…","classes":80,
-   "width":640,"height":384,"active":true}]}
+   "width":640,"height":384,"runtime":1,"active":true},
+  {"name":"yolov5n-r2.rknn","size":2660586,"sha256":"…","classes":80,
+   "width":640,"height":384,"runtime":2,"active":false}]}
 ```
 
-`models.json` stores the size, SHA-256 and tensor metadata; it is rewritten
-atomically. Activation errors keep the previous model and return
-`{"error":"blocked","reason":"rknn_init failed (…): the model was probably
-built by an incompatible rknn-toolkit2"}`.
+`models.json` stores the size, SHA-256, tensor metadata and the `runtime`
+(`0` = not loaded yet, `1` = 1.6.0, `2` = 2.x); it is rewritten atomically.
+Activation refuses a model recorded for the other runtime:
+
+```json
+{"error":"blocked","reason":"model was activated with RKNN runtime 1; set yolo.runtime=1",
+ "hint":"the previous model stays active"}
+```
+
+If the file has no recorded runtime and `rknn_init` fails, activation probes
+the other runtime and reports
+`model needs RKNN runtime N (SDK …); set yolo.runtime=N and retry`. Other
+failures keep the previous model and return the `rknn_init failed (…)` reason
+from the runtime.
 
 Each event frame is a separate `PUT` to `http_post.url` (`http_post.host` may
 include a port, e.g. `192.168.52.200:8080`) with

@@ -57,6 +57,39 @@ tools/rknn-toolkit2/convert_rknn.sh \
 `mean=0`, `std=255`. Готовый файл — около 2.6 МиБ, укладывается в квоту
 загрузки 3 МиБ.
 
+## Второй рантайм 2.x
+
+Модель, собранная toolkit 2.x, не обязана грузиться рантаймом 1.6.0, поэтому
+в образе может лежать вторая копия мини-рантайма
+(`/oem/usr/lib/librknnmrt2.so`, см. `media/rknn2/README.md`). Образ
+конвертера для 2.x собирается отдельно (вендор поставляет только cp38-колесо,
+поэтому база — Python 3.8):
+
+```sh
+docker build -f tools/rknn-toolkit2/Dockerfile.toolkit2 \
+    -t oko-rknn-toolkit2:2.3.2 tools/rknn-toolkit2
+RKNN_TOOLKIT_IMAGE=oko-rknn-toolkit2:2.3.2 \
+  tools/rknn-toolkit2/convert_rknn.sh \
+    output/rknn/yolov5n-640x384.onnx \
+    output/bench/calib \
+    output/rknn/yolov5n-640x384-r2.rknn
+```
+
+Активация на устройстве:
+
+```sh
+curl -fsS -u admin:oko-change-me -X POST \
+    'http://<DUT_IP>/api/yolo?runtime=2'
+curl -fsS -u admin:oko-change-me -X POST \
+    'http://<DUT_IP>/api/models/activate?name=yolov5n-r2.rknn'
+```
+
+`yolo.runtime` применяется к следующей активации без рестарта; AIISP при этом
+продолжает работать на 1.6.0 в том же процессе. `models.json` помнит рантайм
+каждой модели, и активация «чужой» модели отклоняется с причиной. mAP
+2.x-модели на размеченном наборе пока не измерялся — сравнение с 1.6.0 по
+точности остаётся открытым пунктом.
+
 ## Загрузка и проверка
 
 ```sh

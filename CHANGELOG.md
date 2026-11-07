@@ -108,6 +108,30 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Добавлено
 
+- **Второй рантайм RKNN 2.x для YOLO (OKO).** В образ добавлен
+  `librknnmrt2.so` (2.3.2, SONAME изменён на `librknnmrt2.so`, см.
+  `media/rknn2/README.md`); AIISP и RockIVA продолжают использовать
+  `librknnmrt.so` 1.6.0 в том же процессе. `divinus` получил `yolo.runtime:
+  1 | 2` и `yolo.model_dir`; HAL держит два handle (2.x — абсолютный путь,
+  `RTLD_LOCAL`), после `rknn_init` проверяется major версии SDK.
+  `models.json` хранит `runtime` модели, активация «чужого» рантайма
+  отклоняется с причиной, переключение 1↔2 не требует рестарта. Сборка модели
+  2.x — `tools/rknn-toolkit2/Dockerfile.toolkit2` (вендорское колесо только
+  cp38). Обновлены `endpoints.md`, `FEATURES.md`, `FEATURES_VERIFIED.md`,
+  `FEATURES_UNVERIFIED.md`, `VERIFIED_FUNCTIONS.md`. Точность (mAP)
+  2.x-модели на размеченном наборе не измерялась.
+- **Second RKNN 2.x runtime for YOLO (OKO).** The image now ships
+  `librknnmrt2.so` (2.3.2, SONAME changed to `librknnmrt2.so`, see
+  `media/rknn2/README.md`); AIISP and RockIVA keep using the 1.6.0
+  `librknnmrt.so` in the same process. `divinus` gained `yolo.runtime: 1 | 2`
+  and `yolo.model_dir`; the HAL keeps two handles (2.x by absolute path,
+  `RTLD_LOCAL`) and checks the SDK major version after `rknn_init`.
+  `models.json` records the model runtime, activation of a model from the
+  other runtime is refused with a reason, and switching 1↔2 needs no restart.
+  The 2.x model is built by `tools/rknn-toolkit2/Dockerfile.toolkit2` (the
+  vendor wheel is cp38 only). Updated `endpoints.md`, `FEATURES.md`,
+  `FEATURES_VERIFIED.md`, `FEATURES_UNVERIFIED.md`, `VERIFIED_FUNCTIONS.md`.
+  The 2.x model accuracy (mAP) on a labelled set is not measured.
 - **VPN: WireGuard и AmneziaWG (OKO).** Out-of-tree модуль `amneziawg.ko`
   (вендорский слепок `amneziawg-linux-kernel-module` `v3.1.20260906`, без
   правок) в `sysdrv/drv_ko/amneziawg`; вендорские `wireguard-tools`

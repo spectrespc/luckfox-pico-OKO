@@ -45,6 +45,8 @@
 - `mpp` — аппаратные кодеки (кодирование/декодирование видео).
 - `rga` — 2D-графика и масштабирование.
 - `isp`, `iva`, `ive`, `rkpostisp` — обработка изображения с камеры и ускорение.
+- `rknn2` — опциональный второй мини-рантайм RKNN 2.x (`librknnmrt2.so`, SONAME
+  отделён от `librknnmrt.so` 1.6.0; см. `media/rknn2/README.md`).
 - `rockit` — фреймворк построения медиапайплайнов.
 - `avs`, `common_algorithm` — вспомогательные алгоритмы и панорамная сборка.
 - `libdrm`, `libv4l`, `alsa-lib` — системные библиотеки вывода/ввода.
@@ -172,9 +174,10 @@
   прошивка по USB.
 - `linux/SocToolKit` — низкоуровневые утилиты работы с SoC.
 - `rknn-toolkit2/` — Docker-сборка YOLOv5n → ONNX → INT8 `.rknn` для `rv1106`:
-  `Dockerfile.toolkit` (rknn-toolkit2 1.6.0), `Dockerfile.export` (Torch/
-  YOLOv5), `export_yolov5.sh`, `convert_rknn.sh`, `convert.py`; артефакты —
-  в `output/rknn/`.
+  `Dockerfile.toolkit` (rknn-toolkit2 1.6.0), `Dockerfile.toolkit2` (2.3.2 для
+  `yolo.runtime: 2`), `Dockerfile.runtime` (patchelf для `librknnmrt2.so`),
+  `Dockerfile.export` (Torch/YOLOv5), `export_yolov5.sh`, `convert_rknn.sh`,
+  `convert.py`; артефакты — в `output/rknn/`.
 - `stm32_push.sh`, `stm32_pull.sh` — commit и `git subtree push/pull` для
   `project/app/stm32_acpi-ec` относительно remote `stm32`.
 - `stm8_push.sh`, `stm8_pull.sh` — то же для `project/app/stm8-motor` и
