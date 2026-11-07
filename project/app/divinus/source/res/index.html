@@ -126,8 +126,8 @@
 	.badge-state.off { background: #f1f5f9; color: var(--muted); }
 	.badge-state.warn { background: #fef3c7; color: #92400e; }
 
-	#preview { position: relative; background: #0b1219; border-radius: 6px; min-height: 210px; display: flex; align-items: center; justify-content: center; color: #94a3b8; overflow: hidden; user-select: none; touch-action: none; }
-	#preview video, #preview img { width: 100%; display: block; }
+	#preview { position: relative; background: #0b1219; border-radius: 6px; min-height: 210px; display: flex; align-items: center; justify-content: center; color: #94a3b8; overflow: hidden; user-select: none; touch-action: none; max-height: calc(100vh - 520px); }
+	#preview video, #preview img { width: auto; max-width: 100%; max-height: calc(100vh - 520px); display: block; }
 	#preview p { padding: 1em; text-align: center; }
 
 	table { border-collapse: collapse; width: 100%; font-size: 13px; }
@@ -163,6 +163,7 @@
 	.focus-wrap { display: flex; gap: 1em; flex-wrap: wrap; align-items: flex-start; }
 	.focus-box { position: absolute; border: 2px solid #22c55e; background: rgba(34,197,94,.12);
 		display: none; pointer-events: none; box-sizing: border-box; }
+	.focus-box.pending { border-color: #f59e0b; background: rgba(245,158,11,.14); }
 	.focus-side { flex: 1 1 260px; min-width: 240px; }
 	.focus-metric { font-size: 22px; font-weight: 700; margin: .2em 0 .5em; }
 	#fw-versions .tel b { font-size: 13px; }
@@ -263,9 +264,6 @@
 								<option value="roi" data-i18n="focus_roi">ROI</option></select></div></div>
 						<div class="field"><label data-i18n="focus_rate">Refresh rate</label>
 							<div class="ctl"><input type="number" id="focus_fps" min="1" max="10"></div></div>
-						<div class="field"><label data-i18n="focus_motor">Motor</label>
-							<div class="ctl"><select id="focus_motor">
-								<option value="false">OFF</option><option value="true">ON</option></select></div></div>
 						<div class="bar"><div id="focus-bar"></div></div>
 						<div class="focus-metric" id="focus-metric">–</div>
 						<div class="actions">
@@ -274,6 +272,7 @@
 						<div class="actions">
 							<button type="button" class="btn" id="focus-near-btn" title="near">◀</button>
 							<button type="button" class="btn" id="focus-far-btn" title="far">▶</button>
+							<button type="button" class="btn" id="focus-select-btn">Select zone</button>
 							<button type="button" class="btn primary" id="focus-save-btn" data-i18n="focus_apply">Apply</button>
 						</div>
 						<h4 data-i18n="manual_lens">Manual lens control</h4>
@@ -306,8 +305,9 @@
 							<button type="button" class="btn" id="zero-focus-btn" data-i18n="zero_focus">Zero focus</button>
 							<button type="button" class="btn" id="zero-zoom-btn" data-i18n="zero_zoom">Zero zoom</button>
 						</div>
+						<p class="note" id="af-state"></p>
 						<p class="note" id="home-state-note"></p>
-						<p class="note" data-i18n="focus_note">Drag a rectangle over the live video to measure only that area. Values are relative to the sensor frame; mirror/flip are taken into account; rotation (90°/270°) is not.</p>
+						<p class="note" data-i18n="focus_note">Press Select zone, drag a rectangle over the live video, then Apply; Apply also starts the auto-focus. Values are relative to the sensor frame; mirror/flip are taken into account; rotation (90°/270°) is not.</p>
 						<p class="note" id="focus-motor-note"></p>
 					</div>
 				</div>
@@ -1074,8 +1074,13 @@ var I18N = {
 		apply_iq: "Apply IQ", hdr_note: "HDR requires a restart; it is refused while AIISP is on.",
 		focus: "Focus assist", focus_enable: "Enable", focus_mode: "Mode",
 		focus_full: "Full frame", focus_roi: "ROI", focus_rate: "Refresh rate",
-		focus_motor: "Motor", focus_stop: "Stop", focus_apply: "Apply",
-		focus_note: "Drag a rectangle over the live video to measure only that area. Values are relative to the sensor frame; mirror/flip are taken into account; rotation (90°/270°) is not.",
+		focus_stop: "Stop", focus_apply: "Apply",
+		select_zone: "Select zone", zone_done: "Done", zone_cancel: "Cancel",
+		zone_hint: "Press Select zone, drag a rectangle, then Apply.",
+		af_running: "Auto-focus", af_done: "Focused",
+		af_cancelled: "Auto-focus cancelled", af_error: "Auto-focus failed",
+		focus_armed: "driver armed", focus_disarmed: "driver idle",
+		focus_note: "Press Select zone, drag a rectangle over the live video, then Apply; Apply also starts the auto-focus. Values are relative to the sensor frame; mirror/flip are taken into account; rotation (90°/270°) is not.",
 		manual_lens: "Manual lens control", manual_step: "Step",
 		manual_speed: "Speed", home_focus: "Home focus", home_zoom: "Home zoom",
 		zero_focus: "Zero focus", zero_zoom: "Zero zoom",
@@ -1245,8 +1250,13 @@ var I18N = {
 		apply_iq: "Применить IQ", hdr_note: "HDR требует перезапуска; отключается при включённом AIISP.",
 		focus: "Помощь фокусировке", focus_enable: "Включить", focus_mode: "Режим",
 		focus_full: "Весь кадр", focus_roi: "Область", focus_rate: "Частота обновления",
-		focus_motor: "Мотор", focus_stop: "Стоп", focus_apply: "Применить",
-		focus_note: "Выделите прямоугольник прямо на живом видео, чтобы измерять только эту область. Значения привязаны к кадру сенсора, зеркало и переворот учитываются, поворот (90°/270°) — нет.",
+		focus_stop: "Стоп", focus_apply: "Применить",
+		select_zone: "Выделить зону", zone_done: "Готово", zone_cancel: "Отмена",
+		zone_hint: "Нажмите «Выделить зону», обведите прямоугольник и нажмите «Применить».",
+		af_running: "Автофокус", af_done: "Наведено",
+		af_cancelled: "Автофокус отменён", af_error: "Автофокус не удался",
+		focus_armed: "привод взведён", focus_disarmed: "привод не взведён",
+		focus_note: "Нажмите «Выделить зону», обведите прямоугольник на живом видео и нажмите «Применить»; «Применить» также запускает автофокус. Значения привязаны к кадру сенсора, зеркало и переворот учитываются, поворот (90°/270°) — нет.",
 		manual_lens: "Ручное управление объективом", manual_step: "Шаг",
 		manual_speed: "Скорость", home_focus: "Упор focus", home_zoom: "Упор zoom",
 		zero_focus: "Обнулить focus", zero_zoom: "Обнулить zoom",
@@ -1378,6 +1388,11 @@ function applyLang() {
 	var en = document.getElementById('lang-en'), ru = document.getElementById('lang-ru');
 	if (en) en.className = lang === 'en' ? 'on' : '';
 	if (ru) ru.className = lang === 'ru' ? 'on' : '';
+	if (typeof focusSelectionUpdate === 'function') focusSelectionUpdate();
+	if (focusState) {
+		var afNote = $('af-state');
+		if (afNote) afNote.textContent = focusAfText(focusState.af);
+	}
 }
 
 function setLang(next) {
@@ -2479,6 +2494,7 @@ function rebootDevice() {
 
 /* ============================ focus assist ============================ */
 var focusState = null, focusMax = 0;
+var roiSelecting = false, pendingRoi = null;
 
 function focusSetBadge(el, cls, text) {
 	if (!el) return;
@@ -2486,20 +2502,91 @@ function focusSetBadge(el, cls, text) {
 	el.textContent = text;
 }
 
+function focusMediaRect() {
+	var el = document.querySelector('#preview video, #preview img');
+	return el ? el.getBoundingClientRect() : null;
+}
+
+function focusHideBox() {
+	var box = $('focus-box');
+	if (box) { box.className = 'focus-box'; box.style.display = 'none'; }
+}
+
+/* Positions #focus-box in preview pixels for a normalized (0..1) rectangle.
+   The media element can be smaller than the preview (it keeps its aspect
+   ratio), so the offsets matter. */
+function focusPlaceBox(nx, ny, nw, nh, pending) {
+	var box = $('focus-box'), frame = $('preview'), r = focusMediaRect();
+	if (!box || !frame || !r || !r.width || !r.height) return false;
+	var p = frame.getBoundingClientRect();
+	box.className = 'focus-box' + (pending ? ' pending' : '');
+	box.style.left = (r.left - p.left + nx * r.width) + 'px';
+	box.style.top = (r.top - p.top + ny * r.height) + 'px';
+	box.style.width = (nw * r.width) + 'px';
+	box.style.height = (nh * r.height) + 'px';
+	box.style.display = 'block';
+	return true;
+}
+
 function focusDrawBox(roi, mode) {
 	var box = $('focus-box');
 	if (!box) return;
-	if (!roi || mode !== 'roi') { box.style.display = 'none'; return; }
-	var x = roi.x / 100, y = roi.y / 100, w = roi.w / 100, h = roi.h / 100;
+	/* An unapplied zone stays visible until Apply or Cancel, even after the
+	   selection mode was left with "Done". */
+	if (pendingRoi) {
+		focusPlaceBox(pendingRoi.x, pendingRoi.y, pendingRoi.w, pendingRoi.h, true);
+		return;
+	}
+	if (!roi || mode !== 'roi') { focusHideBox(); return; }
+	var x = roi.x / 10000, y = roi.y / 10000, w = roi.w / 10000, h = roi.h / 10000;
 	var mir = $('isp_mirror') && $('isp_mirror').value === 'true';
 	var fl = $('isp_flip') && $('isp_flip').value === 'true';
 	if (mir) x = 1 - (x + w);
 	if (fl) y = 1 - (y + h);
-	box.style.left = (x * 100) + '%';
-	box.style.top = (y * 100) + '%';
-	box.style.width = (w * 100) + '%';
-	box.style.height = (h * 100) + '%';
-	box.style.display = 'block';
+	if (!focusPlaceBox(x, y, w, h, false)) focusHideBox();
+}
+
+function focusSelectionUpdate() {
+	var btn = $('focus-select-btn');
+	if (btn) btn.textContent = !roiSelecting ? t('select_zone') :
+		(pendingRoi ? t('zone_done') : t('zone_cancel'));
+}
+
+function focusSelectionCancel() {
+	roiSelecting = false;
+	pendingRoi = null;
+	focusSelectionUpdate();
+	focusDrawBox(focusState && focusState.roi, focusState && focusState.mode);
+}
+
+function focusSelectionToggle() {
+	if (!roiSelecting) {
+		roiSelecting = true;
+		pendingRoi = null;
+		focusSelectionUpdate();
+		toast('info', t('select_zone'), t('zone_hint'));
+		return;
+	}
+	if (pendingRoi) {
+		/* "Done": keep the zone for Apply, leave the selection mode. */
+		roiSelecting = false;
+		focusSelectionUpdate();
+		focusDrawBox(null, null);
+		return;
+	}
+	focusSelectionCancel();
+}
+
+function focusAfText(af) {
+	if (!af || af.state === 'idle') return '';
+	if (af.state === 'running')
+		return t('af_running') + ' · ' + (af.progress || 0) + '% · ' +
+			focusPosText(af.position) + ' · FV ' + (af.metric || 0);
+	if (af.state === 'done')
+		return t('af_done') + ': ' + focusPosText(af.best_position) +
+			' · FV ' + (af.best_metric || 0);
+	if (af.error === 'cancelled') return t('af_cancelled');
+	return t('af_error') + (af.error ? ': ' + af.error : '');
 }
 
 function focusApplyValues(dec) {
@@ -2508,7 +2595,6 @@ function focusApplyValues(dec) {
 	$('focus_enable').value = dec.enable ? 'true' : 'false';
 	$('focus_mode').value = dec.mode || 'full';
 	$('focus_fps').value = dec.fps || 5;
-	$('focus_motor').value = dec.motor && dec.motor.enabled ? 'true' : 'false';
 	focusSetBadge($('focus-state'),
 		dec.status === 'running' ? 'on' : (dec.status === 'idle' ? 'off' : 'warn'),
 		dec.status);
@@ -2518,12 +2604,16 @@ function focusApplyValues(dec) {
 	$('focus-bar').style.width = focusMax ? Math.round(avg * 100 / focusMax) + '%' : '0%';
 	focusDrawBox(dec.roi, dec.mode);
 	focusRenderManual(dec);
+	focusSelectionUpdate();
 	var note = $('focus-motor-note');
 	if (note) {
 		var m = dec.motor || {};
-		note.textContent = m.present ? (m.status === 'boot' ? t('fw_boot') : m.device + ' 0x' +
-			Number(m.address).toString(16).toUpperCase() + (m.version ? ' · ' + m.version : '')) :
-			(m.enabled ? t('fw_absent') : '');
+		if (!m.present)
+			note.textContent = m.enabled ? t('fw_absent') : '';
+		else
+			note.textContent = m.device + ' · ' +
+				(m.enabled ? t('focus_armed') : t('focus_disarmed')) +
+				(m.version ? ' · ' + m.version : '');
 	}
 }
 
@@ -2541,23 +2631,46 @@ function focusPost(extra) {
 }
 
 function focusApply() {
-	var body = 'enable=' + ($('focus_enable').value === 'true' ? '1' : '0') +
-		'&mode=' + encodeURIComponent($('focus_mode').value) +
-		'&fps=' + encodeURIComponent($('focus_fps').value) +
-		'&motor=' + ($('focus_motor').value === 'true' ? '1' : '0');
-	focusPost(body);
+	var enable = $('focus_enable').value === 'true';
+	var fps = encodeURIComponent($('focus_fps').value);
+	var body, appliedRoi = false;
+
+	if (pendingRoi) {
+		var mir = $('isp_mirror') && $('isp_mirror').value === 'true';
+		var fl = $('isp_flip') && $('isp_flip').value === 'true';
+		var nx = pendingRoi.x, ny = pendingRoi.y;
+		var nw = pendingRoi.w, nh = pendingRoi.h;
+		if (mir) nx = 1 - (nx + nw);
+		if (fl) ny = 1 - (ny + nh);
+		var bp = function (v) { return Math.max(0, Math.min(10000, Math.round(v * 10000))); };
+		body = 'enable=1&mode=roi&rx=' + bp(nx) + '&ry=' + bp(ny) +
+			'&rw=' + bp(nw) + '&rh=' + bp(nh) + '&fps=' + fps +
+			'&motor=1&af=1';
+		appliedRoi = true;
+	} else {
+		body = 'enable=' + (enable ? '1' : '0') +
+			'&mode=' + encodeURIComponent($('focus_mode').value) +
+			'&fps=' + fps + '&motor=1';
+		if (enable) body += '&af=1';
+	}
+	request('POST', '/api/focus?' + body, null, null, function (dec, status) {
+		if (!dec || dec.error) { toastError(dec); return; }
+		if (appliedRoi) {
+			roiSelecting = false;
+			pendingRoi = null;
+			$('focus_mode').value = 'roi';
+			focusSelectionUpdate();
+		}
+		focusApplyValues(dec);
+	});
 }
 
 function focusStop() {
-	focusPost('enable=0');
+	focusPost('enable=0&af=cancel');
 }
 
 function focusMove(steps) {
-	if (!focusState || !focusState.motor || !focusState.motor.enabled) {
-		toast('err', t('focus_motor'), t('off'));
-		return;
-	}
-	focusPost('move=' + steps);
+	focusPost('move=' + steps + '&motor=1&scale=focus');
 }
 
 /* ===================== manual lens control ===================== */
@@ -2570,24 +2683,36 @@ function focusPosText(value) {
 function focusManualUsable() {
 	var m = focusState && focusState.motor;
 	var home = focusState && focusState.home;
-	return !!(m && m.enabled && m.present) &&
-		!(home && home.state === 'running');
+	var af = focusState && focusState.af;
+	var job = (home && home.state === 'running') ||
+		(af && af.state === 'running');
+	return !!(m && m.present && !m.bootloader) && !job;
 }
 
 function focusRenderManual(dec) {
 	var m = (dec && dec.motor) || {};
 	var f = m.focus || {}, z = m.zoom || {};
 	var home = (dec && dec.home) || { state: 'idle' };
+	var af = (dec && dec.af) || { state: 'idle' };
 	var usable = focusManualUsable();
 	var buttons = ['manual-focus-dec', 'manual-focus-inc', 'manual-zoom-dec',
-		'manual-zoom-inc', 'manual-stop-btn', 'home-focus-btn', 'home-zoom-btn',
+		'manual-zoom-inc', 'home-focus-btn', 'home-zoom-btn',
 		'zero-focus-btn', 'zero-zoom-btn'];
 	for (var i = 0; i < buttons.length; i++) {
 		var b = $(buttons[i]);
 		if (b) b.disabled = !usable;
 	}
+	/* Stop must stay reachable while the auto-focus is running (it cancels
+	   the search), but not while the motors home with a busy reply. */
+	var stop = $('manual-stop-btn');
+	if (stop)
+		stop.disabled = !(m.present && !m.bootloader) ||
+			(home.state === 'running');
 	$('manual-readout').textContent = 'focus: ' + focusPosText(f.position) +
 		' · zoom: ' + focusPosText(z.position);
+
+	var afNote = $('af-state');
+	if (afNote) afNote.textContent = focusAfText(af);
 
 	var note = $('home-state-note');
 	if (note) {
@@ -2630,28 +2755,25 @@ function focusRenderManual(dec) {
 
 function focusManualMove(motor, direction) {
 	var step = parseInt($('manual_step').value, 10) || 50;
-	if (!focusManualUsable()) {
-		toast('err', t('focus_motor'), t('off'));
-		return;
-	}
-	focusPost('move=' + (direction * step) + '&motor=' + motor);
+	if (!focusManualUsable()) return;
+	focusPost('move=' + (direction * step) + '&motor=1&scale=' + motor);
 }
 
 function focusManualSpeed() {
 	focusPost('speed=' + encodeURIComponent($('manual_speed').value) +
-		'&motor=both');
+		'&motor=1&scale=both');
 }
 
 function focusManualStop() {
-	focusPost('stop=1');
+	focusPost('af=cancel&stop=1&motor=0');
 }
 
 function focusHome(target) {
-	focusPost('home=' + target);
+	focusPost('home=' + target + '&motor=1');
 }
 
 function focusZero(target) {
-	focusPost('zero=' + target);
+	focusPost('zero=' + target + '&motor=1');
 }
 
 (function () {
@@ -2670,12 +2792,13 @@ function focusZero(target) {
 			y: Math.max(0, Math.min(r.height, e.clientY - r.top))
 		};
 	}
-	/* #focus-box is positioned in percent of #preview, so account for the
-	   offset between the media element and its container. */
+	/* #focus-box lives in #preview while the media element may be offset
+	   (aspect-ratio letterboxing), so place it from the media rect. */
 	function placeBox(x0, y0, x1, y1, r) {
 		var box = $('focus-box');
 		if (!box) return;
 		var p = preview.getBoundingClientRect();
+		box.className = 'focus-box pending';
 		box.style.left = (r.left - p.left + Math.min(x0, x1)) + 'px';
 		box.style.top = (r.top - p.top + Math.min(y0, y1)) + 'px';
 		box.style.width = Math.abs(x1 - x0) + 'px';
@@ -2685,10 +2808,17 @@ function focusZero(target) {
 
 	preview.addEventListener('pointerdown', function (e) {
 		if (e.button !== 0) return;
+		/* Dragging is a two-step action: Enter selection mode first. */
+		if (!roiSelecting) {
+			toast('info', t('select_zone'), t('zone_hint'));
+			return;
+		}
 		var r = rect();
 		if (!r) { toast('info', t('roi_need_stream')); return; }
 		if (!r.width || !r.height || !$('focus-box')) return;
 		dragging = true;
+		pendingRoi = null;
+		focusSelectionUpdate();
 		var p = local(e, r);
 		startX = p.x;
 		startY = p.y;
@@ -2714,18 +2844,16 @@ function focusZero(target) {
 		var ny = Math.min(p.y, startY) / r.height;
 		var nw = Math.abs(p.x - startX) / r.width;
 		var nh = Math.abs(p.y - startY) / r.height;
-		var box = $('focus-box');
-		if (nw < 0.03 || nh < 0.03) { if (box) box.style.display = 'none'; return; }
-		var mir = $('isp_mirror') && $('isp_mirror').value === 'true';
-		var fl = $('isp_flip') && $('isp_flip').value === 'true';
-		if (mir) nx = 1 - (nx + nw);
-		if (fl) ny = 1 - (ny + nh);
-		var bp = function (v) { return Math.max(0, Math.min(10000, Math.round(v * 10000))); };
-		var body = 'enable=1&mode=roi&rx=' + bp(nx) + '&ry=' + bp(ny) +
-			'&rw=' + bp(nw) + '&rh=' + bp(nh) +
-			'&fps=' + encodeURIComponent($('focus_fps').value) +
-			'&motor=' + ($('focus_motor').value === 'true' ? '1' : '0');
-		focusPost(body);
+		if (nw < 0.03 || nh < 0.03) {
+			focusDrawBox(focusState && focusState.roi, focusState && focusState.mode);
+			return;
+		}
+		/* Keep the rectangle in stream coordinates; mirror/flip are applied
+		   only when Apply builds the POST, because the toggle may change in
+		   between. */
+		pendingRoi = { x: nx, y: ny, w: nw, h: nh };
+		focusSelectionUpdate();
+		focusDrawBox(null, null);
 	}
 
 	preview.addEventListener('pointerup', finish);
@@ -2834,7 +2962,10 @@ function loadSection(name) {
 
 function showSection(name) {
 	if (!SECTION_LOAD[name]) name = 'live';
-	if (activeSec === 'live' && name !== 'live') previewStop();
+	if (activeSec === 'live' && name !== 'live') {
+		previewStop();
+		if (roiSelecting || pendingRoi) focusSelectionCancel();
+	}
 	activeSec = name;
 	var secs = document.querySelectorAll('.sec');
 	for (var i = 0; i < secs.length; i++)
@@ -2908,6 +3039,10 @@ function init() {
 	document.addEventListener('change', function (e) {
 		if (e.target && e.target.getAttribute && e.target.getAttribute('data-group')) refreshAllGroups();
 	});
+	document.addEventListener('keydown', function (e) {
+		if (e.key === 'Escape' && (roiSelecting || pendingRoi))
+			focusSelectionCancel();
+	});
 
 	apiRead('status');
 	apiRead('record');
@@ -2918,6 +3053,7 @@ function init() {
 	showSection(SECTION_LOAD[start] ? start : 'live');
 
 	$('focus-save-btn').onclick = focusApply;
+	$('focus-select-btn').onclick = focusSelectionToggle;
 	$('focus-stop-btn').onclick = focusStop;
 	$('focus-near-btn').onclick = function () { focusMove(-200); };
 	$('focus-far-btn').onclick = function () { focusMove(200); };

@@ -267,8 +267,10 @@ curl -s -u admin:oko-change-me http://192.168.52.97/api/firmware
 /oem/usr/bin/oko-ec info
 
 # AF-метрика: 20 отсчётов; для SC230AI нужен contrast_af.enable=1 в IQ
-curl -s -X POST -u admin:oko-change-me 'http://192.168.52.97/api/focus?enable=1'
+curl -s -X POST -u admin:oko-change-me 'http://192.168.52.97/api/focus?enable=1&motor=1'
 bench/run.sh focus_check.py --seconds 20 --interval 1 --snapshot
+# автофокус по контрастной сцене (opt-in): full + ROI, кривые в output/bench/
+OKO_FOCUS_MOTOR_TESTS=1 OKO_FOCUS_AF_TESTS=1 bench/run.sh api_check.py
 
 # VPN: модуль по требованию, утилиты и профили
 lsmod | grep amneziawg
@@ -282,7 +284,7 @@ bench/run.sh vpn_check.py --peer-host 192.168.52.1 \
 # прошивка через WebUI: негативные проверки (400) и реальный STM8
 bench/run.sh firmware_check.py --negative
 bench/run.sh firmware_check.py --flash --target stm8 \
-  --file project/app/stm8-motor/build/app-2.0.1.ihx --confirm FLASH
+  --file project/app/stm8-motor/build/app-2.1.1.ihx --confirm FLASH
 
 # NPU в OSD: строка должна появиться после старта YOLO
 cat /tmp/osd-sys.txt; cat /proc/rknpu/load
@@ -334,6 +336,7 @@ hexdump -C /sys/class/i2c-adapter/i2c-3/of_node/clock-frequency
 bench/run.sh focus_check.py
 bench/run.sh focus_check.py --enable --polls 10
 curl -s -u admin:oko-change-me 'http://192.168.52.97/api/focus?map=1'
+curl -s -u admin:oko-change-me 'http://192.168.52.97/api/focus' | grep -o '"af":{[^}]*}'
 i2cdetect -y 3 | grep -E ' 42 | 60 '
 cat /tmp/osd-sys.txt
 oko-motor info

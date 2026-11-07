@@ -271,6 +271,12 @@ mjpeg:
 #   zoom_speed: 300
 #   zoom_min_pos: 0       # zoom travel: 2275 steps (datasheet)
 #   zoom_max_pos: 2275
+#   af_coarse: 150        # auto-focus coarse step, 10..500
+#   af_fine: 25           # auto-focus fine step, 1..200
+#   af_patience: 3        # stop after N non-improving samples, 1..10
+#   af_settle_ms: 600     # let the AF statistics settle after a move
+#   af_timeout_s: 60      # whole search timeout, 10..180
+#   af_min_gain_pct: 2    # required metric gain over the start, 0..50
 #
 # flash:
 #   enable: true          # controller firmware upload via the WebUI

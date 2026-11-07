@@ -9,6 +9,7 @@ card.  Run it through the wrapper so the venv is used:
     bench/run.sh api_check.py
 """
 import base64
+import csv
 import json
 import os
 import sys
@@ -139,21 +140,153 @@ def wait_motor(motor, timeout=60):
     return dec
 
 
+def wait_af(timeout=180, curve=None):
+    """Polls the AF job and records a (position, metric) curve while it runs."""
+    deadline = time.time() + timeout
+    dec = {}
+    seen = set()
+    while time.time() < deadline:
+        _status, dec = get_focus()
+        af = dec.get("af") or {}
+        pos = af.get("position")
+        metric = af.get("metric")
+        if curve is not None and pos is not None:
+            key = (pos, metric)
+            if key not in seen:
+                seen.add(key)
+                curve.append((pos, metric, af.get("best_position"),
+                              af.get("best_metric"), af.get("state")))
+        if af.get("state") in ("done", "error", "idle"):
+            return dec
+        time.sleep(0.5)
+    return dec
+
+
+def start_af(query="af=1&motor=1", tries=15):
+    """Starts a search, retrying while the previous worker is still unwinding
+    (its terminal state is published just before the busy flag clears)."""
+    status, dec = post_focus(query)
+    for _ in range(tries):
+        if (dec.get("af") or {}).get("state") == "running":
+            return status, dec
+        if dec.get("error") != "busy":
+            return status, dec
+        time.sleep(0.2)
+        status, dec = post_focus(query)
+    return status, dec
+
+
+def write_af_curve(curve, name):
+    os.makedirs(os.path.join("output", "bench"), exist_ok=True)
+    path = os.path.join("output", "bench", "af_curve_%s_%s.csv" %
+                        (name, time.strftime("%Y%m%d-%H%M%S")))
+    with open(path, "w", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["position", "metric", "best_position",
+                         "best_metric", "state"])
+        writer.writerows(curve)
+    print("AF curve %s: %d points -> %s" % (name, len(curve), path))
+    return path
+
+
+def focus_af_checks(failures, checks):
+    """Opt-in real-scene auto-focus run (OKO_FOCUS_AF_TESTS=1)."""
+    checks += 1
+    status, dec = post_focus("enable=1&motor=1&mode=full&fps=5")
+    if dec.get("enable") is not True:
+        failures.append("cannot start the AF statistics: %s %r" % (status, dec))
+    print("AF statistics:", dec.get("status"), "fps", dec.get("fps"))
+
+    # A trusted scale: AF starts from a homed position.
+    post_focus("home=focus&motor=1")
+    dec = wait_home(180)
+    print("AF home ->", (dec.get("home") or {}).get("state"),
+          ((dec.get("motor") or {}).get("focus") or {}).get("position"))
+
+    for mode in ("full", "roi"):
+        status, dec = start_af(
+            "mode=%s&rx=2500&ry=2500&rw=5000&rh=5000&fps=5&motor=1&af=1" %
+            mode)
+        checks += 1
+        af = dec.get("af") or {}
+        if af.get("state") != "running":
+            failures.append("AF %s did not start: %r" % (mode, af))
+            continue
+        print("POST af=1 mode=%s -> running" % mode)
+
+        checks += 1
+        busy_status, busy = post_focus("af=1&motor=1")
+        if busy_status != 409:
+            failures.append("second AF: expected 409, got %s %r" %
+                            (busy_status, busy))
+        checks += 1
+        home_status, home = post_focus("home=focus&motor=1")
+        if home_status != 409:
+            failures.append("home during AF: expected 409, got %s %r" %
+                            (home_status, home))
+
+        curve = []
+        dec = wait_af(180, curve)
+        write_af_curve(curve, mode)
+        af = dec.get("af") or {}
+        checks += 1
+        if af.get("state") != "done":
+            failures.append("AF %s: state %r error %r" %
+                            (mode, af.get("state"), af.get("error")))
+        print("AF %s -> state %s best %s metric %s" %
+              (mode, af.get("state"), af.get("best_position"),
+               af.get("best_metric")))
+
+    # Cancel path: start and cancel immediately.
+    checks += 1
+    status, dec = start_af()
+    af = dec.get("af") or {}
+    if af.get("state") == "running":
+        post_focus("af=cancel")
+        dec = wait_af(30)
+        af = dec.get("af") or {}
+        if af.get("error") != "cancelled" or af.get("state") != "error":
+            failures.append("AF cancel: state %r error %r" %
+                            (af.get("state"), af.get("error")))
+        print("AF cancel ->", af.get("state"), af.get("error"))
+    else:
+        failures.append("AF did not start for the cancel test: %r" % af)
+
+    # A plain motor stop also cancels a running search.
+    checks += 1
+    status, dec = start_af()
+    af = dec.get("af") or {}
+    if af.get("state") == "running":
+        post_focus("stop=1&motor=0")
+        dec = wait_af(30)
+        af = dec.get("af") or {}
+        if af.get("error") != "cancelled" or af.get("state") != "error":
+            failures.append("AF stop=1: state %r error %r" %
+                            (af.get("state"), af.get("error")))
+        print("AF stop=1 ->", af.get("state"), af.get("error"))
+    else:
+        failures.append("AF did not start for the stop test: %r" % af)
+
+    post_focus("enable=0&af=cancel&motor=0")
+    return checks
+
+
 def focus_checks(failures, checks):
     """Home/zero and the manual focus/zoom matrix."""
     _status, dec = get_focus()
     motor = dec.get("motor") or {}
 
     checks += 1
-    if "home" not in dec or "focus" not in motor or "zoom" not in motor:
-        failures.append("/api/focus is missing home/focus/zoom: %r" %
+    if "home" not in dec or "af" not in dec or \
+       "focus" not in motor or "zoom" not in motor:
+        failures.append("/api/focus is missing home/af/focus/zoom: %r" %
             list(dec.keys()))
     print("focus motor:", "enabled" if motor.get("enabled") else "disabled",
           "present" if motor.get("present") else "absent")
 
     # Argument validation is safe without a motor.
     for query in ("home=bogus", "zero=bogus", "home=focus&zero=focus",
-                  "move=1&motor=bogus"):
+                  "move=1&motor=bogus", "af=bogus", "scale=bogus"):
         checks += 1
         status, dec = post_focus(query)
         if status != 400 or dec.get("error") != "invalid":
@@ -161,7 +294,18 @@ def focus_checks(failures, checks):
                 (query, status, dec))
         print("POST %-28s %s %s" % (query, status, dec.get("error", "?")))
 
-    if not (motor.get("enabled") and motor.get("present")):
+    if not motor.get("present"):
+        checks += 1
+        status, dec = post_focus("home=focus")
+        if dec.get("error") != "blocked":
+            failures.append("home with motor absent: expected blocked, got %r"
+                % dec)
+        print("POST %-28s %s %s" % ("home=focus (absent)", status,
+            dec.get("error", "?")))
+        print("focus motion: skipped (motor absent)")
+        return checks
+
+    if not motor.get("enabled"):
         checks += 1
         status, dec = post_focus("home=focus")
         if dec.get("error") != "blocked":
@@ -169,12 +313,19 @@ def focus_checks(failures, checks):
                 % dec)
         print("POST %-28s %s %s" % ("home=focus (disabled)", status,
             dec.get("error", "?")))
-        print("focus motion: skipped (motor disabled/absent)")
-        return checks
+
+    if os.environ.get("OKO_FOCUS_AF_TESTS") == "1":
+        checks = focus_af_checks(failures, checks)
+    else:
+        print("focus auto-focus: skipped (set OKO_FOCUS_AF_TESTS=1 to run)")
 
     if os.environ.get("OKO_FOCUS_MOTOR_TESTS") != "1":
         print("focus motion: skipped (set OKO_FOCUS_MOTOR_TESTS=1 to run)")
         return checks
+
+    # The WebUI arms the driver on every motion command; scripts may still
+    # arm once and use the legacy scale spelling.
+    post_focus("motor=1")
 
     # Zero focus and verify the readback through SET_POS.
     checks += 1

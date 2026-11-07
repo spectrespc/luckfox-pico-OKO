@@ -22,6 +22,104 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
    конфигурации или документации проекта.
 6. `UPDATE_LOG.md` / `UPDATE_LOG_CN.md` — неприкосновенный вендорский архив.
 
+## [Не выпущено]
+
+### Добавлено
+
+- **Автофокус по AF-метрике (OKO).** Новый модуль `focus_af.c` выполняет
+  поиск фокуса по статистике `metric_avg` (вариант B из `TO_DO.md` §5):
+  зонд направления половинным шагом, coarse-проход с остановкой после
+  `af_patience` неулучшений или у границы, fine-проход между лучшими
+  точками и переход к лучшей позиции. После каждого хода — пауза
+  `af_settle_ms` и медиана трёх свежих кадров; сырое среднее используется
+  потому, что `metric_smooth` — EMA и отстаёт на несколько кадров. Поиск
+  ограничен `[max(0, min_pos)+home_margin, max_pos-home_margin]` (KI-042:
+  отрицательные позиции не командуются), `af_timeout_s` и проверкой
+  `status==error`; на плоской сцене возвращается ошибка «peak not found».
+  `POST /api/focus?af=1` запускает job в том же запросе, что и
+  `enable/mode/roi/fps/motor=1`, `af=cancel` и `stop=1` отменяют его,
+  `GET /api/focus` отдаёт блок `af` (`state`, `position`, `best_position`,
+  `metric`, `best_metric`, `progress`, `done`, `error`). Взаимные
+  блокировки: AF не стартует при home/zero или прошивке контроллера,
+  home/zero/ручные движения и `POST /api/flash` получают 409 при активном
+  поиске. Параметры `[focus]`: `af_coarse=150`, `af_fine=25`,
+  `af_patience=3`, `af_settle_ms=600`, `af_timeout_s=60`,
+  `af_min_gain_pct=2`. Чистые решающие правила вынесены в
+  `focus_af_algo.c` и покрыты `tests/focus_af_test.c`; обновлены
+  `endpoints.md`, `README.md` divinus, `TO_DO.md`, `STRUCTURE.md` и
+  `FEATURES_UNVERIFIED.md`. На стенде 2026-11-07 обе ветки (`full`/`roi`)
+  завершились `done`, но метрика не зависит от позиции мотора (объектив
+  стенда не связан с приводом), поэтому сходимость не подтверждена;
+  кривые — в `output/bench/af_curve_*.csv`.
+- **Auto-focus over the AF metric (OKO).** The new `focus_af.c` searches for
+  focus using the `metric_avg` statistics (variant B in `TO_DO.md` §5): a
+  half-step direction probe, a coarse pass that stops after `af_patience`
+  non-improvements or at a travel limit, a fine pass between the best points
+  and a move to the best position. Each move is followed by an
+  `af_settle_ms` pause and the median of three fresh frames; the raw average
+  is used because `metric_smooth` is an EMA that lags several frames. The
+  search is bounded by `[max(0, min_pos)+home_margin, max_pos-home_margin]`
+  (KI-042: negative positions are never commanded), `af_timeout_s` and a
+  `status==error` check; a flat scene returns "peak not found".
+  `POST /api/focus?af=1` starts the job in the same request as
+  `enable/mode/roi/fps/motor=1`, `af=cancel` and `stop=1` cancel it, and
+  `GET /api/focus` exposes an `af` block (`state`, `position`,
+  `best_position`, `metric`, `best_metric`, `progress`, `done`, `error`).
+  Mutual exclusions: AF does not start during home/zero or a controller
+  flash, and home/zero/manual moves and `POST /api/flash` return 409 while a
+  search runs. `[focus]` keys: `af_coarse=150`, `af_fine=25`,
+  `af_patience=3`, `af_settle_ms=600`, `af_timeout_s=60`,
+  `af_min_gain_pct=2`. The pure decision rules live in `focus_af_algo.c` and
+  are covered by `tests/focus_af_test.c`; `endpoints.md`, divinus
+  `README.md`, `TO_DO.md`, `STRUCTURE.md` and `FEATURES_UNVERIFIED.md` are
+  updated. On the bench (2026-11-07) both `full` and `roi` finished `done`,
+  but the metric does not depend on the motor position (the bench lens is not
+  coupled to the drive), so convergence is not confirmed; the curves are in
+  `output/bench/af_curve_*.csv`.
+
+### Изменено
+
+- **WebUI «Видео»: размер предпросмотра, автовзведение привода и выбор
+  зоны (OKO).** `#preview` и его `video`/`img` ограничены по высоте
+  (`calc(100vh - 520px)`) с сохранением пропорций; рамка ROI
+  позиционируется от прямоугольника медиаэлемента, поэтому letterbox
+  больше не смещает её. Переключатель `focus_motor` удалён: каждая команда
+  движения (`move`, `speed`, `home`, `zero`, `af`, «Применить») несёт
+  `motor=1` и взводит драйвер атомарно, ручной STOP отправляет
+  `motor=0&stop=1&af=cancel`, а `GET /api/focus` теперь опрашивает
+  контроллер и без взведения, чтобы UI знал о его наличии. Для выбора
+  шкалы добавлен параметр `scale=focus|zoom|both` (старый
+  `motor=focus|zoom|both` оставлен для скриптов). ROI выбирается
+  двухшагово: «Выделить зону» включает режим, drag только запоминает
+  `pendingRoi` без POST, «Готово»/Esc завершают или отменяют выбор, а
+  «Применить» отправляет зону с `af=1`; вне режима drag показывает
+  подсказку. В карточке появилась строка `#af-state` (прогресс, позиция,
+  лучший FV) и блокировка ручных/home/zero кнопок на время поиска;
+  STOP остаётся доступен для отмены. Обновлены `bench/api_check.py`
+  (`af=bogus`→400, busy-матрица, opt-in `OKO_FOCUS_AF_TESTS=1` с записью
+  `output/bench/af_curve_*.csv`), `bench/ui_check.py` (двухшаговый выбор
+  зоны, отсутствие `#focus_motor`, `#af-state`) и `bench/README.md`.
+- **WebUI Live: preview sizing, automatic driver arming and zone selection
+  (OKO).** `#preview` and its `video`/`img` are height-limited
+  (`calc(100vh - 520px)`) while keeping the aspect ratio; the ROI box is
+  positioned from the media element rectangle, so letterboxing no longer
+  shifts it. The `focus_motor` selector is gone: every motion command
+  (`move`, `speed`, `home`, `zero`, `af`, Apply) carries `motor=1` and arms
+  the driver atomically, the manual STOP sends
+  `motor=0&stop=1&af=cancel`, and `GET /api/focus` now probes the controller
+  even while it is disarmed so the UI knows it is present. The new
+  `scale=focus|zoom|both` parameter selects the scale (the legacy
+  `motor=focus|zoom|both` stays for scripts). ROI selection is two-step:
+  "Select zone" enters the mode, a drag only stores `pendingRoi` without a
+  POST, "Done"/Esc finish or cancel, and Apply sends the zone with `af=1`;
+  outside the mode a drag shows a hint. The card gained an `#af-state` line
+  (progress, position, best FV) and the manual/home/zero buttons are locked
+  during a search; STOP stays available to cancel it. Updated
+  `bench/api_check.py` (`af=bogus`→400, busy matrix, opt-in
+  `OKO_FOCUS_AF_TESTS=1` recording `output/bench/af_curve_*.csv`),
+  `bench/ui_check.py` (two-step zone selection, no `#focus_motor`,
+  `#af-state`) and `bench/README.md`.
+
 ## [0.2.0] — 2026-11-07
 
 - `KNOWN_ISSUES.md` — реестр открытых ошибок и ограничений: критичные

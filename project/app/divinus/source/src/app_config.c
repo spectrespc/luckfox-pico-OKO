@@ -288,6 +288,12 @@ void app_config_dump(FILE *file) {
     fprintf(file, "  zoom_speed: %d\n", app_config.focus_zoom_speed);
     fprintf(file, "  zoom_min_pos: %d\n  zoom_max_pos: %d\n",
         app_config.focus_zoom_min_pos, app_config.focus_zoom_max_pos);
+    fprintf(file, "  af_coarse: %d\n  af_fine: %d\n",
+        app_config.af_coarse, app_config.af_fine);
+    fprintf(file, "  af_patience: %d\n  af_settle_ms: %d\n",
+        app_config.af_patience, app_config.af_settle_ms);
+    fprintf(file, "  af_timeout_s: %d\n  af_min_gain_pct: %d\n",
+        app_config.af_timeout_s, app_config.af_min_gain_pct);
 
     fprintf(file, "flash:\n");
     fprintf(file, "  enable: %s\n", app_config.flash_enable ? "true" : "false");
@@ -507,6 +513,12 @@ enum ConfigError app_config_parse(void) {
     app_config.focus_zoom_speed = 300;
     app_config.focus_zoom_min_pos = 0;
     app_config.focus_zoom_max_pos = 2275;
+    app_config.af_coarse = 150;
+    app_config.af_fine = 25;
+    app_config.af_patience = 3;
+    app_config.af_settle_ms = 600;
+    app_config.af_timeout_s = 60;
+    app_config.af_min_gain_pct = 2;
 
     app_config.flash_enable = true;
     app_config.flash_max_bytes = 262144;
@@ -1026,6 +1038,24 @@ enum ConfigError app_config_parse(void) {
             &app_config.focus_zoom_min_pos);
         parse_int(&ini, "focus", "zoom_max_pos", -1000000, 1000000,
             &app_config.focus_zoom_max_pos);
+        v = (int)app_config.af_coarse;
+        parse_int(&ini, "focus", "af_coarse", 10, 500, &v);
+        app_config.af_coarse = (unsigned int)v;
+        v = (int)app_config.af_fine;
+        parse_int(&ini, "focus", "af_fine", 1, 200, &v);
+        app_config.af_fine = (unsigned int)v;
+        v = (int)app_config.af_patience;
+        parse_int(&ini, "focus", "af_patience", 1, 10, &v);
+        app_config.af_patience = (unsigned int)v;
+        v = (int)app_config.af_settle_ms;
+        parse_int(&ini, "focus", "af_settle_ms", 200, 3000, &v);
+        app_config.af_settle_ms = (unsigned int)v;
+        v = (int)app_config.af_timeout_s;
+        parse_int(&ini, "focus", "af_timeout_s", 10, 180, &v);
+        app_config.af_timeout_s = (unsigned int)v;
+        v = (int)app_config.af_min_gain_pct;
+        parse_int(&ini, "focus", "af_min_gain_pct", 0, 50, &v);
+        app_config.af_min_gain_pct = (unsigned int)v;
     }
 
     parse_bool(&ini, "flash", "enable", &app_config.flash_enable);

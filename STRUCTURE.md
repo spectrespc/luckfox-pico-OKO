@@ -83,13 +83,15 @@
   `tests/yolo_postprocess_test.c` (хостовый тест декода/NMS, в сборку не
   входит), `focus.c`/`focus.h` (тред AF-статистики), `focus_geom.*`,
   `focus_proto.*`, `focus_motor.*`, `focus_home.*` (фоновые job’ы
-  прижатия к упору и обнуления позиции), `flash.*` (фоновый воркер прошивки),
+  прижатия к упору и обнуления позиции), `focus_af.*` (фоновый поиск
+  автофокуса) и `focus_af_algo.*` (чистые решающие правила, общие с
+  `tests/focus_af_test.c`), `flash.*` (фоновый воркер прошивки),
   `firmware_status.*` (кэш версий STM32/STM8),
   `vpn.c`/`vpn.h` (API VPN: профили, живое состояние, импорт/экспорт,
   вызовы `oko-vpn`) и `vpn_conf.c`/`vpn_conf.h` (парсер wg-quick `.conf`,
   общий с `tests/vpn_conf_test.c`),
-  `tests/focus_geom_test.c` и `tests/focus_proto_test.c`. Сборка входит в
-  общий цикл `project/app/Makefile`.
+  `tests/focus_geom_test.c`, `tests/focus_proto_test.c` и
+  `tests/focus_af_test.c`. Сборка входит в общий цикл `project/app/Makefile`.
 - `app/stm8-motor/` — полные исходники прошивки STM8S103F3P6 (фокус/зум,
   I2C-загрузчик, `oko-motor`, тесты). Git subtree
   `spectrespc/stm8s103_i2c_motor` на пине

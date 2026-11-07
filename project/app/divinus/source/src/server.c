@@ -8,6 +8,7 @@
 
 #include "flash.h"
 #include "focus.h"
+#include "focus_af.h"
 #include "focus_geom.h"
 #include "focus_home.h"
 #include "focus_motor.h"
@@ -2929,7 +2930,8 @@ void respond_request(http_request_t *req) {
             int homeReq = 0, zeroReq = 0;   /* 0 none, 1 focus, 2 zoom, 3 both */
             long zeroValue = 0;
             int haveZeroValue = 0;
-            int motorSel = FOCUS_MOTOR_FOCUS; /* motor= for move/speed/position */
+            int motorSel = FOCUS_MOTOR_FOCUS; /* scale for move/speed/position */
+            int afReq = 0;                    /* 0 none, 1 start, 2 cancel    */
 
             while (req->query) {
                 char *value = split(&req->query, "&");
@@ -2989,6 +2991,37 @@ void respond_request(http_request_t *req) {
                     else {
                         reply_bad_request(req->clntFd,
                             "motor must be focus, zoom, both, true or false", "");
+                        return;
+                    }
+                } else if (EQUALS(key, "scale")) {
+                    mutating = 1;
+                    /* WebUI spelling: `motor=1` arms the driver and `scale`
+                       selects the scale for move/speed/position. */
+                    if (EQUALS_CASE(value, "focus"))
+                        motorSel = FOCUS_MOTOR_FOCUS;
+                    else if (EQUALS_CASE(value, "zoom"))
+                        motorSel = FOCUS_MOTOR_ZOOM;
+                    else if (EQUALS_CASE(value, "both"))
+                        motorSel = 2;
+                    else {
+                        reply_bad_request(req->clntFd,
+                            "scale must be focus, zoom or both", "");
+                        return;
+                    }
+                } else if (EQUALS(key, "af")) {
+                    mutating = 1;
+                    if (EQUALS_CASE(value, "cancel"))
+                        afReq = 2;
+                    else if (query_bool(value))
+                        afReq = 1;
+                    else if (EQUALS(value, "0") ||
+                             EQUALS_CASE(value, "false") ||
+                             EQUALS_CASE(value, "off") ||
+                             EQUALS_CASE(value, "no"))
+                        afReq = 0;
+                    else {
+                        reply_bad_request(req->clntFd,
+                            "af must be 0, 1 or cancel", "");
                         return;
                     }
                 } else if (EQUALS(key, "home") || EQUALS(key, "zero")) {
@@ -3070,6 +3103,12 @@ void respond_request(http_request_t *req) {
                 return;
             }
 
+            /* Flag the worker before the motor=0/stop path disarms the driver,
+               so a running search stops at its next check instead of fighting
+               the disarm.  A plain stop=1 also cancels it. */
+            if (afReq == 2 || stopReq)
+                focus_af_cancel();
+
             if (mode >= 0) app_config.focus_mode = (unsigned int)mode;
             if (rx >= 0) app_config.focus_roi_x = (unsigned int)rx;
             if (ry >= 0) app_config.focus_roi_y = (unsigned int)ry;
@@ -3113,6 +3152,14 @@ void respond_request(http_request_t *req) {
                         snprintf(body, sizeof(body),
                             "{\"error\":\"busy\",\"reason\":\"a home/zero job "
                             "is running\"}");
+                        reply_status_json(req->clntFd, 409, body);
+                        return;
+                    }
+                    if (focus_af_running() && afReq != 2 && !stopReq) {
+                        char body[160];
+                        snprintf(body, sizeof(body),
+                            "{\"error\":\"busy\",\"reason\":\"an auto-focus "
+                            "search is running\"}");
                         reply_status_json(req->clntFd, 409, body);
                         return;
                     }
@@ -3160,6 +3207,14 @@ void respond_request(http_request_t *req) {
                     snprintf(body, sizeof(body),
                         "{\"error\":\"busy\",\"reason\":\"another home/zero "
                         "job is running\"}");
+                    reply_status_json(req->clntFd, 409, body);
+                    return;
+                }
+                if (focus_af_running()) {
+                    char body[160];
+                    snprintf(body, sizeof(body),
+                        "{\"error\":\"busy\",\"reason\":\"an auto-focus "
+                        "search is running\"}");
                     reply_status_json(req->clntFd, 409, body);
                     return;
                 }
@@ -3257,7 +3312,10 @@ void respond_request(http_request_t *req) {
                 int maxp = motorSel == FOCUS_MOTOR_ZOOM
                     ? app_config.focus_zoom_max_pos : app_config.focus_max_pos;
 
-                if (!focus_motor_enabled()) {
+                /* The WebUI STOP sends motor=0&stop=1: the arm block above
+                   already stopped and disarmed the driver, so do not reject
+                   the redundant stop with "disabled". */
+                if (!focus_motor_enabled() && !(stopReq && motorReq == 0)) {
                     reply_error(req->clntFd, "blocked",
                         "the focus motor is disabled", "set motor=true first");
                     return;
@@ -3272,6 +3330,14 @@ void respond_request(http_request_t *req) {
                     snprintf(body, sizeof(body),
                         "{\"error\":\"busy\",\"reason\":\"a home/zero job is "
                         "running\"}");
+                    reply_status_json(req->clntFd, 409, body);
+                    return;
+                }
+                if (manual && focus_af_running()) {
+                    char body[160];
+                    snprintf(body, sizeof(body),
+                        "{\"error\":\"busy\",\"reason\":\"an auto-focus "
+                        "search is running\"}");
                     reply_status_json(req->clntFd, 409, body);
                     return;
                 }
@@ -3318,6 +3384,76 @@ void respond_request(http_request_t *req) {
                         "{\"error\":\"i2c\",\"reason\":\"%s\"}",
                         focus_motor_error(rc));
                     reply_status_json(req->clntFd, 502, body);
+                    return;
+                }
+            }
+
+            if (afReq == 1) {
+                fm_snapshot snap;
+                int rc;
+
+                if (!focus_motor_enabled()) {
+                    reply_error(req->clntFd, "blocked",
+                        "the focus motor is disabled", "set motor=true first");
+                    return;
+                }
+                if (flash_busy()) {
+                    char body[160];
+                    snprintf(body, sizeof(body),
+                        "{\"error\":\"busy\",\"reason\":\"a firmware upload "
+                        "is running\"}");
+                    reply_status_json(req->clntFd, 409, body);
+                    return;
+                }
+                if (focus_home_running()) {
+                    char body[160];
+                    snprintf(body, sizeof(body),
+                        "{\"error\":\"busy\",\"reason\":\"a home/zero job is "
+                        "running\"}");
+                    reply_status_json(req->clntFd, 409, body);
+                    return;
+                }
+                if (focus_af_running()) {
+                    char body[160];
+                    snprintf(body, sizeof(body),
+                        "{\"error\":\"busy\",\"reason\":\"an auto-focus "
+                        "search is already running\"}");
+                    reply_status_json(req->clntFd, 409, body);
+                    return;
+                }
+                if (!focus_running()) {
+                    reply_error(req->clntFd, "blocked",
+                        "the focus statistics are not running",
+                        "set enable=1 before starting the auto-focus");
+                    return;
+                }
+                if (focus_motor_probe() != FM_OK) {
+                    char body[320];
+                    snprintf(body, sizeof(body),
+                        "{\"error\":\"i2c\",\"reason\":\"%s\"}",
+                        "the STM8 controller does not answer");
+                    reply_status_json(req->clntFd, 502, body);
+                    return;
+                }
+                focus_motor_snapshot(&snap);
+                if (!snap.present || snap.bootloader) {
+                    reply_error(req->clntFd, "blocked",
+                        "the STM8 application is not running",
+                        "leave the bootloader and retry");
+                    return;
+                }
+                rc = focus_af_start(FOCUS_MOTOR_FOCUS);
+                if (rc == -1) {
+                    char body[160];
+                    snprintf(body, sizeof(body),
+                        "{\"error\":\"busy\",\"reason\":\"an auto-focus "
+                        "search is already running\"}");
+                    reply_status_json(req->clntFd, 409, body);
+                    return;
+                }
+                if (rc != 0) {
+                    reply_error(req->clntFd, "failed",
+                        "the auto-focus worker could not be started", "");
                     return;
                 }
             }
@@ -4739,6 +4875,7 @@ void *server_thread(void *vargp) {
 int server_start() {
     flash_init();
     focus_home_init();
+    focus_af_init();
     for (int i = 0; i < HTTP_MAX_CLIENTS; i++) {
         client_fds[i].sockFd = -1;
         client_fds[i].type = -1;
@@ -4768,6 +4905,7 @@ int server_start() {
 
 int server_stop() {
     keepRunning = 0;
+    focus_af_shutdown();
     flash_shutdown();
     focus_home_shutdown();
 

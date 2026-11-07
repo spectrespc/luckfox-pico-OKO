@@ -161,6 +161,12 @@ struct AppConfig {
     unsigned int focus_home_margin;     /* steps past zero for homing      */
     unsigned int focus_zoom_speed;
     int focus_zoom_min_pos, focus_zoom_max_pos;
+    unsigned int af_coarse;             /* coarse AF step, 10..500 steps   */
+    unsigned int af_fine;               /* fine AF step, 1..200 steps      */
+    unsigned int af_patience;           /* misses before stopping, 1..10   */
+    unsigned int af_settle_ms;          /* stats settle after a move       */
+    unsigned int af_timeout_s;          /* whole search timeout            */
+    unsigned int af_min_gain_pct;       /* required gain over the start    */
 
     // [flash]
     bool flash_enable;

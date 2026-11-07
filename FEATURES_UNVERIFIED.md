@@ -70,6 +70,16 @@
   проверяются в `api_check.py`. Физический цикл home→0, zero, повтор и
   поведение при упоре на тестовой плате с 2.1.1 ещё не прогонялись; на DUT
   с прошивкой ниже 2.0.2 endpoints возвращают `unsupported`.
+- **Автофокус.** Поиск по AF-метрике (`focus_af.c`: зонд направления,
+  coarse+fine, пауза `af_settle_ms`, медиана трёх кадров, `af_patience`,
+  `af_timeout_s`, границы `0..max_pos`) реализован и покрыт хостовым тестом
+  решающих правил (`tests/focus_af_test.c`). На стенде 2026-11-07 обе ветки
+  (`full` и `roi`) завершились `done` за ~11 с, но метрика не зависит от
+  позиции мотора (2 445 648 на 0…150 для full, 344 332 на 0…500 для ROI):
+  объектив стенда оптически не связан с фокусным мотором, поэтому кривая
+  плоская и сходимость на реальной сцене не подтверждена. Кривые сохранены
+  в `output/bench/af_curve_*.csv`; после прогона на настоящем объективе
+  пункты §5.1 в `TO_DO.md` можно закрывать.
 - **Прошивка контроллеров.** Фоновый воркер останавливает `S21oko-ec`,
   приостанавливает мотор, запускает `oko-flash` и перезапускает демон.
   Реальная прошивка STM32 (CBT6, WebUI `app-1.0.1.bin` → `/api/firmware`
@@ -157,6 +167,16 @@ Status as of 2026-11-06.
   and the stop behaviour on the 2.1.1 test board have not been exercised yet;
   on a DUT with firmware older than 2.0.2 the endpoints return
   `unsupported`.
+- **Auto-focus.** The AF-metric search (`focus_af.c`: direction probe,
+  coarse+fine, `af_settle_ms` pause, median of three frames, `af_patience`,
+  `af_timeout_s`, `0..max_pos` bounds) is implemented and its decision rules
+  are covered by the host test `tests/focus_af_test.c`. On the bench
+  (2026-11-07) both `full` and `roi` finished `done` in ~11 s, but the metric
+  does not depend on the motor position (2 445 648 over 0…150 for full,
+  344 332 over 0…500 for ROI): the bench lens is not optically coupled to the
+  focus motor, so the curve is flat and convergence on a real scene is not
+  confirmed. The curves are saved in `output/bench/af_curve_*.csv`; the §5.1
+  boxes in `TO_DO.md` can be closed after a run on the real lens.
 - **Controller flashing.** The background worker stops `S21oko-ec`, suspends the
   focus motor, runs `oko-flash` and restarts the daemon. Real STM32 (CBT6,
   WebUI `app-1.0.1.bin` → `/api/firmware` `1.0.1`, rollback `1.0.0`) and STM8

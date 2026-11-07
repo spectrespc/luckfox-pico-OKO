@@ -18,5 +18,11 @@ void focus_configure(int mode, unsigned int x, unsigned int y,
 void focus_get_config(int *mode, unsigned int *x, unsigned int *y,
                       unsigned int *w, unsigned int *h, unsigned int *fps);
 
+/* Latest aggregated metric for the auto-focus worker.  Returns 0 when the
+ * statistics thread is running and at least one frame has been measured. */
+int focus_metric_get(unsigned long long *metric_avg,
+                     unsigned long long *metric_smooth,
+                     unsigned int *frame_id);
+
 /* Returns a malloc()ed JSON object; the caller frees it.  NULL on OOM. */
 char *focus_json(int with_map);

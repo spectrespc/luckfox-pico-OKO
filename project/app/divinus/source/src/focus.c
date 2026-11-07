@@ -9,6 +9,7 @@
 #include <unistd.h>
 
 #include "app_config.h"
+#include "focus_af.h"
 #include "focus_geom.h"
 #include "focus_home.h"
 #include "focus_motor.h"
@@ -410,6 +411,22 @@ void focus_get_config(int *mode, unsigned int *x, unsigned int *y,
     pthread_mutex_unlock(&fs.lock);
 }
 
+int focus_metric_get(unsigned long long *metric_avg,
+                     unsigned long long *metric_smooth,
+                     unsigned int *frame_id)
+{
+    int available;
+
+    pthread_mutex_lock(&fs.lock);
+    if (metric_avg) *metric_avg = fs.metric_avg;
+    if (metric_smooth) *metric_smooth = fs.metric_smooth;
+    if (frame_id) *frame_id = fs.frame_id;
+    available = fs.running && fs.status == FOCUS_STATUS_RUNNING &&
+        fs.frame_id != 0;
+    pthread_mutex_unlock(&fs.lock);
+    return available ? 0 : -1;
+}
+
 static int append(char **p, size_t *left, const char *fmt, ...)
 {
     va_list args;
@@ -462,6 +479,7 @@ char *focus_json(int with_map)
     rk_af_map *map = NULL;
     fm_snapshot motor;
     focus_home_status home;
+    focus_af_status af;
 
     if (!buffer)
         return NULL;
@@ -498,13 +516,16 @@ char *focus_json(int with_map)
 
     /* Refresh the cached motor scales for the WebUI poll.  The probe is cheap
        (a few I2C reads), keeps the last snapshot on a bus error and never
-       blocks the caller when another process owns the bus. */
-    if (focus_motor_enabled() && !focus_motor_suspended() &&
-        !focus_home_running())
+       blocks the caller when another process owns the bus.  It also runs when
+       the driver is not armed yet: the WebUI needs "present" to offer the
+       controls that arm it on the first command. */
+    if (!focus_motor_suspended() && !focus_home_running() &&
+        !focus_af_running())
         focus_motor_probe();
 
     focus_motor_snapshot(&motor);
     focus_home_status_get(&home);
+    focus_af_status_get(&af);
 
     if (append(&p, &left,
         "{\"enable\":%s,\"available\":%s,\"status\":\"%s\","
@@ -598,6 +619,15 @@ char *focus_json(int with_map)
         "\"done\":%s,\"error\":\"%s\"}",
         home.state, home.motor, home.travel,
         home.done ? "true" : "false", home.error))
+        goto fail;
+
+    if (append(&p, &left,
+        ",\"af\":{\"state\":\"%s\",\"position\":%d,\"best_position\":%d,"
+        "\"metric\":%llu,\"best_metric\":%llu,\"progress\":%d,"
+        "\"done\":%s,\"error\":\"%s\"}",
+        af.state, af.position, af.best_position,
+        af.metric, af.best_metric, af.progress,
+        af.done ? "true" : "false", af.error))
         goto fail;
 
     if (with_map)

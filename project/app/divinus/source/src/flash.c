@@ -19,6 +19,7 @@
 
 #include "app_config.h"
 #include "firmware_status.h"
+#include "focus_af.h"
 #include "focus_home.h"
 #include "focus_motor.h"
 
@@ -554,6 +555,14 @@ static char *flash_post_impl(const char *content_type, char *payload,
     {
         snprintf(response, sizeof(response),
             "{\"error\":\"busy\",\"reason\":\"a home/zero job is running\","
+            "\"hint\":\"wait for it to finish\"}");
+        *http_status = 409;
+        return strdup(response);
+    }
+    if (focus_af_running())
+    {
+        snprintf(response, sizeof(response),
+            "{\"error\":\"busy\",\"reason\":\"an auto-focus search is running\","
             "\"hint\":\"wait for it to finish\"}");
         *http_status = 409;
         return strdup(response);

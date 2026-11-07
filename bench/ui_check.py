@@ -66,9 +66,12 @@ def main():
         page.click('#sidebar button[data-sec="live"]')
         page.wait_for_timeout(1500)
         for selector in ("#preview", "#focus-box", "#focus_enable",
-                         "#focus-metric", "#focus-state", "#focus-save-btn"):
+                         "#focus-metric", "#focus-state", "#focus-save-btn",
+                         "#focus-select-btn", "#af-state"):
             if page.locator(selector).count() == 0:
                 failures.append("live focus element %s is missing" % selector)
+        if page.locator("#focus_motor").count() != 0:
+            failures.append("#focus_motor must be gone (the driver arms itself)")
         if not page.evaluate(
                 "() => document.getElementById('preview')"
                 ".contains(document.getElementById('focus-box'))"):
@@ -126,7 +129,7 @@ def main():
             failures.append("manual readout is not populated: %r" % readout)
         movable = bool(page.evaluate(
             "() => { var s = focusState; return !!(s && s.motor && "
-            "s.motor.enabled && s.motor.present); }"))
+            "s.motor.present && !s.motor.bootloader); }"))
         if not movable:
             if not page.is_disabled("#manual-focus-dec") or \
                not page.is_disabled("#home-focus-btn"):
@@ -141,8 +144,28 @@ def main():
             print("manual readout after zoom +50:", after)
             if after == before:
                 failures.append("zoom jog did not update the readout")
-        # ROI selection: a tiny rectangle stays below the 0.03 POST threshold,
-        # so the drag only draws the box and must not persist a region.
+        # Opt-in: a running search must lock the manual/home/zero buttons but
+        # keep STOP reachable (it cancels the search).
+        if movable and os.environ.get("OKO_FOCUS_AF_TESTS") == "1":
+            page.evaluate("focusPost('enable=1&motor=1&af=1')")
+            page.wait_for_timeout(900)
+            page.evaluate("focusPoll()")
+            page.wait_for_timeout(400)
+            running = page.evaluate(
+                "() => { var s = focusState; return !!(s && s.af && "
+                "s.af.state === 'running'); }")
+            print("af running in the UI:", running)
+            if running:
+                if not page.is_disabled("#manual-focus-dec") or \
+                   not page.is_disabled("#home-focus-btn"):
+                    failures.append("manual buttons stay enabled during AF")
+                if page.is_disabled("#manual-stop-btn"):
+                    failures.append("STOP is disabled during AF")
+            page.evaluate("focusPost('af=cancel&stop=1&motor=0&enable=0')")
+            page.wait_for_timeout(800)
+        # Zone selection is two-step: dragging outside the mode only shows a
+        # hint, "Select zone" enters the mode, a tiny rectangle is discarded,
+        # and a real rectangle stays pending until Apply or Escape.
         page.locator("#preview").scroll_into_view_if_needed()
         page.wait_for_timeout(300)
         box = page.evaluate(
@@ -152,6 +175,30 @@ def main():
         if box:
             x = min(max(box["x"], 10), 1430)
             y = min(max(box["y"], 80), 860)
+            # Outside the mode: the drag must not create a pending zone.  An applied
+            # ROI may legitimately stay visible, so only the class is checked.
+            page.mouse.move(x, y)
+            page.mouse.down()
+            page.mouse.move(x + 80, y + 60, steps=4)
+            outside = page.evaluate(
+                "() => document.getElementById('focus-box').className")
+            page.mouse.up()
+            print("focus box class on a drag outside the mode:", outside)
+            if "pending" in outside:
+                failures.append("a drag outside the selection mode drew a box")
+
+            label = page.text_content("#focus-select-btn").strip()
+            print("select-zone button:", label)
+            if label not in ("Select zone", "Выделить зону"):
+                failures.append("unexpected select-zone label: %r" % label)
+            page.click("#focus-select-btn")
+            page.wait_for_timeout(200)
+            armed = page.text_content("#focus-select-btn").strip()
+            if armed not in ("Cancel", "Отмена"):
+                failures.append("the select-zone button did not switch to Cancel")
+
+            # A tiny rectangle stays below the 0.03 threshold and is dropped; the
+            # applied ROI, if any, is redrawn instead of a pending zone.
             page.mouse.move(x, y)
             page.mouse.down()
             page.mouse.move(x + 2, y + 2, steps=2)
@@ -159,12 +206,34 @@ def main():
                 "() => document.getElementById('focus-box').style.display")
             page.mouse.up()
             after = page.evaluate(
-                "() => document.getElementById('focus-box').style.display")
+                "() => document.getElementById('focus-box').className")
             print("roi box during/after tiny drag:", drawn, after)
             if drawn != "block":
                 failures.append("the ROI drag did not draw the focus box")
-            if after != "none":
+            if "pending" in after:
                 failures.append("a tiny ROI drag kept the focus box")
+
+            # A real rectangle becomes a pending zone; it is not applied yet.
+            page.mouse.move(x, y)
+            page.mouse.down()
+            page.mouse.move(x + 120, y + 90, steps=4)
+            page.mouse.up()
+            pending = page.evaluate(
+                "() => document.getElementById('focus-box').className")
+            print("focus box after a real drag:", pending)
+            if "pending" not in pending:
+                failures.append("a real drag did not mark the pending zone")
+
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(200)
+            pending = page.evaluate(
+                "() => document.getElementById('focus-box').className")
+            print("focus box after Escape:", pending)
+            if "pending" in pending:
+                failures.append("Escape did not cancel the pending zone")
+            if page.text_content("#focus-select-btn").strip() not in \
+                    ("Select zone", "Выделить зону"):
+                failures.append("Escape did not leave the selection mode")
         else:
             failures.append("no preview media element to drag the ROI on")
         page.screenshot(path=os.path.join(SHOTS, "live-focus.png"), full_page=True)

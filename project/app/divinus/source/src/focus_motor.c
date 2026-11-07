@@ -25,6 +25,11 @@
 #define FM_BOOT_STATE_BOOT 1
 
 static pthread_mutex_t fm_mutex = PTHREAD_MUTEX_INITIALIZER;
+/* Serialises whole I2C transactions inside this process.  The advisory flock
+   only excludes other processes; two local threads holding shared locks would
+   otherwise interleave their write/read phases and mix up the STM8 responses
+   (a GET_POS could return the previous GET_STATE payload). */
+static pthread_mutex_t fm_bus_lock = PTHREAD_MUTEX_INITIALIZER;
 static char fm_device[64] = "/dev/i2c-3";
 static unsigned int fm_address = 0x60;
 static int fm_enabled;
@@ -160,18 +165,34 @@ int focus_motor_busy(void)
 static int fm_begin(int exclusive)
 {
     int fd;
+    int tries;
 
+    pthread_mutex_lock(&fm_bus_lock);
     if (fm_suspended)
+    {
+        pthread_mutex_unlock(&fm_bus_lock);
         return FM_ERR_SUSPENDED;
-    fd = fm_lock_take(exclusive);
-    if (fd == -1)
-        return FM_ERR_BUSY;
-    return fd;
+    }
+    /* The firmware-status poll, the WebUI probe and the AF/home workers run
+       in different threads of this process.  A plain non-blocking flock would
+       fail the whole operation with FM_ERR_BUSY when another local thread
+       holds the lock, so wait a short bounded time.  A foreign process
+       (oko-motor/flash) still yields FM_ERR_BUSY after ~100 ms. */
+    for (tries = 0; tries < 20; tries++)
+    {
+        fd = fm_lock_take(exclusive);
+        if (fd != -1)
+            return fd;
+        usleep(5000);
+    }
+    pthread_mutex_unlock(&fm_bus_lock);
+    return FM_ERR_BUSY;
 }
 
 static int fm_end(int lock_fd)
 {
     fm_lock_release(lock_fd);
+    pthread_mutex_unlock(&fm_bus_lock);
     return 0;
 }
 
@@ -280,6 +301,14 @@ int focus_motor_probe(void)
     rc = focus_motor_read_app_version(version);
     if (rc == FM_ERR_BUSY || rc == FM_ERR_SUSPENDED)
         return rc;                /* keep the last known snapshot */
+    /* A zeroed reply is the STM8's "command not fully received" answer.  It
+       can appear right after SET_POS while the controller saves the position
+       to EEPROM; retry once instead of caching a bogus 0.0.0 version. */
+    if (rc == FM_OK && version[0] == 0 && version[1] == 0 && version[2] == 0)
+    {
+        usleep(20000);
+        rc = focus_motor_read_app_version(version);
+    }
     if (rc == FM_OK)
     {
         snap.present = 1;

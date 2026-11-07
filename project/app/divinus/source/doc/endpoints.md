@@ -611,24 +611,26 @@ attached to the recreated VENC channel.
 
 **OKO.** Focus assistant: AF measurement metric and the optional STM8 motors.
 `GET` is read-only (no query or `map=1`). Every change (`enable`, `mode`, ROI,
-`fps`, `motor`, `speed`, `move`, `position`, `stop`, `reset`, `home`, `zero`,
-`value`) requires `POST` with the query string; GET with a mutating key returns
-HTTP 400. Changes are applied live and are not saved to `divinus.yaml` unless
-`POST /api/cmd?save` is called.
+`fps`, `motor`, `scale`, `speed`, `move`, `position`, `stop`, `reset`, `home`,
+`zero`, `value`, `af`) requires `POST` with the query string; GET with a
+mutating key returns HTTP 400. Changes are applied live and are not saved to
+`divinus.yaml` unless `POST /api/cmd?save` is called.
 
 | Method | Parameters | Description |
 |--------|------------|-------------|
 | POST | `enable` | Start/stop the AF statistics thread (`1`/`0`) |
 | POST | `mode` | `full` or `roi` |
 | POST | `rx`, `ry`, `rw`, `rh` | ROI in basis points `0..10000`; `rw`/`rh` ≥ 1000 |
-| POST | `motor` | `true`/`false` (`1`/`0`) arms or disarms the STM8 driver; `focus`/`zoom` selects a scale for `speed`/`move`/`position`; `both` is only valid for `speed`, `home` and `zero` |
-| POST | `speed` | Speed `1..5000` steps/s for the selected scale (default `focus`), or both with `motor=both` |
+| POST | `motor` | `true`/`false` (`1`/`0`) arms or disarms the STM8 driver; `focus`/`zoom`/`both` select a scale for `speed`/`move`/`position` (legacy spelling, used by scripts) |
+| POST | `scale` | `focus`, `zoom` or `both`: scale for `speed`/`move`/`position`; the WebUI sends `motor=1&scale=…` so the first command arms the driver |
+| POST | `speed` | Speed `1..5000` steps/s for the selected scale (default `focus`), or both with `scale=both` |
 | POST | `move` | Relative move `-32768..32767` steps on the selected scale |
 | POST | `position` | Absolute position on the selected scale (clamped by that scale's `min_pos`/`max_pos`) |
 | POST | `stop`, `reset` | Stop both motors / soft-reset the application |
 | POST | `home` | Start the background homing job for `focus`, `zoom` or `both` |
 | POST | `zero` | Force the position of `focus`, `zoom` or `both` to `value` without moving |
 | POST | `value` | Target for `zero`, `-1000000..1000000`, default `0` |
+| POST | `af` | `1` starts the auto-focus search, `cancel` stops it, `0` leaves the job alone |
 | GET | `map=1` | Add the 225-cell arrays `fv_h1/fv_h2/fv_v1/fv_v2/luma/highlit` |
 
 `home` and `zero` need STM8 application firmware **2.0.2** or **2.1.1** (the
@@ -643,6 +645,26 @@ outside `[-1000, max_pos+1000]` is treated as corrupted RAM and refuses to home
 (use Zero instead); a latched driver error (`status=error`) also aborts the job.
 Zero rejects a running motor, sends `SET_POS(value)`, and verifies the readback.
 
+`af=1` starts the auto-focus search on the focus scale after the request has
+applied `enable`/`mode`/ROI/`fps`/`motor`. The statistics thread must already be
+running (`enable=1`, possibly in the same request). The search is asynchronous:
+the response returns immediately with `af.state="running"` and the UI polls
+`GET /api/focus`. The worker probes the direction with half a coarse step, runs
+a coarse pass (`af_coarse`, stops after `af_patience` non-improving samples or
+at the travel limit), refines between the best neighbouring points
+(`af_fine`), moves to the best position and reports `done` only when the metric
+grew by at least `af_min_gain_pct`; a flat scene returns
+`{"error":"failed","reason":"peak not found"}` in `af.error`. All movement
+stays inside `[max(0,min_pos)+home_margin, max_pos-home_margin]`; a negative
+position is never commanded (KI-042). A corrupted position outside
+`[0, max_pos]` returns `af.state="error"` and the hint to run Home/Zero first.
+The whole search is bounded by `af_timeout_s`. `af=cancel` (and `stop=1` while
+a search runs) stops the motor after the current move/sample and reports
+`af.state="error"` with `af.error="cancelled"`. Starting a search while a
+home/zero job or a firmware upload runs returns HTTP 409; the same 409 is
+returned when starting home/zero or a manual move during a search, and
+`POST /api/flash` refuses to start while the search runs.
+
 **Response**
 ```json
 {"enable":true,"available":true,"status":"running","mode":"roi",
@@ -652,11 +674,14 @@ Zero rejects a running motor, sends `SET_POS(value)`, and verifies the readback.
  "highlit_cells":0,"af_hw_ver":2,
  "motor":{"enabled":true,"present":true,"device":"/dev/i2c-3",
           "address":96,"bootloader":false,"status":"app",
-          "version":"2.0.2","boot_version":null,"position":0,
+          "version":"2.1.1","boot_version":null,"position":0,
           "focus":{"position":0,"status":"idle","speed":300},
           "zoom":{"position":410,"status":"idle","speed":300}},
  "home":{"state":"done","motor":"focus","travel":2960,"done":true,
-         "error":""}}
+         "error":""},
+ "af":{"state":"done","position":1180,"best_position":1180,
+       "metric":201433,"best_metric":201433,"progress":100,
+       "done":true,"error":""}}
 ```
 
 `status` is `idle`, `running`, `no_stats`, `unsupported` or `error`. The
@@ -664,13 +689,16 @@ per-motor `focus`/`zoom` objects carry the live position, status (`idle`,
 `running`, `error`, `unknown`) and configured speed; the top-level `position`
 stays for older WebUI builds and mirrors `focus.position`. `home.state` is
 `idle`, `running`, `done` or `error`; `home.travel` is the number of steps moved
-by the current or last job and `home.error` explains a failure. The ROI is
+by the current or last job and `home.error` explains a failure. `af.state` is
+`idle`, `running`, `done` or `error`; `af.position`/`af.metric` describe the
+current sample, `af.best_position`/`af.best_metric` the best one, and
+`af.progress` is 0..100. The ROI is
 applied by aggregating the cells of the full-frame AF map whose centres lie
 inside it; the AFM window itself is still configured (and the map remains
 full-frame on the SC230AI/RV1106 build). A malformed parameter returns HTTP
 400; a missing AF capability or motor returns
 `{"error":"blocked","reason":...}`; an I2C failure returns HTTP 502; a busy
-home/zero or flash job returns HTTP 409.
+home/zero, auto-focus or flash job returns HTTP 409.
 
 #### `/api/flash`
 
