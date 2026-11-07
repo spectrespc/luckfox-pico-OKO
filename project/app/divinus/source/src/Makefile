@@ -12,6 +12,8 @@ AF_INCLUDES := -I$(MEDIA_INCLUDE)/rkaiq -I$(MEDIA_INCLUDE)/rkaiq/uAPI2 \
                -I$(MEDIA_INCLUDE)/rkaiq/xcore -I$(MEDIA_INCLUDE)/rkaiq/iq_parser \
                -I$(MEDIA_INCLUDE)/rkaiq/iq_parser_v2
 hal/plus/rk_af_stats.o: EXTRA_CFLAGS = $(AF_INCLUDES)
+# im2d headers are used only by the optional RGA converter.
+hal/plus/rk_rga.o: EXTRA_CFLAGS = -I$(MEDIA_INCLUDE)
 
 # IMPORT_STR uses .incbin, so make must know about the embedded files.
 server.o: ../res/index.html
