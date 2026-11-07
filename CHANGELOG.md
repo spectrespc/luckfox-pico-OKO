@@ -120,6 +120,26 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   `bench/ui_check.py` (two-step zone selection, no `#focus_motor`,
   `#af-state`) and `bench/README.md`.
 
+### Исправлено
+
+- **I2C STM8: сериализация транзакций (OKO).** Каждая I2C-транзакция
+  в `focus_motor.c` теперь берёт внутрипроцессный мьютекс, помимо
+  advisory-flock. Раньше опрос версии (`firmware_status`, shared-блок) и
+  чтение позиции из другого потока могли перемешать фазы записи/чтения:
+  `GET_POS` получал ответ предыдущего `GET_STATE` (позиция
+  `0x00020101` = «2.1.1»). Ожидание занятой шины ограничено ~100 мс;
+  нулевой ответ версии сразу после `SET_POS` перепроверяется, а
+  автофокус повторяет чтение позиции перед тем, как счесть шкалу
+  испорченной.
+- **STM8 I2C: transaction serialisation (OKO).** Every I2C transaction in
+  `focus_motor.c` now takes an in-process mutex in addition to the advisory
+  flock. Previously the version poll (`firmware_status`, shared lock) and a
+  position read from another thread could interleave their write/read phases:
+  `GET_POS` received the previous `GET_STATE` reply (position `0x00020101` =
+  "2.1.1"). Bus contention now waits for at most ~100 ms; a zero version reply
+  right after `SET_POS` is re-read, and the auto-focus retries the position
+  read before treating the scale as corrupted.
+
 ## [0.2.0] — 2026-11-07
 
 - `KNOWN_ISSUES.md` — реестр открытых ошибок и ограничений: критичные
