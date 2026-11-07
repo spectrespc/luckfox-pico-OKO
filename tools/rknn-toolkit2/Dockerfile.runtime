@@ -1,0 +1,24 @@
+# Builds the RKNN 2.x mini-runtime with a distinct SONAME.
+#
+# The vendor file and the 1.6.0 copy both say "librknnmrt.so"; two loaded
+# objects with one SONAME would collapse into one, so the 2.x copy is
+# re-stamped.  patchelf lives in this image, never on the host.
+#
+# Usage (see media/rknn2/README.md):
+#   docker build -f tools/rknn-toolkit2/Dockerfile.runtime \
+#       -t oko-rknn-runtime2 tools/rknn-toolkit2
+#   docker run --rm oko-rknn-runtime2 > output/rknn/runtime2/librknnmrt2.so
+FROM ubuntu:22.04 AS runtime
+
+ARG RKNN_TAG=v2.3.2
+ARG RKNN_URL=https://raw.githubusercontent.com/airockchip/rknn-toolkit2/${RKNN_TAG}/rknpu2/runtime/Linux/librknn_api/armhf-uclibc/librknnmrt.so
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl patchelf \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL -o /librknnmrt2.so "${RKNN_URL}" \
+    && patchelf --set-soname librknnmrt2.so /librknnmrt2.so
+
+FROM scratch
+COPY --from=runtime /librknnmrt2.so /librknnmrt2.so

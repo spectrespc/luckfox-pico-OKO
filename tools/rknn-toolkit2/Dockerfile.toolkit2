@@ -1,0 +1,28 @@
+FROM python:3.8-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl libgomp1 libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Official rknn-toolkit2 2.x wheel.  The vendor repository ships only the
+# cp38 build; the conversion path does not need Torch/TensorFlow.
+ARG RKNN_WHEEL_URL=https://raw.githubusercontent.com/airockchip/rknn-toolkit2/v2.3.2/rknn-toolkit2/docker/docker_file/ubuntu_20_04_cp38/rknn_toolkit2-2.3.2-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+RUN curl -fsSL -o /tmp/rknn_toolkit2-2.3.2-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl "$RKNN_WHEEL_URL" \
+    && pip install --no-cache-dir --no-deps \
+        /tmp/rknn_toolkit2-2.3.2-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl \
+    && rm -f /tmp/rknn_toolkit2-2.3.2-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+
+# toolkit 2.x imports torch unconditionally; the CPU wheel is enough for
+# ONNX conversion and is much smaller than the default CUDA build.
+RUN pip install --no-cache-dir \
+        --extra-index-url https://download.pytorch.org/whl/cpu \
+        "torch==1.10.1+cpu"
+
+RUN pip install --no-cache-dir \
+        "numpy==1.23.5" "protobuf==3.20.3" flatbuffers onnx==1.14.1 \
+        onnxoptimizer onnxruntime==1.15.1 opencv-python-headless \
+        ruamel.yaml scipy tqdm psutil h5py fast-histogram \
+        humanfriendly coloredlogs
+
+WORKDIR /work
