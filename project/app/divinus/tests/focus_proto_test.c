@@ -36,6 +36,32 @@ int main(void)
     check(len == 4 && frame[0] == 0x02 && frame[2] == 0x01 &&
           frame[3] == 0xF4, "speed 500");
 
+    {
+        uint8_t setpos[6];
+
+        len = focus_proto_set_pos(setpos, FOCUS_MOTOR_FOCUS, 0);
+        check(len == 6 && setpos[0] == 0x09 && setpos[1] == 0 &&
+              setpos[2] == 0 && setpos[3] == 0 && setpos[4] == 0 &&
+              setpos[5] == 0, "set-pos zero");
+
+        len = focus_proto_set_pos(setpos, FOCUS_MOTOR_ZOOM, 2935);
+        check(len == 6 && setpos[1] == 1 && setpos[2] == 0 &&
+              setpos[3] == 0 && setpos[4] == 0x0B && setpos[5] == 0x77,
+              "set-pos 2935 big-endian");
+
+        len = focus_proto_set_pos(setpos, FOCUS_MOTOR_FOCUS, -1);
+        check(len == 6 && setpos[2] == 0xFF && setpos[3] == 0xFF &&
+              setpos[4] == 0xFF && setpos[5] == 0xFF, "set-pos -1");
+
+        len = focus_proto_set_pos(setpos, FOCUS_MOTOR_FOCUS,
+                                  (int32_t)-2147483647 - 1);
+        check(len == 6 && setpos[2] == 0x80 && setpos[3] == 0 &&
+              setpos[4] == 0 && setpos[5] == 0, "set-pos INT32_MIN");
+
+        check(focus_proto_set_pos(NULL, FOCUS_MOTOR_FOCUS, 0) == 0,
+              "set-pos null");
+    }
+
     len = focus_proto_stop(frame, FOCUS_MOTOR_ZOOM);
     check(len == 2 && frame[0] == 0x03 && frame[1] == 1, "stop zoom");
 
@@ -70,6 +96,30 @@ int main(void)
           "version value");
     check(focus_proto_parse_version((const uint8_t *)"\x02", 1, version) != 0,
           "short version");
+
+    check(focus_proto_clamp(100, 0, 2935) == 100, "clamp inside");
+    check(focus_proto_clamp(0, 0, 2935) == 0, "clamp min");
+    check(focus_proto_clamp(-999999, 0, 2935) == 0, "clamp below min");
+    check(focus_proto_clamp(2935, 0, 2935) == 2935, "clamp max");
+    check(focus_proto_clamp(999999, 0, 2935) == 2935, "clamp above max");
+    check(focus_proto_clamp((int64_t)2147483647 + 1000, 0, 2275) == 2275,
+          "clamp int64 overflow guard");
+
+    {
+        const uint8_t v201[3] = { 2, 0, 1 }, v202[3] = { 2, 0, 2 };
+        const uint8_t v210[3] = { 2, 1, 0 }, v211[3] = { 2, 1, 1 };
+        const uint8_t v220[3] = { 2, 2, 0 }, v300[3] = { 3, 0, 0 };
+        const uint8_t v199[3] = { 1, 9, 9 };
+
+        check(!focus_proto_version_supported(v201), "2.0.1 lacks SET_POS");
+        check(focus_proto_version_supported(v202), "2.0.2 supports SET_POS");
+        check(!focus_proto_version_supported(v210), "2.1.0 lacks SET_POS");
+        check(focus_proto_version_supported(v211), "2.1.1 supports SET_POS");
+        check(focus_proto_version_supported(v220), "2.2.0 supports SET_POS");
+        check(focus_proto_version_supported(v300), "3.0.0 supports SET_POS");
+        check(!focus_proto_version_supported(v199), "1.9.9 is too old");
+        check(!focus_proto_version_supported(NULL), "NULL version");
+    }
 
     if (failures)
     {

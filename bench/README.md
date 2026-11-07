@@ -22,7 +22,7 @@ bench/run.sh dut.py 'mount | grep -w " / "'
 | `dut.py` | выполнение команд по SSH через `paramiko` |
 | `osd_check.py` | захват кадров RTSP (`--path`, по умолчанию `/live/0`), попарный диф боксов OSD-регионов, сохранение полных кадров и кропов |
 | `api_check.py` | матрица HTTP API: GET всех эндпоинтов, POST no-op, экспорт конфига и журнала, негативные проверки (статика, имена файлов, NTP) |
-| `ui_check.py` | WebUI в headless Chromium: восемь разделов, EN/RU, Apply/dirty-state, мобильная раскладка, скриншоты (нужен Playwright) |
+| `ui_check.py` | WebUI в headless Chromium: восемь разделов, EN/RU, Apply/dirty-state, автозапуск предпросмотра и ROI поверх живого видео в «Видео», мобильная раскладка, скриншоты (нужен Playwright) |
 | `deploy_divinus.py` | копирование свежесобранного `divinus` в `/oem/usr/bin` по SSH и graceful restart (быстрая итерация, не замена прошивке) |
 | `focus_check.py` | `/api/focus`: статус AF-метрики, ROI, мотор; `--enable`, `--roi x,y,w,h`, `--move`, `--seconds/--interval/--snapshot/--strict`, CSV в `--out` (по умолчанию `output/bench/focus`); код 2 — API жив, но снимок не снят, код 1 — метрика нулевая |
 | `firmware_check.py` | `/api/firmware` и `/api/flash`: версии STM32/STM8, состояние задачи; `--flash --confirm FLASH` запускает прошивку, `--negative` прогоняет проверки валидации (400) |
@@ -52,11 +52,11 @@ bench/run.sh focus_check.py --roi 2500,2500,5000,5000 --seconds 5
 
 # версии контроллеров, негативные проверки и реальная прошивка STM8
 bench/run.sh firmware_check.py
-# --negative требует project/app/stm8-motor/build/app-2.0.1.ihx
-# (make -f Makefile.stm8; версия в имени файла обязательна)
+# --negative требует project/app/stm8-motor/build/app-2.1.1.ihx
+# (make -f Makefile.stm8 BOARD=test; версия в имени файла обязательна)
 bench/run.sh firmware_check.py --negative
 bench/run.sh firmware_check.py --flash --target stm8 \
-  --file project/app/stm8-motor/build/app-2.0.1.ihx --confirm FLASH
+  --file project/app/stm8-motor/build/app-2.1.1.ihx --confirm FLASH
 # STM32: реальная прошивка CBT6 (слот 120 КиБ); 1.0.0 = rollback.
 # Версия берётся из имени файла, отдельного --version нет.
 bench/run.sh firmware_check.py --flash --target stm32 \
@@ -64,9 +64,9 @@ bench/run.sh firmware_check.py --flash --target stm32 \
 
 # RTSP/OSD: если OPTIONS молчит, включите stream.enable=true и перезагрузите DUT
 bench/run.sh osd_check.py --path /live/0 --seconds 5 --frames 2
-# прошивка STM8 (после сборки app-2.0.1.ihx); требует --confirm FLASH
+# прошивка STM8 (после сборки app-2.1.1.ihx); требует --confirm FLASH
 bench/run.sh firmware_check.py --flash --target stm8 \
-  --file project/app/stm8-motor/build/app-2.0.1.ihx --confirm FLASH
+  --file project/app/stm8-motor/build/app-2.1.1.ihx --confirm FLASH
 
 # STM32: безопасная проверка перехода app → bootloader → app без записи
 bench/run.sh dut.py '/etc/init.d/S21oko-ec stop' \

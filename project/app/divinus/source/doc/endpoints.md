@@ -609,11 +609,11 @@ attached to the recreated VENC channel.
 
 #### `/api/focus`
 
-**OKO.** Focus assistant: AF measurement metric and the optional STM8 motor.
+**OKO.** Focus assistant: AF measurement metric and the optional STM8 motors.
 `GET` is read-only (no query or `map=1`). Every change (`enable`, `mode`, ROI,
-`fps`, `motor`, `speed`, `move`, `position`, `stop`, `reset`) requires `POST`
-with the query string; GET with a mutating key returns HTTP 400. Changes are
-applied live and are not saved to `divinus.yaml` unless
+`fps`, `motor`, `speed`, `move`, `position`, `stop`, `reset`, `home`, `zero`,
+`value`) requires `POST` with the query string; GET with a mutating key returns
+HTTP 400. Changes are applied live and are not saved to `divinus.yaml` unless
 `POST /api/cmd?save` is called.
 
 | Method | Parameters | Description |
@@ -621,13 +621,27 @@ applied live and are not saved to `divinus.yaml` unless
 | POST | `enable` | Start/stop the AF statistics thread (`1`/`0`) |
 | POST | `mode` | `full` or `roi` |
 | POST | `rx`, `ry`, `rw`, `rh` | ROI in basis points `0..10000`; `rw`/`rh` ≥ 1000 |
-| POST | `fps` | Sampling rate `1..10` |
-| POST | `motor` | Enable/disable the STM8 motor (`1`/`0`) |
-| POST | `speed` | Motor speed `1..5000` steps/s |
-| POST | `move` | Relative focus move `-32768..32767` steps |
-| POST | `position` | Absolute focus position (clamped by `min_pos`/`max_pos`) |
+| POST | `motor` | `true`/`false` (`1`/`0`) arms or disarms the STM8 driver; `focus`/`zoom` selects a scale for `speed`/`move`/`position`; `both` is only valid for `speed`, `home` and `zero` |
+| POST | `speed` | Speed `1..5000` steps/s for the selected scale (default `focus`), or both with `motor=both` |
+| POST | `move` | Relative move `-32768..32767` steps on the selected scale |
+| POST | `position` | Absolute position on the selected scale (clamped by that scale's `min_pos`/`max_pos`) |
 | POST | `stop`, `reset` | Stop both motors / soft-reset the application |
+| POST | `home` | Start the background homing job for `focus`, `zoom` or `both` |
+| POST | `zero` | Force the position of `focus`, `zoom` or `both` to `value` without moving |
+| POST | `value` | Target for `zero`, `-1000000..1000000`, default `0` |
 | GET | `map=1` | Add the 225-cell arrays `fv_h1/fv_h2/fv_v1/fv_v2/luma/highlit` |
+
+`home` and `zero` need STM8 application firmware **2.0.2** or **2.1.1** (the
+test board); older firmware silently ignores the new `SET_POS` command, so the
+server checks the cached version and refuses with
+`{"error":"unsupported",...}`. Homing is asynchronous: the response returns
+immediately with `home.state="running"`, the UI polls `GET /api/focus`, and a
+second job while one is active returns HTTP 409. Homing drives the scale towards
+the negative mechanical stop until the position is at `-focus.home_margin`
+(default 25), then sends `SET_POS(0)` and verifies the readback. A position
+outside `[-1000, max_pos+1000]` is treated as corrupted RAM and refuses to home
+(use Zero instead); a latched driver error (`status=error`) also aborts the job.
+Zero rejects a running motor, sends `SET_POS(value)`, and verifies the readback.
 
 **Response**
 ```json
@@ -636,17 +650,27 @@ applied live and are not saved to `divinus.yaml` unless
  "frame_id":48213,"metric":42187234,"metric_avg":187499,
  "metric_smooth":187420,"cells_total":225,"cells_used":49,
  "highlit_cells":0,"af_hw_ver":2,
- "motor":{"enabled":false,"present":true,"device":"/dev/i2c-3",
+ "motor":{"enabled":true,"present":true,"device":"/dev/i2c-3",
           "address":96,"bootloader":false,"status":"app",
-          "version":"2.0.1","boot_version":null,"position":5002}}
+          "version":"2.0.2","boot_version":null,"position":0,
+          "focus":{"position":0,"status":"idle","speed":300},
+          "zoom":{"position":410,"status":"idle","speed":300}},
+ "home":{"state":"done","motor":"focus","travel":2960,"done":true,
+         "error":""}}
 ```
 
-`status` is `idle`, `running`, `no_stats`, `unsupported` or `error`. The ROI
-is applied by aggregating the cells of the full-frame AF map whose centres lie
+`status` is `idle`, `running`, `no_stats`, `unsupported` or `error`. The
+per-motor `focus`/`zoom` objects carry the live position, status (`idle`,
+`running`, `error`, `unknown`) and configured speed; the top-level `position`
+stays for older WebUI builds and mirrors `focus.position`. `home.state` is
+`idle`, `running`, `done` or `error`; `home.travel` is the number of steps moved
+by the current or last job and `home.error` explains a failure. The ROI is
+applied by aggregating the cells of the full-frame AF map whose centres lie
 inside it; the AFM window itself is still configured (and the map remains
 full-frame on the SC230AI/RV1106 build). A malformed parameter returns HTTP
 400; a missing AF capability or motor returns
-`{"error":"blocked","reason":...}`; an I2C failure returns HTTP 502.
+`{"error":"blocked","reason":...}`; an I2C failure returns HTTP 502; a busy
+home/zero or flash job returns HTTP 409.
 
 #### `/api/flash`
 
@@ -661,7 +685,7 @@ progress. Only one job may run at a time.
 |-------|----------|---------|
 | `target` | yes | `stm32` or `stm8` |
 | `file` | yes | `.bin` for STM32; `.ihx`/`.hex`/`.bin` for STM8 |
-| `version` | ignored | the version comes from the file name (`app-1.0.1.bin`, `app-2.0.1.ihx`) |
+| `version` | ignored | the version comes from the file name (`app-1.0.1.bin`, `app-2.0.2.ihx`) |
 | `confirm` | yes | literally `FLASH` |
 
 The file name must contain exactly one `major.minor.patch` triple (each
@@ -680,12 +704,12 @@ a job is already running. A successful `POST` returns
 ```json
 {"enable":true,"busy":false,
  "job":{"id":"20261106-080641","target":"stm8","state":"done","progress":100,
-        "message":"firmware flashed","file":"app-2.0.1.ihx","sha256":"…",
-        "started":1793952401,"finished":1793952414,"log":["PROGRESS 100","app 2.0.1"]},
+        "message":"firmware flashed","file":"app-2.0.2.ihx","sha256":"…",
+        "started":1793952401,"finished":1793952414,"log":["PROGRESS 100","app 2.0.2"]},
  "targets":[{"name":"stm32","present":true,"address":66,"state":"app",
              "version":"1.0.0"},
             {"name":"stm8","present":true,"address":96,"state":"app",
-             "version":"2.0.1"}]}
+             "version":"2.0.2"}]}
 ```
 
 STM32 uses the vendor updater through `oko-ec flash` (the OKO board has a
@@ -705,7 +729,7 @@ During a flash job the last snapshot is returned with `stale=true`.
 ```json
 {"stm32":{"present":true,"state":"app","version":"1.0.0","proto":2,
           "device_type":2,"age":1},
- "stm8":{"present":true,"state":"app","version":"2.0.1","boot_version":null,
+ "stm8":{"present":true,"state":"app","version":"2.0.2","boot_version":null,
          "address":96,"age":0,"stale":false}}
 ```
 
@@ -884,10 +908,11 @@ endpoint returns 404.
 
 ### `/video.mp4`
 
-Continuous fragmented MP4 video stream. Requires `mp4.enable=true`. The muxer
-builds `moov` from the VPS/SPS/PPS carried in the Annex B payload; the preview
-works only if the browser can decode the selected codec (H.265 needs HEVC
-support, otherwise use `/mjpeg`).
+Continuous fragmented MP4 video stream. Requires `mp4.enable=true`, which is
+the default in `app_config.c` for a fresh installation. The muxer builds `moov`
+from the VPS/SPS/PPS carried in the Annex B payload; the preview works only if
+the browser can decode the selected codec (H.265 needs HEVC support, otherwise
+use `/mjpeg`).
 
 **Response**: Segmented MP4 video stream
 

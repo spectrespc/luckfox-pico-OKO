@@ -12,6 +12,7 @@ import base64
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -96,6 +97,156 @@ def request(path, method="GET", body=None, content_type=None):
         return err.code, err.headers, err.read()
     except Exception as err:                       # noqa: BLE001 - report it
         return 0, {}, str(err).encode()
+
+
+def post_focus(query):
+    status, _headers, body = request("/api/focus?" + query, "POST", b"")
+    try:
+        return status, json.loads(body.decode())
+    except Exception:                              # noqa: BLE001
+        return status, {}
+
+
+def get_focus():
+    status, _headers, body = request("/api/focus")
+    try:
+        return status, json.loads(body.decode())
+    except Exception:                              # noqa: BLE001
+        return status, {}
+
+
+def wait_home(timeout=180):
+    deadline = time.time() + timeout
+    dec = {}
+    while time.time() < deadline:
+        _status, dec = get_focus()
+        state = (dec.get("home") or {}).get("state")
+        if state in ("done", "error", "idle"):
+            return dec
+        time.sleep(0.5)
+    return dec
+
+
+def wait_motor(motor, timeout=60):
+    deadline = time.time() + timeout
+    dec = {}
+    while time.time() < deadline:
+        _status, dec = get_focus()
+        status = ((dec.get("motor") or {}).get(motor) or {}).get("status")
+        if status in ("idle", "error"):
+            return dec
+        time.sleep(0.3)
+    return dec
+
+
+def focus_checks(failures, checks):
+    """Home/zero and the manual focus/zoom matrix."""
+    _status, dec = get_focus()
+    motor = dec.get("motor") or {}
+
+    checks += 1
+    if "home" not in dec or "focus" not in motor or "zoom" not in motor:
+        failures.append("/api/focus is missing home/focus/zoom: %r" %
+            list(dec.keys()))
+    print("focus motor:", "enabled" if motor.get("enabled") else "disabled",
+          "present" if motor.get("present") else "absent")
+
+    # Argument validation is safe without a motor.
+    for query in ("home=bogus", "zero=bogus", "home=focus&zero=focus",
+                  "move=1&motor=bogus"):
+        checks += 1
+        status, dec = post_focus(query)
+        if status != 400 or dec.get("error") != "invalid":
+            failures.append("%s: expected 400 invalid, got %s %r" %
+                (query, status, dec))
+        print("POST %-28s %s %s" % (query, status, dec.get("error", "?")))
+
+    if not (motor.get("enabled") and motor.get("present")):
+        checks += 1
+        status, dec = post_focus("home=focus")
+        if dec.get("error") != "blocked":
+            failures.append("home with motor disabled: expected blocked, got %r"
+                % dec)
+        print("POST %-28s %s %s" % ("home=focus (disabled)", status,
+            dec.get("error", "?")))
+        print("focus motion: skipped (motor disabled/absent)")
+        return checks
+
+    if os.environ.get("OKO_FOCUS_MOTOR_TESTS") != "1":
+        print("focus motion: skipped (set OKO_FOCUS_MOTOR_TESTS=1 to run)")
+        return checks
+
+    # Zero focus and verify the readback through SET_POS.
+    checks += 1
+    post_focus("zero=focus&value=0")
+    dec = wait_home(15)
+    pos = ((dec.get("motor") or {}).get("focus") or {}).get("position")
+    if (dec.get("home") or {}).get("state") != "done" or pos != 0:
+        failures.append("zero focus: state %r position %r" %
+            ((dec.get("home") or {}).get("state"), pos))
+    print("zero focus ->", pos)
+
+    # Relative move on both scales and the position clamp.
+    for query, expect in (("move=10&motor=focus", 10),
+                          ("move=-10&motor=focus", 0),
+                          ("move=10&motor=zoom", 10),
+                          ("move=-10&motor=zoom", 0),
+                          ("position=-1&motor=focus", 0)):
+        checks += 1
+        _status, dec = post_focus(query)
+        motor_name = "zoom" if "zoom" in query else "focus"
+        dec = wait_motor(motor_name)
+        pos = ((dec.get("motor") or {}).get(motor_name) or {}).get("position")
+        if pos != expect:
+            failures.append("%s: expected %r, got %r" % (query, expect, pos))
+        print("POST %-28s -> %s" % (query, pos))
+
+    # Stay away from the mechanical end: a long stall against the stop can
+    # corrupt the top byte of the RAM position (BOR is off).  The max clamp
+    # itself is covered by the host codec test (focus_proto_clamp).
+    checks += 1
+    _status, dec = post_focus("move=200&motor=focus")
+    dec = wait_motor("focus", 30)
+    pos = ((dec.get("motor") or {}).get("focus") or {}).get("position")
+    if pos != 200:
+        failures.append("move +200: expected 200, got %r" % pos)
+    print("move +200 ->", pos)
+
+    # Home from the far end gives a long enough job to check the busy reply.
+    checks += 1
+    _status, dec = post_focus("home=focus")
+    if (dec.get("home") or {}).get("state") != "running":
+        failures.append("home focus did not start: %r" % dec.get("home"))
+    status, busy = post_focus("home=focus")
+    if status != 409:
+        failures.append("second home: expected 409, got %s %r" % (status, busy))
+    print("POST home focus -> running, second -> %s" % status)
+    dec = wait_home(180)
+    pos = ((dec.get("motor") or {}).get("focus") or {}).get("position")
+    if (dec.get("home") or {}).get("state") != "done" or pos != 0:
+        failures.append("home focus: state %r position %r" %
+            ((dec.get("home") or {}).get("state"), pos))
+    print("home focus ->", pos,
+          "travel", (dec.get("home") or {}).get("travel"))
+
+    # Both scales in one job and a zero of both.
+    checks += 1
+    _status, dec = post_focus("home=both")
+    dec = wait_home(60)
+    posf = ((dec.get("motor") or {}).get("focus") or {}).get("position")
+    posz = ((dec.get("motor") or {}).get("zoom") or {}).get("position")
+    if (dec.get("home") or {}).get("state") != "done" or posf != 0 or posz != 0:
+        failures.append("home both: state %r focus %r zoom %r" %
+            ((dec.get("home") or {}).get("state"), posf, posz))
+    print("home both ->", posf, posz)
+
+    checks += 1
+    _status, dec = post_focus("zero=both&value=0")
+    dec = wait_home(15)
+    if (dec.get("home") or {}).get("state") != "done":
+        failures.append("zero both: state %r" % (dec.get("home"),))
+    print("zero both ->", (dec.get("home") or {}).get("state"))
+    return checks
 
 
 def main():
@@ -218,6 +369,8 @@ def main():
     if dec.get("error") != "blocked":
         failures.append("ntp invalid server: %r" % (dec,))
     print("POST %-18s %s %s" % ("/api/time ntp", status, dec.get("error", "?")))
+
+    checks = focus_checks(failures, checks)
 
     print("\n%d checks, %d failures" % (checks, len(failures)))
     for failure in failures:

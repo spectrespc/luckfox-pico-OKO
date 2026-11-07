@@ -2,6 +2,7 @@
 #include "firmware_status.h"
 #include "focus.h"
 #include "focus_motor.h"
+#include "focus_proto.h"
 #include "gating.h"
 #include "hal/macros.h"
 #include "http_post.h"
@@ -115,8 +116,10 @@ int main(int argc, char *argv[]) {
     }
     focus_motor_init(app_config.focus_device, app_config.focus_address);
     focus_motor_set_enabled(app_config.focus_motor);
-    if (app_config.focus_motor)
-        focus_motor_set_all_speeds(app_config.focus_speed);
+    if (app_config.focus_motor) {
+        focus_motor_set_speed(FOCUS_MOTOR_FOCUS, app_config.focus_speed);
+        focus_motor_set_speed(FOCUS_MOTOR_ZOOM, app_config.focus_zoom_speed);
+    }
 
     models_start();
     if (app_config.watchdog)

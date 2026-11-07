@@ -9,6 +9,7 @@
 #include "flash.h"
 #include "focus.h"
 #include "focus_geom.h"
+#include "focus_home.h"
 #include "focus_motor.h"
 #include "focus_proto.h"
 #include "firmware_status.h"
@@ -2925,6 +2926,10 @@ void respond_request(http_request_t *req) {
             long rx = -1, ry = -1, rw = -1, rh = -1, fps = -1;
             long speed = -1, move = 0, position = 0;
             int haveMove = 0, havePosition = 0;
+            int homeReq = 0, zeroReq = 0;   /* 0 none, 1 focus, 2 zoom, 3 both */
+            long zeroValue = 0;
+            int haveZeroValue = 0;
+            int motorSel = FOCUS_MOTOR_FOCUS; /* motor= for move/speed/position */
 
             while (req->query) {
                 char *value = split(&req->query, "&");
@@ -2969,7 +2974,46 @@ void respond_request(http_request_t *req) {
                     fps = v;
                 } else if (EQUALS(key, "motor")) {
                     mutating = 1;
-                    motorReq = query_bool(value);
+                    /* motor=focus|zoom selects a scale for move/speed/position;
+                       the legacy motor=true|false arms or disarms the driver. */
+                    if (EQUALS_CASE(value, "focus"))
+                        motorSel = FOCUS_MOTOR_FOCUS;
+                    else if (EQUALS_CASE(value, "zoom"))
+                        motorSel = FOCUS_MOTOR_ZOOM;
+                    else if (EQUALS_CASE(value, "both"))
+                        motorSel = 2;
+                    else if (query_bool(value) ||
+                             EQUALS(value, "0") || EQUALS_CASE(value, "false") ||
+                             EQUALS_CASE(value, "off") || EQUALS_CASE(value, "no"))
+                        motorReq = query_bool(value);
+                    else {
+                        reply_bad_request(req->clntFd,
+                            "motor must be focus, zoom, both, true or false", "");
+                        return;
+                    }
+                } else if (EQUALS(key, "home") || EQUALS(key, "zero")) {
+                    int target;
+                    mutating = 1;
+                    if (EQUALS_CASE(value, "focus")) target = 1;
+                    else if (EQUALS_CASE(value, "zoom")) target = 2;
+                    else if (EQUALS_CASE(value, "both")) target = 3;
+                    else {
+                        reply_bad_request(req->clntFd,
+                            "home/zero must be focus, zoom or both", "");
+                        return;
+                    }
+                    if (EQUALS(key, "home")) homeReq = target;
+                    else zeroReq = target;
+                } else if (EQUALS(key, "value")) {
+                    long v;
+                    mutating = 1;
+                    if (!parse_ranged(value, -1000000, 1000000, &v)) {
+                        reply_bad_request(req->clntFd,
+                            "value is out of range", "-1000000..1000000");
+                        return;
+                    }
+                    zeroValue = v;
+                    haveZeroValue = 1;
                 } else if (EQUALS(key, "speed")) {
                     long v;
                     mutating = 1;
@@ -3052,7 +3096,10 @@ void respond_request(http_request_t *req) {
                             "check focus.device, focus.address and the pull-ups");
                         return;
                     }
-                    if (focus_motor_set_all_speeds(app_config.focus_speed) != FM_OK) {
+                    if (focus_motor_set_speed(FOCUS_MOTOR_FOCUS,
+                            app_config.focus_speed) != FM_OK ||
+                        focus_motor_set_speed(FOCUS_MOTOR_ZOOM,
+                            app_config.focus_zoom_speed) != FM_OK) {
                         focus_motor_set_enabled(0);
                         app_config.focus_motor = false;
                         reply_error(req->clntFd, "blocked",
@@ -3061,6 +3108,14 @@ void respond_request(http_request_t *req) {
                         return;
                     }
                 } else {
+                    if (focus_home_running()) {
+                        char body[160];
+                        snprintf(body, sizeof(body),
+                            "{\"error\":\"busy\",\"reason\":\"a home/zero job "
+                            "is running\"}");
+                        reply_status_json(req->clntFd, 409, body);
+                        return;
+                    }
                     int rc = focus_motor_stop_all();
                     if (rc != FM_OK) {
                         char body[320];
@@ -3072,6 +3127,93 @@ void respond_request(http_request_t *req) {
                     }
                     focus_motor_set_enabled(0);
                     app_config.focus_motor = false;
+                }
+            }
+
+            if (homeReq || zeroReq) {
+                fm_snapshot snap;
+                unsigned int mask;
+                int target = homeReq ? homeReq : zeroReq;
+                int supported = 0;
+                int rc;
+
+                if (homeReq && zeroReq) {
+                    reply_bad_request(req->clntFd,
+                        "home and zero cannot be combined", "use one job");
+                    return;
+                }
+                if (!focus_motor_enabled()) {
+                    reply_error(req->clntFd, "blocked",
+                        "the focus motor is disabled", "set motor=true first");
+                    return;
+                }
+                if (flash_busy()) {
+                    char body[160];
+                    snprintf(body, sizeof(body),
+                        "{\"error\":\"busy\",\"reason\":\"a firmware upload "
+                        "is running\"}");
+                    reply_status_json(req->clntFd, 409, body);
+                    return;
+                }
+                if (focus_home_running()) {
+                    char body[160];
+                    snprintf(body, sizeof(body),
+                        "{\"error\":\"busy\",\"reason\":\"another home/zero "
+                        "job is running\"}");
+                    reply_status_json(req->clntFd, 409, body);
+                    return;
+                }
+                if (focus_motor_probe() != FM_OK) {
+                    char body[320];
+                    snprintf(body, sizeof(body),
+                        "{\"error\":\"i2c\",\"reason\":\"%s\"}",
+                        "the STM8 controller does not answer");
+                    reply_status_json(req->clntFd, 502, body);
+                    return;
+                }
+                focus_motor_snapshot(&snap);
+                if (!snap.present || snap.bootloader) {
+                    reply_error(req->clntFd, "blocked",
+                        "the STM8 application is not running",
+                        "leave the bootloader and retry");
+                    return;
+                }
+                /* SET_POS exists in 2.0.2+ and 2.1.1+; 2.1.0 is a test build without it,
+                   so the minor line is checked separately. */
+                if (snap.has_app_version)
+                    supported = focus_proto_version_supported(
+                        snap.app_version);
+                if (!supported) {
+                    char reason[192];
+                    snprintf(reason, sizeof(reason),
+                        "home/zero need STM8 firmware 2.0.2 or 2.1.1 "
+                        "(controller reports %u.%u.%u)",
+                        snap.has_app_version ? snap.app_version[0] : 0,
+                        snap.has_app_version ? snap.app_version[1] : 0,
+                        snap.has_app_version ? snap.app_version[2] : 0);
+                    reply_error(req->clntFd, "unsupported", reason,
+                        "update the controller firmware first");
+                    return;
+                }
+
+                mask = target == 1 ? FOCUS_HOME_MOTOR_FOCUS :
+                       (target == 2 ? FOCUS_HOME_MOTOR_ZOOM :
+                        (FOCUS_HOME_MOTOR_FOCUS | FOCUS_HOME_MOTOR_ZOOM));
+                rc = homeReq ? focus_home_start(mask) :
+                    focus_zero_start(mask, haveZeroValue ? (int32_t)zeroValue
+                                                         : 0);
+                if (rc == -1) {
+                    char body[160];
+                    snprintf(body, sizeof(body),
+                        "{\"error\":\"busy\",\"reason\":\"another home/zero "
+                        "job is running\"}");
+                    reply_status_json(req->clntFd, 409, body);
+                    return;
+                }
+                if (rc != 0) {
+                    reply_error(req->clntFd, "failed",
+                        "the homing worker could not be started", "");
+                    return;
                 }
             }
 
@@ -3109,48 +3251,64 @@ void respond_request(http_request_t *req) {
 
             if (stopReq || resetReq || speed >= 0 || haveMove || havePosition) {
                 int rc = FM_OK;
+                int manual = speed >= 0 || haveMove || havePosition;
+                int minp = motorSel == FOCUS_MOTOR_ZOOM
+                    ? app_config.focus_zoom_min_pos : app_config.focus_min_pos;
+                int maxp = motorSel == FOCUS_MOTOR_ZOOM
+                    ? app_config.focus_zoom_max_pos : app_config.focus_max_pos;
 
                 if (!focus_motor_enabled()) {
                     reply_error(req->clntFd, "blocked",
                         "the focus motor is disabled", "set motor=true first");
                     return;
                 }
+                if ((haveMove || havePosition) && motorSel == 2) {
+                    reply_bad_request(req->clntFd,
+                        "motor=both is only valid for speed/home/zero", "");
+                    return;
+                }
+                if (manual && focus_home_running()) {
+                    char body[160];
+                    snprintf(body, sizeof(body),
+                        "{\"error\":\"busy\",\"reason\":\"a home/zero job is "
+                        "running\"}");
+                    reply_status_json(req->clntFd, 409, body);
+                    return;
+                }
                 if (resetReq)
                     rc = focus_motor_reset();
                 else if (stopReq)
                     rc = focus_motor_stop_all();
-                else if (speed >= 0)
-                    rc = focus_motor_set_speed(FOCUS_MOTOR_FOCUS,
-                        (uint16_t)speed);
+                else if (speed >= 0) {
+                    if (motorSel == 2) {
+                        rc = focus_motor_set_speed(FOCUS_MOTOR_FOCUS,
+                            (uint16_t)speed);
+                        if (rc == FM_OK)
+                            rc = focus_motor_set_speed(FOCUS_MOTOR_ZOOM,
+                                (uint16_t)speed);
+                    } else
+                        rc = focus_motor_set_speed((uint8_t)motorSel,
+                            (uint16_t)speed);
+                }
                 else if (havePosition) {
                     int32_t current = 0;
-                    rc = focus_motor_get_position(FOCUS_MOTOR_FOCUS, &current);
+                    rc = focus_motor_get_position((uint8_t)motorSel, &current);
                     if (rc == FM_OK) {
-                        long target = position;
-                        long delta;
-                        if (target < app_config.focus_min_pos)
-                            target = app_config.focus_min_pos;
-                        if (target > app_config.focus_max_pos)
-                            target = app_config.focus_max_pos;
-                        delta = target - current;
+                        long delta = (long)focus_proto_clamp(position, minp,
+                            maxp) - current;
                         if (delta < -32768) delta = -32768;
                         if (delta > 32767) delta = 32767;
-                        rc = focus_motor_move(FOCUS_MOTOR_FOCUS, (int16_t)delta);
+                        rc = focus_motor_move((uint8_t)motorSel, (int16_t)delta);
                     }
                 } else if (haveMove) {
                     int32_t current = 0;
-                    rc = focus_motor_get_position(FOCUS_MOTOR_FOCUS, &current);
+                    rc = focus_motor_get_position((uint8_t)motorSel, &current);
                     if (rc == FM_OK) {
-                        long target = (long)current + move;
-                        long delta;
-                        if (target < app_config.focus_min_pos)
-                            target = app_config.focus_min_pos;
-                        if (target > app_config.focus_max_pos)
-                            target = app_config.focus_max_pos;
-                        delta = target - current;
+                        long delta = (long)focus_proto_clamp(
+                            (int64_t)current + move, minp, maxp) - current;
                         if (delta < -32768) delta = -32768;
                         if (delta > 32767) delta = 32767;
-                        rc = focus_motor_move(FOCUS_MOTOR_FOCUS, (int16_t)delta);
+                        rc = focus_motor_move((uint8_t)motorSel, (int16_t)delta);
                     }
                 }
 
@@ -4580,6 +4738,7 @@ void *server_thread(void *vargp) {
 
 int server_start() {
     flash_init();
+    focus_home_init();
     for (int i = 0; i < HTTP_MAX_CLIENTS; i++) {
         client_fds[i].sockFd = -1;
         client_fds[i].type = -1;
@@ -4610,6 +4769,7 @@ int server_start() {
 int server_stop() {
     keepRunning = 0;
     flash_shutdown();
+    focus_home_shutdown();
 
     close_socket_fd(server_fd);
     pthread_join(server_thread_id, NULL);

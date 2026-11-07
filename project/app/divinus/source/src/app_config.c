@@ -284,6 +284,10 @@ void app_config_dump(FILE *file) {
     fprintf(file, "  speed: %d\n", app_config.focus_speed);
     fprintf(file, "  min_pos: %d\n  max_pos: %d\n",
         app_config.focus_min_pos, app_config.focus_max_pos);
+    fprintf(file, "  home_margin: %d\n", app_config.focus_home_margin);
+    fprintf(file, "  zoom_speed: %d\n", app_config.focus_zoom_speed);
+    fprintf(file, "  zoom_min_pos: %d\n  zoom_max_pos: %d\n",
+        app_config.focus_zoom_min_pos, app_config.focus_zoom_max_pos);
 
     fprintf(file, "flash:\n");
     fprintf(file, "  enable: %s\n", app_config.flash_enable ? "true" : "false");
@@ -497,8 +501,12 @@ enum ConfigError app_config_parse(void) {
     strcpy(app_config.focus_device, "/dev/i2c-3");
     app_config.focus_address = 0x60;
     app_config.focus_speed = 300;
-    app_config.focus_min_pos = -100000;
-    app_config.focus_max_pos = 100000;
+    app_config.focus_min_pos = 0;
+    app_config.focus_max_pos = 2935;
+    app_config.focus_home_margin = 25;
+    app_config.focus_zoom_speed = 300;
+    app_config.focus_zoom_min_pos = 0;
+    app_config.focus_zoom_max_pos = 2275;
 
     app_config.flash_enable = true;
     app_config.flash_max_bytes = 262144;
@@ -521,7 +529,9 @@ enum ConfigError app_config_parse(void) {
     app_config.audio_bitrate = 128;
     app_config.audio_gain = 0;
     app_config.jpeg_enable = false;
-    app_config.mp4_enable = false;
+    /* The WebUI preview starts the MP4 stream by itself; the HTTP muxer only
+     * attaches to the already running main VENC channel. */
+    app_config.mp4_enable = true;
 
     app_config.mjpeg_enable = false;
     app_config.mjpeg_fps = 15;
@@ -997,6 +1007,25 @@ enum ConfigError app_config_parse(void) {
             &app_config.focus_min_pos);
         parse_int(&ini, "focus", "max_pos", -1000000, 1000000,
             &app_config.focus_max_pos);
+        /* Migration: the old shipped defaults were ±100000, which lets a
+           manual move drive this lens far past its mechanical stop.  The
+           datasheet travel is 0..2935; rewrite only the untouched legacy
+           pair so a deliberate override survives. */
+        if (app_config.focus_min_pos == -100000 &&
+            app_config.focus_max_pos == 100000) {
+            app_config.focus_min_pos = 0;
+            app_config.focus_max_pos = 2935;
+        }
+        v = (int)app_config.focus_home_margin;
+        parse_int(&ini, "focus", "home_margin", 0, 100, &v);
+        app_config.focus_home_margin = (unsigned int)v;
+        v = (int)app_config.focus_zoom_speed;
+        parse_int(&ini, "focus", "zoom_speed", 1, 5000, &v);
+        app_config.focus_zoom_speed = (unsigned int)v;
+        parse_int(&ini, "focus", "zoom_min_pos", -1000000, 1000000,
+            &app_config.focus_zoom_min_pos);
+        parse_int(&ini, "focus", "zoom_max_pos", -1000000, 1000000,
+            &app_config.focus_zoom_max_pos);
     }
 
     parse_bool(&ini, "flash", "enable", &app_config.flash_enable);

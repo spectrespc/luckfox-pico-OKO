@@ -89,8 +89,8 @@ System**. Мобильная раскладка (<40em) превращает sid
 
 Карточки OKO: **Network → VPN** (профиль `wg0`/`awg0`, бейдж типа, живое
 состояние, импорт файлом или текстом, Connect/Disconnect/Autostart/Delete,
-скачивание профиля) и **Image → Focus assist** (`enable`, `mode`, `fps`, ROI и
-предпросмотр с рамкой, живой `metric_avg`/`cells_used`/`status`); также
+скачивание профиля) и **Live → Focus assist** (`enable`, `mode`, `fps`, ROI
+прямо на живом видео с рамкой, живой `metric_avg`/`cells_used`/`status`); также
 **System → Controller firmware / Firmware versions** (target, файл,
 `confirm=FLASH`, прогресс и журнал; строки STM32/STM8 с `state`, `version`,
 `boot_version`, Refresh и автоопрос раз в 10 с). Прошивка выполняется
@@ -186,8 +186,8 @@ every write. `GET` remains supported. New endpoints: `/api/cmd?reboot|export|log
 `/delete`), `/api/telemetry`, and `ntp`/`ntp_server` on `/api/time`;
 `/api/status` gained `ip`, `sd_free_mb`, `sd_total_mb`. Static serving is
 restricted to `/mnt/sdcard/`, and an unparsable configuration is rolled back from
-`divinus.yaml.bak` at startup. OKO cards: **Image → Focus assist** (enable, mode,
-fps, ROI preview/overlay, live metric) and **System → Controller firmware /
+`divinus.yaml.bak` at startup. OKO cards: **Live → Focus assist** (enable, mode,
+fps, ROI over the live video, live metric) and **System → Controller firmware /
 Firmware versions** (STM32/STM8 upload with `confirm=FLASH`, progress and log;
 cached versions with a 10 s refresh). Firmware runs in a worker so the HTTP
 thread never blocks; the form is disabled while a job is busy.

@@ -82,7 +82,8 @@
   в сборку не входит) и
   `tests/yolo_postprocess_test.c` (хостовый тест декода/NMS, в сборку не
   входит), `focus.c`/`focus.h` (тред AF-статистики), `focus_geom.*`,
-  `focus_proto.*`, `focus_motor.*`, `flash.*` (фоновый воркер прошивки),
+  `focus_proto.*`, `focus_motor.*`, `focus_home.*` (фоновые job’ы
+  прижатия к упору и обнуления позиции), `flash.*` (фоновый воркер прошивки),
   `firmware_status.*` (кэш версий STM32/STM8),
   `vpn.c`/`vpn.h` (API VPN: профили, живое состояние, импорт/экспорт,
   вызовы `oko-vpn`) и `vpn_conf.c`/`vpn_conf.h` (парсер wg-quick `.conf`,

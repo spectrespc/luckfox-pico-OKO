@@ -126,7 +126,7 @@
 	.badge-state.off { background: #f1f5f9; color: var(--muted); }
 	.badge-state.warn { background: #fef3c7; color: #92400e; }
 
-	#preview { background: #0b1219; border-radius: 6px; min-height: 210px; display: flex; align-items: center; justify-content: center; color: #94a3b8; overflow: hidden; }
+	#preview { position: relative; background: #0b1219; border-radius: 6px; min-height: 210px; display: flex; align-items: center; justify-content: center; color: #94a3b8; overflow: hidden; user-select: none; touch-action: none; }
 	#preview video, #preview img { width: 100%; display: block; }
 	#preview p { padding: 1em; text-align: center; }
 
@@ -161,9 +161,6 @@
 	.osd-head .badge.show { display: inline-block; }
 
 	.focus-wrap { display: flex; gap: 1em; flex-wrap: wrap; align-items: flex-start; }
-	.focus-preview { position: relative; flex: 1 1 380px; min-width: 260px; background: #0b1219;
-		border-radius: 6px; overflow: hidden; user-select: none; touch-action: none; }
-	.focus-preview img { display: block; width: 100%; }
 	.focus-box { position: absolute; border: 2px solid #22c55e; background: rgba(34,197,94,.12);
 		display: none; pointer-events: none; box-sizing: border-box; }
 	.focus-side { flex: 1 1 260px; min-width: 240px; }
@@ -242,7 +239,7 @@
 		<div class="grid">
 			<div class="card wide">
 				<h3><span data-i18n="preview">Preview</span></h3>
-				<div id="preview"><p data-i18n="preview_idle">Choose MP4, MJPEG or take a snapshot.</p></div>
+				<div id="preview"><p data-i18n="preview_idle">The preview starts automatically. If the picture stays black, the stream is H.265: use MJPEG or a snapshot.</p><div class="focus-box" id="focus-box"></div></div>
 				<div class="actions">
 					<button type="button" class="btn primary" onclick="setSource('mp4')">MP4</button>
 					<button type="button" class="btn" onclick="setSource('mjpeg')">MJPEG</button>
@@ -250,6 +247,70 @@
 					<a class="btn" href="/image.jpg" target="_blank" rel="noopener" data-i18n="snapshot">Snapshot</a>
 				</div>
 				<p class="note" data-i18n="preview_note">MP4 is H.264/H.265; if the picture stays blank, use MJPEG.</p>
+			</div>
+
+			<div class="card wide">
+				<h3><span data-i18n="focus">Focus assist</span>
+					<span class="badge-state off" id="focus-state">–</span></h3>
+				<div class="focus-wrap">
+					<div class="focus-side">
+						<div class="field"><label data-i18n="focus_enable">Enable</label>
+							<div class="ctl"><select id="focus_enable">
+								<option value="false">OFF</option><option value="true">ON</option></select></div></div>
+						<div class="field"><label data-i18n="focus_mode">Mode</label>
+							<div class="ctl"><select id="focus_mode">
+								<option value="full" data-i18n="focus_full">Full frame</option>
+								<option value="roi" data-i18n="focus_roi">ROI</option></select></div></div>
+						<div class="field"><label data-i18n="focus_rate">Refresh rate</label>
+							<div class="ctl"><input type="number" id="focus_fps" min="1" max="10"></div></div>
+						<div class="field"><label data-i18n="focus_motor">Motor</label>
+							<div class="ctl"><select id="focus_motor">
+								<option value="false">OFF</option><option value="true">ON</option></select></div></div>
+						<div class="bar"><div id="focus-bar"></div></div>
+						<div class="focus-metric" id="focus-metric">–</div>
+						<div class="actions">
+							<button type="button" class="btn" id="focus-stop-btn" data-i18n="focus_stop">Stop</button>
+						</div>
+						<div class="actions">
+							<button type="button" class="btn" id="focus-near-btn" title="near">◀</button>
+							<button type="button" class="btn" id="focus-far-btn" title="far">▶</button>
+							<button type="button" class="btn primary" id="focus-save-btn" data-i18n="focus_apply">Apply</button>
+						</div>
+						<h4 data-i18n="manual_lens">Manual lens control</h4>
+						<div class="field"><label data-i18n="manual_step">Step</label>
+							<div class="ctl"><select id="manual_step">
+								<option value="1">1</option><option value="10">10</option>
+								<option value="50" selected>50</option><option value="200">200</option>
+							</select></div></div>
+						<div class="field"><label data-i18n="manual_speed">Speed</label>
+							<div class="ctl"><select id="manual_speed">
+								<option value="50">50</option><option value="100">100</option>
+								<option value="200">200</option><option value="300" selected>300</option>
+								<option value="400">400</option>
+							</select></div></div>
+						<div class="actions">
+							<button type="button" class="btn" id="manual-focus-dec">FOCUS ◀</button>
+							<button type="button" class="btn" id="manual-focus-inc">FOCUS ▶</button>
+						</div>
+						<div class="actions">
+							<button type="button" class="btn" id="manual-zoom-dec">ZOOM ◀</button>
+							<button type="button" class="btn" id="manual-zoom-inc">ZOOM ▶</button>
+							<button type="button" class="btn" id="manual-stop-btn" data-i18n="focus_stop">Stop</button>
+						</div>
+						<div class="focus-metric" id="manual-readout">focus: – · zoom: –</div>
+						<div class="actions">
+							<button type="button" class="btn" id="home-focus-btn" data-i18n="home_focus">Home focus</button>
+							<button type="button" class="btn" id="home-zoom-btn" data-i18n="home_zoom">Home zoom</button>
+						</div>
+						<div class="actions">
+							<button type="button" class="btn" id="zero-focus-btn" data-i18n="zero_focus">Zero focus</button>
+							<button type="button" class="btn" id="zero-zoom-btn" data-i18n="zero_zoom">Zero zoom</button>
+						</div>
+						<p class="note" id="home-state-note"></p>
+						<p class="note" data-i18n="focus_note">Drag a rectangle over the live video to measure only that area. Values are relative to the sensor frame; mirror/flip are taken into account; rotation (90°/270°) is not.</p>
+						<p class="note" id="focus-motor-note"></p>
+					</div>
+				</div>
 			</div>
 
 			<div class="card">
@@ -410,44 +471,7 @@
 				<p class="note" data-i18n="hdr_note">HDR requires a restart; it is refused while AIISP is on.</p>
 			</div>
 
-			<div class="card wide">
-				<h3><span data-i18n="focus">Focus assist</span>
-					<span class="badge-state off" id="focus-state">–</span></h3>
-				<div class="focus-wrap">
-					<div class="focus-preview" id="focus-preview">
-						<img id="focus-img" alt="preview" src="/image.jpg" draggable="false">
-						<div class="focus-box" id="focus-box"></div>
-					</div>
-					<div class="focus-side">
-						<div class="field"><label data-i18n="focus_enable">Enable</label>
-							<div class="ctl"><select id="focus_enable">
-								<option value="false">OFF</option><option value="true">ON</option></select></div></div>
-						<div class="field"><label data-i18n="focus_mode">Mode</label>
-							<div class="ctl"><select id="focus_mode">
-								<option value="full" data-i18n="focus_full">Full frame</option>
-								<option value="roi" data-i18n="focus_roi">ROI</option></select></div></div>
-						<div class="field"><label data-i18n="focus_rate">Refresh rate</label>
-							<div class="ctl"><input type="number" id="focus_fps" min="1" max="10"></div></div>
-						<div class="field"><label data-i18n="focus_motor">Motor</label>
-							<div class="ctl"><select id="focus_motor">
-								<option value="false">OFF</option><option value="true">ON</option></select></div></div>
-						<div class="bar"><div id="focus-bar"></div></div>
-						<div class="focus-metric" id="focus-metric">–</div>
-						<div class="actions">
-							<button type="button" class="btn" id="focus-img-btn" data-i18n="refresh_image">Refresh image</button>
-							<button type="button" class="btn" id="focus-stop-btn" data-i18n="focus_stop">Stop</button>
-						</div>
-						<div class="actions">
-							<button type="button" class="btn" id="focus-near-btn" title="near">◀</button>
-							<button type="button" class="btn" id="focus-far-btn" title="far">▶</button>
-							<button type="button" class="btn primary" id="focus-save-btn" data-i18n="focus_apply">Apply</button>
-						</div>
-						<p class="note" data-i18n="focus_note">Drag a rectangle on the preview to measure only that area. Values are relative to the sensor frame; mirror/flip are taken into account.</p>
-						<p class="note" id="focus-motor-note"></p>
-					</div>
-				</div>
 			</div>
-		</div>
 	</section>
 
 <!-- ===================== STREAMS ===================== -->
@@ -983,7 +1007,7 @@
 				</div>
 				<div class="bar"><div id="flash_bar"></div></div>
 				<div class="log" id="flash_log"></div>
-				<p class="note" data-i18n="flash_note">The daemon is stopped while the controller is flashed. Do not power off the device. The version comes from the file name: app-1.0.1.bin, app-2.0.1.ihx.</p>
+				<p class="note" data-i18n="flash_note">The daemon is stopped while the controller is flashed. Do not power off the device. The version comes from the file name: app-1.0.1.bin, app-2.0.2.ihx.</p>
 			</div>
 		</div>
 	</section>
@@ -1003,8 +1027,10 @@ var I18N = {
 		mounted: "mounted", absent: "absent",
 		restart_needed: "A restart is required for some of the applied changes.",
 		restart: "Restart streamer", reboot: "Reboot device",
-		preview: "Preview", preview_idle: "Choose MP4, MJPEG or take a snapshot.",
-		preview_note: "MP4 is H.264/H.265; if the picture stays blank, use MJPEG.",
+		preview: "Preview", preview_idle: "The preview starts automatically. If the picture stays black, the stream is H.265: use MJPEG or a snapshot.",
+		preview_note: "The preview starts by itself; MP4 may be H.265, so a browser without HEVC falls back to MJPEG or a snapshot.",
+		preview_fallback: "Preview: MJPEG/snapshot",
+		roi_need_stream: "Start a stream (MP4 or MJPEG) to select the focus area.",
 		stop: "Stop", snapshot: "Snapshot",
 		recording: "Recording", state: "State", started_at: "Started at",
 		start_recording: "Start recording", stop_recording: "Stop recording",
@@ -1049,12 +1075,15 @@ var I18N = {
 		focus: "Focus assist", focus_enable: "Enable", focus_mode: "Mode",
 		focus_full: "Full frame", focus_roi: "ROI", focus_rate: "Refresh rate",
 		focus_motor: "Motor", focus_stop: "Stop", focus_apply: "Apply",
-		refresh_image: "Refresh image",
-		focus_note: "Drag a rectangle on the preview to measure only that area. Values are relative to the sensor frame; mirror/flip are taken into account.",
+		focus_note: "Drag a rectangle over the live video to measure only that area. Values are relative to the sensor frame; mirror/flip are taken into account; rotation (90°/270°) is not.",
+		manual_lens: "Manual lens control", manual_step: "Step",
+		manual_speed: "Speed", home_focus: "Home focus", home_zoom: "Home zoom",
+		zero_focus: "Zero focus", zero_zoom: "Zero zoom",
+		home_running: "Homing", home_done: "Done", home_failed: "Failed",
 		firmware: "Controller firmware", flash_target: "Target",
 		flash_file: "Firmware file",
 		flash_confirm: "Type FLASH", flash_start: "Flash controller",
-		flash_note: "The daemon is stopped while the controller is flashed. Do not power off the device. The version comes from the file name: app-1.0.1.bin, app-2.0.1.ihx.",
+		flash_note: "The daemon is stopped while the controller is flashed. Do not power off the device. The version comes from the file name: app-1.0.1.bin, app-2.0.2.ihx.",
 		fw_app: "application", fw_boot: "bootloader", fw_absent: "no response",
 		flash_running: "Flashing the controller", flash_done: "Firmware flashed",
 		flash_failed: "Firmware flash failed",
@@ -1169,8 +1198,10 @@ var I18N = {
 		mounted: "подключена", absent: "нет",
 		restart_needed: "Часть применённых настроек вступит в силу после перезапуска.",
 		restart: "Перезапустить стример", reboot: "Перезагрузить устройство",
-		preview: "Предпросмотр", preview_idle: "Выберите MP4, MJPEG или сделайте снимок.",
-		preview_note: "MP4 — это H.264/H.265; если картинка не появляется, используйте MJPEG.",
+		preview: "Предпросмотр", preview_idle: "Предпросмотр включается автоматически. Если картинка чёрная, поток в H.265: используйте MJPEG или снимок.",
+		preview_note: "Предпросмотр запускается сам; MP4 может быть в H.265, поэтому браузер без HEVC переключается на MJPEG или снимок.",
+		preview_fallback: "Предпросмотр: MJPEG/снимок",
+		roi_need_stream: "Включите поток (MP4 или MJPEG), чтобы выбрать зону фокуса.",
 		stop: "Стоп", snapshot: "Снимок",
 		recording: "Запись", state: "Состояние", started_at: "Начало",
 		start_recording: "Начать запись", stop_recording: "Остановить запись",
@@ -1215,12 +1246,16 @@ var I18N = {
 		focus: "Помощь фокусировке", focus_enable: "Включить", focus_mode: "Режим",
 		focus_full: "Весь кадр", focus_roi: "Область", focus_rate: "Частота обновления",
 		focus_motor: "Мотор", focus_stop: "Стоп", focus_apply: "Применить",
-		refresh_image: "Обновить кадр",
-		focus_note: "Выделите прямоугольник на предпросмотре, чтобы измерять только эту область. Значения привязаны к кадру сенсора, зеркало и переворот учитываются.",
+		focus_note: "Выделите прямоугольник прямо на живом видео, чтобы измерять только эту область. Значения привязаны к кадру сенсора, зеркало и переворот учитываются, поворот (90°/270°) — нет.",
+		manual_lens: "Ручное управление объективом", manual_step: "Шаг",
+		manual_speed: "Скорость", home_focus: "Упор focus", home_zoom: "Упор zoom",
+		zero_focus: "Обнулить focus", zero_zoom: "Обнулить zoom",
+		home_running: "Прижатие к упору", home_done: "Готово",
+		home_failed: "Ошибка",
 		firmware: "Прошивки контроллеров", flash_target: "Цель",
 		flash_file: "Файл прошивки",
 		flash_confirm: "Введите FLASH", flash_start: "Прошить контроллер",
-		flash_note: "На время прошивки демон останавливается. Не выключайте питание. Версия берётся из имени файла: app-1.0.1.bin, app-2.0.1.ihx.",
+		flash_note: "На время прошивки демон останавливается. Не выключайте питание. Версия берётся из имени файла: app-1.0.1.bin, app-2.0.2.ihx.",
 		fw_app: "приложение", fw_boot: "загрузчик", fw_absent: "нет ответа",
 		flash_running: "Идёт прошивка контроллера", flash_done: "Прошивка завершена",
 		flash_failed: "Ошибка прошивки",
@@ -1523,6 +1558,8 @@ function setField(id, v) {
 
 function applyValues(ep, dec) {
 	if (!dec || typeof dec !== 'object') return;
+	if ((ep === 'mp4' || ep === 'mjpeg') && typeof dec.enable === 'boolean')
+		previewCfg[ep] = dec.enable;
 	for (var k in dec) {
 		if (!has(dec, k)) continue;
 		var v = dec[k];
@@ -1577,30 +1614,132 @@ function showRestartHint(on) {
 /* ============================ live ============================ */
 var lastRecord = null, lastStatus = null, lastTelemetry = null;
 
-function setSource(kind) {
+/* The preview keeps one persistent stream per open tab: entering the section
+   starts it, leaving it releases the chunked connection and the decoder. */
+var previewToken = 0, previewTimer = null;
+var previewCfg = { mp4: null, mjpeg: null };
+
+function previewEnabled(name) {
+	if (previewCfg[name] !== null) return previewCfg[name];
+	var el = $(name + '_enable');
+	return !!(el && el.value === 'true');
+}
+
+function previewClearTimer() {
+	if (previewTimer) { clearTimeout(previewTimer); previewTimer = null; }
+}
+
+/* Replace the preview contents but keep #focus-box: the ROI drag handler and
+   focusDrawBox() hold a reference to that node. */
+function previewSet(html) {
+	var frame = $('preview'), box = $('focus-box');
+	if (!frame) return null;
+	frame.innerHTML = html;
+	if (box) frame.appendChild(box);
+	return frame.firstElementChild;
+}
+
+function previewStop() {
+	previewClearTimer();
+	previewToken++;
 	var frame = $('preview');
 	if (!frame) return;
-	if (!kind) {
-		frame.innerHTML = '<p>' + t('preview_idle') + '</p>';
-		return;
+	var video = frame.querySelector('video');
+	if (video) {
+		try { video.pause(); } catch (e) {}
+		video.removeAttribute('src');
+		try { video.load(); } catch (e) {}
 	}
+	var box = $('focus-box');
+	if (box) box.style.display = 'none';
+	previewSet('<p>' + t('preview_idle') + '</p>');
+}
+
+function previewSnapshot(token) {
+	if (token !== previewToken) return;
+	var img = previewSet('<img alt="frame" src="/image.jpg?t=' + Date.now() + '">');
+	if (!img) return;
+	img.addEventListener('error', function () {
+		if (token !== previewToken) return;
+		previewSet('<p>' + t('preview_idle') + '</p>');
+	});
+}
+
+function previewMjpeg(token, fallback) {
+	if (token !== previewToken) return;
+	if (fallback) toast('info', t('preview_fallback'));
+	if (!previewEnabled('mjpeg')) { previewSnapshot(token); return; }
+	var img = previewSet('<img alt="MJPEG" src="/mjpeg?' + Date.now() + '">');
+	if (!img) return;
+	var done = false;
+	var fail = function () {
+		if (done || token !== previewToken) return;
+		done = true;
+		previewClearTimer();
+		previewSnapshot(token);
+	};
+	previewTimer = setTimeout(fail, 4000);
+	img.addEventListener('load', function () { done = true; previewClearTimer(); });
+	img.addEventListener('error', fail);
+}
+
+function setSource(kind, auto) {
+	previewStop();
+	var token = previewToken;
+	if (!kind) return;
 	if (kind === 'mp4') {
-		var en = $('mp4_enable');
-		if (en && en.value !== 'true') {
-			frame.innerHTML = '<p>' + t('mp4') + ' — ' + t('off') + '</p>';
+		if (!previewEnabled('mp4')) {
+			previewSet('<p>' + t('mp4') + ' — ' + t('off') + '</p>');
 			toast('info', t('mp4'), t('enabled') + ': OFF');
+			if (auto) previewMjpeg(token, true);
 			return;
 		}
-		frame.innerHTML = '<video autoplay muted playsinline controls src="/video.mp4"></video>';
+		var video = previewSet('<video autoplay muted playsinline src="/video.mp4"></video>');
+		if (!video) return;
+		var ok = false;
+		var fail = function () {
+			if (ok || token !== previewToken) return;
+			ok = true;
+			previewClearTimer();
+			previewMjpeg(token, true);
+		};
+		previewTimer = setTimeout(fail, 4000);
+		video.addEventListener('canplay', function () { ok = true; previewClearTimer(); });
+		video.addEventListener('playing', function () { ok = true; previewClearTimer(); });
+		video.addEventListener('timeupdate', function () {
+			if (video.currentTime > 0) { ok = true; previewClearTimer(); }
+		});
+		video.addEventListener('error', fail);
 		return;
 	}
-	var mj = $('mjpeg_enable');
-	if (mj && mj.value !== 'true') {
-		frame.innerHTML = '<p>' + t('mjpeg') + ' — ' + t('off') + '</p>';
+	if (!previewEnabled('mjpeg')) {
+		if (auto) { previewSnapshot(token); return; }
+		previewSet('<p>' + t('mjpeg') + ' — ' + t('off') + '</p>');
 		toast('info', t('mjpeg'), t('enabled') + ': OFF');
 		return;
 	}
-	frame.innerHTML = '<img alt="MJPEG" src="/mjpeg?' + Date.now() + '">';
+	previewMjpeg(token, false);
+}
+
+/* Auto-start: MP4 first, then MJPEG, then a still frame.  The flags are read
+   from the API instead of the DOM so a stale select cannot break the choice. */
+function autoStartPreview() {
+	previewStop();
+	var token = previewToken;
+	var left = 2;
+	var go = function () {
+		if (--left > 0) return;
+		if (token !== previewToken || activeSec !== 'live') return;
+		setSource(previewEnabled('mp4') ? 'mp4' : 'mjpeg', true);
+	};
+	getJson('/api/mp4', function (dec) {
+		if (dec && typeof dec.enable === 'boolean') previewCfg.mp4 = dec.enable;
+		go();
+	});
+	getJson('/api/mjpeg', function (dec) {
+		if (dec && typeof dec.enable === 'boolean') previewCfg.mjpeg = dec.enable;
+		go();
+	});
 }
 
 function updateRecordBadge(dec) {
@@ -2378,6 +2517,7 @@ function focusApplyValues(dec) {
 	$('focus-metric').textContent = avg ? avg.toLocaleString() : '–';
 	$('focus-bar').style.width = focusMax ? Math.round(avg * 100 / focusMax) + '%' : '0%';
 	focusDrawBox(dec.roi, dec.mode);
+	focusRenderManual(dec);
 	var note = $('focus-motor-note');
 	if (note) {
 		var m = dec.motor || {};
@@ -2388,7 +2528,7 @@ function focusApplyValues(dec) {
 }
 
 function focusPoll() {
-	if (activeSec !== 'image') return;
+	if (activeSec !== 'live') return;
 	getJson('/api/focus', function (dec) { focusApplyValues(dec); });
 }
 
@@ -2412,11 +2552,6 @@ function focusStop() {
 	focusPost('enable=0');
 }
 
-function focusImage() {
-	$('focus-img').src = '/image.jpg?t=' + Date.now();
-	toast('info', t('refresh_image'));
-}
-
 function focusMove(steps) {
 	if (!focusState || !focusState.motor || !focusState.motor.enabled) {
 		toast('err', t('focus_motor'), t('off'));
@@ -2425,51 +2560,162 @@ function focusMove(steps) {
 	focusPost('move=' + steps);
 }
 
+/* ===================== manual lens control ===================== */
+var manualInitialized = false;
+
+function focusPosText(value) {
+	return (typeof value === 'number') ? value : '–';
+}
+
+function focusManualUsable() {
+	var m = focusState && focusState.motor;
+	var home = focusState && focusState.home;
+	return !!(m && m.enabled && m.present) &&
+		!(home && home.state === 'running');
+}
+
+function focusRenderManual(dec) {
+	var m = (dec && dec.motor) || {};
+	var f = m.focus || {}, z = m.zoom || {};
+	var home = (dec && dec.home) || { state: 'idle' };
+	var usable = focusManualUsable();
+	var buttons = ['manual-focus-dec', 'manual-focus-inc', 'manual-zoom-dec',
+		'manual-zoom-inc', 'manual-stop-btn', 'home-focus-btn', 'home-zoom-btn',
+		'zero-focus-btn', 'zero-zoom-btn'];
+	for (var i = 0; i < buttons.length; i++) {
+		var b = $(buttons[i]);
+		if (b) b.disabled = !usable;
+	}
+	$('manual-readout').textContent = 'focus: ' + focusPosText(f.position) +
+		' · zoom: ' + focusPosText(z.position);
+
+	var note = $('home-state-note');
+	if (note) {
+		if (home.state === 'running')
+			note.textContent = t('home_running') + ': ' + (home.motor || '') +
+				', ' + (home.travel || 0) + ' steps';
+		else if (home.state === 'error')
+			note.textContent = t('home_failed') + ': ' + (home.error || '');
+		else if (home.state === 'done')
+			note.textContent = t('home_done') + ': ' + (home.motor || '') +
+				', ' + (home.travel || 0) + ' steps';
+		else
+			note.textContent = '';
+	}
+
+	if (!manualInitialized) {
+		manualInitialized = true;
+		var sel = $('manual_speed');
+		if (sel && typeof m.speed === 'number') {
+			var found = false;
+			for (var j = 0; j < sel.options.length; j++) {
+				if (Number(sel.options[j].value) === m.speed) {
+					sel.value = String(m.speed);
+					found = true;
+					break;
+				}
+			}
+			/* A configured speed outside the preset list must still be
+			   visible: the firmware already runs at m.speed. */
+			if (!found) {
+				var opt = document.createElement('option');
+				opt.value = String(m.speed);
+				opt.textContent = String(m.speed);
+				sel.appendChild(opt);
+				sel.value = String(m.speed);
+			}
+		}
+	}
+}
+
+function focusManualMove(motor, direction) {
+	var step = parseInt($('manual_step').value, 10) || 50;
+	if (!focusManualUsable()) {
+		toast('err', t('focus_motor'), t('off'));
+		return;
+	}
+	focusPost('move=' + (direction * step) + '&motor=' + motor);
+}
+
+function focusManualSpeed() {
+	focusPost('speed=' + encodeURIComponent($('manual_speed').value) +
+		'&motor=both');
+}
+
+function focusManualStop() {
+	focusPost('stop=1');
+}
+
+function focusHome(target) {
+	focusPost('home=' + target);
+}
+
+function focusZero(target) {
+	focusPost('zero=' + target);
+}
+
 (function () {
-	var preview = $('focus-preview'), box = $('focus-box'), img = $('focus-img');
-	if (!preview || !box || !img) return;
+	var preview = $('preview');
+	if (!preview) return;
 	var dragging = false, startX = 0, startY = 0;
 
-	function rect() { return img.getBoundingClientRect(); }
+	function mediaEl() { return preview.querySelector('video, img'); }
+	function rect() {
+		var el = mediaEl();
+		return el ? el.getBoundingClientRect() : null;
+	}
+	function local(e, r) {
+		return {
+			x: Math.max(0, Math.min(r.width, e.clientX - r.left)),
+			y: Math.max(0, Math.min(r.height, e.clientY - r.top))
+		};
+	}
+	/* #focus-box is positioned in percent of #preview, so account for the
+	   offset between the media element and its container. */
+	function placeBox(x0, y0, x1, y1, r) {
+		var box = $('focus-box');
+		if (!box) return;
+		var p = preview.getBoundingClientRect();
+		box.style.left = (r.left - p.left + Math.min(x0, x1)) + 'px';
+		box.style.top = (r.top - p.top + Math.min(y0, y1)) + 'px';
+		box.style.width = Math.abs(x1 - x0) + 'px';
+		box.style.height = Math.abs(y1 - y0) + 'px';
+		box.style.display = 'block';
+	}
 
 	preview.addEventListener('pointerdown', function (e) {
 		if (e.button !== 0) return;
 		var r = rect();
-		if (!r.width || !r.height) return;
+		if (!r) { toast('info', t('roi_need_stream')); return; }
+		if (!r.width || !r.height || !$('focus-box')) return;
 		dragging = true;
-		startX = Math.max(0, Math.min(r.width, e.clientX - r.left));
-		startY = Math.max(0, Math.min(r.height, e.clientY - r.top));
-		box.style.left = startX + 'px';
-		box.style.top = startY + 'px';
-		box.style.width = '0px';
-		box.style.height = '0px';
-		box.style.display = 'block';
+		var p = local(e, r);
+		startX = p.x;
+		startY = p.y;
+		placeBox(startX, startY, startX, startY, r);
 		preview.setPointerCapture && preview.setPointerCapture(e.pointerId);
 	});
 
 	preview.addEventListener('pointermove', function (e) {
 		if (!dragging) return;
 		var r = rect();
-		var x = Math.max(0, Math.min(r.width, e.clientX - r.left));
-		var y = Math.max(0, Math.min(r.height, e.clientY - r.top));
-		box.style.left = Math.min(x, startX) + 'px';
-		box.style.top = Math.min(y, startY) + 'px';
-		box.style.width = Math.abs(x - startX) + 'px';
-		box.style.height = Math.abs(y - startY) + 'px';
+		if (!r) return;
+		var p = local(e, r);
+		placeBox(startX, startY, p.x, p.y, r);
 	});
 
 	function finish(e) {
 		if (!dragging) return;
 		dragging = false;
 		var r = rect();
-		if (!r.width || !r.height) return;
-		var x = Math.max(0, Math.min(r.width, e.clientX - r.left));
-		var y = Math.max(0, Math.min(r.height, e.clientY - r.top));
-		var nx = Math.min(x, startX) / r.width;
-		var ny = Math.min(y, startY) / r.height;
-		var nw = Math.abs(x - startX) / r.width;
-		var nh = Math.abs(y - startY) / r.height;
-		if (nw < 0.03 || nh < 0.03) { box.style.display = 'none'; return; }
+		if (!r || !r.width || !r.height) return;
+		var p = local(e, r);
+		var nx = Math.min(p.x, startX) / r.width;
+		var ny = Math.min(p.y, startY) / r.height;
+		var nw = Math.abs(p.x - startX) / r.width;
+		var nh = Math.abs(p.y - startY) / r.height;
+		var box = $('focus-box');
+		if (nw < 0.03 || nh < 0.03) { if (box) box.style.display = 'none'; return; }
 		var mir = $('isp_mirror') && $('isp_mirror').value === 'true';
 		var fl = $('isp_flip') && $('isp_flip').value === 'true';
 		if (mir) nx = 1 - (nx + nw);
@@ -2566,7 +2812,7 @@ function flashStart() {
 
 /* ============================ sections ============================ */
 var SECTION_LOAD = {
-	live: ['record', 'eptz', 'rotate'],
+	live: ['record', 'eptz', 'rotate', 'mp4', 'mjpeg', 'isp'],
 	image: ['isp', 'night', 'aiisp', 'hdr', 'iq'],
 	streams: ['mp4', 'substream', 'mjpeg', 'jpeg', 'audio', 'venc', 'rtsp', 'onvif'],
 	events: ['ivs', 'yolo'],
@@ -2583,10 +2829,12 @@ function loadSection(name) {
 	if (name === 'streams') loadStreams();
 	if (name === 'events') loadModels();
 	if (name === 'network') vpnLoad();
+	if (name === 'live') focusPoll();
 }
 
 function showSection(name) {
 	if (!SECTION_LOAD[name]) name = 'live';
+	if (activeSec === 'live' && name !== 'live') previewStop();
 	activeSec = name;
 	var secs = document.querySelectorAll('.sec');
 	for (var i = 0; i < secs.length; i++)
@@ -2604,6 +2852,7 @@ function showSection(name) {
 		vpnLoad();
 	}
 	poll();
+	if (name === 'live') autoStartPreview();
 }
 
 function onApplyClick(g) {
@@ -2621,10 +2870,9 @@ function poll() {
 	if (activeSec === 'live') {
 		loadIvsEvents();
 		loadTelemetry();
+		focusPoll();
 	} else if (activeSec === 'events') {
 		loadIvsEvents();
-	} else if (activeSec === 'image') {
-		focusPoll();
 	} else if (activeSec === 'system') {
 		firmwarePoll();
 		flashPoll();
@@ -2671,11 +2919,19 @@ function init() {
 
 	$('focus-save-btn').onclick = focusApply;
 	$('focus-stop-btn').onclick = focusStop;
-	$('focus-img-btn').onclick = focusImage;
 	$('focus-near-btn').onclick = function () { focusMove(-200); };
 	$('focus-far-btn').onclick = function () { focusMove(200); };
+	$('manual-focus-dec').onclick = function () { focusManualMove('focus', -1); };
+	$('manual-focus-inc').onclick = function () { focusManualMove('focus', 1); };
+	$('manual-zoom-dec').onclick = function () { focusManualMove('zoom', -1); };
+	$('manual-zoom-inc').onclick = function () { focusManualMove('zoom', 1); };
+	$('manual-stop-btn').onclick = focusManualStop;
+	$('manual_speed').onchange = focusManualSpeed;
+	$('home-focus-btn').onclick = function () { focusHome('focus'); };
+	$('home-zoom-btn').onclick = function () { focusHome('zoom'); };
+	$('zero-focus-btn').onclick = function () { focusZero('focus'); };
+	$('zero-zoom-btn').onclick = function () { focusZero('zoom'); };
 	$('fw_refresh').onclick = firmwarePoll;
-	$('focus-img').onclick = function (e) { e.preventDefault(); };
 	$('flash_start').onclick = flashStart;
 	flashPoll();
 

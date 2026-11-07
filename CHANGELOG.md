@@ -22,7 +22,7 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
    конфигурации или документации проекта.
 6. `UPDATE_LOG.md` / `UPDATE_LOG_CN.md` — неприкосновенный вендорский архив.
 
-## [Не выпущено]
+## [0.2.0] — 2026-11-07
 
 - `KNOWN_ISSUES.md` — реестр открытых ошибок и ограничений: критичные
   (`vi1`, librga, отсутствие модели 640×384, лицензия YOLOv5), функциональные
@@ -39,6 +39,30 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Изменено
 
+- **WebUI: фокус в «Видео», автозапуск MP4 и ROI поверх потока (OKO).**
+  Карточка «Помощь фокусировке» перенесена из «Изображения» в «Видео»
+  (`sec-live`). Предпросмотр запускается сам при входе в раздел с каскадом
+  MP4 → MJPEG → снимок `/image.jpg` (браузер без HEVC не декодирует H.265 и
+  через ~4 с переходит на резервную ветку), при уходе из раздела поток
+  освобождается. Зона фокуса выбирается перетаскиванием прямо поверх живого
+  видео; рамка `#focus-box` находится в `#preview`, ROI по-прежнему не
+  учитывает поворот 90°/270°. Дефолт `app_config.mp4_enable` изменён на
+  `true` (фабричный `divinus.yaml` уже включал MP4/H.265), сохранённые
+  конфиги `/userdata` не мигрируются. Обновлены `bench/ui_check.py`,
+  `project/app/divinus/README.md`, `source/doc/endpoints.md`,
+  `source/doc/WEBUI_REORG.md` и `FEATURES_VERIFIED.md`.
+- **WebUI: focus card in Live, MP4 auto-start and ROI over the stream (OKO).**
+  The Focus assist card moved from Image to Live (`sec-live`). The preview now
+  starts by itself when the section opens, with an MP4 → MJPEG → `/image.jpg`
+  cascade (a browser without HEVC cannot decode H.265 and switches to the
+  fallback after ~4 s); leaving the section releases the stream. The focus area
+  is selected by dragging directly over the live video; `#focus-box` lives
+  inside `#preview`, and ROI still ignores 90°/270° rotation.
+  `app_config.mp4_enable` now defaults to `true` (the shipped `divinus.yaml`
+  already enabled MP4/H.265); saved `/userdata` configs are not migrated.
+  Updated `bench/ui_check.py`, `project/app/divinus/README.md`,
+  `source/doc/endpoints.md`, `source/doc/WEBUI_REORG.md` and
+  `FEATURES_VERIFIED.md`.
 - **NPU: драйвер `rknpu` 0.9.2 → 0.9.8 (OKO).** Импортирован upstream
   `drivers/rknpu` из `rockchip-linux/kernel`, ветка `develop-5.10`, коммит
   `276af44f9a7be47a2804ecabf37f8898541d244e` (0.9.8, `20240828`). Сохранено
@@ -108,6 +132,81 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Добавлено
 
+- **STM8: `SET_POS 0x09` и принудительный сброс позиций (2.0.2/2.1.1).**
+  Прошивка получила команду `SET_POS` (`[09][motor][int32 BE]`): позиция и
+  цель задаются без движения, команда применяется только вне `RUNNING` и
+  помечает позицию для сохранения в EEPROM. Версии подняты до **2.0.2**
+  (продукт) и **2.1.1** (тестовая плата); `oko-motor` получил `set-pos
+  MOTOR VALUE` с проверкой readback и `home MOTOR [SPEED]`. `/api/focus`
+  принимает `home=focus|zoom|both` и `zero=focus|zoom|both&value=N`:
+  асинхронный job прижимает шкалу к отрицательному упору чанками, ждёт
+  `IDLE` и обнуляет позицию; повторный запуск и прошивка контроллера во
+  время job’а возвращают HTTP 409, а прошивка ниже 2.0.2/2.1.1 отклоняется
+  с явной ошибкой. `GET /api/focus` отдаёт блок `home` и позиции/статусы
+  обоих моторов. Homing считает шаги в open-loop и обнуляет шкалу через
+  `SET_POS`, не читая отрицательную позицию (KI-042).
+- **Ручное управление фокусом и зумом в WebUI (OKO).** `/api/focus`
+  понимает `motor=focus|zoom` для `speed`/`move`/`position` (clamp по
+  границам выбранной шкалы) и `motor=both` для скорости; в карточке Focus
+  assist появились шаг 1/10/50/200, скорость 50–400, кнопки FOCUS/ZOOM ◀▶,
+  STOP и readout позиций, а также кнопки Home/Zero с индикатором задачи.
+  Дефолты границ заменены на даташитные: focus 0…2935, zoom 0…2275; новые
+  ключи `focus.home_margin`, `focus.zoom_speed`, `focus.zoom_min_pos`,
+  `focus.zoom_max_pos`. Старые конфиги с неизменённой парой `-100000`/
+  `100000` автоматически переводятся на 0/2935 при загрузке.
+  `bench/api_check.py` и `bench/ui_check.py`
+  дополнены проверками новых параметров и панели.
+- **STM8: `SET_POS 0x09` and forced position reset (2.0.2/2.1.1).** The
+  firmware gained `SET_POS` (`[09][motor][int32 BE]`): position and target
+  are set without motion, the command is applied only outside `RUNNING`, and
+  the position is marked for EEPROM persistence. Versions were bumped to
+  **2.0.2** (product) and **2.1.1** (test board); `oko-motor` gained
+  `set-pos MOTOR VALUE` with a readback check and `home MOTOR [SPEED]`.
+  `/api/focus` accepts `home=focus|zoom|both` and
+  `zero=focus|zoom|both&value=N`: a background job drives the scale to the
+  negative stop in chunks, waits for `IDLE`, then zeroes the position; a
+  second job or a controller flash returns HTTP 409, and firmware older than
+  2.0.2/2.1.1 is refused with an explicit error. `GET /api/focus` exposes a
+  `home` block and both motor positions/statuses. Homing counts steps
+  open-loop and zeroes the scale through `SET_POS` without reading the
+  negative position (KI-042).
+- **Manual focus and zoom control in the WebUI (OKO).** `/api/focus`
+  understands `motor=focus|zoom` for `speed`/`move`/`position` (clamped by
+  that scale's bounds) and `motor=both` for speed; the Focus assist card now
+  has step 1/10/50/200, speed 50–400, FOCUS/ZOOM ◀▶ buttons, STOP and a
+  position readout, plus Home/Zero buttons with a job indicator. The default
+  bounds now match the datasheet: focus 0…2935, zoom 0…2275; new keys are
+  `focus.home_margin`, `focus.zoom_speed`, `focus.zoom_min_pos` and
+  `focus.zoom_max_pos`. Old configs that still carry the untouched
+  `-100000`/`100000` pair are migrated to 0/2935 on load.
+  `bench/api_check.py` and `bench/ui_check.py` cover
+  the new parameters and panel.
+- **STM8: прошивка тестовой платы `BOARD=test` (2.1.1).** В
+  `project/app/stm8-motor` добавлен вариант сборки под тестовую плату на
+  STM8S003F3P6 с отдельной картой пинов (`PD5/PC7/PD3/PD2` + `PA1/PA2` для
+  focus, `PC4/PC3/PC6/PC5` + `PA3/PD6` для zoom). Карта выбирается на этапе
+  компиляции (`-DBOARD_TEST`) в `stepper.c`, `hw_config.c` и `boot_hw.c`;
+  продуктовая сборка по умолчанию остаётся 2.0.2. Смена `BOARD`
+  отслеживается маркером `build/.board` и автоматически перекомпилирует все
+  исходники, поэтому смешанная сборка с чужой картой не возникает.
+  `stm8flash` использует профиль `stm8s003f3` (`FLASH_DEV`);
+  документация — `docs/HARDWARE_TESTBOARD.md`, модель MCU и размер EEPROM
+  уточнены в `TO_DO.md`, `docs/HARDWARE.md/.ru` и `eeprom.h`. Исправлено
+  ошибочное утверждение, что пропуск шагов ловится по `nFAULT`: при 5 В и
+  обмотках 40 Ом ток заклинившего мотора равен рабочему и OCP не
+  срабатывает.
+- **STM8: test-board firmware `BOARD=test` (2.1.1).** `project/app/stm8-motor`
+  gained a compile-time variant for the STM8S003F3P6 test board with its own
+  pin map (`PD5/PC7/PD3/PD2` + `PA1/PA2` for focus, `PC4/PC3/PC6/PC5` +
+  `PA3/PD6` for zoom). The map is selected with `-DBOARD_TEST` in
+  `stepper.c`, `hw_config.c` and `boot_hw.c`; the default production build
+  stays 2.0.2. A `build/.board` marker makes a `BOARD` switch recompile every
+  source, so a mixed build with the wrong pin map cannot occur.
+  `stm8flash` now uses the `stm8s003f3` profile (`FLASH_DEV`); documented in
+  `docs/HARDWARE_TESTBOARD.md`, with the MCU model and EEPROM size corrected
+  in `TO_DO.md`, `docs/HARDWARE.md/.ru` and `eeprom.h`. Also corrected the
+  claim that missed steps are caught by `nFAULT`: at 5 V and 40 Ω coils a
+  stalled motor draws the same current as a running one, so OCP never trips.
 - **Архив внешних исследований `research/` (OKO).** Создана не-сборочная
   папка `research/` с правилами оформления тем: заметка о переносимости
   upstream-кода, read-only снимки с провенансом (путь, лицензия, sha256,
@@ -328,6 +427,18 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Исправлено
 
+- **STM8: ложный `STATUS_ERROR` при пробуждении драйвера.** `stepper_tick()`
+  опрашивал nFAULT сразу после подъёма nSLEEP, до выдержки `wake_ticks`, и
+  DRV8833 в окне tWAKE иногда держал nFAULT низким: 15–25% первых шагов после
+  простоя обрывались ошибкой (на стенде 3 из 20 реверсов). Проверка nFAULT
+  перенесена за блок `wake_ticks`; на исправленной прошивке 40 движений и
+  sweep 100–800 шаг/с — 0 ложных ERROR. **STM8: spurious `STATUS_ERROR` on
+  driver wake.** `stepper_tick()` sampled nFAULT immediately after nSLEEP
+  rose, before the `wake_ticks` delay; the DRV8833 can hold nFAULT low during
+  its tWAKE window, so 15–25% of the first steps after idle aborted with an
+  error (3 of 20 reverse cycles on the bench). The nFAULT check now runs
+  after the `wake_ticks` block; with the fix, 40 moves and the 100–800 pps
+  sweep produced no spurious errors.
 - **Сборка STM8 и негативные тесты.** Цели `app`/`factory`/`bin` в
   `Makefile.stm8` сериализованы через `.NOTPARALLEL`, чтобы `make -j` не
   запускал несколько `mkapp.py` над одними файлами; проверено чистым

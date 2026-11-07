@@ -61,14 +61,113 @@ def main():
             page.screenshot(path=os.path.join(SHOTS, "%s.png" % sec), full_page=True)
             print("section %-8s visible=%s" % (sec, visible))
 
-        # Image: focus assist card, ROI preview and metric placeholder.
-        page.click('#sidebar button[data-sec="image"]')
-        page.wait_for_timeout(1200)
-        for selector in ("#focus-preview", "#focus-img", "#focus_enable",
+        # Live: the focus assist card moved here, the ROI box lives inside the
+        # preview and the stream starts without a click.
+        page.click('#sidebar button[data-sec="live"]')
+        page.wait_for_timeout(1500)
+        for selector in ("#preview", "#focus-box", "#focus_enable",
                          "#focus-metric", "#focus-state", "#focus-save-btn"):
             if page.locator(selector).count() == 0:
-                failures.append("focus element %s is missing" % selector)
-        page.screenshot(path=os.path.join(SHOTS, "image-focus.png"), full_page=True)
+                failures.append("live focus element %s is missing" % selector)
+        if not page.evaluate(
+                "() => document.getElementById('preview')"
+                ".contains(document.getElementById('focus-box'))"):
+            failures.append("#focus-box is not inside #preview")
+
+        # Auto-start cascade: a video element, an MJPEG image or a snapshot
+        # must appear without pressing a button (headless Chromium may have no
+        # H.265, in which case the fallback is expected).
+        media = False
+        for _ in range(16):
+            media = page.evaluate(
+                "() => { var p = document.getElementById('preview');"
+                " return !!(p && p.querySelector('video, img')); }")
+            if media:
+                break
+            page.wait_for_timeout(500)
+        if not media:
+            failures.append("the preview did not start by itself")
+        page.screenshot(path=os.path.join(SHOTS, "live-focus.png"), full_page=True)
+
+        # Manual lens panel: step/speed selectors, jog buttons, readout and the
+        # home/zero job controls.
+        for selector in ("#manual_step", "#manual_speed", "#manual-focus-dec",
+                         "#manual-focus-inc", "#manual-zoom-dec",
+                         "#manual-zoom-inc", "#manual-stop-btn",
+                         "#manual-readout", "#home-focus-btn",
+                         "#home-zoom-btn", "#zero-focus-btn",
+                         "#zero-zoom-btn", "#home-state-note"):
+            if page.locator(selector).count() == 0:
+                failures.append("manual lens element %s is missing" % selector)
+        steps = page.eval_on_selector_all("#manual_step option",
+            "els => els.map(e => e.value)")
+        speeds = page.eval_on_selector_all("#manual_speed option",
+            "els => els.map(e => e.value)")
+        if steps != ["1", "10", "50", "200"]:
+            failures.append("unexpected step options: %r" % steps)
+        if speeds[:5] != ["50", "100", "200", "300", "400"]:
+            failures.append("unexpected speed options: %r" % speeds)
+        if any(not v.isdigit() for v in speeds[5:]):
+            failures.append("unexpected extra speed options: %r" % speeds[5:])
+        if page.input_value("#manual_step") != "50":
+            failures.append("the step selector does not default to 50")
+        page.evaluate("focusPoll()")
+        page.wait_for_timeout(1200)
+        cfg_speed = page.evaluate(
+            "() => (focusState && focusState.motor && "
+            "focusState.motor.speed) || null")
+        if cfg_speed is not None and \
+           page.input_value("#manual_speed") != str(cfg_speed):
+            failures.append("the speed selector does not show focus.speed %r"
+                            % cfg_speed)
+        readout = page.inner_text("#manual-readout")
+        print("manual readout:", readout)
+        if "focus:" not in readout or "zoom:" not in readout:
+            failures.append("manual readout is not populated: %r" % readout)
+        movable = bool(page.evaluate(
+            "() => { var s = focusState; return !!(s && s.motor && "
+            "s.motor.enabled && s.motor.present); }"))
+        if not movable:
+            if not page.is_disabled("#manual-focus-dec") or \
+               not page.is_disabled("#home-focus-btn"):
+                failures.append("manual buttons are enabled without a motor")
+        if movable and os.environ.get("OKO_FOCUS_MOTOR_TESTS") == "1":
+            before = readout
+            page.click("#manual-zoom-inc")
+            page.wait_for_timeout(1500)
+            page.evaluate("focusPoll()")
+            page.wait_for_timeout(800)
+            after = page.inner_text("#manual-readout")
+            print("manual readout after zoom +50:", after)
+            if after == before:
+                failures.append("zoom jog did not update the readout")
+        # ROI selection: a tiny rectangle stays below the 0.03 POST threshold,
+        # so the drag only draws the box and must not persist a region.
+        page.locator("#preview").scroll_into_view_if_needed()
+        page.wait_for_timeout(300)
+        box = page.evaluate(
+            "() => { var m = document.querySelector('#preview video, #preview img');"
+            " if (!m) return null; var r = m.getBoundingClientRect();"
+            " return {x: r.left + r.width / 2, y: r.top + r.height / 2}; }")
+        if box:
+            x = min(max(box["x"], 10), 1430)
+            y = min(max(box["y"], 80), 860)
+            page.mouse.move(x, y)
+            page.mouse.down()
+            page.mouse.move(x + 2, y + 2, steps=2)
+            drawn = page.evaluate(
+                "() => document.getElementById('focus-box').style.display")
+            page.mouse.up()
+            after = page.evaluate(
+                "() => document.getElementById('focus-box').style.display")
+            print("roi box during/after tiny drag:", drawn, after)
+            if drawn != "block":
+                failures.append("the ROI drag did not draw the focus box")
+            if after != "none":
+                failures.append("a tiny ROI drag kept the focus box")
+        else:
+            failures.append("no preview media element to drag the ROI on")
+        page.screenshot(path=os.path.join(SHOTS, "live-focus.png"), full_page=True)
 
         # Exercise the card's POST path (mutations are POST-only).
         page.evaluate("focusPost('enable=1')")
@@ -161,6 +260,18 @@ def main():
         else:
             print("mjpeg preview: skipped (stream disabled)")
 
+        # Leaving Live releases the persistent stream: only the idle text
+        # remains in the preview container.
+        page.click('#sidebar button[data-sec="image"]')
+        page.wait_for_timeout(1200)
+        idle = page.evaluate(
+            "() => { var p = document.getElementById('preview');"
+            " return !!p && !!p.querySelector('p')"
+            " && !p.querySelector('video, img'); }")
+        print("preview idle after leaving live:", idle)
+        if not idle:
+            failures.append("the preview stream was not released on leave")
+
         # Dirty tracking: edit a field, the Apply button enables and the
         # navigation shows a dot; applying it disables the button again.
         page.click('#sidebar button[data-sec="image"]')
@@ -192,7 +303,8 @@ def main():
         page.wait_for_timeout(1800)
         toast = page.inner_text("#toasts") if page.locator("#toasts .toast").count() else ""
         print("gating toast:", toast.replace("\n", " ")[:80])
-        if "HDR is not supported" not in toast:
+        if "HDR" not in toast or ("HDR is not supported" not in toast and
+                                  "cannot be combined" not in toast):
             failures.append("gating error toast is missing the server reason")
         page.evaluate("apiRead('hdr')")
         page.wait_for_timeout(800)
@@ -245,6 +357,9 @@ def main():
         vpn_label = page.text_content("#vpn-connect") or ""
         if "Подключить" not in vpn_label:
             failures.append("VPN controls did not switch to RU")
+        home_label = page.text_content("#home-focus-btn") or ""
+        if "Упор" not in home_label:
+            failures.append("manual lens controls did not switch to RU")
         page.click("#lang-en")
         page.wait_for_timeout(300)
 

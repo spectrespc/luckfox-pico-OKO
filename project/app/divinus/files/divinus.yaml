@@ -265,8 +265,12 @@ mjpeg:
 #   device: /dev/i2c-3
 #   address: 96
 #   speed: 300
-#   min_pos: -100000
-#   max_pos: 100000
+#   min_pos: 0            # focus travel: 2935 steps (datasheet)
+#   max_pos: 2935
+#   home_margin: 25       # homing overshoot past zero, 0..100
+#   zoom_speed: 300
+#   zoom_min_pos: 0       # zoom travel: 2275 steps (datasheet)
+#   zoom_max_pos: 2275
 #
 # flash:
 #   enable: true          # controller firmware upload via the WebUI

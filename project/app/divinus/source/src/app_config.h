@@ -158,6 +158,9 @@ struct AppConfig {
     unsigned int focus_address;
     unsigned int focus_speed;
     int focus_min_pos, focus_max_pos;
+    unsigned int focus_home_margin;     /* steps past zero for homing      */
+    unsigned int focus_zoom_speed;
+    int focus_zoom_min_pos, focus_zoom_max_pos;
 
     // [flash]
     bool flash_enable;

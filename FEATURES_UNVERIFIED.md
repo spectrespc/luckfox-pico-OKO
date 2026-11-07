@@ -64,6 +64,12 @@
   обновления `app-2.0.1.ihx` через WebUI проверены (версия из имени
   сверяется с заголовком OKO8). Слот загрузчика — 2.5 КиБ
   (`0x8000–0x89FF`), потому что измеренный boot занимает 2355 байт.
+- **Ручное управление и home/zero.** Команда `SET_POS 0x09`, ручное
+  управление focus/zoom в WebUI и асинхронные `home`/`zero` реализованы в
+  прошивке 2.0.2/2.1.1 и divinus; гейт версии и 409 при занятом job’е
+  проверяются в `api_check.py`. Физический цикл home→0, zero, повтор и
+  поведение при упоре на тестовой плате с 2.1.1 ещё не прогонялись; на DUT
+  с прошивкой ниже 2.0.2 endpoints возвращают `unsupported`.
 - **Прошивка контроллеров.** Фоновый воркер останавливает `S21oko-ec`,
   приостанавливает мотор, запускает `oko-flash` и перезапускает демон.
   Реальная прошивка STM32 (CBT6, WebUI `app-1.0.1.bin` → `/api/firmware`
@@ -144,6 +150,13 @@ Status as of 2026-11-06.
   ST-Link/SWIM and `app-2.0.1.ihx` updates through the WebUI are verified (the
   name version is checked against the OKO8 header). The boot slot is 2.5 KiB
   (0x8000–0x89FF) because the measured boot image is 2355 bytes.
+- **Manual control and home/zero.** `SET_POS 0x09`, manual focus/zoom control
+  in the WebUI and the asynchronous `home`/`zero` jobs are implemented in
+  firmware 2.0.2/2.1.1 and divinus; the version gate and the 409 for a busy
+  job are covered by `api_check.py`. The physical home→0, zero, repeat cycle
+  and the stop behaviour on the 2.1.1 test board have not been exercised yet;
+  on a DUT with firmware older than 2.0.2 the endpoints return
+  `unsupported`.
 - **Controller flashing.** The background worker stops `S21oko-ec`, suspends the
   focus motor, runs `oko-flash` and restarts the daemon. Real STM32 (CBT6,
   WebUI `app-1.0.1.bin` → `/api/firmware` `1.0.1`, rollback `1.0.0`) and STM8

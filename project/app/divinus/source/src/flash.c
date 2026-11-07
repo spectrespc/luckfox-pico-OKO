@@ -19,6 +19,7 @@
 
 #include "app_config.h"
 #include "firmware_status.h"
+#include "focus_home.h"
 #include "focus_motor.h"
 
 #define FLASH_LOG_LINES  20
@@ -361,7 +362,7 @@ static int copy_value(const char *data, size_t len, char *out, size_t out_size)
 }
 
 /* The upload carries its version in the file name: exactly one dotted triple
- * such as app-1.0.1.bin or factory-2.0.1.ihx.  A missing, malformed or
+ * such as app-1.0.1.bin or factory-2.0.2.ihx.  A missing, malformed or
  * repeated triple is rejected, because there is no other side channel for the
  * STM32 metadata version and an ambiguous name would flash the wrong value. */
 static int parse_version_from_name(const char *name, unsigned *major,
@@ -549,6 +550,14 @@ static char *flash_post_impl(const char *content_type, char *payload,
         *http_status = 409;
         return strdup(response);
     }
+    if (focus_home_running())
+    {
+        snprintf(response, sizeof(response),
+            "{\"error\":\"busy\",\"reason\":\"a home/zero job is running\","
+            "\"hint\":\"wait for it to finish\"}");
+        *http_status = 409;
+        return strdup(response);
+    }
 
     if (parse_version_from_name(filename, &major, &minor, &patch) != 0)
     {
@@ -658,8 +667,8 @@ static char *flash_post_impl(const char *content_type, char *payload,
             unlink(path);
             snprintf(response, sizeof(response),
                 "{\"error\":\"invalid\",\"reason\":\"the STM8 image failed the "
-                "OKO8/CRC/address check\",\"hint\":\"use app-2.0.1.ihx or "
-                "app-2.0.1.bin from tools/mkapp.py\"}");
+                "OKO8/CRC/address check\",\"hint\":\"use app-2.0.2.ihx or "
+                "app-2.0.2.bin from tools/mkapp.py\"}");
             *http_status = 400;
             return strdup(response);
         }

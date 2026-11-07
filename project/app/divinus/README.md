@@ -288,6 +288,32 @@ AIISP/RockIVA), `2` — `librknnmrt2.so` 2.x с отдельным SONAME. `mode
 пока AIQ не готов; нулевая карта дважды включает `contrast_af` как fallback
 гейта A6.
 
+Карточка «Помощь фокусировке» живёт в разделе «Видео» (`sec-live`): при
+входе в раздел предпросмотр запускается сам с каскадом MP4 → MJPEG → снимок
+`/image.jpg` (браузер без HEVC не декодирует H.265 и через ~4 с переходит на
+резервную ветку с toast-пометкой), при уходе из раздела постоянное
+chunked-соединение освобождается. Зона фокуса выбирается перетаскиванием
+прямо поверх живого видео; рамка `#focus-box` находится внутри `#preview`.
+`[mp4] enable` в коде (`app_config.c`) по умолчанию `true`; фабричный
+`files/divinus.yaml` уже включает MP4 с H.265, сохранённые конфиги
+`/userdata` не мигрируются. Поворот 90°/270° при выборе ROI не учитывается.
+
+Ручное управление объективом живёт в той же карточке: селекторы шага
+(1/10/50/200) и скорости (50–400), кнопки FOCUS/ZOOM ◀▶ (один относительный
+`move` на клик, `motor=focus|zoom`), STOP всех моторов и readout позиций.
+Границы шкал — `focus.min_pos/max_pos` (0/2935) и
+`focus.zoom_min_pos/zoom_max_pos` (0/2275), скорости — `focus.speed` и
+`focus.zoom_speed` (обе 300), всё переопределяется в `divinus.yaml`.
+
+Принудительный сброс: `POST /api/focus?home=focus|zoom|both` прижимает шкалу
+к отрицательному упору чанками по ≤32000 шагов, ждёт `IDLE` и отправляет
+`SET_POS(0)`; `zero=...&value=N` только задаёт позицию. Задача выполняется в
+`focus_home.c` отдельным потоком (один слот), её состояние отдаётся в
+`GET /api/focus` (`home.state/travel/done/error`), повторный запуск и
+прошивка контроллера во время job’а получают HTTP 409. Нужна прошивка STM8
+2.0.2 или 2.1.1 (гейт по версии); позиция вне `[-1000, max_pos+1000]`
+считается испорченной и homing отклоняется с советом использовать Zero.
+
 `[flash] enable: true` включает карточки прошивки контроллеров.
 `POST /api/flash` сохраняет multipart-тело в `/tmp/fw-<target>-<pid>.<ext>`
 (расширение сохраняется, чтобы `oko-motor` отличил Intel HEX от raw-образа),
@@ -334,10 +360,10 @@ STM8 и загрузчик — в `project/app/stm8-motor`; первая зап�
    - `server.c`, `gating.*`, `ivs_events.*`, `record.*`, `res/index.html`:
      API, блокировки, аналитика, квота записей и WebUI.
    - `files/divinus.yaml`: регион `reg5` для индикатора IVS и новые секции.
-   - `focus.c/.h`, `focus_geom.*`, `focus_proto.*`, `focus_motor.*`,
-     `firmware_status.*`, `flash.*`, `hal/plus/rk_af_stats.*` и
-     `MEDIA_INCLUDE` в `Makefile`: фокус-ассистент, мотор STM8 `0x60` и
-     прошивка контроллеров (см. раздел «OKO: фокус и прошивка»).
+- `focus.c/.h`, `focus_geom.*`, `focus_proto.*`, `focus_motor.*`,
+      `focus_home.*`, `firmware_status.*`, `flash.*`, `hal/plus/rk_af_stats.*`
+      и `MEDIA_INCLUDE` в `Makefile`: фокус-ассистент, мотор STM8 `0x60`,
+      home/zero и прошивка контроллеров (см. раздел «OKO: фокус и прошивка»).
    - `server.c`/`res/index.html`/`app_config.*`/`gating.c`: `/api/focus`,
      `/api/flash`, `/api/firmware`, карточки Image/System и секции
      `[focus]`/`[flash]`.

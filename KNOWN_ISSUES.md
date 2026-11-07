@@ -1,6 +1,6 @@
 # Известные ошибки и ограничения OKO
 
-Обновлено: `2026-11-06`. В файле — открытые проблемы, подтверждённые
+Обновлено: `2026-11-07`. В файле — открытые проблемы, подтверждённые
 ограничения и недавно закрытые записи (KI-036). Проверенные функции и доказательства — в `VERIFIED_FUNCTIONS.md`,
 состав и статус функционала — в `FEATURES_VERIFIED.md` / `FEATURES_UNVERIFIED.md`,
 процедуры стенда — в `TESTBENCH.md`.
@@ -249,6 +249,18 @@
   маршруты общие; при двух full-tunnel профилях default route один.
   Статус: **ограничение ядра**.
 
+- **KI-042. STM8: старший байт отрицательной позиции искажается.**
+  На прошивке 2.0.2/2.1.1 после завершения движения в отрицательную область
+  `GET_POS` возвращает значение с испорченным старшим байтом
+  (`-1` → `0xFBFFFFFF`), хотя мотор проходит ровно заданное число шагов и
+  статус возвращается в `IDLE`; искажённое значение может попасть в EEPROM.
+  Причина локализована в записи 32-битной позиции из ISR (SDCC 4.2, STM8);
+  `SET_POS` и положительные позиции работают корректно. Обход: divinus и
+  `oko-motor home` считают шаги в open-loop и после довига отправляют
+  `SET_POS(0)`, не читая отрицательную позицию; ручное управление ограничено
+  `min_pos = 0`, а `home`/`zero` отклоняют заведомо битые значения. Статус:
+  **открыто, обход встроен**.
+
 ### Безопасность
 
 - **KI-029. WebUI работает по HTTP Basic без HTTPS.**
@@ -484,6 +496,17 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   namespace and two independent default routes are impossible. At most `wg0`
   and `awg0` are active together, the route table is shared, and two
   full-tunnel profiles share one default route. Status: **kernel limitation**.
+
+- **KI-042. STM8: the top byte of a negative position is corrupted.** On
+  firmware 2.0.2/2.1.1, after a move into the negative range `GET_POS` returns
+  a value with a wrong top byte (`-1` → `0xFBFFFFFF`), even though the motor
+  travels exactly the commanded number of steps and returns to `IDLE`; the
+  corrupted value can reach the EEPROM. The fault is in the 32-bit position
+  store from the ISR (SDCC 4.2, STM8); `SET_POS` and positive positions are
+  correct. Workaround: divinus and `oko-motor home` count steps open-loop and
+  send `SET_POS(0)` after the overshoot without reading the negative position;
+  manual control is bounded by `min_pos = 0`, and `home`/`zero` reject values
+  that are visibly corrupted. Status: **open, workaround in place**.
 
 ### Security
 

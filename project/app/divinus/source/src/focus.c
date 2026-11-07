@@ -10,6 +10,7 @@
 
 #include "app_config.h"
 #include "focus_geom.h"
+#include "focus_home.h"
 #include "focus_motor.h"
 #include "hal/globals.h"
 #include "hal/plus/rk_af_stats.h"
@@ -437,6 +438,17 @@ static int append_array(char **p, size_t *left, const char *name,
     return append(p, left, last ? "]" : "],");
 }
 
+static const char *motor_state_name(int status)
+{
+    switch (status)
+    {
+        case 0: return "idle";
+        case 1: return "running";
+        case 2: return "error";
+        default: return "unknown";
+    }
+}
+
 char *focus_json(int with_map)
 {
     char *buffer = malloc(24576);
@@ -449,6 +461,7 @@ char *focus_json(int with_map)
     unsigned int frame_id;
     rk_af_map *map = NULL;
     fm_snapshot motor;
+    focus_home_status home;
 
     if (!buffer)
         return NULL;
@@ -483,7 +496,15 @@ char *focus_json(int with_map)
         memcpy(map, &fs.map, sizeof(*map));
     pthread_mutex_unlock(&fs.lock);
 
+    /* Refresh the cached motor scales for the WebUI poll.  The probe is cheap
+       (a few I2C reads), keeps the last snapshot on a bus error and never
+       blocks the caller when another process owns the bus. */
+    if (focus_motor_enabled() && !focus_motor_suspended() &&
+        !focus_home_running())
+        focus_motor_probe();
+
     focus_motor_snapshot(&motor);
+    focus_home_status_get(&home);
 
     if (append(&p, &left,
         "{\"enable\":%s,\"available\":%s,\"status\":\"%s\","
@@ -541,7 +562,42 @@ char *focus_json(int with_map)
     else if (append(&p, &left, ",\"position\":null"))
         goto fail;
 
+    /* Per-motor scales for the manual controls.  The legacy top-level
+       "position"/"status" above stay for older WebUI builds. */
+    if (append(&p, &left, ",\"focus\":{\"position\":"))
+        goto fail;
+    if (motor.has_position)
+    {
+        if (append(&p, &left, "%ld", (long)motor.position))
+            goto fail;
+    }
+    else if (append(&p, &left, "null"))
+        goto fail;
+    if (append(&p, &left, ",\"status\":\"%s\",\"speed\":%u}",
+        motor_state_name(motor.status), app_config.focus_speed))
+        goto fail;
+
+    if (append(&p, &left, ",\"zoom\":{\"position\":"))
+        goto fail;
+    if (motor.has_zoom_position)
+    {
+        if (append(&p, &left, "%ld", (long)motor.zoom_position))
+            goto fail;
+    }
+    else if (append(&p, &left, "null"))
+        goto fail;
+    if (append(&p, &left, ",\"status\":\"%s\",\"speed\":%u}",
+        motor_state_name(motor.zoom_status), app_config.focus_zoom_speed))
+        goto fail;
+
     if (append(&p, &left, "}"))
+        goto fail;
+
+    if (append(&p, &left,
+        ",\"home\":{\"state\":\"%s\",\"motor\":\"%s\",\"travel\":%d,"
+        "\"done\":%s,\"error\":\"%s\"}",
+        home.state, home.motor, home.travel,
+        home.done ? "true" : "false", home.error))
         goto fail;
 
     if (with_map)

@@ -25,6 +25,9 @@ typedef struct {
     int status;             /* last motor status byte, -1 if unknown */
     int has_position;
     int32_t position;
+    int zoom_status;        /* zoom status byte, -1 if unknown */
+    int has_zoom_position;
+    int32_t zoom_position;
 } fm_snapshot;
 
 int focus_motor_init(const char *device, unsigned int address);
@@ -38,10 +41,10 @@ int focus_motor_probe(void);
 void focus_motor_snapshot(fm_snapshot *out);
 
 int focus_motor_move(uint8_t motor, int16_t steps);
+int focus_motor_set_position(uint8_t motor, int32_t position);
 int focus_motor_stop(uint8_t motor);
 int focus_motor_stop_all(void);
 int focus_motor_set_speed(uint8_t motor, uint16_t speed);
-int focus_motor_set_all_speeds(uint16_t speed);
 int focus_motor_get_position(uint8_t motor, int32_t *position);
 int focus_motor_get_status(uint8_t motor, uint8_t *status);
 int focus_motor_reset(void);

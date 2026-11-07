@@ -135,7 +135,10 @@ docker run --rm -v "$PWD:/work" -w /work/project/app/stm8-motor \
   (CBT6, WebUI `app-1.0.1.bin` → rollback `app-1.0.0.bin`; `/api/firmware`
   показывает точечно `1.0.0`; `img_size=2324`, `flags=0`, телеметрия и
   reboot). См. `FEATURES_VERIFIED.md`,
-  `FEATURES_UNVERIFIED.md` и `KNOWN_ISSUES.md` (KI-032…036).
+  `FEATURES_UNVERIFIED.md` и `KNOWN_ISSUES.md` (KI-032…036). Ручное
+  управление focus/zoom, `home`/`zero` (команда STM8 `SET_POS 0x09`,
+  прошивка 2.0.2/2.1.1) и гейт версии добавлены в той же карточке Focus
+  assist; физический прогон на тестовой плате ещё за стендом.
 
 ## English
 

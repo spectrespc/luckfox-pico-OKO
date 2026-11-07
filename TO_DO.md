@@ -12,11 +12,12 @@
 
 Добавить в OKO управление фокусировкой и автофокусом для установленного
 моторизованного объектива. Объектив будет подключён к внешнему контроллеру
-**STM8S103F3P6** (I2C-слейв), который управляет шаговыми приводами фокуса и
+**STM8S003F3P6** (I2C-слейв; сборка идёт под регистрово совместимый
+STM8S103F3P6), который управляет шаговыми приводами фокуса и
 зума. Наработки по прошивке STM8 находятся в репозитории:
 <https://github.com/spectrespc/stm8s103_i2c_motor>.
 
-Объектив установлен, STM8S103F3P6 подключён к I2C3 (`0x60`) и ST-Link/V2;
+Объектив установлен, STM8S003F3P6 подключён к I2C3 (`0x60`) и ST-Link/V2;
 драйвера и DTS-описания линзы в Linux-части нет — управление идёт из
 `divinus` по I2C.
 
@@ -39,13 +40,14 @@
 | `rkipc` уже вызывает AF-функции AIQ (значит, символы в `librkaiq.so` есть) | `project/app/rkipc/rkipc/common/isp/rv1106/isp.c:1568-1688` |
 | `divinus` (приложение по умолчанию) AF не умеет; его AIQ-обёртка — таблица `dlsym` | `project/app/divinus/source/src/hal/plus/rk_aiq.h:50-89`; `doc/endpoints.md:39-56` |
 | `motor.ko` — шаговик 28BYJ-48 для pan/tilt, к фокусу не относится и выключен | `sysdrv/drv_ko/motor/ReadMe`, `TESTBENCH.md:26,325` |
-| Есть внешний контроллер STM8S103F3P6 на `0x60`; старый `oko-ec motor` (`0x39`, протокол v2) — другое устройство и для нового STM8 не используется; новый путь — `oko-motor`/`oko-flash` | `project/app/stm8-motor/`, `project/app/oko-flash/`, `project/app/oko-ec/source/main.c` |
+| Есть внешний контроллер STM8S003F3P6 на `0x60`; старый `oko-ec motor` (`0x39`, протокол v2) — другое устройство и для нового STM8 не используется; новый путь — `oko-motor`/`oko-flash` | `project/app/stm8-motor/`, `project/app/oko-flash/`, `project/app/oko-ec/source/main.c` |
 | Объектив будет подключён к STM8 (два шаговых мотора: focus + zoom, драйверы DRV8833) | этот файл, §3, §4.5 |
 | Прошивка STM8: `https://github.com/spectrespc/stm8s103_i2c_motor`, I2C-адрес `0x60` (см. §4.5) | внешний репозиторий |
 
-## 3. Привод: STM8S103F3P6 + шаговые моторы
+## 3. Привод: STM8S003F3P6 + шаговые моторы
 
-Архитектура уже выбрана: объектив подключается к STM8S103F3P6, а RV1106
+Архитектура уже выбрана: объектив подключается к STM8S003F3P6 (сборка — под
+регистры STM8S103F3P6, раскладка TSSOP20 идентична), а RV1106
 управляет им по I2C. Это снимает вопрос о VCM/DC-приводе — используется
 **вариант B** (свой AF по статистике rkaiq).
 
@@ -72,9 +74,9 @@
 
 Что осталось уточнить:
 
-- [ ] какой из двух моторов — фокус, какой — зум (идентификаторы в протоколе);
-- [ ] число шагов на полный ход объектива, направление, наличие упоров;
-- [ ] требуется ли калибровка нуля/диапазона при первом включении;
+- [x] какой из двух моторов — фокус, какой — зум: motor 0 = focus, motor 1 = zoom;
+- [x] число шагов на полный ход объектива: focus 2935, zoom 2275; направление — отрицательное к упору, home = прижатие и SET_POS(0);
+- [x] калибровка нуля/диапазона при первом включении: `home`/`zero` через WebUI и `oko-motor home` (прошивка 2.0.2/2.1.1);
 - [x] адрес на шине OKO: новый STM8 — `0x60`; старый `oko-ec motor`
       (`0x39`) — другое устройство, приводить к одному значению не нужно;
 - [x] шина I2C на OKO: `/dev/i2c-3`, 100 кГц (`i2cdetect` видит `0x60`);
@@ -104,7 +106,9 @@ i2ctransfer -y 7 w2@0x60 0x05 0x00 r1         # статус focus
 Ограничения прошивки (важно для алгоритма AF):
 
 - **open-loop**: позиция только программная, энкодера нет; пропуск шагов
-  ловится лишь по `nFAULT`, а не по потере позиции;
+  **не** определяется по `nFAULT`: при питании 5 В и обмотках 40 Ом ток
+  заклинившего мотора (≈125 мА) равен рабочему, до порога OCP далеко;
+  `nFAULT` ловит только КЗ, UVLO и тепловую защиту. Реального положения нет;
 - нет разгона/торможения (acceleration ramp);
 - движение игнорируется, пока не задана скорость (сначала команда скорости);
 - запись EEPROM throttled ≤ 1 Гц и не выполняется во время движения.
@@ -159,7 +163,7 @@ i2ctransfer -y 7 w2@0x60 0x05 0x00 r1         # статус focus
 | `rkipc` docs `docs/Rockchip_Developer_Guide_Linux_RKIPC_EN.md:929-936` | список IPC-команд AF |
 | `ipcweb` `src/image_api.cpp:107-113,335` | REST-поля `sAFMode`, `iZoomLevel`, `iFocusLevel` |
 | `divinus` `src/hal/plus/rk_aiq.h` | сюда добавляются `dlsym`-обёртки AF |
-| `oko-motor` (пакет `stm8-motor`) | I2C-доступ к новому STM8 `0x60`, прошивка через I2C-загрузчик; старый `oko-ec motor`/`0x39` не используется |
+| `oko-motor` (пакет `stm8-motor`) | I2C-доступ к новому STM8 `0x60` (focus = motor 0, zoom = motor 1), `SET_POS 0x09`, `set-pos`/`home`, прошивка через I2C-загрузчик; старый `oko-ec motor`/`0x39` не используется |
 
 ### 4.5. Прошивка STM8 (внешний репозиторий)
 
@@ -168,6 +172,8 @@ i2ctransfer -y 7 w2@0x60 0x05 0x00 r1         # статус focus
   русская версия — `README.ru.md`.
 - Протокол: <https://github.com/spectrespc/stm8s103_i2c_motor/blob/main/docs/PROTOCOL.md>.
 - Железо/распиновка: <https://github.com/spectrespc/stm8s103_i2c_motor/blob/main/docs/HARDWARE.md>.
+- Тестовая плата (STM8S003F3P6, `BOARD=test`, версия 2.1.1):
+  `project/app/stm8-motor/docs/HARDWARE_TESTBOARD.md`.
 - Сборка: `make clean && make` → `build/firmware.ihx`; прошивка `make flash`
   (STM8-SPL-SDCC, SDCC ≥ 4.0, ST-LINK/v2).
 - Хостовые тесты протокола: `make -C tests test`.
@@ -203,7 +209,7 @@ oneshot, tracking. Минусы: требуется именно VCM и прав
 
 ### Вариант B. STM8 + шаговые моторы → свой AF (выбранный)
 
-Объектив будет подключён к STM8S103F3P6 (`0x60`); Linux-сторона общается с
+Объектив будет подключён к STM8S003F3P6 (`0x60`); Linux-сторона общается с
 ним по I2C и не управляет обмотками напрямую.
 
 - [x] подключить STM8 к I2C OKO (`/dev/i2c-3`, 100 кГц), проверить
@@ -321,9 +327,10 @@ oneshot, tracking. Минусы: требуется именно VCM и прав
 - [ ] режим «весь кадр» и режим «ROI» с переключением на лету;
 - [ ] валидация ROI: минимальный размер, границы, пересчёт при смене
       разрешения/сценария;
-- [ ] хранение последней позиции: EEPROM STM8 (CRC16, запись ≤ 1 Гц) +
+- [x] хранение последней позиции: EEPROM STM8 (CRC16, запись ≤ 1 Гц) +
       дублирование в конфиге приложения;
-- [ ] восстановление после перезагрузки и после `nFAULT`/WDT-сброса STM8.
+- [x] восстановление после перезагрузки и после `nFAULT`/WDT-сброса STM8:
+      позиция читается из EEPROM, `home`/`zero` восстанавливают шкалу;
 
 ### Фаза 4. Интеграция и API
 
@@ -343,16 +350,24 @@ oneshot, tracking. Минусы: требуется именно VCM и прав
 |---|---|
 | `project/app/divinus/source/src/hal/plus/rk_aiq.h` | добавить указатели `fnSetFocusMode`, `fnGetFocusMode`, `fnSetFocusPosition`, `fnGetFocusPos`, `fnOneshotFocus`, `fnGetAfStats` и `dlsym`-загрузку |
 | `project/app/divinus/source/src/hal/plus/rk_hal.c` | реализовать обёртки над `_rk_aiq_ctx`, проверять `_rk_aiq_ctx` перед вызовом |
-| `project/app/divinus/source/src/...` (I2C) | клиент STM8: `/dev/i2c-3`, команды `set speed` / `move` / `get position` / `get status` / `version`, проверка `nFAULT` |
-| `project/app/divinus/source/src/...` (HTTP) | новый endpoint, например `/api/focus` с `mode`, `position`, `oneshot` и `roi` (`x,y,w,h`); `roi=null` — весь кадр |
-| `project/app/divinus/source/doc/endpoints.md` | описать новый endpoint и коды ошибок |
+| `project/app/divinus/source/src/...` (I2C) | клиент STM8 (`focus_motor.c`, `focus_proto.c`): `/dev/i2c-3`, `set speed` / `move` / `get position` / `get status` / `version` / `SET_POS 0x09` для обоих моторов |
+| `project/app/divinus/source/src/focus_home.c` | асинхронный job прижатия к упору и обнуления позиции (`home`/`zero`), состояние в `GET /api/focus` |
+| `project/app/divinus/source/src/...` (HTTP) | `/api/focus`: `enable`, `mode`, `roi`, `fps`, `motor` (`true/false` — драйвер, `focus/zoom/both` — шкала), `speed`, `move`, `position`, `home`, `zero`, `value`, `stop`, `reset` |
+| `project/app/divinus/source/doc/endpoints.md` | описать endpoint, новые поля JSON и коды ошибок (сделано) |
+
+**Реализовано:** ручное управление обоими моторами в карточке Focus assist
+(шаг 1/10/50/200, скорость 50–400, кнопки FOCUS/ZOOM ◀▶, STOP, readout
+позиций), принудительное прижатие к упору и обнуление (`home`/`zero`) с
+асинхронным job’ом и индикатором, гейт версии прошивки STM8 (2.0.2/2.1.1).
+AF-алгоритм (замыкание FV → движение) по-прежнему не реализован.
 
 Замечания:
 
 - `divinus` использует `dlsym`, поэтому отсутствие AF-символов в конкретной
   сборке `librkaiq.so` не должно ронять приложение — функция опциональна.
-- В `divinus` нет UI/логики AF; ONVIF `videosources.xml` лишь статически
-  объявляет `AutoFocusMode=AUTO`.
+- В `divinus` есть UI метрики focus assist и ручное управление моторами;
+  автоматического AF-алгоритма (FV → движение) нет, ONVIF
+  `videosources.xml` лишь статически объявляет `AutoFocusMode=AUTO`.
 
 ## 8. Проверки на стенде
 
@@ -398,9 +413,11 @@ i2ctransfer -y 3 w2@0x60 0x05 0x00 r1         # статус focus
   минимальный размер ROI и/или расширение окна с весами.
 - **`motor.ko` — не фокус.** Это pan/tilt 28BYJ-48; переиспользовать можно
   только как пример GPIO-драйвера шаговика, но не как готовый фокус-драйвер.
-- **STM8: open-loop без энкодера.** Позиция программная; пропуск шагов
-  ловится только по `nFAULT`, реального положения нет. AF должен проверять FV
-  после каждого перемещения, а не доверять счётчику шагов.
+- **STM8: open-loop без энкодера.** Позиция программная; пропуск шагов по
+  `nFAULT` **не** ловится (при 5 В и 40 Ом ток заклинившего мотора равен
+  рабочему ≈125 мА, OCP не срабатывает; `nFAULT` — только КЗ/UVLO/TSD).
+  Реального положения нет. AF должен проверять FV после каждого перемещения,
+  а не доверять счётчику шагов.
 - **STM8: нет разгона.** Длинные перемещения на большой скорости могут
   срываться; для AF использовать малые шаги и умеренную скорость.
 - **STM8: порядок команд.** `move` игнорируется, пока не задана скорость
@@ -438,6 +455,7 @@ i2ctransfer -y 3 w2@0x60 0x05 0x00 r1         # статус focus
   - README: `README.md` / `README.ru.md`
   - протокол: `docs/PROTOCOL.md`
   - железо/распиновка: `docs/HARDWARE.md`
+  - тестовая плата: `docs/HARDWARE_TESTBOARD.md` (`make ... BOARD=test`)
   - сборка/прошивка: `make`, `make flash` (SDCC ≥ 4.0, ST-LINK/v2)
 - Документация проекта: `STRUCTURE.md`, `INIT_ORDER.md`, `TESTBENCH.md`,
   `FEATURES_VERIFIED.md`, `FEATURES_UNVERIFIED.md`

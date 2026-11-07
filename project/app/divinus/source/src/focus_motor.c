@@ -29,7 +29,7 @@ static char fm_device[64] = "/dev/i2c-3";
 static unsigned int fm_address = 0x60;
 static int fm_enabled;
 static volatile int fm_suspended;
-static uint16_t fm_speed;
+static uint16_t fm_speed[2];  /* cached per motor: 0 = focus, 1 = zoom */
 static fm_snapshot fm_cache;
 
 static const char *fm_lock_path(void)
@@ -107,7 +107,9 @@ int focus_motor_init(const char *device, unsigned int address)
     if (address >= 1 && address <= 127)
         fm_address = address;
     memset(&fm_cache, 0, sizeof(fm_cache));
+    memset(fm_speed, 0, sizeof(fm_speed));
     fm_cache.status = -1;
+    fm_cache.zoom_status = -1;
     fm_cache.enabled = fm_enabled;
     pthread_mutex_unlock(&fm_mutex);
     focus_motor_probe();
@@ -268,6 +270,7 @@ int focus_motor_probe(void)
     memset(&snap, 0, sizeof(snap));
     snap.enabled = fm_enabled;
     snap.status = -1;
+    snap.zoom_status = -1;
 
     if (focus_motor_suspended())
         return FM_ERR_SUSPENDED;  /* keep the last known snapshot */
@@ -315,6 +318,15 @@ int focus_motor_probe(void)
         }
         if (focus_motor_get_status(0, &status) == FM_OK)
             snap.status = status;
+        /* The zoom motor uses the same controller and bus, so one probe
+           refreshes both scales for the WebUI. */
+        if (focus_motor_get_position(1, &position) == FM_OK)
+        {
+            snap.has_zoom_position = 1;
+            snap.zoom_position = position;
+        }
+        if (focus_motor_get_status(1, &status) == FM_OK)
+            snap.zoom_status = status;
     }
 
     pthread_mutex_lock(&fm_mutex);
@@ -337,13 +349,22 @@ int focus_motor_move(uint8_t motor, int16_t steps)
     size_t len = focus_proto_move(req, motor, steps);
     int rc;
 
-    if (len == 0 || fm_speed == 0) return FM_ERR_PARAM;
+    if (motor >= 2 || len == 0 || fm_speed[motor] == 0) return FM_ERR_PARAM;
     /* The controller loses its speed on reset; re-send the cached value. */
-    if (focus_motor_set_speed(motor, fm_speed) != FM_OK)
+    if (focus_motor_set_speed(motor, fm_speed[motor]) != FM_OK)
         return FM_ERR_IO;
     rc = fm_app_write(req, len);
     if (rc == FM_OK) focus_motor_probe();
     return rc;
+}
+
+int focus_motor_set_position(uint8_t motor, int32_t position)
+{
+    uint8_t req[6];
+    size_t len = focus_proto_set_pos(req, motor, position);
+
+    if (motor >= 2 || len == 0) return FM_ERR_PARAM;
+    return fm_app_write(req, len);
 }
 
 int focus_motor_stop(uint8_t motor)
@@ -372,18 +393,11 @@ int focus_motor_set_speed(uint8_t motor, uint16_t speed)
     size_t len = focus_proto_speed(req, motor, speed);
     int rc;
 
-    if (len == 0 || speed < 1 || speed > 5000) return FM_ERR_PARAM;
+    if (len == 0 || motor >= 2 || speed < 1 || speed > 5000)
+        return FM_ERR_PARAM;
     rc = fm_app_write(req, len);
     if (rc == FM_OK)
-        fm_speed = speed;
-    return rc;
-}
-
-int focus_motor_set_all_speeds(uint16_t speed)
-{
-    int rc = focus_motor_set_speed(FOCUS_MOTOR_FOCUS, speed);
-    if (focus_motor_set_speed(FOCUS_MOTOR_ZOOM, speed) != FM_OK)
-        rc = FM_ERR_IO;
+        fm_speed[motor] = speed;
     return rc;
 }
 

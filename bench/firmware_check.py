@@ -3,13 +3,14 @@
 
     bench/run.sh firmware_check.py
     bench/run.sh firmware_check.py --flash --target stm8 \
-        --file project/app/stm8-motor/build/app-2.0.1.ihx --confirm FLASH
+        --file project/app/stm8-motor/build/app-2.0.2.ihx --confirm FLASH
 
 The flash path is deliberately explicit: both --flash and --confirm FLASH are
 required.  The version is taken from the file name (app-1.0.1.bin,
-app-2.0.1.ihx); an unversioned name is rejected by the server.
+app-2.0.2.ihx); an unversioned name is rejected by the server.
 """
 import argparse
+import glob
 import json
 import os
 import shutil
@@ -115,18 +116,28 @@ def post_upload(fields, file_path, filename=None):
 
 def negative_checks():
     failures = 0
-    app = os.path.join("project", "app", "stm8-motor", "build", "app-2.0.1.ihx")
-    if not os.path.exists(app):
-        print("FAIL: missing %s (build the STM8 firmware first)" % app,
-              file=sys.stderr)
+    # Accept either the test-board 2.1.1 or the production 2.0.2 artifact:
+    # `make clean all BOARD=test` leaves only the former in build/.
+    candidates = sorted(glob.glob(os.path.join(
+        "project", "app", "stm8-motor", "build", "app-*.ihx")))
+    app = ""
+    for candidate in candidates:
+        if os.path.basename(candidate) == "app-2.1.1.ihx":
+            app = candidate
+            break
+    if not app and candidates:
+        app = candidates[0]
+    if not app:
+        print("FAIL: no app-*.ihx in project/app/stm8-motor/build "
+              "(build the STM8 firmware first)", file=sys.stderr)
         return 1
     tmp = tempfile.mkdtemp(prefix="oko-flash-neg-")
     # Every test name carries a version triple so the specific check under
     # test is reached; "plain" deliberately omits it.
-    bad = os.path.join(tmp, "bad-2.0.1.ihx")
-    big = os.path.join(tmp, "big-2.0.1.bin")
+    bad = os.path.join(tmp, "bad-2.0.2.ihx")
+    big = os.path.join(tmp, "big-2.0.2.bin")
     slot = os.path.join(tmp, "slot-1.0.1.bin")
-    wrong = os.path.join(tmp, "wrong-2.0.1.txt")
+    wrong = os.path.join(tmp, "wrong-2.0.2.txt")
     plain = os.path.join(tmp, "app.bin")
     mismatch = os.path.join(tmp, "app-9.9.9.ihx")
     with open(bad, "wb") as fh:
