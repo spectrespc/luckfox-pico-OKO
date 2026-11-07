@@ -2759,6 +2759,17 @@ void respond_request(http_request_t *req) {
                     /* Applies to the next model activation; an already
                      * loaded context keeps running on its runtime. */
                     app_config.yolo_runtime = (unsigned int)v;
+                } else if (EQUALS(key, "convert")) {
+                    if (EQUALS_CASE(value, "rga")) {
+                        app_config.yolo_convert = 1;
+                    } else if (EQUALS_CASE(value, "cpu")) {
+                        app_config.yolo_convert = 0;
+                    } else {
+                        reply_bad_request(req->clntFd,
+                            "unknown yolo.convert value",
+                            "use cpu (default) or rga (im2d fd)");
+                        return;
+                    }
                 } else if (EQUALS(key, "input_width")) {
                     long v;
                     if (parse_ranged(value, 64, 4096, &v) &&
@@ -2863,7 +2874,7 @@ void respond_request(http_request_t *req) {
             "Connection: close\r\n"
             "\r\n"
             "{\"enable\":%s,\"source\":\"%s\",\"runtime\":%d,"
-            "\"model_dir\":\"%s\",\"model\":\"%s\","
+            "\"convert\":\"%s\",\"model_dir\":\"%s\",\"model\":\"%s\","
             "\"input_width\":%d,\"input_height\":%d,\"fps\":%d,"
             "\"conf_threshold\":%.2f,\"nms_threshold\":%.2f,"
             "\"classes\":%d,\"pre_seconds\":%d,\"post_seconds\":%d,"
@@ -2871,8 +2882,9 @@ void respond_request(http_request_t *req) {
             app_config.yolo_enable ? "true" : "false",
             app_config.yolo_source == 2 ? "vi0" :
                 (app_config.yolo_source == 1 ? "vpss3" : "vi1"),
-            app_config.yolo_runtime, app_config.yolo_model_dir,
-            app_config.yolo_model,
+            app_config.yolo_runtime,
+            app_config.yolo_convert ? "rga" : "cpu",
+            app_config.yolo_model_dir, app_config.yolo_model,
             app_config.yolo_input_width, app_config.yolo_input_height,
             app_config.yolo_fps, app_config.yolo_conf_threshold,
             app_config.yolo_nms_threshold, app_config.yolo_classes,

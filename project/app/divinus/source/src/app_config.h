@@ -133,6 +133,7 @@ struct AppConfig {
     bool yolo_enable;
     unsigned int yolo_source;           /* 0 vi1, 1 vpss3, 2 vi0 */
     unsigned int yolo_runtime;          /* 1 = librknnmrt.so, 2 = librknnmrt2.so */
+    unsigned int yolo_convert;          /* 0 = CPU, 1 = RGA (im2d fd) */
     char yolo_model_dir[128];
     char yolo_model[192];
     unsigned int yolo_input_width;

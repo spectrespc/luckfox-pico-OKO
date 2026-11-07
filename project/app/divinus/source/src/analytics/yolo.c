@@ -29,6 +29,7 @@
 #include "hal/globals.h"
 #include "hal/macros.h"
 #include "hal/plus/rk_hal.h"
+#include "hal/plus/rk_rga.h"
 #include <sys/mman.h>
 #include "http_post.h"
 
@@ -97,6 +98,7 @@ static unsigned long long osdShownMs;
 static int osdOwned;
 
 static int consecutiveFaults;
+static int rgaFailed;
 static int inferenceDisabled;
 static int frameWidth, frameHeight, frameBytes;
 static int preFrames;
@@ -546,10 +548,22 @@ static int yolo_infer(const yolo_ring_frame *frame, yolo_result *result)
     }
     generation = yoloModel.generation;
 
+    if (app_config.yolo_convert && !rgaFailed) {
+        if (rk_rga_convert_nv12_rgb(frame->fd, frameWidth, frameHeight,
+                yoloModel.inputMem->fd, yoloModel.width, yoloModel.height,
+                yoloModel.inputStride) == 0) {
+            goto converted;
+        }
+        /* Any RGA failure is permanent for this process: the CPU path is
+         * the documented fallback and must not be retried per frame. */
+        rgaFailed = 1;
+        HAL_WARNING("yolo", "RGA NV12->RGB failed, falling back to CPU\n");
+    }
     yolo_convert_nv12_rgb(frame->data, frameWidth, frameHeight, frameWidth,
         yoloModel.inputMem->virt_addr, yoloModel.width, yoloModel.height,
         yoloModel.inputStride * 3);
 
+converted:
     if (yoloModel.api->fnRun(yoloModel.ctx, NULL) < 0) {
         consecutiveFaults++;
         if (consecutiveFaults >= YOLO_MAX_CONSECUTIVE_FAULTS &&
