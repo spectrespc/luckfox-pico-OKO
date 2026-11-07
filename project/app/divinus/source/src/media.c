@@ -19,6 +19,7 @@ short pcmSrc[SHINE_MAX_SAMPLES];
 static struct ringbuf audRing;
 static unsigned int audDrops;
 static void media_eptz_mark_applied(char bound);
+static void media_rotate_mark_applied(char bound);
 
 int save_audio_stream(hal_audframe *frame) {
 #ifdef DEBUG_AUDIO
@@ -874,6 +875,7 @@ int media_mp4_enable(void) {
         rtsp_set_stream_channel(rtspHandle, 0, index);
 #endif
     media_eptz_mark_applied(index);
+    media_rotate_mark_applied(index);
     return EXIT_SUCCESS;
 }
 
@@ -981,6 +983,7 @@ int media_substream_enable(void) {
         index, app_config.substream_width, app_config.substream_height,
         app_config.substream_fps);
     media_eptz_mark_applied(index);
+    media_rotate_mark_applied(index);
     return EXIT_SUCCESS;
 }
 
@@ -1005,105 +1008,149 @@ int media_substream_disable(void) {
 
 static pthread_mutex_t eptzStateMutex = PTHREAD_MUTEX_INITIALIZER;
 static int eptzLastChn = -1;
-static int eptzLastX, eptzLastY, eptzLastW, eptzLastH;
 static int eptzLastRc;
-static int eptzPending;
+/* What rk_channel_bind() actually applied on the last channel start. */
+static int eptzLiveValid, eptzLiveEnable, eptzLiveStream;
+static int eptzLiveX, eptzLiveY, eptzLiveW, eptzLiveH;
+static int rotateLiveValid, rotateLiveEnable, rotateLiveStream, rotateLiveAngle;
 static int mediaStarting;
+
+/* Must be called with eptzStateMutex held: the channel was just built by the
+ * bind hook, so the live state equals the stored configuration. */
+static void eptz_live_store_locked(int index) {
+    eptzLastChn = index;
+    eptzLastRc = 0;
+    eptzLiveValid = 1;
+    eptzLiveEnable = app_config.eptz_enable;
+    eptzLiveStream = app_config.eptz_stream;
+    if (app_config.eptz_enable) {
+        eptzLiveX = app_config.eptz_x;
+        eptzLiveY = app_config.eptz_y;
+        eptzLiveW = app_config.eptz_w;
+        eptzLiveH = app_config.eptz_h;
+    } else {
+        /* A disabled crop is a full-frame channel, not the stored rect. */
+        eptzLiveX = 0;
+        eptzLiveY = 0;
+        eptzLiveW = app_config.mp4_width ? app_config.mp4_width : 1920;
+        eptzLiveH = app_config.mp4_height ? app_config.mp4_height : 1080;
+    }
+}
+
+static void rotate_live_store_locked(void) {
+    rotateLiveValid = 1;
+    rotateLiveEnable = app_config.rotate_enable;
+    rotateLiveStream = app_config.rotate_stream;
+    rotateLiveAngle = app_config.rotate_enable ? app_config.rotate_angle : 0;
+}
 
 /* Records the stored crop as applied by rk_channel_bind() on a channel start.
  * Called after a successful bind of the channel the crop belongs to. */
 static void media_eptz_mark_applied(char bound) {
     int index = channel_by_role(app_config.eptz_stream ? HAL_CHNROLE_SUB : HAL_CHNROLE_MAIN);
 
-    if (index < 0 || index != bound || !app_config.eptz_enable) return;
+    if (index < 0 || index != bound) return;
 
     pthread_mutex_lock(&eptzStateMutex);
-    eptzLastChn = index;
-    eptzLastX = app_config.eptz_x;
-    eptzLastY = app_config.eptz_y;
-    eptzLastW = app_config.eptz_w;
-    eptzLastH = app_config.eptz_h;
-    eptzLastRc = 0;
-    eptzPending = 0;
+    eptz_live_store_locked(index);
     pthread_mutex_unlock(&eptzStateMutex);
 }
 
-/* The RV1106 applies a crop/rotation only before EnableChn.  A call on an
- * enabled channel returns 0 but has no visible effect and poisons the next
- * channel restart, while Disable/Enable or unbind/bind around the call stalls
- * the RTSP stream.  A runtime change is therefore only stored; the next
- * channel start applies it in rk_channel_bind(). */
+/* Same bookkeeping for the VENC rotation, which rk_channel_bind() applies
+ * together with the crop. */
+static void media_rotate_mark_applied(char bound) {
+    int index = channel_by_role(app_config.rotate_stream ? HAL_CHNROLE_SUB : HAL_CHNROLE_MAIN);
+
+    if (index < 0 || index != bound) return;
+
+    pthread_mutex_lock(&eptzStateMutex);
+    rotate_live_store_locked();
+    pthread_mutex_unlock(&eptzStateMutex);
+}
+
+/* The RV1106 resets the crop/rotation when a channel is enabled, and
+ * rk_channel_bind() re-applies the stored settings right after EnableChn.  A
+ * runtime change is only stored here; the caller restarts the application so
+ * the next channel start applies it, without touching a live stream. */
 int media_apply_eptz(void) {
-    int index = -1;
-    hal_rect rect;
+    int index;
+    int same;
 
     index = channel_by_role(app_config.eptz_stream ? HAL_CHNROLE_SUB : HAL_CHNROLE_MAIN);
-    if (index < 0) return EXIT_FAILURE;
-
-    rect.x = app_config.eptz_x;
-    rect.y = app_config.eptz_y;
-    rect.width = app_config.eptz_w;
-    rect.height = app_config.eptz_h;
 
     pthread_mutex_lock(&eptzStateMutex);
-    eptzLastChn = index;
-    eptzLastX = rect.x;
-    eptzLastY = rect.y;
-    eptzLastW = rect.width;
-    eptzLastH = rect.height;
-    eptzLastRc = 0;
-    /* At startup the bind hook has already applied the stored crop; a runtime
-     * change is pending until the channel is started again. */
-    eptzPending = !mediaStarting;
+    if (mediaStarting && index >= 0) {
+        /* The bind hook has just applied the stored crop. */
+        eptz_live_store_locked(index);
+        pthread_mutex_unlock(&eptzStateMutex);
+        return MEDIA_APPLY_OK;
+    }
+    same = eptzLiveValid &&
+        eptzLiveEnable == app_config.eptz_enable &&
+        eptzLiveStream == app_config.eptz_stream &&
+        (!app_config.eptz_enable ||
+            (eptzLiveX == app_config.eptz_x && eptzLiveY == app_config.eptz_y &&
+             eptzLiveW == app_config.eptz_w && eptzLiveH == app_config.eptz_h));
     pthread_mutex_unlock(&eptzStateMutex);
 
-    return EXIT_SUCCESS;
+    if (index < 0) return MEDIA_APPLY_NO_TARGET;
+    if (!same) return MEDIA_APPLY_NEEDS_RESTART;
+    return MEDIA_APPLY_OK;
 }
 
-int media_eptz_pending(void) {
-    int pending;
-
+/* Records the MPP code of the SetChnCrop call made by rk_channel_bind(), so
+ * /api/eptz can report the last HAL result (0 = accepted). */
+void media_eptz_bind_result(int rc) {
     pthread_mutex_lock(&eptzStateMutex);
-    pending = eptzPending;
+    eptzLastRc = rc;
     pthread_mutex_unlock(&eptzStateMutex);
-    return pending;
 }
 
 void media_eptz_last(int *chn, int *x, int *y, int *w, int *h, int *rc) {
     pthread_mutex_lock(&eptzStateMutex);
-    if (chn) *chn = eptzLastChn;
-    if (x) *x = eptzLastX;
-    if (y) *y = eptzLastY;
-    if (w) *w = eptzLastW;
-    if (h) *h = eptzLastH;
+    if (chn) *chn = eptzLiveValid ? eptzLastChn : -1;
+    if (x) *x = eptzLiveValid ? eptzLiveX : 0;
+    if (y) *y = eptzLiveValid ? eptzLiveY : 0;
+    if (w) *w = eptzLiveValid ? eptzLiveW : 0;
+    if (h) *h = eptzLiveValid ? eptzLiveH : 0;
     if (rc) *rc = eptzLastRc;
     pthread_mutex_unlock(&eptzStateMutex);
 }
 
 /* A channel restart (MP4/sub/MJPEG enable) recreates the VPSS/VENC channel.
- * rk_channel_bind() re-applies the stored crop and rotation before EnableChn,
- * because the RV1106 ignores both calls on an already enabled channel. */
+ * rk_channel_bind() re-applies the stored crop and rotation after EnableChn,
+ * because the enable resets both. */
 
 int media_apply_rotation(void) {
-    int index = -1;
-    hal_rotation rotation = HAL_ROTATE_NONE;
+    int index;
+    int reqAngle = app_config.rotate_enable ? app_config.rotate_angle : 0;
+    int same;
 
     index = channel_by_role(app_config.rotate_stream ? HAL_CHNROLE_SUB : HAL_CHNROLE_MAIN);
-    if (index < 0) return EXIT_FAILURE;
 
-    switch (app_config.rotate_enable ? app_config.rotate_angle : 0) {
-        case 90: rotation = HAL_ROTATE_90; break;
-        case 180: rotation = HAL_ROTATE_180; break;
-        case 270: rotation = HAL_ROTATE_270; break;
-        default: rotation = HAL_ROTATE_NONE; break;
+    pthread_mutex_lock(&eptzStateMutex);
+    if (mediaStarting && index >= 0) {
+        rotate_live_store_locked();
+        pthread_mutex_unlock(&eptzStateMutex);
+        return MEDIA_APPLY_OK;
     }
+    same = rotateLiveValid &&
+        rotateLiveEnable == app_config.rotate_enable &&
+        rotateLiveStream == app_config.rotate_stream &&
+        rotateLiveAngle == reqAngle;
+    pthread_mutex_unlock(&eptzStateMutex);
 
-    /* The rotation is applied by rk_channel_bind() before EnableChn, for the
-     * same reason as the crop: a runtime call has no effect (and can poison
-     * the next restart), so a change is only stored here. */
-    (void)index;
-    (void)rotation;
-    return EXIT_SUCCESS;
+    if (index < 0) return MEDIA_APPLY_NO_TARGET;
+    if (!same) return MEDIA_APPLY_NEEDS_RESTART;
+    return MEDIA_APPLY_OK;
+}
+
+void media_rotate_last(int *enable, int *stream, int *angle) {
+    pthread_mutex_lock(&eptzStateMutex);
+    if (enable) *enable = rotateLiveValid ? rotateLiveEnable : -1;
+    if (stream) *stream = rotateLiveValid ? rotateLiveStream : -1;
+    if (angle) *angle = rotateLiveValid ? rotateLiveAngle : -1;
+    pthread_mutex_unlock(&eptzStateMutex);
 }
 
 int media_apply_venc_extras(void) {
@@ -1404,9 +1451,10 @@ int sdk_start(void) {
         HAL_WARNING("media", "IQ switch could not be applied\n");
 
     /* Record the crop/rotation that rk_channel_bind() applied for /api/eptz
-     * without restarting a channel that has just been started. */
-    if (app_config.eptz_enable) media_apply_eptz();
-    if (app_config.rotate_enable) media_apply_rotation();
+     * without restarting a channel that has just been started.  With
+     * mediaStarting set both calls only refresh the live snapshot. */
+    (void)media_apply_eptz();
+    (void)media_apply_rotation();
     mediaStarting = 0;
 
 #if defined(__arm__) && !defined(__ARM_PCS_VFP)

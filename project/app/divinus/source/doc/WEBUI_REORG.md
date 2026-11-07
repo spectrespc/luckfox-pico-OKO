@@ -93,6 +93,14 @@ System**. Ширина ≥ 60em даёт в Live две колонки (прев
    ждёт выделенная зона). Двухсекундный опрос `focusPoll` пишет живые
    значения только при отсутствии несохранённой правки; изменения
    принудительно принимаются после успешного `Apply`, STOP и `af=fine`.
+7. Карточка Live → Zoom / rotation меняет настройку только через
+   перезапуск приложения (`/api/eptz`, `/api/rotate` отвечают
+   `applied:false` и `note` со словом restarting). Баннер «требуется
+   перезапуск» показывает ссылку на перезагрузку страницы; повторять `Apply`
+   до восстановления связи не нужно — сервер сам поднимается за несколько
+   секунд, а повторный POST с тем же значением уже не перезапускает
+   приложение. Пока идёт поиск автофокуса, `home`/`zero` или прошивка,
+   запрос отклоняется с `409 busy`.
 
 ### 4. Разделы и используемые endpoint'ы
 
@@ -231,6 +239,14 @@ and is disabled on a clean snapshot (or while a selected zone waits to be
 applied); the 2 s `focusPoll` refreshes those fields only when there is no
 unsaved edit, and the edit is accepted after a successful Apply, STOP or
 `af=fine`.
+
+The Live → Zoom / rotation card applies a change through a graceful
+application restart: `/api/eptz` and `/api/rotate` answer `applied:false` with
+a `note` that contains "restarting", and the page shows the existing restart
+banner with a reload link. Repeating Apply before the connection returns is not
+needed; a second POST with the same value does not restart the application
+again. While an autofocus search, a `home`/`zero` job or a firmware write is
+running, the request is refused with `409 busy`.
 
 **System → Status** is a read-only card: Chip, Sensor, Memory, SD card capacity
 and free space (`sd_total_mb`/`sd_free_mb` from `/api/status` in MiB, rendered as

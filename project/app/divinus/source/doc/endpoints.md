@@ -479,28 +479,32 @@ Digital zoom (VPSS crop).
 
 Blocked with `reason` when the HAL has no `RK_MPI_VPSS_SetChnCrop`.
 
-The response always contains the requested `x`/`y`/`w`/`h` and, in addition,
-the result of the last HAL call:
+The response contains the requested `x`/`y`/`w`/`h` (the stored setting) and
+what the channel actually runs:
 
 | Field | Meaning |
 |-------|---------|
-| `applied` | `true` when the stored MPP return code is `0` and a channel has been cropped |
-| `rc` | MPP `SetChnCrop` return code as a hex string (`0x0` = accepted) |
-| `chn` | VENC/VPSS channel index (`-1` before the first call) |
-| `crop` | Rectangle actually passed to the HAL after clamping `[x,y,w,h]` |
-| `note` | Present when nothing was applied yet or the HAL refused the crop |
+| `applied` | `true` only when the live channel matches the stored request |
+| `rc` | MPP `SetChnCrop` code of the last channel start (`0x0` = accepted) |
+| `chn` | Live VENC/VPSS channel index (`-1` when the target stream is off) |
+| `crop` | Crop rectangle the channel is running (`[0,0,W,H]` when disabled) |
+| `note` | Why the change is not live yet, or that the target stream is off |
 
 Coordinates are pixels of the channel input: the VPSS group and VI are created
 with the main stream size, and the crop is scaled back to the channel size, so
 the encoded picture (and the OSD/NN overlay) keeps its dimensions.
 
-The RV1106 applies the crop only before the channel is enabled.  A request on a
-running channel is stored, but the response then carries `applied:false` and a
-`note`; the crop becomes visible after the channel starts again (for the main
-stream: Streams → MP4 apply, or an application restart).  `SetChnCrop` on an
-enabled channel returns `0` without an effect, and wrapping it in
-Disable/Enable or unbind/bind stalls the RTSP stream, so it is not attempted
-(KI-044).
+The RV1106 resets the crop when a channel is enabled.  A change on a running
+channel is therefore saved and applied by a graceful application restart —
+`settings saved; restarting the application`, the same mechanism as
+`/api/substream`.  The restart takes several seconds, closes the recording
+segment and interrupts a running autofocus search, so the request is refused
+with `409 busy` while a `focus`/`flash` job is active.  The new value is applied
+by the channel bind right after `EnableChn` on the next start, and
+`app_config_save()` keeps it across a power cycle.  Repeating the same request
+does not restart the application again (`applied:true`); with the target stream
+off the response carries `applied:false` and `note:"stream is off"`.  A GET
+without parameters never restarts.
 
 With `osd.scope=main` (factory default) the OSD and NN overlays are attached to
 the main VENC channel only, so they are absent from `/mjpeg` and `/image.jpg`;
@@ -517,9 +521,12 @@ effect.
 
 Rotation is applied with `RK_MPI_VENC_SetChnRotation`; the encoded SPS
 dimensions change accordingly.  Like the ePTZ crop, the rotation is re-applied
-after a channel restart.  The NN overlay swaps its canvas for 90/270 and maps
-detection coordinates through the crop and the rotation; OSD text keeps the
-same corner and margin in the rotated picture.
+by the channel bind after `EnableChn`, a change on a running channel restarts
+the application gracefully (`applied:false` + `note`) and is refused with
+`409 busy` while a focus/flash job runs.  The response also carries `applied`.
+The NN overlay swaps its canvas for 90/270 and maps detection coordinates
+through the crop and the rotation; OSD text keeps the same corner and margin in
+the rotated picture.
 
 #### `/api/venc`
 

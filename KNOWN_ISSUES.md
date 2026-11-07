@@ -272,19 +272,20 @@
   без `motor` — метрика включается и опрашивается. Статус: **открыто**,
   правка сервера не входит в инкремент по решению пользователя.
 
-- **KI-044. ePTZ: кроп применяется только при старте канала.**
-  Замеры 2026-11-07 на стенде: кроп, заданный до запуска канала, работает —
-  кадр `/live/0` совпал с центральной половиной кадра 1x (mean|diff| 4.25
-  против 52.83), `/image.jpg` не изменился (3.37). Но
-  `RK_MPI_VPSS_SetChnCrop` на уже включённом канале возвращает `0` без
-  визуального эффекта, а обвязка Disable/Enable или unbind/bind вокруг вызова
-  останавливает RTSP-поток; после такой попытки ненадёжен и следующий
-  рестарт MP4 (кадры не идут). Поэтому смена зума/поворота во время работы
-  только сохраняется (API отдаёт `applied:false` и `note`), а применяется
-  `rk_channel_bind()` при следующем старте канала; гарантированный обход —
-  перезапуск приложения. Наблюдаемость (`applied`/`rc`/`chn`/`crop`)
-  добавлена. Предпросмотр Live может показывать `/mjpeg` или `/image.jpg`,
-  где кроп main не действует. Статус: **открыто**.
+- **KI-044. ePTZ: кроп/поворот применяются при старте канала (закрыто).**
+  Замеры 2026-11-07: включение канала сбрасывает `SetChnCrop` и
+  `SetChnRotation` — вызов до `RK_MPI_VPSS_EnableChn` возвращает `0`, но
+  картинку не меняет; вызов сразу после `EnableChn` работает (кроп 960x540:
+  mean|diff| 4.26 к центру кадра 1x против 53.85 к полному кадру). Поэтому
+  `rk_channel_bind()` применяет сохранённые настройки после `EnableChn`, а
+  смена зума/поворота на работающем канале только сохраняется и применяется
+  graceful-рестартом приложения (`app_config_save` + SIGHUP, как у
+  `/api/substream`; ответ `applied:false` и `note`). Повтор того же запроса
+  рестарта не вызывает, а во время AF/`home`/`zero`/прошивки запрос
+  отклоняется с `409`. После смены кропа обычный рестарт MP4 остаётся
+  ненадёжным (нет кадров) — это ограничение стенда, обходится рестартом
+  приложения. Предпросмотр Live может показывать `/mjpeg` или `/image.jpg`,
+  где кроп main не действует. Статус: **закрыто (2026-11-07)**.
 
 ### Безопасность
 
@@ -544,19 +545,21 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   `motor` enables and polls the metric. Status: **open**; the server change
   is out of this increment by the user's decision.
 
-- **KI-044. ePTZ: a crop is applied only when a channel starts.**
-  Bench measurements on 2026-11-07: a crop set before the channel starts
-  works — `/live/0` matched the centre half of the 1x frame (mean|diff| 4.25
-  versus 52.83) and `/image.jpg` stayed unchanged (3.37). However
-  `RK_MPI_VPSS_SetChnCrop` on an enabled channel returns `0` with no visible
-  effect, and wrapping the call in Disable/Enable or unbind/bind stalls the
-  RTSP stream; after such an attempt the next MP4 restart is unreliable too
-  (no frames). A runtime zoom/rotation change is therefore only stored (the API
-  reports `applied:false` and a `note`) and is applied by
-  `rk_channel_bind()` on the next channel start; the reliable workaround is an
-  application restart. Observability (`applied`/`rc`/`chn`/`crop`) is now in
-  place. The Live preview may show `/mjpeg` or `/image.jpg`, where the main
-  crop has no effect. Status: **open**.
+- **KI-044. ePTZ: crop/rotation are applied when a channel starts (closed).**
+  Measurements on 2026-11-07: enabling a channel resets `SetChnCrop` and
+  `SetChnRotation` — a call before `RK_MPI_VPSS_EnableChn` returns `0` but
+  leaves the picture unchanged, while a call right after `EnableChn` works (a
+  960x540 crop: mean|diff| 4.26 to the centre of the 1x frame versus 53.85 to
+  the full frame). `rk_channel_bind()` therefore applies the stored settings
+  after `EnableChn`, and a runtime zoom/rotation change is only stored and
+  applied by a graceful application restart (`app_config_save` + SIGHUP, the
+  `/api/substream` pattern; the response carries `applied:false` and a `note`).
+  Repeating the same request does not restart again, and a request during an
+  AF/`home`/`zero`/flash job is refused with `409`. After a crop change a plain
+  MP4 restart is still unreliable (no frames) — a bench limitation worked
+  around by the application restart. The Live preview may show `/mjpeg` or
+  `/image.jpg`, where the main crop has no effect.
+  Status: **closed (2026-11-07)**.
 
 ### Security
 

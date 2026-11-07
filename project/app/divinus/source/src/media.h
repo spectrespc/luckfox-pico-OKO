@@ -39,10 +39,18 @@ int channel_by_role(int role);
 
 int media_substream_enable(void);
 int media_substream_disable(void);
+/* Result of media_apply_eptz()/media_apply_rotation(): the stored settings
+ * either already match the live channel, or the target channel is not
+ * running, or the change needs a channel start (graceful app restart). */
+#define MEDIA_APPLY_OK            0
+#define MEDIA_APPLY_NO_TARGET     1
+#define MEDIA_APPLY_NEEDS_RESTART 2
+
 int media_apply_eptz(void);
 void media_eptz_last(int *chn, int *x, int *y, int *w, int *h, int *rc);
-int media_eptz_pending(void);
+void media_eptz_bind_result(int rc);
 int media_apply_rotation(void);
+void media_rotate_last(int *enable, int *stream, int *angle);
 int media_apply_aiisp(void);
 int media_apply_iq(const char *main, const char *sub, const char *file);
 int media_apply_venc_extras(void);

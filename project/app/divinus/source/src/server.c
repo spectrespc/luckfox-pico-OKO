@@ -2351,7 +2351,9 @@ void respond_request(http_request_t *req) {
     }
 
     if (EQUALS(req->uri, "/api/eptz")) {
-        if (req->query) {
+        int eptzRc;
+        int hadQuery = req->query != NULL;
+        if (hadQuery) {
             int enableReq = -1;
             while (req->query) {
                 char *value = split(&req->query, "&");
@@ -2414,32 +2416,40 @@ void respond_request(http_request_t *req) {
                     app_config.eptz_y = height - app_config.eptz_h;
             }
 
-            if (media_apply_eptz())
-                HAL_WARNING("server", "ePTZ could not be applied\n");
+            /* Restarting the application in the middle of an AF search, a
+             * home/zero job or a firmware write is not allowed. */
+            if (focus_af_running() || focus_home_running() || flash_busy()) {
+                char body[160];
+                snprintf(body, sizeof(body),
+                    "{\"error\":\"busy\",\"reason\":\"a focus or flash job is "
+                    "running\"}");
+                reply_status_json(req->clntFd, 409, body);
+                return;
+            }
+
+            eptzRc = media_apply_eptz();
+            if (eptzRc != MEDIA_APPLY_OK && eptzRc != MEDIA_APPLY_NEEDS_RESTART)
+                HAL_WARNING("server", "ePTZ target stream is not running\n");
         }
+        if (!hadQuery)
+            eptzRc = media_apply_eptz();
 
         {
-            /* The requested rectangle is not proof that the VPSS accepted the
-             * crop: report the stored channel, rectangle and MPP return code
-             * so that "applied" can be distinguished from "refused". */
-            int echn, ex, ey, ew, eh, erc, epending;
+            /* Only the live snapshot proves that the VPSS accepted the crop:
+             * `/api/eptz` reports what rk_channel_bind() applied, not what the
+             * query asked for. */
+            int echn, ex, ey, ew, eh, erc;
             char enote[200] = "";
 
             media_eptz_last(&echn, &ex, &ey, &ew, &eh, &erc);
-            epending = media_eptz_pending();
-            if (echn < 0) {
-                erc = 0;
-                ex = ey = ew = eh = 0;
+            if (eptzRc == MEDIA_APPLY_NEEDS_RESTART) {
                 snprintf(enote, sizeof(enote),
-                    ",\"note\":\"no channel has been cropped yet\"");
-            } else if (erc) {
+                    ",\"note\":\"settings saved; restarting the application\"");
+            } else if (eptzRc == MEDIA_APPLY_NO_TARGET) {
+                snprintf(enote, sizeof(enote), ",\"note\":\"stream is off\"");
+            } else if (echn < 0) {
                 snprintf(enote, sizeof(enote),
-                    ",\"note\":\"SetChnCrop failed, rc 0x%x\"",
-                    (unsigned)erc);
-            } else if (epending) {
-                snprintf(enote, sizeof(enote),
-                    ",\"note\":\"the RV1106 applies a crop before the channel "
-                    "starts; restart the stream to make the change visible\"");
+                    ",\"note\":\"applied when the stream starts\"");
             }
 
             respLen = sprintf(response,
@@ -2454,14 +2464,20 @@ void respond_request(http_request_t *req) {
                 app_config.eptz_stream ? "sub" : "main",
                 app_config.eptz_x, app_config.eptz_y,
                 app_config.eptz_w, app_config.eptz_h,
-                (echn >= 0 && !erc && !epending) ? "true" : "false",
+                (eptzRc == MEDIA_APPLY_OK && echn >= 0) ? "true" : "false",
                 (unsigned)erc, echn, ex, ey, ew, eh, enote);
         }
         send_and_close(req->clntFd, response, respLen);
+        if (eptzRc == MEDIA_APPLY_NEEDS_RESTART) {
+            app_config_save();
+            kill(getpid(), SIGHUP);
+        }
         return;
     }
 
     if (EQUALS(req->uri, "/api/rotate")) {
+        int rotRc;
+        char rnote[200] = "";
         if (req->query) {
             int enableReq = -1;
             while (req->query) {
@@ -2490,8 +2506,25 @@ void respond_request(http_request_t *req) {
                 app_config.rotate_enable = false;
             }
 
-            if (media_apply_rotation())
-                HAL_WARNING("server", "Rotation could not be applied\n");
+            if (focus_af_running() || focus_home_running() || flash_busy()) {
+                char body[160];
+                snprintf(body, sizeof(body),
+                    "{\"error\":\"busy\",\"reason\":\"a focus or flash job is "
+                    "running\"}");
+                reply_status_json(req->clntFd, 409, body);
+                return;
+            }
+
+            rotRc = media_apply_rotation();
+        } else {
+            rotRc = media_apply_rotation();
+        }
+
+        if (rotRc == MEDIA_APPLY_NEEDS_RESTART) {
+            snprintf(rnote, sizeof(rnote),
+                ",\"note\":\"settings saved; restarting the application\"");
+        } else if (rotRc == MEDIA_APPLY_NO_TARGET) {
+            snprintf(rnote, sizeof(rnote), ",\"note\":\"stream is off\"");
         }
 
         respLen = sprintf(response,
@@ -2499,11 +2532,16 @@ void respond_request(http_request_t *req) {
             "Content-Type: application/json;charset=UTF-8\r\n"
             "Connection: close\r\n"
             "\r\n"
-            "{\"enable\":%s,\"stream\":\"%s\",\"angle\":%d}",
+            "{\"enable\":%s,\"stream\":\"%s\",\"angle\":%d,\"applied\":%s%s}",
             app_config.rotate_enable ? "true" : "false",
             app_config.rotate_stream ? "sub" : "main",
-            app_config.rotate_angle);
+            app_config.rotate_angle,
+            rotRc == MEDIA_APPLY_OK ? "true" : "false", rnote);
         send_and_close(req->clntFd, response, respLen);
+        if (rotRc == MEDIA_APPLY_NEEDS_RESTART) {
+            app_config_save();
+            kill(getpid(), SIGHUP);
+        }
         return;
     }
 

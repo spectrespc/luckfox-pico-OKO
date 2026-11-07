@@ -30,8 +30,8 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   возвращает числовой код MPP, печатает его один раз и сохраняется в
   `media.c` под мьютексом (`media_eptz_last`); `/api/eptz` отдаёт фактические
   `applied`, `rc`, `chn` и `crop` и `note` при отказе. Кроп и поворот
-  применяются в `rk_channel_bind()` до `EnableChn` — при каждом старте
-  канала, а не на включённом канале (RV1106 игнорирует такой вызов). Новый модуль
+  применяются в `rk_channel_bind()` сразу после `EnableChn` — при каждом
+  старте канала (включение канала сбрасывает их). Новый модуль
   `analytics/nn_geom.c` (хост-тест `tests/nn_geom_test.c`) пересчитывает
   координаты детекций с учётом кропа и поворота 0/90/180/270; рамки
   выравниваются по 4 px вместо сетки 16 px. Текстовый OSD переякоривается при
@@ -44,9 +44,8 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   `rk_vpss_set_chn_crop` returns the numeric MPP code, logs it once and stores
   it in `media.c` under a mutex (`media_eptz_last`); `/api/eptz` now reports
   the actual `applied`, `rc`, `chn` and `crop` plus a `note` on failure. The
-  crop and the rotation are applied in `rk_channel_bind()` before `EnableChn` —
-  on every channel start, not on an enabled channel (the RV1106 ignores such a
-  call). The new
+  crop and the rotation are applied in `rk_channel_bind()` right after
+  `EnableChn` — on every channel start (the enable resets them). The new
   `analytics/nn_geom.c` module (host test `tests/nn_geom_test.c`) maps
   detection coordinates through the crop and the 0/90/180/270 rotation; boxes
   are aligned to 4 px instead of the 16 px grid. OSD text is re-anchored at
@@ -165,6 +164,41 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Изменено
 
+- **ePTZ: смена зума/поворота применяется graceful-рестартом (OKO).**
+  `/api/eptz` и `/api/rotate` больше не пытаются менять работающий канал:
+  новое значение сохраняется, ответ содержит `applied:false` и
+  `note:"settings saved; restarting the application"`, после `send_and_close`
+  вызываются `app_config_save()` и `kill(getpid(), SIGHUP)` — тот же путь,
+  что у `/api/substream`. `applied:true` отдаётся только когда живой канал
+  совпадает с запросом; `crop` — фактический кроп канала (полный кадр при
+  выключенном ePTZ), `rc` — код MPP последнего старта, `note` объясняет
+  «stream is off»; повтор одинакового запроса рестарта не вызывает. Пока идёт
+  поиск автофокуса, `home`/`zero` или прошивка, запрос отклоняется с
+  `409 busy`. Кроп и поворот теперь применяются в `rk_channel_bind()` сразу
+  после `EnableChn` — включение канала сбрасывает их (замеры 2026-11-07:
+  mean|diff| 4.26 к центру 1x против 53.85 к полному кадру). KI-044 закрыт;
+  `bench/geometry_check.py` ждёт подъём `/api/status` после POST и проверяет
+  кроп после рестарта. Обновлены `doc/endpoints.md`, `divinus/README.md`,
+  `WEBUI_REORG.md`, `KNOWN_ISSUES.md`, `FEATURES_VERIFIED.md` и
+  `VERIFIED_FUNCTIONS.md`.
+- **ePTZ: a zoom/rotation change is applied by a graceful restart (OKO).**
+  `/api/eptz` and `/api/rotate` no longer touch a running channel: the new
+  value is saved, the response carries `applied:false` and
+  `note:"settings saved; restarting the application"`, and after
+  `send_and_close` the handler calls `app_config_save()` and
+  `kill(getpid(), SIGHUP)` — the `/api/substream` path. `applied:true` is
+  returned only when the live channel matches the request; `crop` is the real
+  channel rectangle (full frame when ePTZ is off), `rc` is the MPP code of the
+  last start, and `note` explains "stream is off"; repeating the same request
+  does not restart again. While an autofocus search, a `home`/`zero` job or a
+  firmware write runs, the request is refused with `409 busy`. The crop and the
+  rotation are now applied in `rk_channel_bind()` right after `EnableChn` —
+  the enable resets them (2026-11-07: mean|diff| 4.26 to the centre of the 1x
+  frame versus 53.85 to the full frame). KI-044 is closed;
+  `bench/geometry_check.py` waits for `/api/status` after a POST and verifies
+  the crop after the restart. Updated `doc/endpoints.md`,
+  `divinus/README.md`, `WEBUI_REORG.md`, `KNOWN_ISSUES.md`,
+  `FEATURES_VERIFIED.md` and `VERIFIED_FUNCTIONS.md`.
 - **Документация: TO_DO и FEATURES приведены к индексу (OKO).** `TO_DO.md`
   сокращён до открытых работ: убраны закрытые чек-листы фаз 0–4 и вариантов A/B,
   механика объектива зафиксирована текстом, обновлены §6 («Открытые работы по
@@ -272,26 +306,26 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 ### Исправлено
 
 - **ePTZ: кроп/поворот при старте канала и геометрия оверлеев (OKO).**
-  Кроп и поворот теперь применяются в `rk_channel_bind()` до `EnableChn`
-  (через `rk_apply_stream_settings`), поэтому каждый старт канала получает
-  сохранённые настройки, а не теряет их молча. Смена на включённом канале
-  только сохраняется: `SetChnCrop` там возвращает `0` без эффекта, обвязка
-  Disable/Enable и unbind/bind останавливает RTSP, поэтому `/api/eptz` отдаёт
-  `applied:false` и `note`, а значение вступает в силу при следующем старте
-  канала (KI-044, замеры 2026-11-07). NN-рамки поворачиваются вместе с
+  Кроп и поворот теперь применяются в `rk_channel_bind()` сразу после
+  `EnableChn` (через `rk_apply_stream_settings`), поэтому каждый старт канала
+  получает сохранённые настройки, а не теряет их молча: включение канала
+  сбрасывает `SetChnCrop`/`SetChnRotation`, а вызов после него работает
+  (замеры 2026-11-07). Смена на работающем канале только сохраняется, и
+  `/api/eptz` отдаёт `applied:false` и `note` (KI-044).
+  NN-рамки поворачиваются вместе с
   картинкой: координаты детекций проходят через кроп и поворот
   (`nn_geom.c`), а не только масштабируются по неповёрнутому кадру.
   Систематический сдвиг рамки до 15 px вверх/влево от квантования на сетку
   16 px убран (выравнивание 4 px). Текстовый OSD при 90/270 переезжает к тому
   же углу кадра, а не остаётся за пределами portrait-картинки.
 - **ePTZ: crop/rotation at channel start and overlay geometry (OKO).** The
-  crop and rotation are now applied in `rk_channel_bind()` before `EnableChn`
-  (via `rk_apply_stream_settings`), so every channel start receives the stored
-  settings instead of silently dropping them. A change on an enabled channel
-  is only stored: `SetChnCrop` returns `0` without an effect there, and
-  Disable/Enable or unbind/bind stalls RTSP, so `/api/eptz` reports
-  `applied:false` plus a `note` and the value takes effect on the next channel
-  start (KI-044, 2026-11-07 measurements). NN boxes rotate with the picture:
+  crop and rotation are now applied in `rk_channel_bind()` right after
+  `EnableChn` (via `rk_apply_stream_settings`), so every channel start receives
+  the stored settings instead of silently dropping them: the enable resets
+  `SetChnCrop`/`SetChnRotation`, while a call after it works (2026-11-07
+  measurements). A change on a running channel is only stored and `/api/eptz`
+  reports `applied:false` plus a `note` (KI-044). NN boxes rotate with the
+  picture:
   detection coordinates go through the crop and the rotation (`nn_geom.c`)
   instead of being scaled on the unrotated frame only. The systematic
   up-to-15-px up/left shift from the 16-px grid quantization is gone (4-px

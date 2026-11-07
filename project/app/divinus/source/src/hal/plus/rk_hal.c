@@ -8,6 +8,9 @@
 #include "../../app_config.h"
 #include "../../analytics/nn_geom.h"
 
+/* Implemented in media.c: stores the MPP result of the bind-time crop. */
+void media_eptz_bind_result(int rc);
+
 rk_aiq_impl     rk_aiq;
 rk_aud_impl     rk_aud;
 rk_ivs_impl     rk_ivs;
@@ -204,10 +207,10 @@ void *rk_audio_thread(void)
     HAL_INFO("rk_aud", "Shutting down encoding thread...\n");
 }
 
-/* The RV1106 honours RK_MPI_VPSS_SetChnCrop and the VENC rotation when they
- * are set before RK_MPI_VPSS_EnableChn; a call on an already enabled channel
- * returns success but leaves the picture unchanged.  Every channel (re)start
- * therefore re-applies the stored settings before the channel is enabled. */
+/* The RV1106 resets the VPSS crop when the channel is enabled: a call made
+ * before RK_MPI_VPSS_EnableChn is accepted but has no visible effect, while a
+ * call right after it changes the picture.  Every channel (re)start therefore
+ * re-applies the stored crop and the VENC rotation after EnableChn. */
 static void rk_apply_stream_settings(char index)
 {
     int role = rk_state[index].role;
@@ -222,7 +225,7 @@ static void rk_apply_stream_settings(char index)
         crop.rect.y = app_config.eptz_y;
         crop.rect.width = app_config.eptz_w;
         crop.rect.height = app_config.eptz_h;
-        rk_vpss_set_chn_crop(index, &crop);
+        media_eptz_bind_result(rk_vpss_set_chn_crop(index, &crop));
     }
 
     if (app_config.rotate_enable &&
@@ -244,10 +247,12 @@ int rk_channel_bind(char index)
 {
     int ret;
 
-    rk_apply_stream_settings(index);
-
     if (ret = rk_vpss.fnEnableChannel(_rk_vpss_grp, index))
         return ret;
+
+    /* Apply the stored crop/rotation after EnableChn: the enable resets them
+     * and a live SetChnCrop/SetRotation does change the encoded picture. */
+    rk_apply_stream_settings(index);
 
     {
         rk_sys_bind source = { .module = RK_SYS_MOD_VPSS,
