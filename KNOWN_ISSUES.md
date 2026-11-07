@@ -16,12 +16,14 @@
   `vpss3`. Обход: `vpss3`, при конфликте с IVS/MJPEG — `vi0`.
   Статус: **заблокировано по дизайну**.
 
-- **KI-002. librga непригодна на этом образе.**
-  Легаси `c_RkRgaBlit` падает с SIGSEGV, im2d `importbuffer_fd` не импортирует
-  MMZ/dma-heap-дескрипторы, RGA-блит по куче вешал плату. NV12→RGB888 для YOLO
-  считается на CPU; цена — ~21.5% одного ядра на 5 fps при 640×384 и ~59% при
-  640×640 на той же частоте. Обход: CPU-конверсия; RGA не использовать.
-  Статус: **принятое ограничение**.
+- **KI-002. RGA: im2d fd-путь работает, легаси blit — нет.**
+  На `rknpu` 0.9.8 im2d `importbuffer_fd` импортирует MMZ- и dma-heap-
+  дескрипторы (проверено `rgaImDemo --copy` и отдельным тестом MMZ
+  NV12→RGB888). `yolo.convert: rga` снижает CPU `divinus` с ~35.6% до ~29.4%
+  при 5 fps 640×384 без потери fps; при ошибке RGA один раз пишет
+  предупреждение и откатывается на CPU. Легаси `c_RkRgaBlit` и блит по
+  `malloc`-памяти по-прежнему не используются (SIGSEGV/зависания).
+  Статус: **закрыто для im2d fd-пути**, легаси API — принятое ограничение.
 
 - **KI-003. Модель 640×384 не входит в образ.**
   Модель собрана Docker-пайплайном (`tools/rknn-toolkit2/`, 2.6 МиБ) и
@@ -281,11 +283,14 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   with `vpss3` at startup. Workaround: `vpss3`, or `vi0` when IVS/MJPEG owns
   channel 3. Status: **blocked by design**.
 
-- **KI-002. librga is unusable on this image.** Legacy `c_RkRgaBlit`
-  segfaults, im2d `importbuffer_fd` cannot import MMZ/dma-heap descriptors, and
-  an RGA blit on heap memory hung the board. YOLO converts NV12→RGB on the CPU
-  (~21.5% of one core at 5 fps for 640×384 and ~59% for 640×640).
-  Status: **accepted limitation**.
+- **KI-002. RGA: the im2d fd path works, the legacy blit does not.** On
+  `rknpu` 0.9.8 im2d `importbuffer_fd` imports MMZ and dma-heap descriptors
+  (verified with `rgaImDemo --copy` and a dedicated MMZ NV12→RGB888 test).
+  `yolo.convert: rga` lowers `divinus` CPU from ~35.6% to ~29.4% at 5 fps
+  640×384 without losing fps; on an RGA error it logs once and falls back to
+  the CPU path. Legacy `c_RkRgaBlit` and blits on `malloc` memory are still
+  not used (SIGSEGV/hangs). Status: **closed for the im2d fd path**; the
+  legacy API remains an accepted limitation.
 
 - **KI-003. The 640×384 model is not part of the image.** It is built by the
   Docker pipeline (`tools/rknn-toolkit2/`, 2.6 MiB) and activates on the DUT,

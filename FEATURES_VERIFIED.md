@@ -76,12 +76,13 @@
   том же процессе; переключение `runtime=1` ↔ `runtime=2` проверено, 2-часовой
   soak без утечек. Активация модели «чужого» рантайма отклоняется с причиной.
   mAP 2.x-модели на размеченном наборе не измерялся.
-- librga на образе непригодна (легаси `c_RkRgaBlit` — SIGSEGV, im2d
-  `importbuffer_fd` не импортирует ни MMZ-, ни dma-heap-fd, RGA по куче
-  вешала плату), поэтому NV12→RGB888 считается на CPU: на 5 fps — ~21.5%
-  одного ядра для 640×384 и ~59% для 640×640. Кольцо кадров живёт в MMZ и
-  отображается через `mmap(fd)` (виртуальный адрес `MB_Handle2VirAddr` для
-  MMZ-блока валиден только на первые 4 КиБ).
+- RGA: im2d `importbuffer_fd` на `rknpu` 0.9.8 принимает MMZ- и dma-heap-fd,
+  поэтому `yolo.convert: rga` конвертирует NV12→RGB888 на RGA (CPU `divinus`
+  ~35.6% → ~29.4% при 5 fps 640×384, fps не падает, 2-часовой soak без
+  зависаний) с откатом на CPU при ошибке. Легаси `c_RkRgaBlit` и блит по
+  `malloc`-памяти по-прежнему непригодны (SIGSEGV/зависания). Кольцо кадров
+  живёт в MMZ и отображается через `mmap(fd)` (виртуальный адрес
+  `MB_Handle2VirAddr` для MMZ-блока валиден только на первые 4 КиБ).
 - Доказательства по каждой строке — в `VERIFIED_FUNCTIONS.md`.
 
 ## English
@@ -161,10 +162,11 @@ Status as of 2026-11-06.
   `runtime=2` was verified, as was a 2-hour soak. Activating a model recorded
   for the other runtime is refused with a reason. The 2.x model mAP has not
   been measured on a labelled set.
-- librga is unusable on this image (legacy `c_RkRgaBlit` → SIGSEGV, im2d
-  `importbuffer_fd` imports neither MMZ nor dma-heap fds, and RGA on the heap
-  hung the board), so NV12→RGB888 runs on the CPU: at 5 fps ~21.5% of one core
-  for 640×384 and ~59% for 640×640. The frame ring lives in MMZ and is mapped
+- RGA: im2d `importbuffer_fd` accepts MMZ and dma-heap fds on `rknpu` 0.9.8,
+  so `yolo.convert: rga` converts NV12→RGB888 on RGA (`divinus` CPU ~35.6% →
+  ~29.4% at 5 fps 640×384, no fps loss, a 2-hour soak without hangs) and falls
+  back to CPU on error. Legacy `c_RkRgaBlit` and blits on `malloc` memory
+  remain unusable (SIGSEGV/hangs). The frame ring lives in MMZ and is mapped
   via `mmap(fd)` (a `MB_Handle2VirAddr` virtual address is valid only for the
   first 4 KiB of an MMZ block).
 - Per-row evidence is in `VERIFIED_FUNCTIONS.md`.

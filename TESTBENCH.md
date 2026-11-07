@@ -285,6 +285,13 @@ bench/run.sh firmware_check.py --flash --target stm8 \
 # NPU в OSD: строка должна появиться после старта YOLO
 cat /tmp/osd-sys.txt; cat /proc/rknpu/load
 
+# RGA im2d fd-путь: копирование через CMA-буфер (rc=1 — нет /data/in0...bin,
+# это нормально; зависание/чёрный экран — откат на CPU и power cycle)
+LD_LIBRARY_PATH=/oem/usr/lib /oem/usr/bin/rgaImDemo --copy
+# конверсия YOLO на RGA: в логе не должно быть RGA_BLIT/falling back
+curl -s -u admin:oko-change-me -X POST 'http://192.168.52.97/api/yolo?convert=rga'
+grep -aE 'rk_rga|RGA_BLIT|falling back' /tmp/divinus.log | tail
+
 # RTSP отдаёт кадры только при stream.enable=true в /userdata/divinus.yaml
 grep -A2 '^stream:' /userdata/divinus.yaml
 

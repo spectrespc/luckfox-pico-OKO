@@ -486,8 +486,9 @@ NPU 28%, `librkpostisp.so` загружен, пропусков в `/live/0` н�
 
 ### 11.4. Опорные факты
 
-- Пара драйвер/runtime — `rknpu` 0.9.2 + `librknnmrt.so` 1.6.0; модели
-  собирать только toolkit 1.6.0.
+- Пара драйвер/runtime — `rknpu` 0.9.8 + `librknnmrt.so` 1.6.0; модели
+  toolkit 1.6.0 идут на runtime 1, модели toolkit 2.x — на
+  `librknnmrt2.so` 2.3.2 (`yolo.runtime: 2`).
 - NPU без IOMMU: буферы должны быть физически непрерывными (dma-heap/MMZ),
   не `malloc`.
 - `vi1` (selfpath) вешает плату и заблокирован; рабочая ветка — `vpss3`,

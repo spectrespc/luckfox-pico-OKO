@@ -233,22 +233,27 @@ canvas не совпал с выровненным растром, остаёт�
 ## OKO: NPU-аналитика YOLOv5 (`analytics/`)
 
 `[yolo] enable: true` запускает детекцию после `sdk_start()`:
-`analytics/yolo.c` держит кольцо NV12-кадров, раз в `fps` делает
-NV12→RGB888 на CPU, вызывает `librknnmrt.so` через `dlopen`
-(`hal/plus/rk_rknn.h`, `hal/plus/rknn_api.h` 1.6.0) и декодирует три выхода
+`analytics/yolo.c` держит кольцо NV12-кадров, раз в `fps` готовит
+NV12→RGB888, вызывает выбранный мини-рантайм через `dlopen`
+(`hal/plus/rk_rknn.h`, `hal/plus/rknn_api.h`) и декодирует три выхода
 `analytics/yolo_postprocess.c`. Событие = индикатор в `/tmp/osd-ivs.txt` +
 `pre_seconds`/`post_seconds` кадров, которые отдельный VENC-канал **MJPG 4**
 кодирует и отправляет N `PUT` с `X-Event-*` (`http_post.c`).
 
-RGA не используется: на этом образе легаси `c_RkRgaBlit` падает SIGSEGV,
-im2d `importbuffer_fd` не импортирует MMZ/dma-heap fd, а блит по куче вешал
-плату. CPU-конверсия стоит ~28% одного ядра на 3 fps при 640×640. Кольцо
-лежит в MMZ и отображается через `mmap(fd)`: `MB_Handle2VirAddr` для
-MMZ-блока валиден только на первые 4 КиБ. `yolo.source=vi1` (selfpath) вешает
-плату и отклоняется `gating.c`, `/api/yolo` и WebUI; дефолт — `vpss3`
-(при IVS/MJPEG — `vi0`). Модели: `/userdata/models`,
-активация через `POST /api/models/activate` с откатом; INT8 `.rknn` 1.6.0,
-вход должен совпадать с `yolo.input_width/height`.
+Два рантайма: `yolo.runtime: 1` — `librknnmrt.so` 1.6.0 (общий с
+AIISP/RockIVA), `2` — `librknnmrt2.so` 2.x с отдельным SONAME. `models.json`
+помнит рантайм модели, активация «чужой» модели отклоняется с причиной;
+переключение runtime не требует рестарта. `yolo.convert: cpu | rga`
+(по умолчанию `cpu`): RGA-путь отдаёт im2d fd кольца (MMZ) и входа
+`rknn_create_mem` (dma-heap), при ошибке один раз пишет предупреждение и
+навсегда откатывается на CPU. Легаси `c_RkRgaBlit` по-прежнему не
+используется. Кольцо лежит в MMZ и отображается через `mmap(fd)`:
+`MB_Handle2VirAddr` для MMZ-блока валиден только на первые 4 КиБ.
+`yolo.source=vi1` (selfpath) вешает плату и отклоняется `gating.c`,
+`/api/yolo` и WebUI; дефолт — `vpss3` (при IVS/MJPEG — `vi0`). Модели:
+`/userdata/models` (`yolo.model_dir`), активация через
+`POST /api/models/activate` с откатом; INT8 `.rknn` 1.6.0 или 2.x, вход
+должен совпадать с `yolo.input_width/height`.
 
 ## OKO: фокус и прошивка контроллеров
 

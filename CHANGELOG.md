@@ -108,6 +108,25 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Добавлено
 
+- **RGA-конверсия NV12→RGB888 для YOLO (OKO).** На `rknpu` 0.9.8 im2d
+  `importbuffer_fd` импортирует MMZ- и dma-heap-дескрипторы; добавлен
+  опциональный `yolo.convert: cpu | rga` (по умолчанию `cpu`) и HAL
+  `hal/plus/rk_rga.c` (dlopen `librga.so`). RGA-путь отдаёт im2d fd кольца и
+  входа `rknn_create_mem`, при ошибке один раз логирует и навсегда
+  откатывается на CPU. Замер: CPU `divinus` ~35.6% → ~29.4% при 5 fps
+  640×384 без потери fps, 2-часовой soak без зависаний. Легаси
+  `c_RkRgaBlit` не используется. Обновлены `KNOWN_ISSUES.md` (KI-002),
+  `endpoints.md`, `FEATURES*.md`, `VERIFIED_FUNCTIONS.md`, `TESTBENCH.md`.
+- **RGA NV12→RGB888 conversion for YOLO (OKO).** On `rknpu` 0.9.8 im2d
+  `importbuffer_fd` imports MMZ and dma-heap descriptors, so YOLO gained the
+  optional `yolo.convert: cpu | rga` setting (default `cpu`) and an
+  `hal/plus/rk_rga.c` HAL (dlopen of `librga.so`). The RGA path feeds im2d
+  with the ring and `rknn_create_mem` fds; on an error it logs once and
+  permanently falls back to the CPU converter. Measured `divinus` CPU
+  ~35.6% → ~29.4% at 5 fps 640×384 with no fps loss and a 2-hour soak without
+  hangs. Legacy `c_RkRgaBlit` is not used. Updated `KNOWN_ISSUES.md`
+  (KI-002), `endpoints.md`, `FEATURES*.md`, `VERIFIED_FUNCTIONS.md` and
+  `TESTBENCH.md`.
 - **Второй рантайм RKNN 2.x для YOLO (OKO).** В образ добавлен
   `librknnmrt2.so` (2.3.2, SONAME изменён на `librknnmrt2.so`, см.
   `media/rknn2/README.md`); AIISP и RockIVA продолжают использовать
