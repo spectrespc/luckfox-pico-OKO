@@ -240,7 +240,9 @@ dmesg | grep -i rknpu | tail -3      # ожидается v0.9.8 и non-iommu mo
 cd /userdata && LD_LIBRARY_PATH=/oem/usr/lib setsid /oem/usr/bin/divinus \
   >/tmp/divinus.log 2>&1 < /dev/null &
 curl -s -u admin:oko-change-me http://127.0.0.1/api/status
-# откат: killall divinus; rmmod rknpu; insmod /userdata/rknpu-baseline-0.9.2.ko
+# killall/stop = не graceful: divinus вернёт divinus.yaml.bak (откат настроек).
+# Мягкий рестарт без отката: kill -HUP $(pidof divinus)
+# откат модуля: killall divinus; rmmod rknpu; insmod /userdata/rknpu-baseline-0.9.2.ko
 # штатная загрузка берёт /oem/usr/ko/rknpu.ko; кандидат ставится туда же
 # только после soak (cp /userdata/rknpu-0.9.8.ko /oem/usr/ko/rknpu.ko)
 
