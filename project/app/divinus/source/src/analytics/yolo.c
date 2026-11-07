@@ -617,6 +617,182 @@ converted:
     return EXIT_SUCCESS;
 }
 
+/* -------------------------------------------------------------------------
+ * Bounding boxes on the video OSD
+ *
+ * Port of the vendor rkipc NN overlay (rv1106_ipc/video/video.c): a 2BPP
+ * region with two palette entries, repainted through the region canvas after
+ * every inference.  The drawing is aligned to the 16-pixel overlay grid,
+ * which is also a hard requirement of the region position/size.
+ * ---------------------------------------------------------------------- */
+
+static const unsigned char rgn_lut_0_left[4] = {0x03, 0x0f, 0x3f, 0xff};
+static const unsigned char rgn_lut_0_right[4] = {0xc0, 0xf0, 0xfc, 0xff};
+static const unsigned char rgn_lut_1_left[4] = {0x02, 0x0a, 0x2a, 0xaa};
+static const unsigned char rgn_lut_1_right[4] = {0x80, 0xa0, 0xa8, 0xaa};
+
+/* Draws a rectangle into a 2BPP canvas whose rows are `stride` pixels wide.
+ * `lut` selects the palette entry (0 or 1).  The vendor limit of four pixels
+ * per line is kept; x and the width must be multiples of 4. */
+static void draw_rect_2bpp(unsigned char *buffer, unsigned int stride,
+    unsigned int height, int rx, int ry, int rw, int rh, int line, int lut)
+{
+    unsigned char *ptr = buffer;
+    unsigned char value = lut == 1 ? 0xaa : 0xff;
+
+    (void)height;
+
+    if (!buffer || line < 1 || line > 4 || rw < 4 || rh < line * 2 ||
+        rx < 0 || ry < 0 || (rx & 3) || (rw & 3))
+        return;
+
+    ptr += (stride * (unsigned int)ry + (unsigned int)rx) >> 2;
+
+    /* Top line. */
+    for (int i = 0; i < line; i++) {
+        memset(ptr, value, (size_t)((rw + 3) >> 2));
+        ptr += stride >> 2;
+    }
+
+    /* Left and right edges. */
+    for (int i = 0; i < rh - line * 2; i++) {
+        if (lut == 1) {
+            *ptr = rgn_lut_1_left[line - 1];
+            *(ptr + ((rw + 3) >> 2)) = rgn_lut_1_right[line - 1];
+        } else {
+            *ptr = rgn_lut_0_left[line - 1];
+            *(ptr + ((rw + 3) >> 2)) = rgn_lut_0_right[line - 1];
+        }
+        ptr += stride >> 2;
+    }
+
+    /* Bottom line. */
+    for (int i = 0; i < line; i++) {
+        memset(ptr, value, (size_t)((rw + 3) >> 2));
+        ptr += stride >> 2;
+    }
+}
+
+static volatile int boxesWanted;
+static int boxesReady;
+static int boxesWarned;
+static int boxesWidth, boxesHeight;
+static unsigned long long boxesRetryMs;
+
+/* The boxes cover the encoded main stream.  A 90/270 rotation of the main
+ * stream swaps the encoded picture size, exactly like video.source:rotation
+ * in the vendor overlay. */
+static void yolo_boxes_geometry(int *width, int *height)
+{
+    int w = (int)app_config.mp4_width;
+    int h = (int)app_config.mp4_height;
+
+    if (app_config.rotate_enable && !app_config.rotate_stream &&
+        (app_config.rotate_angle == 90 || app_config.rotate_angle == 270)) {
+        int swap = w;
+
+        w = h;
+        h = swap;
+    }
+    *width = w;
+    *height = h;
+}
+
+static void yolo_boxes_sync(void)
+{
+    int width, height;
+
+    yolo_boxes_geometry(&width, &height);
+
+    if (!boxesWanted || inferenceDisabled) {
+        if (boxesReady) {
+            rk_region_nn_destroy();
+            boxesReady = 0;
+        }
+        return;
+    }
+    if (width < 16 || height < 16) return;
+
+    if (boxesReady && width == boxesWidth && height == boxesHeight) return;
+    if (boxesReady) {
+        rk_region_nn_destroy();
+        boxesReady = 0;
+    }
+
+    if (!rk_region_nn_supported()) {
+        /* One warning is emitted by the HAL; the setting is kept so a restart
+         * with a fixed library enables the boxes again. */
+        boxesWanted = 0;
+        return;
+    }
+    if (yolo_now_ms() < boxesRetryMs) return;
+
+    if (rk_region_nn_create(width, height, RK_RGN_NN_LAYER,
+            RK_RGN_NN_LUT_PERSON, RK_RGN_NN_LUT_OTHER)) {
+        boxesRetryMs = yolo_now_ms() + 10000;
+        if (!boxesWarned) {
+            HAL_WARNING("yolo", "Bounding boxes could not be enabled\n");
+            boxesWarned = 1;
+        }
+        return;
+    }
+
+    boxesReady = 1;
+    boxesWidth = width;
+    boxesHeight = height;
+}
+
+static void yolo_boxes_render(const yolo_result *result)
+{
+    void *addr;
+    unsigned int stride, canvasW, canvasH;
+    static int commitWarned;
+
+    if (!boxesReady) return;
+
+    if (rk_region_nn_begin(&addr, &stride, &canvasW, &canvasH)) {
+        /* The canvas no longer matches (stream recreated): rebuild next tick. */
+        rk_region_nn_destroy();
+        boxesReady = 0;
+        return;
+    }
+
+    /* Always clear the full canvas: without it the last boxes stay visible
+     * after the object leaves the frame. */
+    memset(addr, 0, (size_t)stride * canvasH / 4);
+
+    for (int i = 0; i < result->count; i++) {
+        const yolo_detection *det = &result->det[i];
+        int x = (int)((long)boxesWidth * det->x / 10000);
+        int y = (int)((long)boxesHeight * det->y / 10000);
+        int w = (int)((long)boxesWidth * det->w / 10000);
+        int h = (int)((long)boxesHeight * det->h / 10000);
+        int lut;
+
+        x &= ~15;
+        y &= ~15;
+        w = ((w + 15) / 16) * 16;
+        h = ((h + 15) / 16) * 16;
+        if (x < 0) x = 0;
+        if (y < 0) y = 0;
+        if (x >= boxesWidth || y >= boxesHeight) continue;
+        /* The right edge byte sits just past the rectangle, so leave room
+         * for it (the vendor requires x + w + line < width). */
+        if (x + w + 4 > boxesWidth) w = (boxesWidth - x - 4) & ~15;
+        if (y + h > boxesHeight) h = (boxesHeight - y) & ~15;
+        if (w < 16 || h < 16) continue;
+
+        /* class 0 is person in COCO. */
+        lut = det->class_id == 0 ? 0 : 1;
+        draw_rect_2bpp(addr, stride, canvasH, x, y, w, h, 2, lut);
+    }
+
+    if (rk_region_nn_commit() && !commitWarned) {
+        HAL_WARNING("yolo", "Updating the bounding-box canvas failed\n");
+        commitWarned = 1;
+    }
+}
+
 static void yolo_event_finalize(void)
 {
     if (activeEvent < 0) return;
@@ -726,12 +902,20 @@ static void *yolo_capture_thread(void *arg)
                 yolo_event_finalize();
         }
 
+        yolo_boxes_sync();
+
         if (inferenceDisabled || now - lastInfer < inferInterval) continue;
         lastInfer = now;
 
         if (yolo_infer(&ring[(ringNext - 1 + ringCapacity) % ringCapacity],
-                &result) || !result.count)
-            continue;
+                &result))
+            result.count = 0;
+
+        /* Repaint even with zero detections: the canvas has to be cleared
+         * when the object leaves the frame. */
+        yolo_boxes_render(&result);
+
+        if (!result.count) continue;
 
         if (activeEvent >= 0) {
             unsigned long long extend = now + eventPostMs;
@@ -878,6 +1062,10 @@ int yolo_start(void)
     eventSequence = 0;
     consecutiveFaults = 0;
     inferenceDisabled = 0;
+    boxesWanted = app_config.yolo_boxes ? 1 : 0;
+    boxesReady = 0;
+    boxesWarned = 0;
+    boxesRetryMs = 0;
     yoloRunning = 1;
     senderRunning = 1;
 
@@ -906,6 +1094,8 @@ int yolo_start(void)
 fail:
     senderRunning = 0;
     yoloRunning = 0;
+    rk_region_nn_destroy();
+    boxesReady = 0;
     rk_yolo_jpeg_close();
     rk_yolo_source_close();
     pthread_mutex_lock(&modelMtx);
@@ -926,9 +1116,22 @@ fail:
     return EXIT_FAILURE;
 }
 
+void yolo_boxes_request(int enable)
+{
+    boxesWanted = enable ? 1 : 0;
+    if (!enable) boxesRetryMs = 0;
+}
+
 void yolo_stop(void)
 {
-    if (!yoloRunning && !ring) return;
+    boxesWanted = 0;
+    if (!yoloRunning && !ring) {
+        if (boxesReady) {
+            rk_region_nn_destroy();
+            boxesReady = 0;
+        }
+        return;
+    }
 
     yoloRunning = 0;
     senderRunning = 0;
@@ -943,6 +1146,11 @@ void yolo_stop(void)
     if (senderStarted) {
         pthread_join(senderThread, NULL);
         senderStarted = 0;
+    }
+
+    if (boxesReady) {
+        rk_region_nn_destroy();
+        boxesReady = 0;
     }
 
     rk_yolo_jpeg_close();

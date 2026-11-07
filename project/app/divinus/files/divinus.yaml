@@ -240,6 +240,7 @@ mjpeg:
 # yolo:
 #   enable: false
 #   source: vpss3         # vpss3 (default) | vi1 | vi0; vi1 hung a board in M0
+#   boxes: false          # demo overlay: detection boxes on the main stream
 #   model: /userdata/models/yolov5n.rknn
 #   input_width: 640
 #   input_height: 384

@@ -256,6 +256,7 @@ void app_config_dump(FILE *file) {
         (app_config.yolo_source == 1 ? "vpss3" : "vi1"));
     fprintf(file, "  runtime: %d\n", app_config.yolo_runtime);
     fprintf(file, "  convert: %s\n", app_config.yolo_convert ? "rga" : "cpu");
+    fprintf(file, "  boxes: %s\n", app_config.yolo_boxes ? "true" : "false");
     fprintf(file, "  model_dir: %s\n", app_config.yolo_model_dir);
     fprintf(file, "  model: %s\n", app_config.yolo_model);
     fprintf(file, "  input_width: %d\n  input_height: %d\n",
@@ -471,6 +472,7 @@ enum ConfigError app_config_parse(void) {
     app_config.yolo_source = 1;   /* vpss3: VI selfpath hung the board in M0 */
     app_config.yolo_runtime = 1;  /* RKNN 1.6.0: models built by toolkit 1.6.0 */
     app_config.yolo_convert = 0;  /* CPU until RGA is explicitly selected */
+    app_config.yolo_boxes = false; /* demo overlay off by default */
     strcpy(app_config.yolo_model_dir, "/userdata/models");
     strcpy(app_config.yolo_model, "/userdata/models/yolov5n.rknn");
     app_config.yolo_input_width = 640;
@@ -905,6 +907,7 @@ enum ConfigError app_config_parse(void) {
     /* [yolo] is parsed even while disabled: the WebUI has to be able to edit
      * and Save the settings before the model is installed. */
     parse_bool(&ini, "yolo", "enable", &app_config.yolo_enable);
+    parse_bool(&ini, "yolo", "boxes", &app_config.yolo_boxes);
     {
         char val[32] = {0};
         if (parse_param_value_n(&ini, "yolo", "source", val, sizeof(val)) == CONFIG_OK) {

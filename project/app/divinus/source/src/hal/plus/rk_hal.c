@@ -588,6 +588,191 @@ void rk_region_destroy(char handle)
     rk_rgn.fnDestroyRegion(handle);
 }
 
+/* -------------------------------------------------------------------------
+ * NN overlay region (detector bounding boxes)
+ *
+ * The vendor rkipc draws RockIVA boxes into an overlay region in 2BPP and
+ * repaints it with RK_MPI_RGN_GetCanvasInfo/UpdateCanvas: one byte holds four
+ * pixels and only two palette entries are available, which keeps the whole
+ * 1080p canvas at ~518 KiB instead of the ~4.1 MiB a BGRA5551 canvas needs.
+ * The region is created by the YOLO capture thread and is not part of osds[].
+ * ---------------------------------------------------------------------- */
+
+static int rk_nn_ready;
+static int rk_nn_width, rk_nn_height;
+static int rk_nn_layer = -1;
+static unsigned int rk_nn_lut0, rk_nn_lut1;
+
+int rk_region_nn_supported(void)
+{
+    static int warned;
+    int supported = rk_rgn.fnGetCanvasInfo && rk_rgn.fnUpdateCanvas;
+
+    if (!supported && !warned) {
+        HAL_WARNING("rk_rgn", "NN overlay is unavailable: "
+            "RK_MPI_RGN_GetCanvasInfo/UpdateCanvas is missing\n");
+        warned = 1;
+    }
+    return supported ? 1 : 0;
+}
+
+void rk_region_nn_destroy(void)
+{
+    if (!rk_nn_ready) return;
+
+    for (int i = 0; i < RK_VENC_CHN_NUM; i++) {
+        rk_sys_bind target = { .module = RK_SYS_MOD_VENC,
+            .device = _rk_venc_dev, .channel = i };
+        rk_rgn.fnDetachChannel(RK_RGN_NN_HANDLE, &target);
+    }
+    rk_rgn.fnDestroyRegion(RK_RGN_NN_HANDLE);
+
+    rk_nn_ready = 0;
+    rk_nn_layer = -1;
+}
+
+int rk_region_nn_create(int width, int height, int layer,
+    unsigned int lut0, unsigned int lut1)
+{
+    char targets[3] = {0};
+    rk_rgn_cnf region;
+    rk_rgn_chn attrib;
+    unsigned int pw, ph;
+    int ret, count;
+
+    if (!rk_region_nn_supported()) return EXIT_FAILURE;
+    if (width < 16 || height < 16 || layer < 0 || layer > 7)
+        return EXIT_FAILURE;
+
+    pw = rk_rgn_pad16((unsigned int)width);
+    ph = rk_rgn_pad16((unsigned int)height);
+    if (pw > 8192 || ph > 8192) return EXIT_FAILURE;
+
+    if (rk_nn_ready && rk_nn_width == (int)pw &&
+        rk_nn_height == (int)ph && rk_nn_layer == layer &&
+        rk_nn_lut0 == lut0 && rk_nn_lut1 == lut1)
+        return EXIT_SUCCESS;
+
+    rk_region_nn_destroy();
+
+    count = rk_region_targets(targets, sizeof(targets));
+    if (count < 1) return EXIT_FAILURE;
+
+    memset(&region, 0, sizeof(region));
+    region.type = RK_RGN_TYPE_OVERLAY;
+    region.overlay.pixFmt = RK_PIXFMT_2BPP;
+    region.overlay.size.width = pw;
+    region.overlay.size.height = ph;
+    /* A single canvas matches the vendor NN overlay; double buffering can
+     * keep showing the previous frame until the next UpdateCanvas. */
+    region.overlay.canvas = 1;
+
+    if (ret = rk_rgn.fnCreateRegion(RK_RGN_NN_HANDLE, &region)) {
+        HAL_DANGER("rk_rgn", "Creating the NN overlay region %d "
+            "(%ux%u, 2BPP) failed with %#x!\n", RK_RGN_NN_HANDLE,
+            pw, ph, ret);
+        return ret;
+    }
+    rk_nn_ready = 1;
+
+    memset(&attrib, 0, sizeof(attrib));
+    attrib.show = 1;
+    attrib.type = RK_RGN_TYPE_OVERLAY;
+    attrib.overlay.bgAlpha = 0;
+    attrib.overlay.fgAlpha = 255;
+    attrib.overlay.point.x = 0;
+    attrib.overlay.point.y = 0;
+    attrib.overlay.layer = (unsigned int)layer;
+    attrib.overlay.colorLut[0] = lut0;
+    attrib.overlay.colorLut[1] = lut1;
+
+    for (int i = 0; i < count; i++) {
+        rk_sys_bind target = { .module = RK_SYS_MOD_VENC,
+            .device = _rk_venc_dev, .channel = targets[i] };
+
+        ret = rk_rgn.fnAttachChannel(RK_RGN_NN_HANDLE, &target, &attrib);
+        if (ret) {
+            HAL_DANGER("rk_rgn", "Attaching the NN overlay region %d to "
+                "channel %d failed with %#x!\n", RK_RGN_NN_HANDLE,
+                targets[i], ret);
+            rk_region_nn_destroy();
+            return ret;
+        }
+    }
+
+    rk_nn_width = (int)pw;
+    rk_nn_height = (int)ph;
+    rk_nn_layer = layer;
+    rk_nn_lut0 = lut0;
+    rk_nn_lut1 = lut1;
+
+    HAL_INFO("rk_rgn", "NN overlay region %d created: %ux%u 2BPP on %d "
+        "channel(s), layer %d\n", RK_RGN_NN_HANDLE, pw, ph, count, layer);
+    return EXIT_SUCCESS;
+}
+
+int rk_region_nn_begin(void **addr, unsigned int *stridePx,
+    unsigned int *width, unsigned int *height)
+{
+    char targets[3] = {0};
+    rk_rgn_canvas cv;
+    unsigned int stride;
+    int count, attached = 0;
+
+    if (!rk_nn_ready || !addr || !stridePx || !width || !height)
+        return EXIT_FAILURE;
+
+    /* A VENC channel may have been recreated without the process restarting;
+     * in that case the canvas still exists but the overlay is detached and
+     * would never reach the stream.  Treat "no attachment" as a stale region
+     * so the caller rebuilds it. */
+    count = rk_region_targets(targets, sizeof(targets));
+    for (int i = 0; i < count; i++) {
+        rk_sys_bind target = { .module = RK_SYS_MOD_VENC,
+            .device = _rk_venc_dev, .channel = targets[i] };
+        rk_rgn_chn config;
+
+        memset(&config, 0, sizeof(config));
+        if (!rk_rgn.fnGetChannelConfig(RK_RGN_NN_HANDLE, &target, &config))
+            attached++;
+    }
+    if (!attached) return EXIT_FAILURE;
+
+    memset(&cv, 0, sizeof(cv));
+    if (rk_rgn.fnGetCanvasInfo(RK_RGN_NN_HANDLE, &cv))
+        return EXIT_FAILURE;
+
+    /* Never cache the pointer: the region may have been recreated or the
+     * canvas remapped.  The stride comes from the canvas, and a size change
+     * (stream restart) is reported as a mismatch so the caller recreates. */
+    stride = cv.virWidth ? cv.virWidth : cv.size.width;
+    if (cv.pixFmt != RK_PIXFMT_2BPP || !cv.virAddr || !cv.virHeight ||
+        cv.size.width < 16 || cv.size.height < 16 ||
+        cv.size.width != (unsigned int)rk_nn_width ||
+        cv.size.height != (unsigned int)rk_nn_height ||
+        stride < cv.size.width || stride > 8192 || (stride & 3))
+        return EXIT_FAILURE;
+
+    *addr = (void *)(uintptr_t)cv.virAddr;
+    *stridePx = stride;
+    *width = cv.size.width;
+    *height = cv.size.height;
+    return EXIT_SUCCESS;
+}
+
+int rk_region_nn_commit(void)
+{
+    int tries = 0, ret;
+
+    if (!rk_nn_ready) return EXIT_FAILURE;
+
+    do {
+        ret = rk_rgn.fnUpdateCanvas(RK_RGN_NN_HANDLE);
+    } while (ret == RK_NOTICE_RGN_BUFFER_CHANGE && ++tries < 2);
+
+    return ret ? EXIT_FAILURE : EXIT_SUCCESS;
+}
+
 int rk_region_setbitmap(int handle, hal_bitmap *bitmap)
 {
     // OKO: RV1106 RGN accepts BGRA5551. The alpha bit position differs between

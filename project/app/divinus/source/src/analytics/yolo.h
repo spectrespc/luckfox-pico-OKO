@@ -17,6 +17,11 @@ int yolo_start(void);
 void yolo_stop(void);
 int yolo_running(void);
 
+/* Live switch for the bounding boxes on the OSD.  The capture thread creates
+ * or destroys the 2BPP overlay on its next tick; the value is not persisted
+ * here (app_config.yolo_boxes is owned by the caller). */
+void yolo_boxes_request(int enable);
+
 /* Load a model for validation without touching the active context.  The
  * yolo.runtime value selects the library; the *runtime variants let the
  * caller probe the other runtime to explain a mismatch. */

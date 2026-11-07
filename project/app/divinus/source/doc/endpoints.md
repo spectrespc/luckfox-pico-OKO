@@ -566,6 +566,7 @@ NPU object detection settings (the `[yolo]` section of `divinus.yaml`).
 | POST | `source` | `vpss3` (default) or `vi0`; `vi1` and unknown values are rejected with HTTP 400 |
 | POST | `runtime` | `1` = `librknnmrt.so` 1.6.0 (default), `2` = `librknnmrt2.so` 2.x. Applied to the next activation, no restart |
 | POST | `convert` | `cpu` (default) or `rga` (im2d fd); applied live, falls back to CPU on an RGA error |
+| POST | `boxes` | `0`/`1` (`off`/`on`, `false`/`true`): draw detection boxes on the main stream; applied live, unknown values are rejected with HTTP 400 |
 | POST | `input_width`, `input_height` | Must match the active model |
 | POST | `fps`, `conf_threshold`, `nms_threshold`, `classes` | Detection tuning |
 | POST | `pre_seconds`, `post_seconds`, `max_frames` | Event package bounds |
@@ -575,7 +576,7 @@ carrying `"note":"restart required..."` means that only the listed fields need a
 restart; `enable` is applied live. Example:
 
 ```json
-{"enable":true,"source":"vpss3","runtime":2,"convert":"rga",
+{"enable":true,"source":"vpss3","runtime":2,"convert":"rga","boxes":true,
  "model_dir":"/userdata/models","model":"/userdata/models/yolov5n-r2.rknn",
  "input_width":640,"input_height":384,"fps":5,"conf_threshold":0.35,
  "nms_threshold":0.45,"classes":80,"pre_seconds":3,"post_seconds":2,
@@ -591,9 +592,20 @@ process or the current context; it applies to the next activation.
 Enabling is refused with `{"error":"blocked","reason":...}` when the selected
 NPU runtime, the model file or VPSS channel 3 is unavailable. Setting
 `source=vi1` (VI selfpath hangs the RV1106 board), an unknown source, a
-runtime outside `1..2` or a convert mode other than `cpu`/`rga` is rejected
-with HTTP 400 and `{"error":"invalid",...}`. `convert=rga` uses im2d with the
-MMZ and rknn dma-buf fds; a failed blit logs once and falls back to CPU.
+runtime outside `1..2`, a convert mode other than `cpu`/`rga` or a `boxes`
+value other than `0`/`1`/`on`/`off` is rejected with HTTP 400 and
+`{"error":"invalid",...}`. `convert=rga` uses im2d with the MMZ and rknn
+dma-buf fds; a failed blit logs once and falls back to CPU.
+
+`boxes=1` paints each detection into the existing 2BPP overlay region on the
+main VENC channel (handle 12, layer 6, person = red, other classes = blue) and
+repaints it after every inference at `yolo.fps`; zero detections clear the
+canvas. Switch it off to destroy the region, or disable YOLO itself. On a
+librockit build without `RK_MPI_RGN_GetCanvasInfo`/`UpdateCanvas` the detector
+still runs and the boxes are skipped with one warning; enabling YOLO with
+`boxes=1` is then refused by `gating`. The region is recreated when the main
+stream size or 90/270 rotation changes, or when the overlay is no longer
+attached to the recreated VENC channel.
 
 #### `/api/focus`
 

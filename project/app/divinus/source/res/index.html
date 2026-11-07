@@ -672,6 +672,8 @@
 				<h3><span data-i18n="yolo">Object detection (NPU)</span></h3>
 				<div class="field"><label data-i18n="enabled">Enabled</label>
 					<div class="ctl"><select id="yolo_enable" data-group="yolo" data-k="enable"><option value="false">OFF</option><option value="true">ON</option></select></div></div>
+				<div class="field"><label data-i18n="yolo_boxes">Bounding boxes on the stream</label>
+					<div class="ctl"><select id="yolo_boxes" data-group="yolo" data-k="boxes"><option value="false">OFF</option><option value="true">ON</option></select></div></div>
 				<div class="field"><label data-i18n="yolo_source">Frame source</label>
 					<div class="ctl"><select id="yolo_source" data-group="yolo" data-k="source">
 						<option value="vpss3" data-i18n="yolo_src_vpss3">VPSS channel 3 (default)</option>
@@ -695,7 +697,7 @@
 				<div class="actions">
 					<button type="button" class="btn primary" data-apply="yolo" data-ep="yolo" disabled data-i18n="apply">Apply</button>
 				</div>
-				<p class="note" data-i18n="yolo_note">Frames are stored before and after a detection and sent as a package by HTTP; bounding boxes are not drawn. VPSS channel 3 conflicts with IVS/MJPEG.</p>
+				<p class="note" data-i18n="yolo_note">Boxes are drawn on the main stream as a two-color overlay aligned to a 16-pixel grid; they refresh at the detection rate and disappear when nothing is detected. Frames around a detection are stored and sent by HTTP. VPSS channel 3 conflicts with IVS/MJPEG.</p>
 			</div>
 
 			<div class="card">
@@ -1032,7 +1034,8 @@ var I18N = {
 		classes: "Classes", input_size: "Model input (W x H)",
 		pre_seconds: "Pre-roll (s)", post_seconds: "Post-roll (s)",
 		max_frames: "Maximum frames per event",
-		yolo_note: "Frames before and after a detection are stored and sent by HTTP; boxes are not drawn on the stream. VPSS channel 3 conflicts with IVS/MJPEG. VI selfpath (vi1) is not offered because it hangs the board.",
+		yolo_boxes: "Bounding boxes on the stream",
+		yolo_note: "Boxes are drawn on the main stream as a two-color overlay aligned to a 16-pixel grid; they refresh at the detection rate and disappear when nothing is detected. Frames around a detection are stored and sent by HTTP. VPSS channel 3 conflicts with IVS/MJPEG. VI selfpath (vi1) is not offered because it hangs the board.",
 		models: "Models", model_file: "Model file", upload: "Upload",
 		no_models: "No models installed.", active: "active",
 		activate: "Activate", models_unavailable: "The model list is unavailable.",
@@ -1197,7 +1200,8 @@ var I18N = {
 		classes: "Классы", input_size: "Вход модели (Ш x В)",
 		pre_seconds: "Пре-ролл (с)", post_seconds: "Пост-ролл (с)",
 		max_frames: "Максимум кадров на событие",
-		yolo_note: "Кадры до и после детекции сохраняются и отправляются по HTTP; рамки на поток не рисуются. Канал VPSS 3 конфликтует с IVS/MJPEG. VI selfpath (vi1) не предлагается, так как вешает плату.",
+		yolo_boxes: "Рамки на потоке",
+		yolo_note: "Рамки рисуются на основном потоке двухцветным оверлеем по сетке 16 px; обновляются с частотой детекции и исчезают, когда объектов нет. Кадры вокруг детекции сохраняются и отправляются по HTTP. Канал VPSS 3 конфликтует с IVS/MJPEG. VI selfpath (vi1) не предлагается, так как вешает плату.",
 		models: "Модели", model_file: "Файл модели", upload: "Загрузить",
 		no_models: "Модели не установлены.", active: "активна",
 		activate: "Активировать", models_unavailable: "Список моделей недоступен.",

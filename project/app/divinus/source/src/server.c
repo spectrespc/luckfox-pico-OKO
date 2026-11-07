@@ -2770,6 +2770,23 @@ void respond_request(http_request_t *req) {
                             "use cpu (default) or rga (im2d fd)");
                         return;
                     }
+                } else if (EQUALS(key, "boxes")) {
+                    if (EQUALS(value, "1") || EQUALS_CASE(value, "true") ||
+                        EQUALS_CASE(value, "on") || EQUALS_CASE(value, "yes")) {
+                        app_config.yolo_boxes = true;
+                        yolo_boxes_request(1);
+                    } else if (EQUALS(value, "0") ||
+                        EQUALS_CASE(value, "false") ||
+                        EQUALS_CASE(value, "off") ||
+                        EQUALS_CASE(value, "no")) {
+                        app_config.yolo_boxes = false;
+                        yolo_boxes_request(0);
+                    } else {
+                        reply_bad_request(req->clntFd,
+                            "unknown yolo.boxes value",
+                            "use 0/1 (or on/off)");
+                        return;
+                    }
                 } else if (EQUALS(key, "input_width")) {
                     long v;
                     if (parse_ranged(value, 64, 4096, &v) &&
@@ -2874,7 +2891,8 @@ void respond_request(http_request_t *req) {
             "Connection: close\r\n"
             "\r\n"
             "{\"enable\":%s,\"source\":\"%s\",\"runtime\":%d,"
-            "\"convert\":\"%s\",\"model_dir\":\"%s\",\"model\":\"%s\","
+            "\"convert\":\"%s\",\"boxes\":%s,\"model_dir\":\"%s\","
+            "\"model\":\"%s\","
             "\"input_width\":%d,\"input_height\":%d,\"fps\":%d,"
             "\"conf_threshold\":%.2f,\"nms_threshold\":%.2f,"
             "\"classes\":%d,\"pre_seconds\":%d,\"post_seconds\":%d,"
@@ -2884,6 +2902,7 @@ void respond_request(http_request_t *req) {
                 (app_config.yolo_source == 1 ? "vpss3" : "vi1"),
             app_config.yolo_runtime,
             app_config.yolo_convert ? "rga" : "cpu",
+            app_config.yolo_boxes ? "true" : "false",
             app_config.yolo_model_dir, app_config.yolo_model,
             app_config.yolo_input_width, app_config.yolo_input_height,
             app_config.yolo_fps, app_config.yolo_conf_threshold,

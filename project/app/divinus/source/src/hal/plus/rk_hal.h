@@ -86,6 +86,23 @@ int rk_region_create2(char handle, hal_rect rect, short opacity,
 void rk_region_destroy(char handle);
 int rk_region_setbitmap(int handle, hal_bitmap *bitmap);
 
+/* NN overlay: a single 2BPP region painted by the detector.  Handle 12 stays
+ * outside the text OSD range (0..MAX_OSD-1) and below 32, and layer 6 keeps
+ * the boxes under the text overlay at layer 7. */
+#define RK_RGN_NN_HANDLE 12
+#define RK_RGN_NN_LAYER 6
+/* BGR-ordered LUT values, like the vendor rkipc NN overlay. */
+#define RK_RGN_NN_LUT_PERSON 0x0000FFu
+#define RK_RGN_NN_LUT_OTHER 0xFF0000u
+
+int rk_region_nn_supported(void);
+int rk_region_nn_create(int width, int height, int layer,
+    unsigned int lut0, unsigned int lut1);
+int rk_region_nn_begin(void **addr, unsigned int *stridePx,
+    unsigned int *width, unsigned int *height);
+int rk_region_nn_commit(void);
+void rk_region_nn_destroy(void);
+
 int rk_sensor_find_v4l2_endpoint(void);
 
 int rk_video_create(char index, hal_vidconfig *config);

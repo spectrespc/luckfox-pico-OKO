@@ -7,6 +7,7 @@
 
 #include "app_config.h"
 #include "hal/globals.h"
+#include "hal/plus/rk_hal.h"
 #include "media.h"
 
 static const gating_result allowed = { true, NULL, NULL };
@@ -141,6 +142,12 @@ gating_result gating_check(const char *feature)
              chnState[HAL_CHN_IVS].enable))
             return blocked("VPSS channel 3 is already used",
                 "set yolo.source to vi0 or disable IVS/MJPEG");
+        /* The boxes need the region canvas interface; without it the detector
+         * itself still works, so the setting can stay on and is only reported
+         * as unavailable when the detector is started. */
+        if (app_config.yolo_boxes && !rk_region_nn_supported())
+            return blocked("RK_MPI_RGN_GetCanvasInfo/UpdateCanvas is not "
+                "available", "set yolo.boxes to false and restart YOLO");
         if (access(app_config.yolo_model, R_OK))
             return blocked("the configured model is missing",
                 "upload a .rknn model in the Events section");

@@ -8,7 +8,7 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
 
 | Поле | Значение |
 |---|---|
-| Дата обновления | `2026-11-06` |
+| Дата обновления | `2026-11-07` |
 | Ответственный | `<ФИО>` |
 | Статус | активен |
 | Назначение | сборка прошивки и прошивка SPI NAND для отладки IPC |
@@ -293,6 +293,18 @@ LD_LIBRARY_PATH=/oem/usr/lib /oem/usr/bin/rgaImDemo --copy
 # конверсия YOLO на RGA: в логе не должно быть RGA_BLIT/falling back
 curl -s -u admin:oko-change-me -X POST 'http://192.168.52.97/api/yolo?convert=rga'
 grep -aE 'rk_rga|RGA_BLIT|falling back' /tmp/divinus.log | tail
+
+# рамки детекции на потоке (2BPP RGN 12, слой 6): включение на лету
+curl -s -u admin:oko-change-me -X POST 'http://192.168.52.97/api/yolo?boxes=1'
+grep -aE 'NN overlay region 12' /tmp/divinus.log | tail -1
+#   ожидается: "1920x1088 2BPP on 1 channel(s), layer 6"
+# для гарантированных детекций на статичной сцене: conf_threshold=0.05,
+# затем кадры RTSP и проверка красных/синих линий по краям рамок
+curl -s -u admin:oko-change-me -X POST 'http://192.168.52.97/api/yolo?conf_threshold=0.05'
+bench/run.sh osd_check.py --ip 192.168.52.97 --frames 3 --interval 1 --seconds 4
+# выключение: регион уничтожается, кадры остаются чистыми
+curl -s -u admin:oko-change-me -X POST 'http://192.168.52.97/api/yolo?boxes=0'
+# восстановить: conf_threshold=0.35, boxes=1, /api/cmd?save=1
 
 # RTSP отдаёт кадры только при stream.enable=true в /userdata/divinus.yaml
 grep -A2 '^stream:' /userdata/divinus.yaml

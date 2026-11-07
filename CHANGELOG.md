@@ -108,6 +108,41 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Добавлено
 
+- **Рамки детекции YOLO на видеопотоке (OKO).** Порт вендорского NN-оверлея
+  rkipc: регион RGN `12` (`layer 6`) формата 2BPP с двумя цветами (класс 0 —
+  красный, прочие — синий), канва главного потока `1920×1088` ≈ 518 КиБ
+  (BGRA5551 заняла бы ~4.1 МиБ). Перерисовка в `yolo_capture_thread` после
+  каждого инференса (5 Hz): канва полностью очищается, поэтому при нуле
+  детекций рамки исчезают; координаты `0..10000` масштабируются в размер
+  закодированного потока (90/270 — с обменом сторон) и выравниваются по сетке
+  16 px. Добавлены `yolo.boxes` (по умолчанию `false`),
+  `POST /api/yolo?boxes=0|1`, живое включение/выключение, поле WebUI EN/RU и
+  проверка в `gating` при старте YOLO. Регион пересоздаётся при смене размера
+  или поворота главного потока и при потере привязки к VENC; без
+  `RK_MPI_RGN_GetCanvasInfo`/`UpdateCanvas` детектор продолжает работать, а
+  рамки отключаются с одним предупреждением. DUT: CMA +512 КиБ
+  (53 824→54 336), CPU `divinus` 29% при 5 fps без роста, `boxes=2|bogus` →
+  HTTP 400, поворот 90° пересоздаёт канву `1088×1920`. Обновлены
+  `endpoints.md`, `README` divinus, `FEATURES*.md`, `VERIFIED_FUNCTIONS.md`,
+  `TESTBENCH.md` и `TO_DO.md`. Ограничения: только главный поток, два цвета,
+  180/270 не проверялись.
+- **YOLO detection boxes on the video stream (OKO).** Port of the vendor rkipc
+  NN overlay: RGN region `12` (`layer 6`) in 2BPP with two colours (class 0 is
+  red, everything else is blue) and a `1920×1088` main-stream canvas of about
+  518 KiB (BGRA5551 would take ~4.1 MiB). `yolo_capture_thread` repaints it
+  after every inference (5 Hz) and clears the whole canvas, so the boxes vanish
+  on zero detections; `0..10000` coordinates are scaled to the encoded stream
+  (swapped for 90/270) and snapped to the 16-pixel grid. Added `yolo.boxes`
+  (default `false`), `POST /api/yolo?boxes=0|1`, live switching, an EN/RU WebUI
+  field and a `gating` check when YOLO starts. The region is recreated when the
+  main-stream size or rotation changes and when the overlay is no longer
+  attached to the VENC channel; without
+  `RK_MPI_RGN_GetCanvasInfo`/`UpdateCanvas` the detector keeps running and the
+  boxes are disabled with one warning. DUT: CMA +512 KiB (53,824→54,336),
+  `divinus` CPU 29% at 5 fps with no increase, `boxes=2|bogus` → HTTP 400, 90°
+  rotation recreates the canvas as `1088×1920`. Updated `endpoints.md`, the
+  divinus `README`, `FEATURES*.md`, `VERIFIED_FUNCTIONS.md`, `TESTBENCH.md` and
+  `TO_DO.md`. Limitations: main stream only, two colours, 180/270 untested.
 - **RGA-конверсия NV12→RGB888 для YOLO (OKO).** На `rknpu` 0.9.8 im2d
   `importbuffer_fd` импортирует MMZ- и dma-heap-дескрипторы; добавлен
   опциональный `yolo.convert: cpu | rga` (по умолчанию `cpu`) и HAL
