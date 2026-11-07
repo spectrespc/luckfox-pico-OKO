@@ -110,6 +110,12 @@ System**. Ширина ≥ 60em даёт в Live две колонки (прев
 `boot_version`, Refresh и автоопрос раз в 10 с). Прошивка выполняется
 воркером, HTTP-поток не блокируется; при `busy` форма отключается.
 
+**System → Status** — карточка только для чтения: Chip, Sensor, Memory, объём
+и свободное место SD-карты (`sd_total_mb`/`sd_free_mb` из `/api/status` в MiB,
+показ в `GiB`/`MiB`, прочерк при несмонтированной карте), Load, температура
+SoC, Uptime, IP, чипы возможностей и Refresh. Полей с `Apply` у этих строк
+нет; действия с картой остаются в «Накопителе».
+
 ### 5. Каталог функций ipcweb и матрица решений
 
 Источник — исходники `project/app/ipcweb/ipcweb-backend` (`rest_api.cpp`,
@@ -210,6 +216,12 @@ exactly one viewport tall (only `#content` and `#sidebar` scroll); screens
 into a bottom 4×2 grid with short labels, 44 px targets and a trimmed status
 line. The Live focus card also has an Autofocus button that runs the
 micro-fine `af=fine` sweep (±`af_coarse`, step `af_fine`, always `done`).
+
+**System → Status** is a read-only card: Chip, Sensor, Memory, SD card capacity
+and free space (`sd_total_mb`/`sd_free_mb` from `/api/status` in MiB, rendered as
+`GiB`/`MiB` with a dash when the card is unmounted), Load, SoC temperature,
+Uptime, IP, feature chips and Refresh. None of these rows takes part in the
+`Apply`/dirty machinery; card actions stay in **Storage**.
 
 The ipcweb catalog was used as a reference: take-photo/record control, archive
 listing, log export, config export/import, reboot and NTP are ported; JWT and

@@ -149,6 +149,12 @@ Gets live system status information.
 }
 ```
 
+`sd_total_mb` and `sd_free_mb` are MiB taken from `statvfs("/mnt/sdcard")`: the
+mounted FAT32 volume, not the advertised card size. Both are `0` while the card
+is absent or unmounted; `features.sd` is derived separately from `/proc/mounts`.
+The WebUI shows the pair next to Memory in **System → Status** (formatted as
+`GiB`/`MiB`, a dash when unmounted).
+
 #### `/api/time`
 
 Configures or reads the real-time clock.

@@ -8,6 +8,7 @@ Requires Playwright with a Chromium build:
     /tmp/pw/bin/python bench/ui_check.py
 """
 import os
+import re
 import sys
 
 from playwright.sync_api import sync_playwright
@@ -317,6 +318,35 @@ def main():
             if page.locator(selector).count() == 0:
                 failures.append("firmware element %s is missing" % selector)
         page.screenshot(path=os.path.join(SHOTS, "system-firmware.png"), full_page=True)
+
+        # Status card: the SD capacity and free rows sit next to Memory and are
+        # formatted from /api/status.  The expectation is recomputed from the
+        # page's own cached answer, so the check works with or without a card.
+        page.evaluate("apiRead('status')")
+        page.wait_for_timeout(700)
+        st = page.evaluate("() => window.lastStatus || {}")
+        total_mb = st.get("sd_total_mb") or 0
+        free_mb = st.get("sd_free_mb") or 0
+        expected_total = page.evaluate("mb => fmtMiB(mb)", total_mb)
+        expected_free = page.evaluate("mb => fmtMiB(mb)", free_mb)
+        total_text = (page.text_content("#status_sd_total_mb") or "").strip()
+        free_text = (page.text_content("#status_sd_free_mb") or "").strip()
+        print("SD summary:", total_text, "/", free_text,
+              "(raw %s/%s MiB)" % (total_mb, free_mb))
+        if page.locator("#status_sd_total_mb").count() == 0:
+            failures.append("SD capacity summary is missing in System")
+        if page.locator("#status_sd_free_mb").count() == 0:
+            failures.append("SD free summary is missing in System")
+        if total_text != expected_total or free_text != expected_free:
+            failures.append("SD summary does not match /api/status: %r/%r vs %r/%r"
+                            % (total_text, free_text, expected_total, expected_free))
+        if total_mb > 0:
+            if not re.match(r"^\d+(\.\d+)? (GiB|MiB)$", total_text):
+                failures.append("unexpected SD capacity format: %r" % total_text)
+            if free_mb > total_mb:
+                failures.append("SD free space exceeds the card capacity")
+        elif total_text != "–":
+            failures.append("an unmounted card must render a dash, got %r" % total_text)
 
         # Events: the NPU settings card and the model table are rendered.
         page.click('#sidebar button[data-sec="events"]')

@@ -110,6 +110,29 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   Live, bottom navbar, Autofocus button), `bench/README.md`, `endpoints.md`,
   divinus `README.md`, `WEBUI_REORG.md`, `TO_DO.md`,
   `FEATURES_UNVERIFIED.md` and `TESTBENCH.md`.
+- **WebUI: объём и свободное место SD-карты в «Система → Статус» (OKO).**
+  Рядом со строкой «Память» добавлены две read-only строки,
+  `#status_sd_total_mb`/`#status_sd_free_mb`, заполняемые из уже
+  существующих полей `/api/status` (`sd_total_mb`/`sd_free_mb`, MiB от
+  `statvfs`). Хук `fmtMiB` печатает `GiB`/`MiB` и прочерк, когда карта
+  отсутствует или не смонтирована (сервер отдаёт `0`); строки не входят в
+  dirty-state и не добавляют кнопок `Apply`. Под карточкой — пояснение, что
+  объём относится к смонтированному тому FAT32, а не к паспортной ёмкости
+  карты. Статус-строка `#sb_sd` не менялась. Обновлены `endpoints.md`,
+  divinus `README.md`, `WEBUI_REORG.md` и `bench/README.md`;
+  `bench/ui_check.py` сверяет тексты с `window.lastStatus` и проверяет
+  формат, отсутствие карты не требуется.
+- **WebUI: SD card capacity and free space in System → Status (OKO).** Two
+  read-only rows, `#status_sd_total_mb`/`#status_sd_free_mb`, sit next to
+  Memory and are filled from the existing `/api/status` fields
+  (`sd_total_mb`/`sd_free_mb`, MiB from `statvfs`). The `fmtMiB` read hook
+  prints `GiB`/`MiB` and a dash when the card is absent or unmounted (the
+  server reports `0`); the rows take no part in the dirty state and add no
+  `Apply` buttons. A note under the card states that the size is the mounted
+  FAT32 volume, not the card's advertised capacity. The `#sb_sd` status line
+  is unchanged. Updated `endpoints.md`, divinus `README.md`, `WEBUI_REORG.md`
+  and `bench/README.md`; `bench/ui_check.py` compares the rendered texts with
+  `window.lastStatus` and checks the format, so no card is required.
 
 ### Изменено
 

@@ -978,6 +978,8 @@
 				<div class="field"><label data-i18n="chip">Chip</label><div class="ctl"><span id="status_chip">–</span></div></div>
 				<div class="field"><label data-i18n="sensor">Sensor</label><div class="ctl"><span id="status_sensor">–</span></div></div>
 				<div class="field"><label data-i18n="memory">Memory</label><div class="ctl"><span id="status_memory">–</span></div></div>
+				<div class="field"><label data-i18n="sd_capacity">SD card capacity</label><div class="ctl"><span id="status_sd_total_mb">–</span></div></div>
+				<div class="field"><label data-i18n="sd_free">SD card free</label><div class="ctl"><span id="status_sd_free_mb">–</span></div></div>
 				<div class="field"><label data-i18n="load">Load</label><div class="ctl"><span id="status_loadavg">–</span></div></div>
 				<div class="field"><label data-i18n="soc_temp">SoC temperature</label><div class="ctl"><span id="status_temp">–</span></div></div>
 				<div class="field"><label data-i18n="uptime">Uptime</label><div class="ctl"><span id="status_uptime">–</span></div></div>
@@ -986,6 +988,7 @@
 				<div class="actions">
 					<button type="button" class="btn" onclick="apiRead('status')" data-i18n="refresh">Refresh</button>
 				</div>
+				<p class="note" data-i18n="sd_size_note">Capacity is the mounted FAT32 volume, not the card's advertised size; a dash means the card is not mounted.</p>
 			</div>
 
 			<div class="card">
@@ -1191,6 +1194,8 @@ var I18N = {
 		osd_note: "Text is drawn with simsun_en.ttf: only ASCII/Latin is available, Cyrillic glyphs are missing. A region shows either text or an uploaded image.",
 		apply_all: "Apply all", save_config: "Save configuration",
 		chip: "Chip", sensor: "Sensor", memory: "Memory",
+		sd_capacity: "SD card capacity", sd_free: "SD card free",
+		sd_size_note: "Capacity is the mounted FAT32 volume, not the card's advertised size; a dash means the card is not mounted.",
 		device_time: "Device time", time: "Time", time_format: "Display format",
 		sync_browser: "Set from browser",
 		time_note: "The format uses strftime tokens; the value is also used by the OSD clock region.",
@@ -1373,6 +1378,8 @@ var I18N = {
 		osd_note: "Текст рисуется шрифтом simsun_en.ttf: доступна только латиница, кириллицы в шрифте нет. Регион показывает либо текст, либо загруженную картинку.",
 		apply_all: "Применить все", save_config: "Сохранить конфигурацию",
 		chip: "Чип", sensor: "Сенсор", memory: "Память",
+		sd_capacity: "Объём SD-карты", sd_free: "SD: свободно",
+		sd_size_note: "Указан объём отформатированного тома FAT32, а не паспортная ёмкость карты; прочерк означает, что карта не смонтирована.",
 		device_time: "Время устройства", time: "Время", time_format: "Формат отображения",
 		sync_browser: "Взять из браузера",
 		time_note: "Формат задаётся токенами strftime; значение используется и часами на OSD.",
@@ -1602,9 +1609,18 @@ function updateNavDots() {
 }
 
 /* ============================ read and apply ============================ */
+/* /api/status gives SD sizes in MiB; 0 or missing means no mounted card. */
+function fmtMiB(mb) {
+	if (mb === undefined || mb === null || !(mb > 0)) return '–';
+	if (mb >= 1024) return (mb / 1024).toFixed(1) + ' GiB';
+	return Math.round(mb) + ' MiB';
+}
+
 var READ_HOOKS = {
 	'substream_mode': function (v) { return ['CBR', 'VBR', 'QP', 'ABR', 'AVBR'][v] || 'CBR'; },
-	'substream_profile': function (v) { return ['BP', 'MP', 'HP'][v] || 'MP'; }
+	'substream_profile': function (v) { return ['BP', 'MP', 'HP'][v] || 'MP'; },
+	'status_sd_total_mb': fmtMiB,
+	'status_sd_free_mb': fmtMiB
 };
 
 function setField(id, v) {
