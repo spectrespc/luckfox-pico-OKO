@@ -319,6 +319,31 @@ def focus_checks(failures, checks):
     print("focus motor:", "enabled" if motor.get("enabled") else "disabled",
           "present" if motor.get("present") else "absent")
 
+    # KI-043: the AF measurement does not need the STM8, so enabling it
+    # without `motor` must work even when the driver is absent or busy.
+    checks += 1
+    status, dec = post_focus("enable=1")
+    # The statistics thread needs a frame before it reports "running".
+    deadline = time.time() + 6
+    while status == 200 and dec.get("enable") and \
+            dec.get("status") != "running" and time.time() < deadline:
+        time.sleep(0.25)
+        _status, dec = get_focus()
+    if status != 200 or not dec.get("enable") or dec.get("status") != "running":
+        failures.append("enable=1 without motor: expected enable=true "
+                        "status=running, got %s %r" % (status, dec))
+    print("POST %-28s %s enable=%s status=%s" %
+          ("enable=1 (no motor)", status, dec.get("enable"),
+           dec.get("status")))
+
+    checks += 1
+    status, dec = post_focus("enable=0")
+    if status != 200 or dec.get("enable") or dec.get("status") != "idle":
+        failures.append("enable=0: expected enable=false status=idle, got %s %r"
+                        % (status, dec))
+    print("POST %-28s %s enable=%s status=%s" %
+          ("enable=0", status, dec.get("enable"), dec.get("status")))
+
     # Argument validation is safe without a motor.
     for query in ("home=bogus", "zero=bogus", "home=focus&zero=focus",
                   "move=1&motor=bogus", "af=bogus", "scale=bogus"):

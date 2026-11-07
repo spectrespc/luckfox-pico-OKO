@@ -197,9 +197,11 @@ JWT и роли вместо Basic-auth, HTTPS, обновление проши�
 - `osd.scope=all` и HDR по-прежнему блокируются гейтами; UI показывает причину.
 - Импорт конфигурации пишет файл и сохраняет предыдущий как `.bak`; битый файл
   откатывается при следующем старте.
-- Включение AF-метрики из WebUI требует контроллера STM8: `Apply` шлёт
-  `motor=1`, и при занятой шине запрос отклоняется (`blocked`, KI-043).
-  Обход — `POST /api/focus?enable=1&mode=full` без `motor`.
+- Включение AF-метрики из WebUI не требует контроллера STM8: `Apply` шлёт
+  `motor=1`, но сервер применяет `enable`/`mode`/`fps`/ROI до взведения
+  привода. Если привод отсутствует или занят, метрика всё равно включается, а
+  состояние мотора в ответе остаётся `enabled:false`/`blocked` (KI-043
+  закрыт). `af=1|fine` по-прежнему требует взведённого драйвера.
 
 ## English
 
@@ -264,7 +266,9 @@ Limitations: Basic-auth has no logout and no HTTPS (passwords travel with every
 request and are stored as plain text in `divinus.yaml`), RTSP/ONVIF/WebUI
 passwords are never read back, RTSP port/audio codec/ONVIF/SmartP need a
 restart, OSD text is Latin-only, NTP takes over ten seconds after boot (after
-`S49ntp`), HDR/`osd.scope=all` remain gated with the reason shown in the UI, and
-enabling the AF metric from the WebUI needs the STM8 controller because Apply
-sends `motor=1`; a busy bus returns `blocked` (KI-043, workaround
-`POST /api/focus?enable=1&mode=full` without `motor`).
+`S49ntp`), and HDR/`osd.scope=all` remain gated with the reason shown in the UI.
+Enabling the AF metric does not need the STM8: Apply sends `motor=1`, but the
+server applies `enable`/`mode`/`fps`/ROI before arming the driver. With a
+missing or busy controller the metric still starts and the motor state in the
+response stays `enabled:false`/`blocked` (KI-043 is closed); `af=1|fine` still
+requires the armed driver.

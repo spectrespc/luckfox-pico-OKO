@@ -677,6 +677,14 @@ mutating key returns HTTP 400. Changes are applied live and are not saved to
 | POST | `af` | `1` starts the full auto-focus search, `fine` runs the micro-fine sweep around the current position, `cancel` stops either job, `0` leaves the job alone |
 | GET | `map=1` | Add the 225-cell arrays `fv_h1/fv_h2/fv_v1/fv_v2/luma/highlit` |
 
+`enable`, `mode`, `fps` and the ROI are applied before the motor is armed: the
+AF measurement itself never touches the STM8.  When a request also sends
+`motor=1` and the driver is missing, busy or stuck in the bootloader, the
+metric still starts and the response is HTTP 200 with `motor.enabled=false` and
+`motor.status`/`motor.bootloader` describing the state; a pure motor request
+(`motor=1` without any setting) keeps the `blocked`, 409 or 502 responses.
+`af=1`/`af=fine` still require an armed driver.
+
 `home` and `zero` need STM8 application firmware **2.0.2** or **2.1.1** (the
 test board); older firmware silently ignores the new `SET_POS` command, so the
 server checks the cached version and refuses with

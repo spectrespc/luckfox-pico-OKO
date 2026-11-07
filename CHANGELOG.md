@@ -305,6 +305,27 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Исправлено
 
+- **Фокус: AF-метрика включается независимо от STM8 (OKO).** `POST
+  /api/focus` применяет `enable`/`mode`/`fps`/ROI до взведения привода:
+  блок `motor` перенесён после `focus_start`/`focus_configure`, поэтому
+  отсутствующий, занятый или находящийся в бутлоадере контроллер больше не
+  блокирует измерение. Ошибки `blocked`/409/502 сохранены для чистых моторных
+  запросов, а `af=1|fine` по-прежнему требуют взведённого драйвера.
+  `api_check.py` получил две проверки `enable=1` без `motor` и `enable=0`;
+  обновлены `doc/endpoints.md`, `divinus/README.md`, `WEBUI_REORG.md` §8
+  (обход через curl снят) и `KNOWN_ISSUES.md` (KI-043 закрыт). Счётчики в
+  `bench/README.md`, `FEATURES_VERIFIED.md` и `VERIFIED_FUNCTIONS.md`
+  приведены к фактическому прогону.
+- **Focus: the AF metric starts regardless of the STM8 (OKO).** `POST
+  /api/focus` applies `enable`/`mode`/`fps`/ROI before arming the driver: the
+  `motor` block moved after `focus_start`/`focus_configure`, so a missing, busy
+  or bootloader-stuck controller no longer blocks the measurement. The
+  `blocked`/409/502 responses remain for pure motor requests, and `af=1|fine`
+  still require the armed driver. `api_check.py` gained two checks (`enable=1`
+  without `motor`, then `enable=0`); `doc/endpoints.md`, `divinus/README.md`,
+  `WEBUI_REORG.md` §8 (the curl workaround is gone) and `KNOWN_ISSUES.md`
+  (KI-043 closed) are updated. The counters in `bench/README.md`,
+  `FEATURES_VERIFIED.md` and `VERIFIED_FUNCTIONS.md` follow the actual run.
 - **ePTZ: кроп/поворот при старте канала и геометрия оверлеев (OKO).**
   Кроп и поворот теперь применяются в `rk_channel_bind()` сразу после
   `EnableChn` (через `rk_apply_stream_settings`), поэтому каждый старт канала

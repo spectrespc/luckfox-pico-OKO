@@ -3185,6 +3185,48 @@ void respond_request(http_request_t *req) {
             if (rh >= 0) app_config.focus_roi_h = (unsigned int)rh;
             if (fps >= 0) app_config.focus_fps = (unsigned int)fps;
 
+            /* The AF metric and its ROI do not need the motor, so apply them
+             * before the arm block: a missing/busy STM8 must not block the
+             * measurement (KI-043). */
+            if (enableReq == 1) {
+                gating_result gate = gating_check("focus_metric");
+                if (!gate.ok) {
+                    gating_block(req, gate);
+                    return;
+                }
+                app_config.focus_enable = true;
+                if (focus_start()) {
+                    app_config.focus_enable = false;
+                    reply_error(req->clntFd, "blocked",
+                        "the focus statistics thread could not be started",
+                        "check the kernel log and RKAIQ_ENABLE_AF");
+                    return;
+                }
+            } else if (enableReq == 0) {
+                app_config.focus_enable = false;
+                focus_stop();
+            }
+
+            if (mode >= 0 || rx >= 0 || ry >= 0 || rw >= 0 || rh >= 0 ||
+                fps >= 0) {
+                int curMode;
+                unsigned int cx, cy, cw, ch, cfps;
+                focus_get_config(&curMode, &cx, &cy, &cw, &ch, &cfps);
+                focus_configure(mode >= 0 ? mode : curMode,
+                    rx >= 0 ? (unsigned int)rx : cx,
+                    ry >= 0 ? (unsigned int)ry : cy,
+                    rw >= 0 ? (unsigned int)rw : cw,
+                    rh >= 0 ? (unsigned int)rh : ch,
+                    fps >= 0 ? (unsigned int)fps : cfps);
+            }
+
+            {
+                /* A metric/ROI request must still succeed when the motor is
+                 * missing or busy; only pure motor requests keep the old
+                 * blocked/409/502 responses (KI-043). */
+                int haveSettings = enableReq >= 0 || mode >= 0 || fps >= 0 ||
+                    rx >= 0 || ry >= 0 || rw >= 0 || rh >= 0;
+
             if (motorReq >= 0) {
                 if (motorReq) {
                     gating_result gate;
@@ -3192,28 +3234,40 @@ void respond_request(http_request_t *req) {
                     gate = gating_check("focus_motor");
                     if (!gate.ok) {
                         app_config.focus_motor = false;
-                        gating_block(req, gate);
-                        return;
-                    }
-                    focus_motor_set_enabled(1);
-                    if (focus_motor_probe() != FM_OK) {
-                        focus_motor_set_enabled(0);
-                        app_config.focus_motor = false;
-                        reply_error(req->clntFd, "blocked",
-                            "the STM8 controller does not answer",
-                            "check focus.device, focus.address and the pull-ups");
-                        return;
-                    }
-                    if (focus_motor_set_speed(FOCUS_MOTOR_FOCUS,
-                            app_config.focus_speed) != FM_OK ||
-                        focus_motor_set_speed(FOCUS_MOTOR_ZOOM,
-                            app_config.focus_zoom_speed) != FM_OK) {
-                        focus_motor_set_enabled(0);
-                        app_config.focus_motor = false;
-                        reply_error(req->clntFd, "blocked",
-                            "the STM8 controller did not accept the speed",
-                            "check focus.speed and the I2C bus");
-                        return;
+                        if (!haveSettings) {
+                            gating_block(req, gate);
+                            return;
+                        }
+                        HAL_WARNING("server", "focus metric applied without "
+                            "the motor: %s\n", gate.reason);
+                    } else {
+                        focus_motor_set_enabled(1);
+                        if (focus_motor_probe() != FM_OK) {
+                            focus_motor_set_enabled(0);
+                            app_config.focus_motor = false;
+                            if (!haveSettings) {
+                                reply_error(req->clntFd, "blocked",
+                                    "the STM8 controller does not answer",
+                                    "check focus.device, focus.address and the pull-ups");
+                                return;
+                            }
+                            HAL_WARNING("server", "focus metric applied: the "
+                                "STM8 controller does not answer\n");
+                        } else if (focus_motor_set_speed(FOCUS_MOTOR_FOCUS,
+                                app_config.focus_speed) != FM_OK ||
+                            focus_motor_set_speed(FOCUS_MOTOR_ZOOM,
+                                app_config.focus_zoom_speed) != FM_OK) {
+                            focus_motor_set_enabled(0);
+                            app_config.focus_motor = false;
+                            if (!haveSettings) {
+                                reply_error(req->clntFd, "blocked",
+                                    "the STM8 controller did not accept the speed",
+                                    "check focus.speed and the I2C bus");
+                                return;
+                            }
+                            HAL_WARNING("server", "focus metric applied: the "
+                                "STM8 controller did not accept the speed\n");
+                        }
                     }
                 } else {
                     if (focus_home_running()) {
@@ -3244,6 +3298,7 @@ void respond_request(http_request_t *req) {
                     focus_motor_set_enabled(0);
                     app_config.focus_motor = false;
                 }
+            }
             }
 
             if (homeReq || zeroReq) {
@@ -3339,38 +3394,6 @@ void respond_request(http_request_t *req) {
                         "the homing worker could not be started", "");
                     return;
                 }
-            }
-
-            if (enableReq == 1) {
-                gating_result gate = gating_check("focus_metric");
-                if (!gate.ok) {
-                    gating_block(req, gate);
-                    return;
-                }
-                app_config.focus_enable = true;
-                if (focus_start()) {
-                    app_config.focus_enable = false;
-                    reply_error(req->clntFd, "blocked",
-                        "the focus statistics thread could not be started",
-                        "check the kernel log and RKAIQ_ENABLE_AF");
-                    return;
-                }
-            } else if (enableReq == 0) {
-                app_config.focus_enable = false;
-                focus_stop();
-            }
-
-            if (mode >= 0 || rx >= 0 || ry >= 0 || rw >= 0 || rh >= 0 ||
-                fps >= 0) {
-                int curMode;
-                unsigned int cx, cy, cw, ch, cfps;
-                focus_get_config(&curMode, &cx, &cy, &cw, &ch, &cfps);
-                focus_configure(mode >= 0 ? mode : curMode,
-                    rx >= 0 ? (unsigned int)rx : cx,
-                    ry >= 0 ? (unsigned int)ry : cy,
-                    rw >= 0 ? (unsigned int)rw : cw,
-                    rh >= 0 ? (unsigned int)rh : ch,
-                    fps >= 0 ? (unsigned int)fps : cfps);
             }
 
             if (stopReq || resetReq || speed >= 0 || haveMove || havePosition) {

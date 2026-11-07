@@ -262,15 +262,16 @@
   `min_pos = 0`, а `home`/`zero` отклоняют заведомо битые значения. Статус:
   **открыто, обход встроен**.
 
-- **KI-043. Включение AF-метрики из WebUI зависит от STM8.**
-  Кнопка «Применить» в карточке «Помощь фокусировке» всегда отправляет
-  `motor=1` (`index.html`, `focusApply`), а сервер сначала взводит привод
-  (`server.c`, блок `motor`) и только затем применяет `enable`; при
-  отсутствующем или занятом контроллере (I2C-шина, бутлоадер) запрос
-  завершается `blocked`, и метрику включить нельзя, хотя самому измерению
-  привод не нужен. Обход: `POST /api/focus?enable=1&mode=full` (или `roi`)
-  без `motor` — метрика включается и опрашивается. Статус: **открыто**,
-  правка сервера не входит в инкремент по решению пользователя.
+- **KI-043. Включение AF-метрики больше не зависит от STM8 (закрыто).**
+  Кнопка «Применить» по-прежнему отправляет `motor=1`, но сервер применяет
+  `enable`/`mode`/`fps`/ROI **до** взведения привода (`server.c`, блок
+  `motor` перенесён после `focus_start`/`focus_configure`). При отсутствующем,
+  занятом или находящемся в бутлоадере контроллере метрика включается, ответ
+  остаётся 200, а `motor.enabled=false`/`motor.status` показывают причину;
+  ошибки `blocked`/409/502 остаются только у чистых моторных запросов и
+  `af=1|fine` (им по-прежнему нужен взведённый драйвер). Проверено на стенде
+  2026-11-07: `POST /api/focus?enable=1` без `motor` → `status=running`,
+  `enable=0` → `idle`. Статус: **закрыто (2026-11-07)**.
 
 - **KI-044. ePTZ: кроп/поворот применяются при старте канала (закрыто).**
   Замеры 2026-11-07: включение канала сбрасывает `SetChnCrop` и
@@ -535,15 +536,16 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   manual control is bounded by `min_pos = 0`, and `home`/`zero` reject values
   that are visibly corrupted. Status: **open, workaround in place**.
 
-- **KI-043. Enabling the AF metric from the WebUI depends on the STM8.**
-  The "Apply" button in the Focus assist card always sends `motor=1`
-  (`index.html`, `focusApply`), and the server arms the driver (`server.c`,
-  the `motor` block) before it applies `enable`; with a missing or busy
-  controller (I2C bus, bootloader) the request ends `blocked` and the metric
-  cannot be enabled, although the measurement itself needs no driver.
-  Workaround: `POST /api/focus?enable=1&mode=full` (or `roi`) without
-  `motor` enables and polls the metric. Status: **open**; the server change
-  is out of this increment by the user's decision.
+- **KI-043. Enabling the AF metric no longer depends on the STM8 (closed).**
+  The "Apply" button still sends `motor=1`, but the server now applies
+  `enable`/`mode`/`fps`/ROI **before** arming the driver (`server.c`, the
+  `motor` block moved after `focus_start`/`focus_configure`). With a missing,
+  busy or bootloader-stuck controller the metric still starts, the response
+  stays HTTP 200 and `motor.enabled=false`/`motor.status` show the reason;
+  `blocked`/409/502 remain only for pure motor requests and `af=1|fine`
+  (those still require the armed driver). Verified on the bench 2026-11-07:
+  `POST /api/focus?enable=1` without `motor` → `status=running`, `enable=0` →
+  `idle`. Status: **closed (2026-11-07)**.
 
 - **KI-044. ePTZ: crop/rotation are applied when a channel starts (closed).**
   Measurements on 2026-11-07: enabling a channel resets `SetChnCrop` and
