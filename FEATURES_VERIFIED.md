@@ -152,7 +152,9 @@ Status as of 2026-11-06.
   3 MiB. `source: vpss3` takes the last VPSS channel and is therefore
   incompatible with IVS/MJPEG/a fourth stream, so the sanitizer falls back to
   `vi0`. `source: vi1` (selfpath) hangs this board and is blocked — see
-  `FEATURES_UNVERIFIED.md`. Boxes are not drawn into the stream or JPEGs.
+  `FEATURES_UNVERIFIED.md`. With `yolo.boxes=1` a 2BPP overlay region draws
+  detection boxes on the main stream only (two colours, 16-pixel grid); the
+  event JPEGs stay clean. See the YOLO row and the boxes note below.
   AIISP and YOLO on `vpss3` run together (bench, 640×640 demo: main 30–33 fps,
   NPU 28%, no drops).
 - A second RKNN 2.3.2 runtime (`librknnmrt2.so`, distinct SONAME) is available
