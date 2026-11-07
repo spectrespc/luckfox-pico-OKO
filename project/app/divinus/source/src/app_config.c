@@ -254,6 +254,8 @@ void app_config_dump(FILE *file) {
     fprintf(file, "  enable: %s\n", app_config.yolo_enable ? "true" : "false");
     fprintf(file, "  source: %s\n", app_config.yolo_source == 2 ? "vi0" :
         (app_config.yolo_source == 1 ? "vpss3" : "vi1"));
+    fprintf(file, "  runtime: %d\n", app_config.yolo_runtime);
+    fprintf(file, "  model_dir: %s\n", app_config.yolo_model_dir);
     fprintf(file, "  model: %s\n", app_config.yolo_model);
     fprintf(file, "  input_width: %d\n  input_height: %d\n",
         app_config.yolo_input_width, app_config.yolo_input_height);
@@ -466,6 +468,8 @@ enum ConfigError app_config_parse(void) {
 
     app_config.yolo_enable = false;
     app_config.yolo_source = 1;   /* vpss3: VI selfpath hung the board in M0 */
+    app_config.yolo_runtime = 1;  /* RKNN 1.6.0: models built by toolkit 1.6.0 */
+    strcpy(app_config.yolo_model_dir, "/userdata/models");
     strcpy(app_config.yolo_model, "/userdata/models/yolov5n.rknn");
     app_config.yolo_input_width = 640;
     app_config.yolo_input_height = 384;
@@ -906,6 +910,13 @@ enum ConfigError app_config_parse(void) {
             else if (EQUALS(val, "vi0")) app_config.yolo_source = 2;
             else app_config.yolo_source = 0;
         }
+        {
+            int v = (int)app_config.yolo_runtime;
+            parse_int(&ini, "yolo", "runtime", 1, 2, &v);
+            app_config.yolo_runtime = (unsigned int)v;
+        }
+        parse_param_value_n(&ini, "yolo", "model_dir",
+            app_config.yolo_model_dir, sizeof(app_config.yolo_model_dir));
         parse_param_value_n(&ini, "yolo", "model", app_config.yolo_model,
             sizeof(app_config.yolo_model));
         {

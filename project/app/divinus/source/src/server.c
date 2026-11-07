@@ -2748,6 +2748,17 @@ void respond_request(http_request_t *req) {
                         restartNeeded = 1;
                         liveOk = 0;
                     }
+                } else if (EQUALS(key, "runtime")) {
+                    long v;
+                    if (!parse_ranged(value, 1, 2, &v)) {
+                        reply_bad_request(req->clntFd,
+                            "unknown yolo.runtime value",
+                            "use 1 (librknnmrt.so 1.6.0) or 2 (librknnmrt2.so)");
+                        return;
+                    }
+                    /* Applies to the next model activation; an already
+                     * loaded context keeps running on its runtime. */
+                    app_config.yolo_runtime = (unsigned int)v;
                 } else if (EQUALS(key, "input_width")) {
                     long v;
                     if (parse_ranged(value, 64, 4096, &v) &&
@@ -2851,7 +2862,8 @@ void respond_request(http_request_t *req) {
             "Content-Type: application/json;charset=UTF-8\r\n"
             "Connection: close\r\n"
             "\r\n"
-            "{\"enable\":%s,\"source\":\"%s\",\"model\":\"%s\","
+            "{\"enable\":%s,\"source\":\"%s\",\"runtime\":%d,"
+            "\"model_dir\":\"%s\",\"model\":\"%s\","
             "\"input_width\":%d,\"input_height\":%d,\"fps\":%d,"
             "\"conf_threshold\":%.2f,\"nms_threshold\":%.2f,"
             "\"classes\":%d,\"pre_seconds\":%d,\"post_seconds\":%d,"
@@ -2859,6 +2871,7 @@ void respond_request(http_request_t *req) {
             app_config.yolo_enable ? "true" : "false",
             app_config.yolo_source == 2 ? "vi0" :
                 (app_config.yolo_source == 1 ? "vpss3" : "vi1"),
+            app_config.yolo_runtime, app_config.yolo_model_dir,
             app_config.yolo_model,
             app_config.yolo_input_width, app_config.yolo_input_height,
             app_config.yolo_fps, app_config.yolo_conf_threshold,

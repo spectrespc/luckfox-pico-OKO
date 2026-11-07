@@ -121,7 +121,12 @@ gating_result gating_check(const char *feature)
     }
 
     if (!strcmp(feature, "yolo")) {
-        if (!(halCapabilities & HAL_CAP_RKNN))
+        if (app_config.yolo_runtime == 2 &&
+            !(halCapabilities & HAL_CAP_RKNN2))
+            return blocked("the RKNN 2.x runtime is not available",
+                "librknnmrt2.so is missing; reflash the oem partition");
+        if (app_config.yolo_runtime != 2 &&
+            !(halCapabilities & HAL_CAP_RKNN))
             return blocked("the NPU runtime is not available",
                 "librknnmrt.so is missing; reflash the oem partition");
         /* VI channel 1 (selfpath) is exposed by the ISP topology but enabling

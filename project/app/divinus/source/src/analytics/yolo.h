@@ -7,6 +7,7 @@ typedef struct {
     int width;
     int height;
     int classes;
+    int runtime;            /* 1 = RKNN 1.x, 2 = RKNN 2.x */
     char sdk[64];
 } yolo_model_info;
 
@@ -16,9 +17,13 @@ int yolo_start(void);
 void yolo_stop(void);
 int yolo_running(void);
 
-/* Load a model for validation without touching the active context. */
+/* Load a model for validation without touching the active context.  The
+ * yolo.runtime value selects the library; the *runtime variants let the
+ * caller probe the other runtime to explain a mismatch. */
 int yolo_model_probe(const char *path, yolo_model_info *info,
     char *error, size_t error_size);
+int yolo_model_probe_runtime(const char *path, int runtime,
+    yolo_model_info *info, char *error, size_t error_size);
 
 /* Atomically replace the active model.  On failure the previous context is
  * kept and `error` describes the reason (incompatible toolkit, bad tensors). */

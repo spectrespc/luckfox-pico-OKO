@@ -48,6 +48,8 @@ static const int yolo_anchors[3][6] = {
 
 typedef struct {
     rknn_context ctx;
+    rk_rknn_impl *api;          /* selected RKNN runtime (1.x or 2.x) */
+    int runtime;                /* 1 or 2, for logging and models.json */
     int ready;
     int generation;
     int width, height, classes;
@@ -119,20 +121,20 @@ static void yolo_osd(const char *text)
 
 static void yolo_model_destroy(yolo_model_dev *model)
 {
-    if (model->ctx) {
+    if (model->ctx && model->api) {
         for (int i = 0; i < model->outputCount; i++) {
             if (model->outputMem[i]) {
                 /* rknn_create_mem() marks the block ALLOC_INSIDE, so
                  * rknn_destroy_mem() releases the structure as well. */
-                rk_rknn.fnDestroyMem(model->ctx, model->outputMem[i]);
+                model->api->fnDestroyMem(model->ctx, model->outputMem[i]);
                 model->outputMem[i] = NULL;
             }
         }
         if (model->inputMem) {
-            rk_rknn.fnDestroyMem(model->ctx, model->inputMem);
+            model->api->fnDestroyMem(model->ctx, model->inputMem);
             model->inputMem = NULL;
         }
-        rk_rknn.fnDestroy(model->ctx);
+        model->api->fnDestroy(model->ctx);
         model->ctx = 0;
     }
     model->ready = 0;
@@ -143,7 +145,7 @@ static void yolo_model_destroy(yolo_model_dev *model)
  * `runTest` executes one inference: this catches a model that loads but is
  * rejected by the NPU (wrong toolkit generation, unsupported operators). */
 static int yolo_model_open(const char *path, yolo_model_dev *model,
-    int runTest, char *error, size_t errorSize)
+    int runTest, int runtime, char *error, size_t errorSize)
 {
     rknn_input_output_num io;
     int ret;
@@ -151,6 +153,8 @@ static int yolo_model_open(const char *path, yolo_model_dev *model,
     memset(&io, 0, sizeof(io));
     memset(model, 0, sizeof(*model));
     snprintf(error, errorSize, "%s", "");
+    model->runtime = runtime;
+    model->api = rk_rknn_for_runtime(runtime);
 
     if (!path || !*path) {
         snprintf(error, errorSize, "no model path configured");
@@ -160,12 +164,14 @@ static int yolo_model_open(const char *path, yolo_model_dev *model,
         snprintf(error, errorSize, "model file is missing: %s", path);
         return EXIT_FAILURE;
     }
-    if (!(halCapabilities & HAL_CAP_RKNN)) {
-        snprintf(error, errorSize, "librknnmrt.so is not available");
+    if (!model->api) {
+        snprintf(error, errorSize,
+            "RKNN %d.x runtime is not installed (%s)", runtime,
+            runtime == 2 ? RK_RKNN_RUNTIME2_PATH : RK_RKNN_RUNTIME1_PATH);
         return EXIT_FAILURE;
     }
 
-    ret = rk_rknn.fnInit(&model->ctx, (void *)path, 0, 0, NULL);
+    ret = model->api->fnInit(&model->ctx, (void *)path, 0, 0, NULL);
     if (ret < 0) {
         snprintf(error, errorSize,
             "rknn_init failed (%d): the model was probably built by an "
@@ -173,7 +179,23 @@ static int yolo_model_open(const char *path, yolo_model_dev *model,
         return EXIT_FAILURE;
     }
 
-    if (rk_rknn.fnQuery(model->ctx, RKNN_QUERY_IN_OUT_NUM, &io, sizeof(io)) ||
+    {
+        rknn_sdk_version sdk;
+        memset(&sdk, 0, sizeof(sdk));
+        if (model->api->fnQuery(model->ctx, RKNN_QUERY_SDK_VERSION, &sdk,
+                sizeof(sdk))) {
+            snprintf(error, errorSize, "cannot query the runtime version");
+            goto fail;
+        }
+        if (atoi(sdk.api_version) != runtime) {
+            snprintf(error, errorSize,
+                "runtime %d was loaded but reports RKNN SDK %s", runtime,
+                sdk.api_version);
+            goto fail;
+        }
+    }
+
+    if (model->api->fnQuery(model->ctx, RKNN_QUERY_IN_OUT_NUM, &io, sizeof(io)) ||
         io.n_input != 1 || io.n_output < 1 ||
         io.n_output > YOLO_MAX_OUTPUTS) {
         snprintf(error, errorSize,
@@ -185,7 +207,7 @@ static int yolo_model_open(const char *path, yolo_model_dev *model,
 
     memset(&model->inputAttr, 0, sizeof(model->inputAttr));
     model->inputAttr.index = 0;
-    if (rk_rknn.fnQuery(model->ctx, RKNN_QUERY_NATIVE_INPUT_ATTR,
+    if (model->api->fnQuery(model->ctx, RKNN_QUERY_NATIVE_INPUT_ATTR,
             &model->inputAttr, sizeof(model->inputAttr))) {
         snprintf(error, errorSize, "cannot query the input tensor");
         goto fail;
@@ -227,13 +249,13 @@ static int yolo_model_open(const char *path, yolo_model_dev *model,
 
     model->inputAttr.type = RKNN_TENSOR_UINT8;
     model->inputAttr.fmt = RKNN_TENSOR_NHWC;
-    model->inputMem = rk_rknn.fnCreateMem(model->ctx,
+    model->inputMem = model->api->fnCreateMem(model->ctx,
         model->inputAttr.size_with_stride);
     if (!model->inputMem) {
         snprintf(error, errorSize, "cannot allocate the input tensor memory");
         goto fail;
     }
-    if (rk_rknn.fnSetIoMem(model->ctx, model->inputMem, &model->inputAttr)) {
+    if (model->api->fnSetIoMem(model->ctx, model->inputMem, &model->inputAttr)) {
         snprintf(error, errorSize, "rknn_set_io_mem failed for the input");
         goto fail;
     }
@@ -241,7 +263,7 @@ static int yolo_model_open(const char *path, yolo_model_dev *model,
     for (int i = 0; i < model->outputCount; i++) {
         memset(&model->outputAttr[i], 0, sizeof(model->outputAttr[i]));
         model->outputAttr[i].index = i;
-        if (rk_rknn.fnQuery(model->ctx, RKNN_QUERY_NATIVE_NHWC_OUTPUT_ATTR,
+        if (model->api->fnQuery(model->ctx, RKNN_QUERY_NATIVE_NHWC_OUTPUT_ATTR,
                 &model->outputAttr[i], sizeof(model->outputAttr[i]))) {
             snprintf(error, errorSize, "cannot query output tensor %d", i);
             goto fail;
@@ -262,14 +284,14 @@ static int yolo_model_open(const char *path, yolo_model_dev *model,
                 i, get_format_string(model->outputAttr[i].fmt));
             goto fail;
         }
-        model->outputMem[i] = rk_rknn.fnCreateMem(model->ctx,
+        model->outputMem[i] = model->api->fnCreateMem(model->ctx,
             model->outputAttr[i].size_with_stride);
         if (!model->outputMem[i]) {
             snprintf(error, errorSize,
                 "cannot allocate output tensor memory %d", i);
             goto fail;
         }
-        if (rk_rknn.fnSetIoMem(model->ctx, model->outputMem[i],
+        if (model->api->fnSetIoMem(model->ctx, model->outputMem[i],
                 &model->outputAttr[i])) {
             snprintf(error, errorSize, "rknn_set_io_mem failed for output %d", i);
             goto fail;
@@ -312,7 +334,7 @@ static int yolo_model_open(const char *path, yolo_model_dev *model,
     }
 
     if (runTest) {
-        ret = rk_rknn.fnRun(model->ctx, NULL);
+        ret = model->api->fnRun(model->ctx, NULL);
         if (ret < 0) {
             snprintf(error, errorSize, "test inference failed (%d)", ret);
             goto fail;
@@ -342,31 +364,42 @@ fail:
     return EXIT_FAILURE;
 }
 
-int yolo_model_probe(const char *path, yolo_model_info *info,
-    char *error, size_t errorSize)
+int yolo_model_probe_runtime(const char *path, int runtime,
+    yolo_model_info *info, char *error, size_t errorSize)
 {
     yolo_model_dev model;
-    int ret = yolo_model_open(path, &model, 1, error, errorSize);
+    int ret = yolo_model_open(path, &model, 1, runtime, error, errorSize);
 
-    if (ret == EXIT_SUCCESS && info) {
-        memset(info, 0, sizeof(*info));
-        info->width = model.width;
-        info->height = model.height;
-        info->classes = model.classes;
-        rknn_sdk_version sdk;
-        memset(&sdk, 0, sizeof(sdk));
-        if (!rk_rknn.fnQuery(model.ctx, RKNN_QUERY_SDK_VERSION, &sdk,
-                sizeof(sdk)))
-            snprintf(info->sdk, sizeof(info->sdk), "%s", sdk.api_version);
+    if (ret == EXIT_SUCCESS) {
+        if (info) {
+            rknn_sdk_version sdk;
+            memset(info, 0, sizeof(*info));
+            info->width = model.width;
+            info->height = model.height;
+            info->classes = model.classes;
+            info->runtime = model.runtime;
+            memset(&sdk, 0, sizeof(sdk));
+            if (!model.api->fnQuery(model.ctx, RKNN_QUERY_SDK_VERSION, &sdk,
+                    sizeof(sdk)))
+                snprintf(info->sdk, sizeof(info->sdk), "%s", sdk.api_version);
+        }
         yolo_model_destroy(&model);
     }
     return ret;
 }
 
+int yolo_model_probe(const char *path, yolo_model_info *info,
+    char *error, size_t errorSize)
+{
+    return yolo_model_probe_runtime(path, (int)app_config.yolo_runtime,
+        info, error, errorSize);
+}
+
 int yolo_model_swap(const char *path, char *error, size_t errorSize)
 {
     yolo_model_dev model;
-    int ret = yolo_model_open(path, &model, 1, error, errorSize);
+    int ret = yolo_model_open(path, &model, 1, (int)app_config.yolo_runtime,
+        error, errorSize);
 
     if (ret != EXIT_SUCCESS) return ret;
 
@@ -376,8 +409,8 @@ int yolo_model_swap(const char *path, char *error, size_t errorSize)
     yoloModel = model;
     pthread_mutex_unlock(&modelMtx);
 
-    HAL_INFO("yolo", "Active model: %s (%dx%d, %d classes)\n",
-        path, model.width, model.height, model.classes);
+    HAL_INFO("yolo", "Active model: %s (%dx%d, %d classes, runtime %d)\n",
+        path, model.width, model.height, model.classes, model.runtime);
     return EXIT_SUCCESS;
 }
 
@@ -517,7 +550,7 @@ static int yolo_infer(const yolo_ring_frame *frame, yolo_result *result)
         yoloModel.inputMem->virt_addr, yoloModel.width, yoloModel.height,
         yoloModel.inputStride * 3);
 
-    if (rk_rknn.fnRun(yoloModel.ctx, NULL) < 0) {
+    if (yoloModel.api->fnRun(yoloModel.ctx, NULL) < 0) {
         consecutiveFaults++;
         if (consecutiveFaults >= YOLO_MAX_CONSECUTIVE_FAULTS &&
             !inferenceDisabled) {
@@ -779,8 +812,11 @@ int yolo_start(void)
 
     if (yoloRunning) return EXIT_SUCCESS;
     if (!app_config.yolo_enable) return EXIT_FAILURE;
-    if (!(halCapabilities & HAL_CAP_RKNN))
+    if (!rk_rknn_runtime_available((int)app_config.yolo_runtime)) {
+        HAL_WARNING("yolo", "RKNN %u.x runtime is not available\n",
+            app_config.yolo_runtime);
         return EXIT_FAILURE;
+    }
 
     frameWidth = (int)app_config.yolo_input_width;
     frameHeight = (int)app_config.yolo_input_height;
@@ -797,8 +833,8 @@ int yolo_start(void)
     if (ringCapacity < preFrames + 1) ringCapacity = preFrames + 1;
     if (ringCapacity > 64) ringCapacity = 64;
 
-    if (yolo_model_open(app_config.yolo_model, &yoloModel, 1, error,
-            sizeof(error))) {
+    if (yolo_model_open(app_config.yolo_model, &yoloModel, 1,
+            (int)app_config.yolo_runtime, error, sizeof(error))) {
         HAL_WARNING("yolo", "Model unavailable: %s\n", error);
         return EXIT_FAILURE;
     }

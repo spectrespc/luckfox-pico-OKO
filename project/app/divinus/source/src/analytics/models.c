@@ -20,7 +20,6 @@
 #include "yolo.h"
 
 #define MODELS_MAX 16
-#define MODELS_JSON MODELS_DIR "/models.json"
 
 typedef struct {
     char name[96];
@@ -29,7 +28,19 @@ typedef struct {
     int classes;
     int width;
     int height;
+    int runtime;        /* 0 = unknown, 1 = RKNN 1.x, 2 = RKNN 2.x */
 } model_meta;
+
+/* yolo.model_dir may be changed in the config; the compiled default is used
+ * when the key is absent. */
+static const char *models_dir(void) {
+    return app_config.yolo_model_dir[0] ? app_config.yolo_model_dir :
+        MODELS_DIR;
+}
+
+static void models_json_path(char *out, size_t size, const char *suffix) {
+    snprintf(out, size, "%s/models.json%s", models_dir(), suffix);
+}
 
 static model_meta metadata[MODELS_MAX];
 static int metadataCount;
@@ -221,9 +232,13 @@ static model_meta *models_slot(const char *name)
 /* Minimal parser for the document written below. */
 static void models_json_load(void)
 {
-    FILE *file = fopen(MODELS_JSON, "r");
+    char jsonPath[256];
+    FILE *file;
     char *text;
     long length;
+
+    models_json_path(jsonPath, sizeof(jsonPath), "");
+    file = fopen(jsonPath, "r");
 
     metadataCount = 0;
     if (!file) return;
@@ -251,7 +266,7 @@ static void models_json_load(void)
         char name[96] = {0};
         char hash[65] = {0};
         unsigned long long size = 0;
-        int classes = 0, width = 0, height = 0;
+        int classes = 0, width = 0, height = 0, runtime = 0;
         char *end;
 
         cursor += strlen("{\"name\":\"");
@@ -283,12 +298,15 @@ static void models_json_load(void)
             width = (int)strtol(end + strlen("\"width\":"), NULL, 10);
         if ((end = strstr(cursor, "\"height\":")))
             height = (int)strtol(end + strlen("\"height\":"), NULL, 10);
+        if ((end = strstr(cursor, "\"runtime\":")))
+            runtime = (int)strtol(end + strlen("\"runtime\":"), NULL, 10);
 
         entry->size = size;
         snprintf(entry->sha, sizeof(entry->sha), "%s", hash);
         entry->classes = classes;
         entry->width = width;
         entry->height = height;
+        entry->runtime = runtime;
         cursor++;
     }
 
@@ -297,28 +315,32 @@ static void models_json_load(void)
 
 static void models_json_save(void)
 {
-    FILE *file = fopen(MODELS_JSON ".part", "w");
+    char jsonPath[256], partPath[256];
+    FILE *file;
 
+    models_json_path(jsonPath, sizeof(jsonPath), "");
+    models_json_path(partPath, sizeof(partPath), ".part");
+    file = fopen(partPath, "w");
     if (!file) return;
     fprintf(file, "{\"models\":[");
     for (int i = 0; i < metadataCount; i++) {
         model_meta *entry = &metadata[i];
         fprintf(file, "%s{\"name\":\"%s\",\"size\":%llu,\"sha256\":\"%s\","
-            "\"classes\":%d,\"width\":%d,\"height\":%d}",
+            "\"classes\":%d,\"width\":%d,\"height\":%d,\"runtime\":%d}",
             i ? "," : "", entry->name, entry->size, entry->sha,
-            entry->classes, entry->width, entry->height);
+            entry->classes, entry->width, entry->height, entry->runtime);
     }
     fprintf(file, "]}\n");
     fflush(file);
     fsync(fileno(file));
     fclose(file);
-    rename(MODELS_JSON ".part", MODELS_JSON);
+    rename(partPath, jsonPath);
 }
 
 void models_start(void)
 {
-    if (mkdir(MODELS_DIR, 0755) && errno != EEXIST)
-        HAL_WARNING("models", "Cannot create %s\n", MODELS_DIR);
+    if (mkdir(models_dir(), 0755) && errno != EEXIST)
+        HAL_WARNING("models", "Cannot create %s\n", models_dir());
     models_json_load();
 }
 
@@ -326,7 +348,7 @@ static int models_free_bytes(unsigned long long *freeBytes)
 {
     struct statvfs stat;
 
-    if (statvfs(MODELS_DIR, &stat)) return -1;
+    if (statvfs(models_dir(), &stat)) return -1;
     if (freeBytes)
         *freeBytes = (unsigned long long)stat.f_bavail * stat.f_frsize;
     return 0;
@@ -374,7 +396,7 @@ size_t models_list_json(char *out, size_t size)
     if (!out || !size) return 0;
     out[0] = 0;
 
-    dir = opendir(MODELS_DIR);
+    dir = opendir(models_dir());
     while (dir && (entry = readdir(dir)) && count < MODELS_MAX) {
         struct stat st;
         char path[256];
@@ -384,7 +406,7 @@ size_t models_list_json(char *out, size_t size)
             strcmp(entry->d_name + length - 5, ".rknn"))
             continue;
         if (!models_name_ok(entry->d_name)) continue;
-        snprintf(path, sizeof(path), "%s/%s", MODELS_DIR, entry->d_name);
+        snprintf(path, sizeof(path), "%s/%s", models_dir(), entry->d_name);
         if (stat(path, &st) || !S_ISREG(st.st_mode)) continue;
         snprintf(names[count], sizeof(names[count]), "%s", entry->d_name);
         count++;
@@ -407,7 +429,7 @@ size_t models_list_json(char *out, size_t size)
 
     models_append(out, size, &used,
         "{\"dir\":\"%s\",\"quota\":%d,\"free\":%llu,\"active\":\"",
-        MODELS_DIR, MODELS_QUOTA, freeBytes);
+        models_dir(), MODELS_QUOTA, freeBytes);
     {
         char escaped[192];
         models_json_escape(active, escaped, sizeof(escaped));
@@ -421,18 +443,20 @@ size_t models_list_json(char *out, size_t size)
         struct stat st;
         model_meta *meta = models_find(names[i]);
 
-        snprintf(path, sizeof(path), "%s/%s", MODELS_DIR, names[i]);
+        snprintf(path, sizeof(path), "%s/%s", models_dir(), names[i]);
         memset(&st, 0, sizeof(st));
         stat(path, &st);
         models_json_escape(names[i], escaped, sizeof(escaped));
 
         models_append(out, size, &used,
             "%s{\"name\":\"%s\",\"size\":%llu,\"sha256\":\"%s\","
-            "\"classes\":%d,\"width\":%d,\"height\":%d,\"active\":%s}",
+            "\"classes\":%d,\"width\":%d,\"height\":%d,\"runtime\":%d,"
+            "\"active\":%s}",
             i ? "," : "", escaped,
             (unsigned long long)(S_ISREG(st.st_mode) ? st.st_size : 0),
             meta ? meta->sha : "", meta ? meta->classes : 0,
             meta ? meta->width : 0, meta ? meta->height : 0,
+            meta ? meta->runtime : 0,
             !strcmp(names[i], active) ? "true" : "false");
     }
 
@@ -464,7 +488,7 @@ int models_upload(const char *filename, const char *data, size_t length,
         return EXIT_FAILURE;
     }
     if (models_free_bytes(&freeBytes)) {
-        snprintf(error, errorSize, "cannot read the free space of %s", MODELS_DIR);
+        snprintf(error, errorSize, "cannot read the free space of %s", models_dir());
         return EXIT_FAILURE;
     }
     if (freeBytes < length + 128 * 1024) {
@@ -473,7 +497,7 @@ int models_upload(const char *filename, const char *data, size_t length,
         return EXIT_FAILURE;
     }
 
-    snprintf(path, sizeof(path), "%s/%s", MODELS_DIR, filename);
+    snprintf(path, sizeof(path), "%s/%s", models_dir(), filename);
     snprintf(part, sizeof(part), "%s.part", path);
 
     fd = open(part, O_WRONLY | O_CREAT | O_TRUNC, 0644);
@@ -510,6 +534,7 @@ int models_upload(const char *filename, const char *data, size_t length,
         model_meta *entry = models_slot(filename);
         if (entry) {
             entry->size = length;
+            entry->runtime = 0;     /* detected on the next activation */
             models_sha256(data, length, entry->sha);
             if (strcmp(filename, models_active_name()))
                 entry->classes = entry->width = entry->height = 0;
@@ -519,6 +544,23 @@ int models_upload(const char *filename, const char *data, size_t length,
 
     HAL_INFO("models", "Stored %s (%zu bytes)\n", filename, length);
     return EXIT_SUCCESS;
+}
+
+/* A model that fails on the selected runtime may still be valid for the
+ * other one; probing it turns a generic rknn_init error into an actionable
+ * "set yolo.runtime=N" message. */
+static void models_explain_runtime(const char *path, char *error,
+    size_t errorSize)
+{
+    int other = app_config.yolo_runtime == 2 ? 1 : 2;
+    yolo_model_info alt;
+    char altError[192];
+
+    if (yolo_model_probe_runtime(path, other, &alt, altError,
+            sizeof(altError)) == 0)
+        snprintf(error, errorSize,
+            "model needs RKNN runtime %d (SDK %s); set yolo.runtime=%d "
+            "and retry", other, alt.sdk[0] ? alt.sdk : "unknown", other);
 }
 
 int models_activate(const char *name, char *error, size_t errorSize)
@@ -532,22 +574,37 @@ int models_activate(const char *name, char *error, size_t errorSize)
         snprintf(error, errorSize, "invalid model name");
         return EXIT_FAILURE;
     }
-    snprintf(path, sizeof(path), "%s/%s", MODELS_DIR, name);
+    snprintf(path, sizeof(path), "%s/%s", models_dir(), name);
     if (access(path, R_OK)) {
         snprintf(error, errorSize, "model %s is missing", name);
+        return EXIT_FAILURE;
+    }
+
+    /* models.json records the runtime that last loaded this file; a model
+     * converted by toolkit 2.x must not be handed to the 1.6.0 runtime. */
+    entry = models_find(name);
+    if (entry && entry->runtime &&
+        entry->runtime != (int)app_config.yolo_runtime) {
+        snprintf(error, errorSize,
+            "model was activated with RKNN runtime %d; set yolo.runtime=%d",
+            entry->runtime, entry->runtime);
         return EXIT_FAILURE;
     }
 
     /* While the detector runs the context is swapped under its mutex; while
      * it is disabled a probe is enough and the NPU memory is released. */
     if (yolo_running()) {
-        if (yolo_model_swap(path, error, errorSize))
+        if (yolo_model_swap(path, error, errorSize)) {
+            models_explain_runtime(path, error, errorSize);
             return EXIT_FAILURE;
+        }
         memset(&info, 0, sizeof(info));
         info.width = (int)app_config.yolo_input_width;
         info.height = (int)app_config.yolo_input_height;
         info.classes = (int)app_config.yolo_classes;
+        info.runtime = (int)app_config.yolo_runtime;
     } else if (yolo_model_probe(path, &info, error, errorSize)) {
+        models_explain_runtime(path, error, errorSize);
         return EXIT_FAILURE;
     }
 
@@ -564,6 +621,8 @@ int models_activate(const char *name, char *error, size_t errorSize)
         entry->width = info.width;
         entry->height = info.height;
         entry->classes = info.classes;
+        entry->runtime = info.runtime ? info.runtime :
+            (int)app_config.yolo_runtime;
         if (!stat(path, &st)) entry->size = (unsigned long long)st.st_size;
         models_json_save();
     }
@@ -589,7 +648,7 @@ int models_delete(const char *name, char *error, size_t errorSize)
         return EXIT_FAILURE;
     }
 
-    snprintf(path, sizeof(path), "%s/%s", MODELS_DIR, name);
+    snprintf(path, sizeof(path), "%s/%s", models_dir(), name);
     if (unlink(path)) {
         snprintf(error, errorSize, "cannot delete %s", name);
         return EXIT_FAILURE;
