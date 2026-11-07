@@ -136,6 +136,27 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Изменено
 
+- **Подтверждение SD-инкремента прогонами стенда (OKO).** Прогоны 2026-11-07
+  подтвердили заявленное: `bench/ui_check.py` печатает
+  `SD summary: 14.8 GiB / 14.8 GiB (raw 15177/15171 MiB)` и завершается
+  `UI check passed` с кодом 0; тот же прогон с `OKO_FOCUS_AF_TESTS=1`
+  (кнопка «Автофокус», `af=fine`) тоже даёт `UI check passed`, код 0;
+  `bench/api_check.py` — `96 checks, 0 failures`, код 0. Счётчики в
+  `bench/README.md`, `FEATURES_VERIFIED.md` и `VERIFIED_FUNCTIONS.md`
+  приведены к фактическим 96 проверкам и дате прогона. Staged-копия
+  `output/out/oem/usr/bin/divinus` намеренно не пересобиралась: перепрошивка
+  в этом цикле не планируется.
+- **SD increment confirmed by bench runs (OKO).** The 2026-11-07 runs
+  confirmed the claims: `bench/ui_check.py` prints
+  `SD summary: 14.8 GiB / 14.8 GiB (raw 15177/15171 MiB)` and ends with
+  `UI check passed`, exit code 0; the same run with
+  `OKO_FOCUS_AF_TESTS=1` (the Autofocus button, `af=fine`) also returns
+  `UI check passed`, exit code 0; `bench/api_check.py` reports
+  `96 checks, 0 failures`, exit code 0. The counters in `bench/README.md`,
+  `FEATURES_VERIFIED.md` and `VERIFIED_FUNCTIONS.md` are brought to the
+  measured 96 checks and the run date. The staged copy
+  `output/out/oem/usr/bin/divinus` was deliberately not rebuilt: no reflash
+  is planned in this cycle.
 - **WebUI: каркас под высоту окна и две колонки Live (OKO).** Страница
   больше не прокручивается целиком: `body` — flex-колонка высотой
   `100vh`/`100dvh` с `overflow: hidden`, `#layout` растягивается

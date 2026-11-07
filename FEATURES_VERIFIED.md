@@ -5,7 +5,7 @@
 `FEATURES_UNVERIFIED.md`; паспорт платформы, общие примечания и команды проверки —
 в `FEATURES.md`; доказательства — в `VERIFIED_FUNCTIONS.md`.
 
-Статус на 2026-11-06.
+Статус на 2026-11-07.
 
 ## Русский
 
@@ -36,8 +36,8 @@
 | Прошивка | Версии STM32/STM8 | Кэш версий и карточка System | `/api/firmware`, `[flash]` | `firmware_status.c`, daemon `oko-ec`, роль/версия STM8 `0x08` | **работает** — `1.0.0`/`2.0.1` (точечно; сырой hex STM32 — в `oko-ec info`), обновляются после прошивки и переживают reboot |
 | Прошивка | STM32 через WebUI | `.bin` CBT6, версия из имени файла, worker, rollback | `/api/flash` (`target=stm32`), `/api/firmware`, `[flash]` | `flash.c`, `oko-flash`, `oko-ec flash` | **работает** — CLI `1.0.1` (`0x00010001`) → `Application started`; WebUI `/api/flash` `app-1.0.1.bin` (без поля version) → job `done`, `/api/firmware` `1.0.1`; rollback `app-1.0.0.bin` → `1.0.0`; `oko-ec info` `img_size=2324`, `flags=0`, battery/cells/temp; после reboot app 1.0.0; негативные 9/9; установленный MCU — CBT6, сборка `-DMCU=CBT6` |
 | OSD | NPU в строке CPU | `NPU NN%` в `/tmp/osd-sys.txt` | `oko-osd`, `reg4` | чтение `/proc/rknpu/load` | **работает** — `CPU 20% NPU 0%` без YOLO и `NPU 17%` с YOLO; literal `\n` в файле, три текст-полосы в кадре (`output/bench/osd-fix2/`); кадры в `output/bench/focus/osd-frame-*.png` |
-| WebUI/API | WebUI | Восемь разделов: Live, Image, Streams, Events, Storage, Network, OSD, System; статус-строка, EN/RU, тосты ошибок | `http://<DUT>/`, `project/app/divinus/source/doc/WEBUI_REORG.md` | переработанный `index.html` (dirty-state, POST-применение) | **работает (2026-11-05)** — headless Chromium: 8 разделов, EN/RU, Apply/dirty, 0 ошибок консоли, нет прокрутки на 390/1440 px |
-| WebUI/API | HTTP API | status, isp, time, night, streams, storage, network, recordings, telemetry, cmd + медиаэндпоинты | `/api/*`, `project/app/divinus/source/doc/endpoints.md` | сети/хранилище: mount, unmount, format, record, osd, import, web-auth | **работает (2026-11-05)** — `bench/api_check.py`: 84 проверки, 0 ошибок |
+| WebUI/API | WebUI | Восемь разделов: Live, Image, Streams, Events, Storage, Network, OSD, System; статус-строка, EN/RU, тосты ошибок | `http://<DUT>/`, `project/app/divinus/source/doc/WEBUI_REORG.md` | переработанный `index.html` (dirty-state, POST-применение) | **работает (2026-11-07)** — headless Chromium: 8 разделов, EN/RU, Apply/dirty, 0 ошибок консоли, нет прокрутки на 390/1440 px; сводка SD в «Система → Статус» совпала с `/api/status` (`14.8 GiB / 14.8 GiB`, сырые `15177/15171 MiB`), прогон с `OKO_FOCUS_AF_TESTS=1` тоже прошёл |
+| WebUI/API | HTTP API | status, isp, time, night, streams, storage, network, recordings, telemetry, cmd + медиаэндпоинты | `/api/*`, `project/app/divinus/source/doc/endpoints.md` | сети/хранилище: mount, unmount, format, record, osd, import, web-auth | **работает (2026-11-07)** — `bench/api_check.py`: 96 проверок, 0 ошибок, код возврата 0 |
 | WebUI/API | Аутентификация | WebUI и RTSP, смена фабричного пароля через `/api/web-auth` | `[web]`, `[rtsp]`, `web_auth_skiplocal=off` | включена в фабричном `divinus.yaml`; смена пароля пишется сразу | **работает (2026-11-05)** — без учётных данных 401, старый пароль после смены 401 |
 | WebUI/API | NTP | Клиент NTP: вкл/выкл и сервер, пустой сервер — системный `/etc/ntp.conf` | `/api/time?ntp=on&ntp_server=…`, `[system] ntp_*` | `ntp.c`, `S49ntp` | **работает (2026-11-05)** — `ntp=off` останавливает демон, сервер поднимает `ntpd -c /tmp/divinus-ntp.conf`, пустой — вендорский конфиг |
 | WebUI/API | Архив записей | Список, скачивание и удаление `.mp4`/`.jpg`; активный сегмент удалить нельзя | `/api/recordings`, `/file`, `/delete` | `record.c`, microSD | **работает (2026-11-05)** — удаление тестового файла, отказ для `..`, активного сегмента и несуществующего файла |
@@ -92,7 +92,7 @@ and partially verified capabilities are in `FEATURES_UNVERIFIED.md`; the
 platform passport, shared notes and verification commands are in `FEATURES.md`;
 evidence is in `VERIFIED_FUNCTIONS.md`.
 
-Status as of 2026-11-06.
+Status as of 2026-11-07.
 
 | Group | Feature | Control (API, YAML section) | What was added (OKO vs vendor V1.4) | Verified & works |
 |---|---|---|---|---|
@@ -119,8 +119,8 @@ Status as of 2026-11-06.
 | Firmware | STM32/STM8 versions: cache and System card | `/api/firmware`, `[flash]` | `firmware_status.c`, `oko-ec` daemon, STM8 role/version `0x08` | **works** — `1.0.0`/`2.0.1` as dotted values (raw STM32 hex remains in `oko-ec info`), refresh after flashing and survive reboot |
 | Firmware | STM32 through the WebUI | CBT6 `.bin`, version from the file name, worker, rollback | `/api/flash` (`target=stm32`), `/api/firmware`, `[flash]` | `flash.c`, `oko-flash`, `oko-ec flash` | **works** — CLI `1.0.1` (`0x00010001`) → `Application started`; WebUI `/api/flash` `app-1.0.1.bin` (no version field) → job `done`, `/api/firmware` `1.0.1`; rollback `app-1.0.0.bin` → `1.0.0`; `oko-ec info` `img_size=2324`, `flags=0`, battery/cells/temp; after reboot app 1.0.0; negative checks 9/9; the installed MCU is CBT6, build with `-DMCU=CBT6` |
 | OSD | NPU on the CPU line: `NPU NN%` in `/tmp/osd-sys.txt` | `oko-osd`, `reg4` | `/proc/rknpu/load` reader | **works** — `CPU 20% NPU 0%` without YOLO and `NPU 17%` with YOLO; literal `\n` in the file, three text bands in the frame (`output/bench/osd-fix2/`); frames in `output/bench/focus/osd-frame-*.png` |
-| WebUI/API | WebUI: eight sections, sticky status bar, EN/RU, error toasts | `http://<DUT>/`, `project/app/divinus/source/doc/WEBUI_REORG.md` | reworked `index.html` (dirty state, POST apply) | **works (2026-11-05)** — headless Chromium: 8 sections, EN/RU, Apply/dirty, 0 console errors, no overflow at 390/1440 px |
-| WebUI/API | HTTP API: status, isp, time, night, streams, storage, network, recordings, telemetry, cmd and media endpoints | `/api/*`, `project/app/divinus/source/doc/endpoints.md` | network/storage: mount, unmount, format, record, osd, import, web-auth | **works (2026-11-05)** — `bench/api_check.py`: 84 checks, 0 errors |
+| WebUI/API | WebUI: eight sections, sticky status bar, EN/RU, error toasts | `http://<DUT>/`, `project/app/divinus/source/doc/WEBUI_REORG.md` | reworked `index.html` (dirty state, POST apply) | **works (2026-11-07)** — headless Chromium: 8 sections, EN/RU, Apply/dirty, 0 console errors, no overflow at 390/1440 px; the SD summary in System → Status matched `/api/status` (`14.8 GiB / 14.8 GiB`, raw `15177/15171 MiB`) and the run with `OKO_FOCUS_AF_TESTS=1` passed too |
+| WebUI/API | HTTP API: status, isp, time, night, streams, storage, network, recordings, telemetry, cmd and media endpoints | `/api/*`, `project/app/divinus/source/doc/endpoints.md` | network/storage: mount, unmount, format, record, osd, import, web-auth | **works (2026-11-07)** — `bench/api_check.py`: 96 checks, 0 failures, exit code 0 |
 | WebUI/API | Authentication for WebUI and RTSP; factory password change via `/api/web-auth` | `[web]`, `[rtsp]`, `web_auth_skiplocal=off` | enabled in the factory `divinus.yaml`; the change is written immediately | **works (2026-11-05)** — 401 without credentials, old password returns 401 after change |
 | WebUI/API | NTP client: enable/disable and server; an empty server keeps `/etc/ntp.conf` | `/api/time?ntp=on&ntp_server=…`, `[system] ntp_*` | `ntp.c`, `S49ntp` | **works (2026-11-05)** — `ntp=off` stops the daemon, a server starts `ntpd -c /tmp/divinus-ntp.conf`, empty keeps the vendor config |
 | WebUI/API | Recording archive: list, download and delete `.mp4`/`.jpg`; the active segment is protected | `/api/recordings`, `/file`, `/delete` | `record.c`, microSD | **works (2026-11-05)** — test file deleted; `..`, the active segment and a missing file are refused |

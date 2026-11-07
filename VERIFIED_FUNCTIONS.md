@@ -42,8 +42,9 @@
 | microSD: mount/read, `/api/storage` | работает | `GET /api/storage` → `sd_mounted=true`, `device=/dev/mmcblk1p1`, `fs=vfat`, `total_mb=15177`; `/run/oko-sd.state` создан udev-правилом | Запись разрешена только ниже `/mnt/sdcard` |
 | WebUI: модели через браузер | работает | `bench/ui_check.py` с новым `oem`: список источников YOLO — только `vpss3`/`vi0`; файл `ui-test.rknn` загружается из карточки Models, активация показывает `rknn_init failed (-1): the model was probably built by an incompatible rknn-toolkit2`, удаление убирает строку; скриншоты в `output/bench/ui/` | Chromium требует `libasound.so.2`; без root он распаковывается из `apt-get download libasound2t64` |
 | WebUI: разделы и API | работает | `GET /` → HTTP 200 (`<title>Divinus</title>`); `/api/status`, `/api/streams`, `/api/record`, `/api/storage` отвечают | Аутентификация — по настройкам `web_*` |
-| WebUI 2026-11-05: 8 разделов, EN/RU, dirty-state | работает | `bench/ui_check.py`: все восемь разделов открываются, `#isp_mirror` включает `Apply` и точку в меню, после применения кнопка снова выключена, переключение на RU даёт «Видео», 9 плиток телеметрии, 10 OSD-регионов, нет горизонтальной прокрутки на 1440 и 390 px, нет ошибок консоли | Playwright + Chromium; установка браузера — см. `bench/README.md` |
-| API-матрица 2026-11-05 | работает | `bench/api_check.py`: 80 проверок — 34 GET, 30 POST no-op, export/log, три 404 на статику, HTTP 400 для `yolo.source=vi1` и `bogus`, отказы delete (`..`, `x.txt`, пусто) и NTP (`bad..host`); 0 ошибок | Нужны учётные данные стенда |
+| WebUI 2026-11-07: 8 разделов, EN/RU, dirty-state | работает | `bench/ui_check.py`: все восемь разделов открываются, `#isp_mirror` включает `Apply` и точку в меню, после применения кнопка снова выключена, переключение на RU даёт «Видео», 9 плиток телеметрии, 10 OSD-регионов, нет горизонтальной прокрутки на 1440 и 390 px, нет ошибок консоли; `UI check passed`, код 0; прогон с `OKO_FOCUS_AF_TESTS=1` тоже `UI check passed`, код 0 | Playwright + Chromium; установка браузера — см. `bench/README.md` |
+| WebUI: сводка SD в «Система → Статус» | работает | 2026-11-07: `bench/ui_check.py` напечатал `SD summary: 14.8 GiB / 14.8 GiB (raw 15177/15171 MiB)`, тексты `#status_sd_total_mb`/`#status_sd_free_mb` совпали с `window.lastStatus` через `fmtMiB`, формат `GiB`, `free ≤ total`; `UI check passed`, код 0; повтор с `OKO_FOCUS_AF_TESTS=1` — тоже `UI check passed` | Наличие карты не требуется: при `sd_total_mb=0` ожидается прочерк; подпись `MB` в карточке «Накопитель» не менялась |
+| API-матрица 2026-11-07 | работает | `bench/api_check.py`: 96 проверок — 40 GET, 33 POST no-op, export/log, три 404 на статику, HTTP 400 для `yolo.source=vi1`/`bogus` и негативных параметров фокуса, отказы delete (`..`, `x.txt`, пусто), отказы NTP (`bad..host`) и VPN; 0 ошибок, код 0 | Нужны учётные данные стенда |
 | NTP через API | работает | `POST /api/time` с `ntp=off` останавливает `ntpd`; `ntp=on&ntp_server=pool.ntp.org` запускает `ntpd -g -c /tmp/divinus-ntp.conf -p /tmp/divinus-ntpd.pid`; пустой `ntp_server` возвращает вендорский `/usr/sbin/ntpd -g -p /var/run/ntpd.pid`; `bad..host` → `{"error":"blocked"}` | Не сохраняется без `/api/cmd?save` |
 | NTP после перезагрузки | работает | Три reboot с сохранённым конфигом: `ntp_enable=false` → `pidof ntpd` пуст и `ntp_running=false`; `ntp_enable=true` + пустой сервер → `ntpd -g -p /var/run/ntpd.pid`; `ntp_server=pool.ntp.org` → `ntpd -g -c /tmp/divinus-ntp.conf -p /tmp/divinus-ntpd.pid`, файл содержит `server pool.ntp.org iburst` | Применяется через 10 с после старта (после `S49ntp`); `/api/time` и `date +%s` совпадают после `ts=` |
 | Смена пароля спецсимволами | работает | Пароль `P@ss w=rd%1` (пробел, `=`, `%`, `@`): `POST /api/web-auth` → `ok`, старый 401, новый 200, в YAML `web_auth_pass: P@ss w=rd%1`; возврат к `oko-change-me` → 200 | Проверяет порядок `url_decode` после `split` |
@@ -160,10 +161,10 @@ curl -s -u admin:oko-change-me http://<DUT_IP>/api/firmware
 cat /tmp/osd-sys.txt; cat /proc/rknpu/load
 ```
 
-### WebUI и API-матрица (2026-11-05)
+### WebUI и API-матрица (2026-11-07)
 
 ```sh
-# 80 проверок: GET, POST no-op, вложения, негативные случаи
+# 96 проверок: GET, POST no-op, вложения, негативные случаи
 bench/run.sh api_check.py
 
 # WebUI в headless Chromium: разделы, EN/RU, Apply/dirty, мобильная раскладка

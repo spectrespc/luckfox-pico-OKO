@@ -43,7 +43,7 @@ bench/run.sh osd_check.py --ip 192.168.52.97 --seconds 17
 # свои регионы (имя:x0,y0,x1,y1;...)
 bench/run.sh osd_check.py --regions 'telemetry:0,16,760,160;gps:1500,16,1920,64'
 
-# API: 80+ проверок, код возврата 1 при ошибке
+# API: 96 проверок, код возврата 1 при ошибке
 bench/run.sh api_check.py
 # движение моторов и реальный автофокус — только по явному разрешению:
 # OKO_FOCUS_MOTOR_TESTS=1 (home/zero, шаги, скорости)
