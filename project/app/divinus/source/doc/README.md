@@ -33,7 +33,7 @@ sanitised at start (HDR falls back, `osd.scope=all` is forced to `main`).
 
 | Gate | Check | Result | Evidence |
 |---|---|---|---|
-| G1 | `RK_MPI_VPSS_SetChnCrop` changes the encoded picture | **pass** | 2x crop changed the decoded frame (mean per-channel difference 43/255) while the SDP stayed 1920x1080 |
+| G1 | `RK_MPI_VPSS_SetChnCrop` changes the encoded picture | **pass (before EnableChn)** | 2x crop set before the channel start changed the decoded frame (mean\|diff\| 4.25 to the expected centre, 52.83 to the uncropped frame) while the SPS stayed 1920x1080; a call on an enabled channel returns 0 with no effect (KI-044, `output/bench/geometry/zoom-*`) |
 | G2 | rotation changes the encoded picture | **pass via VENC** | `RK_MPI_VPSS_SetChnRotation` returned success but left the frame unchanged; `RK_MPI_VENC_SetChnRotation` produced 1080x1920 and new SPS. The HAL now prefers VENC and falls back to VPSS |
 | G3 | SVC / motion deblur / QP / SmartP | **pass** | symbols present in `librockit.so`; SVC, deblur and QP applied live to a running channel without dropping the stream. SmartP is a channel attribute and is applied at the next start |
 | G4 | one region attached to VENC0 and JPEG | **not passed** | the vendor note says RV1106 RGN does not attach to a second channel; the code path exists (`rk_region_create2`) but `HAL_CAP_OSD_MULTI` is never set, so `osd.scope=all` is refused |

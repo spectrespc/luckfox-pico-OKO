@@ -26,6 +26,35 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Добавлено
 
+- **Наблюдаемость ePTZ и геометрия оверлеев (OKO).** `rk_vpss_set_chn_crop`
+  возвращает числовой код MPP, печатает его один раз и сохраняется в
+  `media.c` под мьютексом (`media_eptz_last`); `/api/eptz` отдаёт фактические
+  `applied`, `rc`, `chn` и `crop` и `note` при отказе. Кроп и поворот
+  применяются в `rk_channel_bind()` до `EnableChn` — при каждом старте
+  канала, а не на включённом канале (RV1106 игнорирует такой вызов). Новый модуль
+  `analytics/nn_geom.c` (хост-тест `tests/nn_geom_test.c`) пересчитывает
+  координаты детекций с учётом кропа и поворота 0/90/180/270; рамки
+  выравниваются по 4 px вместо сетки 16 px. Текстовый OSD переякоривается при
+  90/270 (`nn_map_anchor` в `rk_region_create2`), сохраняя угол и отступ.
+  Новый `bench/geometry_check.py` (`--what zoom|boxes|osd`) и opt-in
+  `OKO_GEOMETRY_TESTS=1`; в предпросмотре WebUI — бейдж `#preview-mode`
+  («MP4 · main», «MJPEG · отдельный канал», «стоп-кадр · JPEG»,
+  «остановлено») и подсказка, что зум/поворот применяются к выбранному потоку.
+- **ePTZ observability and overlay geometry (OKO).**
+  `rk_vpss_set_chn_crop` returns the numeric MPP code, logs it once and stores
+  it in `media.c` under a mutex (`media_eptz_last`); `/api/eptz` now reports
+  the actual `applied`, `rc`, `chn` and `crop` plus a `note` on failure. The
+  crop and the rotation are applied in `rk_channel_bind()` before `EnableChn` —
+  on every channel start, not on an enabled channel (the RV1106 ignores such a
+  call). The new
+  `analytics/nn_geom.c` module (host test `tests/nn_geom_test.c`) maps
+  detection coordinates through the crop and the 0/90/180/270 rotation; boxes
+  are aligned to 4 px instead of the 16 px grid. OSD text is re-anchored at
+  90/270 (`nn_map_anchor` in `rk_region_create2`) and keeps its corner and
+  margin. New `bench/geometry_check.py` (`--what zoom|boxes|osd`) and the
+  opt-in `OKO_GEOMETRY_TESTS=1`; the WebUI preview gained the `#preview-mode`
+  badge ("MP4 · main", "MJPEG · separate channel", "still · JPEG", "stopped")
+  and a note that zoom/rotation apply to the selected stream.
 - **Автофокус по AF-метрике (OKO).** Новый модуль `focus_af.c` выполняет
   поиск фокуса по статистике `metric_avg` (вариант B из `TO_DO.md` §5):
   зонд направления половинным шагом, coarse-проход с остановкой после
@@ -242,6 +271,53 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Исправлено
 
+- **ePTZ: кроп/поворот при старте канала и геометрия оверлеев (OKO).**
+  Кроп и поворот теперь применяются в `rk_channel_bind()` до `EnableChn`
+  (через `rk_apply_stream_settings`), поэтому каждый старт канала получает
+  сохранённые настройки, а не теряет их молча. Смена на включённом канале
+  только сохраняется: `SetChnCrop` там возвращает `0` без эффекта, обвязка
+  Disable/Enable и unbind/bind останавливает RTSP, поэтому `/api/eptz` отдаёт
+  `applied:false` и `note`, а значение вступает в силу при следующем старте
+  канала (KI-044, замеры 2026-11-07). NN-рамки поворачиваются вместе с
+  картинкой: координаты детекций проходят через кроп и поворот
+  (`nn_geom.c`), а не только масштабируются по неповёрнутому кадру.
+  Систематический сдвиг рамки до 15 px вверх/влево от квантования на сетку
+  16 px убран (выравнивание 4 px). Текстовый OSD при 90/270 переезжает к тому
+  же углу кадра, а не остаётся за пределами portrait-картинки.
+- **ePTZ: crop/rotation at channel start and overlay geometry (OKO).** The
+  crop and rotation are now applied in `rk_channel_bind()` before `EnableChn`
+  (via `rk_apply_stream_settings`), so every channel start receives the stored
+  settings instead of silently dropping them. A change on an enabled channel
+  is only stored: `SetChnCrop` returns `0` without an effect there, and
+  Disable/Enable or unbind/bind stalls RTSP, so `/api/eptz` reports
+  `applied:false` plus a `note` and the value takes effect on the next channel
+  start (KI-044, 2026-11-07 measurements). NN boxes rotate with the picture:
+  detection coordinates go through the crop and the rotation (`nn_geom.c`)
+  instead of being scaled on the unrotated frame only. The systematic
+  up-to-15-px up/left shift from the 16-px grid quantization is gone (4-px
+  alignment). At 90/270 the OSD text moves to the same picture corner instead
+  of staying outside the portrait picture.
+- **Документация: ePTZ понижен до «ограничено», версии STM8 — 2.1.1 (OKO).**
+  Строка ePTZ убрана из `FEATURES_VERIFIED.md` и добавлена в
+  `FEATURES_UNVERIFIED.md` как **ограничено**: API принимает кроп и отдаёт
+  запрошенные `x/y/w/h`, но влияние на main в сборке 2026-11-07 не замерялось;
+  заведена KI-044 (кроп не наблюдается, HAL теряет код возврата MPP, кроп
+  сбрасывается при рестарте канала). `VERIFIED_FUNCTIONS.md` помечает ePTZ как
+  «ограничено» с честным доказательством (echo-проверка 2026-11-05). Версии
+  STM8 в `FEATURES_VERIFIED.md` / `VERIFIED_FUNCTIONS.md` обновлены с
+  2.0.1/2.0.2 до 2.1.1 (релиз `7969e922f`), перекрёстная ссылка на
+  «непроверенные» `home`/`zero` убрана — они покрыты `api_check.py`.
+- **Docs: ePTZ lowered to "limited", STM8 versions to 2.1.1 (OKO).** The ePTZ
+  row is removed from `FEATURES_VERIFIED.md` and added to
+  `FEATURES_UNVERIFIED.md` as **limited**: the API accepts the crop and returns
+  the requested `x/y/w/h`, but its effect on main was not measured on the
+  2026-11-07 build; KI-044 records that the crop is not observable, the HAL
+  drops the MPP return code and a channel restart resets the crop.
+  `VERIFIED_FUNCTIONS.md` marks ePTZ as "limited" with the honest evidence (a
+  2026-11-05 echo check). STM8 versions in `FEATURES_VERIFIED.md` /
+  `VERIFIED_FUNCTIONS.md` are updated from 2.0.1/2.0.2 to 2.1.1 (release
+  `7969e922f`), and the cross-reference to "unverified" `home`/`zero` is gone
+  because `api_check.py` covers them.
 - **WebUI: опрос больше не сбрасывает «Включить» в «Помощи фокусировке» (OKO).**
   Поля `#focus_enable`/`#focus_mode`/`#focus_fps` подключены к общей модели
   `groups`/`snapshots` (`data-group="focus"`), кнопка «Применить» помечена

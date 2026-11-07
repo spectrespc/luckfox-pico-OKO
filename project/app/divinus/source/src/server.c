@@ -2418,16 +2418,45 @@ void respond_request(http_request_t *req) {
                 HAL_WARNING("server", "ePTZ could not be applied\n");
         }
 
-        respLen = sprintf(response,
-            "HTTP/1.1 200 OK\r\n"
-            "Content-Type: application/json;charset=UTF-8\r\n"
-            "Connection: close\r\n"
-            "\r\n"
-            "{\"enable\":%s,\"stream\":\"%s\",\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d}",
-            app_config.eptz_enable ? "true" : "false",
-            app_config.eptz_stream ? "sub" : "main",
-            app_config.eptz_x, app_config.eptz_y,
-            app_config.eptz_w, app_config.eptz_h);
+        {
+            /* The requested rectangle is not proof that the VPSS accepted the
+             * crop: report the stored channel, rectangle and MPP return code
+             * so that "applied" can be distinguished from "refused". */
+            int echn, ex, ey, ew, eh, erc, epending;
+            char enote[200] = "";
+
+            media_eptz_last(&echn, &ex, &ey, &ew, &eh, &erc);
+            epending = media_eptz_pending();
+            if (echn < 0) {
+                erc = 0;
+                ex = ey = ew = eh = 0;
+                snprintf(enote, sizeof(enote),
+                    ",\"note\":\"no channel has been cropped yet\"");
+            } else if (erc) {
+                snprintf(enote, sizeof(enote),
+                    ",\"note\":\"SetChnCrop failed, rc 0x%x\"",
+                    (unsigned)erc);
+            } else if (epending) {
+                snprintf(enote, sizeof(enote),
+                    ",\"note\":\"the RV1106 applies a crop before the channel "
+                    "starts; restart the stream to make the change visible\"");
+            }
+
+            respLen = sprintf(response,
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: application/json;charset=UTF-8\r\n"
+                "Connection: close\r\n"
+                "\r\n"
+                "{\"enable\":%s,\"stream\":\"%s\",\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d,"
+                "\"applied\":%s,\"rc\":\"0x%x\",\"chn\":%d,"
+                "\"crop\":[%d,%d,%d,%d]%s}",
+                app_config.eptz_enable ? "true" : "false",
+                app_config.eptz_stream ? "sub" : "main",
+                app_config.eptz_x, app_config.eptz_y,
+                app_config.eptz_w, app_config.eptz_h,
+                (echn >= 0 && !erc && !epending) ? "true" : "false",
+                (unsigned)erc, echn, ex, ey, ew, eh, enote);
+        }
         send_and_close(req->clntFd, response, respLen);
         return;
     }

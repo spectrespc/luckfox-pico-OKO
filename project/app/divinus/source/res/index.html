@@ -285,7 +285,8 @@
 		<h2 data-i18n="live">Live</h2>
 		<div class="grid live-grid">
 			<div class="card wide" id="preview-card">
-				<h3><span data-i18n="preview">Preview</span></h3>
+				<h3><span data-i18n="preview">Preview</span>
+					<span class="badge-state off" id="preview-mode">–</span></h3>
 				<div id="preview"><p data-i18n="preview_idle">The preview starts automatically. If the picture stays black, the stream is H.265: use MJPEG or a snapshot.</p><div class="focus-box" id="focus-box"></div></div>
 				<div class="actions">
 					<button type="button" class="btn primary" onclick="setSource('mp4')">MP4</button>
@@ -411,6 +412,7 @@
 				<div class="actions">
 					<button type="button" class="btn primary" data-apply="rotate" data-ep="rotate" disabled data-i18n="apply_rotation">Apply rotation</button>
 				</div>
+				<p class="note" data-i18n="geometry_note">Zoom and rotation apply to the selected stream; the preview badge shows which channel is on screen, so the crop may not be visible there.</p>
 			</div>
 
 			<div class="card">
@@ -1086,6 +1088,10 @@ var I18N = {
 		preview: "Preview", preview_idle: "The preview starts automatically. If the picture stays black, the stream is H.265: use MJPEG or a snapshot.",
 		preview_note: "The preview starts by itself; MP4 may be H.265, so a browser without HEVC falls back to MJPEG or a snapshot.",
 		preview_fallback: "Preview: MJPEG/snapshot",
+		preview_mode_mp4: "MP4 · main",
+		preview_mode_mjpeg: "MJPEG · separate channel",
+		preview_mode_snapshot: "still · JPEG",
+		preview_mode_stopped: "stopped",
 		roi_need_stream: "Start a stream (MP4 or MJPEG) to select the focus area.",
 		stop: "Stop", snapshot: "Snapshot",
 		recording: "Recording", state: "State", started_at: "Started at",
@@ -1096,6 +1102,7 @@ var I18N = {
 		crop: "Crop X / Y / W / H", apply_zoom: "Apply zoom", reset: "Reset",
 		rotation: "Rotation", rotate_stream: "Rotate stream", angle: "Angle",
 		apply_rotation: "Apply rotation",
+		geometry_note: "Zoom and rotation apply to the selected stream; the preview badge shows which channel is on screen, so the crop may not be visible there.",
 		events_journal: "Event log", no_events: "No motion events yet.",
 		telemetry: "Telemetry",
 		telemetry_note: "Values come from the oko-ec daemon (/tmp/oko-ec.json) and refresh every two seconds.",
@@ -1269,6 +1276,10 @@ var I18N = {
 		preview: "Предпросмотр", preview_idle: "Предпросмотр включается автоматически. Если картинка чёрная, поток в H.265: используйте MJPEG или снимок.",
 		preview_note: "Предпросмотр запускается сам; MP4 может быть в H.265, поэтому браузер без HEVC переключается на MJPEG или снимок.",
 		preview_fallback: "Предпросмотр: MJPEG/снимок",
+		preview_mode_mp4: "MP4 · main",
+		preview_mode_mjpeg: "MJPEG · отдельный канал",
+		preview_mode_snapshot: "стоп-кадр · JPEG",
+		preview_mode_stopped: "остановлено",
 		roi_need_stream: "Включите поток (MP4 или MJPEG), чтобы выбрать зону фокуса.",
 		stop: "Стоп", snapshot: "Снимок",
 		recording: "Запись", state: "Состояние", started_at: "Начало",
@@ -1279,6 +1290,7 @@ var I18N = {
 		crop: "Обрезка X / Y / W / H", apply_zoom: "Применить зум", reset: "Сброс",
 		rotation: "Поворот", rotate_stream: "Поток поворота", angle: "Угол",
 		apply_rotation: "Применить поворот",
+		geometry_note: "Зум и поворот применяются к выбранному потоку; бейдж предпросмотра показывает, какой канал на экране, поэтому эффект может быть не виден.",
 		events_journal: "Журнал событий", no_events: "Событий движения пока нет.",
 		telemetry: "Телеметрия",
 		telemetry_note: "Значения берутся из демона oko-ec (/tmp/oko-ec.json) и обновляются каждые две секунды.",
@@ -1455,6 +1467,7 @@ function applyLang() {
 	if (en) en.className = lang === 'en' ? 'on' : '';
 	if (ru) ru.className = lang === 'ru' ? 'on' : '';
 	if (typeof focusSelectionUpdate === 'function') focusSelectionUpdate();
+	if (typeof previewMode === 'function' && previewModeKey) previewMode(previewModeKey);
 	if (focusState) {
 		var afNote = $('af-state');
 		if (afNote) afNote.textContent = focusAfText(focusState.af);
@@ -1709,6 +1722,15 @@ var lastRecord = null, lastStatus = null, lastTelemetry = null;
    starts it, leaving it releases the chunked connection and the decoder. */
 var previewToken = 0, previewTimer = null;
 var previewCfg = { mp4: null, mjpeg: null };
+var previewModeKey = 'preview_mode_stopped';
+
+/* The badge tells which channel the picture actually comes from: ePTZ and the
+   rotation apply to a configured stream, the preview may show another one. */
+function previewMode(key) {
+	previewModeKey = key;
+	var el = $('preview-mode');
+	if (el) el.textContent = t(key);
+}
 
 function previewEnabled(name) {
 	if (previewCfg[name] !== null) return previewCfg[name];
@@ -1744,15 +1766,18 @@ function previewStop() {
 	var box = $('focus-box');
 	if (box) box.style.display = 'none';
 	previewSet('<p>' + t('preview_idle') + '</p>');
+	previewMode('preview_mode_stopped');
 }
 
 function previewSnapshot(token) {
 	if (token !== previewToken) return;
 	var img = previewSet('<img alt="frame" src="/image.jpg?t=' + Date.now() + '">');
+	previewMode('preview_mode_snapshot');
 	if (!img) return;
 	img.addEventListener('error', function () {
 		if (token !== previewToken) return;
 		previewSet('<p>' + t('preview_idle') + '</p>');
+		previewMode('preview_mode_stopped');
 	});
 }
 
@@ -1761,6 +1786,7 @@ function previewMjpeg(token, fallback) {
 	if (fallback) toast('info', t('preview_fallback'));
 	if (!previewEnabled('mjpeg')) { previewSnapshot(token); return; }
 	var img = previewSet('<img alt="MJPEG" src="/mjpeg?' + Date.now() + '">');
+	previewMode('preview_mode_mjpeg');
 	if (!img) return;
 	var done = false;
 	var fail = function () {
@@ -1781,11 +1807,13 @@ function setSource(kind, auto) {
 	if (kind === 'mp4') {
 		if (!previewEnabled('mp4')) {
 			previewSet('<p>' + t('mp4') + ' — ' + t('off') + '</p>');
+			previewMode('preview_mode_stopped');
 			toast('info', t('mp4'), t('enabled') + ': OFF');
 			if (auto) previewMjpeg(token, true);
 			return;
 		}
 		var video = previewSet('<video autoplay muted playsinline src="/video.mp4"></video>');
+		previewMode('preview_mode_mp4');
 		if (!video) return;
 		var ok = false;
 		var fail = function () {
@@ -1806,6 +1834,7 @@ function setSource(kind, auto) {
 	if (!previewEnabled('mjpeg')) {
 		if (auto) { previewSnapshot(token); return; }
 		previewSet('<p>' + t('mjpeg') + ' — ' + t('off') + '</p>');
+		previewMode('preview_mode_stopped');
 		toast('info', t('mjpeg'), t('enabled') + ': OFF');
 		return;
 	}

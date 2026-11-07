@@ -40,6 +40,8 @@ int channel_by_role(int role);
 int media_substream_enable(void);
 int media_substream_disable(void);
 int media_apply_eptz(void);
+void media_eptz_last(int *chn, int *x, int *y, int *w, int *h, int *rc);
+int media_eptz_pending(void);
 int media_apply_rotation(void);
 int media_apply_aiisp(void);
 int media_apply_iq(const char *main, const char *sub, const char *file);

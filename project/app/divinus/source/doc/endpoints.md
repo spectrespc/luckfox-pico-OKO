@@ -479,6 +479,34 @@ Digital zoom (VPSS crop).
 
 Blocked with `reason` when the HAL has no `RK_MPI_VPSS_SetChnCrop`.
 
+The response always contains the requested `x`/`y`/`w`/`h` and, in addition,
+the result of the last HAL call:
+
+| Field | Meaning |
+|-------|---------|
+| `applied` | `true` when the stored MPP return code is `0` and a channel has been cropped |
+| `rc` | MPP `SetChnCrop` return code as a hex string (`0x0` = accepted) |
+| `chn` | VENC/VPSS channel index (`-1` before the first call) |
+| `crop` | Rectangle actually passed to the HAL after clamping `[x,y,w,h]` |
+| `note` | Present when nothing was applied yet or the HAL refused the crop |
+
+Coordinates are pixels of the channel input: the VPSS group and VI are created
+with the main stream size, and the crop is scaled back to the channel size, so
+the encoded picture (and the OSD/NN overlay) keeps its dimensions.
+
+The RV1106 applies the crop only before the channel is enabled.  A request on a
+running channel is stored, but the response then carries `applied:false` and a
+`note`; the crop becomes visible after the channel starts again (for the main
+stream: Streams → MP4 apply, or an application restart).  `SetChnCrop` on an
+enabled channel returns `0` without an effect, and wrapping it in
+Disable/Enable or unbind/bind stalls the RTSP stream, so it is not attempted
+(KI-044).
+
+With `osd.scope=main` (factory default) the OSD and NN overlays are attached to
+the main VENC channel only, so they are absent from `/mjpeg` and `/image.jpg`;
+the Live preview may show those channels, where a main-stream crop has no
+effect.
+
 #### `/api/rotate`
 
 | Method | Parameters | Description |
@@ -488,7 +516,10 @@ Blocked with `reason` when the HAL has no `RK_MPI_VPSS_SetChnCrop`.
 | GET | `angle` | `0`, `90`, `180`, `270` |
 
 Rotation is applied with `RK_MPI_VENC_SetChnRotation`; the encoded SPS
-dimensions change accordingly.
+dimensions change accordingly.  Like the ePTZ crop, the rotation is re-applied
+after a channel restart.  The NN overlay swaps its canvas for 90/270 and maps
+detection coordinates through the crop and the rotation; OSD text keeps the
+same corner and margin in the rotated picture.
 
 #### `/api/venc`
 

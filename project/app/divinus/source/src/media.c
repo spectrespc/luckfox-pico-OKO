@@ -1,6 +1,8 @@
 #include "media.h"
 #include "gating.h"
 
+#include <time.h>
+
 char audioOn = 0, udpOn = 0;
 pthread_mutex_t aencMtx, chnMtx, mp4Mtx;
 pthread_t aencPid = 0, audPid = 0, ispPid = 0, vidPid = 0;
@@ -16,6 +18,7 @@ short pcmSrc[SHINE_MAX_SAMPLES];
  * waiting on the encode.  Newest frames are dropped when it is full. */
 static struct ringbuf audRing;
 static unsigned int audDrops;
+static void media_eptz_mark_applied(char bound);
 
 int save_audio_stream(hal_audframe *frame) {
 #ifdef DEBUG_AUDIO
@@ -870,6 +873,7 @@ int media_mp4_enable(void) {
     if (plat == HAL_PLATFORM_RK && rtspHandle)
         rtsp_set_stream_channel(rtspHandle, 0, index);
 #endif
+    media_eptz_mark_applied(index);
     return EXIT_SUCCESS;
 }
 
@@ -976,6 +980,7 @@ int media_substream_enable(void) {
     HAL_INFO("media", "Sub stream channel %d at %dx%d@%d\n",
         index, app_config.substream_width, app_config.substream_height,
         app_config.substream_fps);
+    media_eptz_mark_applied(index);
     return EXIT_SUCCESS;
 }
 
@@ -998,9 +1003,38 @@ int media_substream_disable(void) {
     return EXIT_SUCCESS;
 }
 
+static pthread_mutex_t eptzStateMutex = PTHREAD_MUTEX_INITIALIZER;
+static int eptzLastChn = -1;
+static int eptzLastX, eptzLastY, eptzLastW, eptzLastH;
+static int eptzLastRc;
+static int eptzPending;
+static int mediaStarting;
+
+/* Records the stored crop as applied by rk_channel_bind() on a channel start.
+ * Called after a successful bind of the channel the crop belongs to. */
+static void media_eptz_mark_applied(char bound) {
+    int index = channel_by_role(app_config.eptz_stream ? HAL_CHNROLE_SUB : HAL_CHNROLE_MAIN);
+
+    if (index < 0 || index != bound || !app_config.eptz_enable) return;
+
+    pthread_mutex_lock(&eptzStateMutex);
+    eptzLastChn = index;
+    eptzLastX = app_config.eptz_x;
+    eptzLastY = app_config.eptz_y;
+    eptzLastW = app_config.eptz_w;
+    eptzLastH = app_config.eptz_h;
+    eptzLastRc = 0;
+    eptzPending = 0;
+    pthread_mutex_unlock(&eptzStateMutex);
+}
+
+/* The RV1106 applies a crop/rotation only before EnableChn.  A call on an
+ * enabled channel returns 0 but has no visible effect and poisons the next
+ * channel restart, while Disable/Enable or unbind/bind around the call stalls
+ * the RTSP stream.  A runtime change is therefore only stored; the next
+ * channel start applies it in rk_channel_bind(). */
 int media_apply_eptz(void) {
     int index = -1;
-    hal_crop crop;
     hal_rect rect;
 
     index = channel_by_role(app_config.eptz_stream ? HAL_CHNROLE_SUB : HAL_CHNROLE_MAIN);
@@ -1010,16 +1044,45 @@ int media_apply_eptz(void) {
     rect.y = app_config.eptz_y;
     rect.width = app_config.eptz_w;
     rect.height = app_config.eptz_h;
-    crop.enable = app_config.eptz_enable ? 1 : 0;
-    crop.rect = rect;
 
-    switch (plat) {
-#if defined(__ARM_PCS_VFP)
-        case HAL_PLATFORM_RK: return rk_vpss_set_chn_crop(index, &crop);
-#endif
-    }
-    return EXIT_FAILURE;
+    pthread_mutex_lock(&eptzStateMutex);
+    eptzLastChn = index;
+    eptzLastX = rect.x;
+    eptzLastY = rect.y;
+    eptzLastW = rect.width;
+    eptzLastH = rect.height;
+    eptzLastRc = 0;
+    /* At startup the bind hook has already applied the stored crop; a runtime
+     * change is pending until the channel is started again. */
+    eptzPending = !mediaStarting;
+    pthread_mutex_unlock(&eptzStateMutex);
+
+    return EXIT_SUCCESS;
 }
+
+int media_eptz_pending(void) {
+    int pending;
+
+    pthread_mutex_lock(&eptzStateMutex);
+    pending = eptzPending;
+    pthread_mutex_unlock(&eptzStateMutex);
+    return pending;
+}
+
+void media_eptz_last(int *chn, int *x, int *y, int *w, int *h, int *rc) {
+    pthread_mutex_lock(&eptzStateMutex);
+    if (chn) *chn = eptzLastChn;
+    if (x) *x = eptzLastX;
+    if (y) *y = eptzLastY;
+    if (w) *w = eptzLastW;
+    if (h) *h = eptzLastH;
+    if (rc) *rc = eptzLastRc;
+    pthread_mutex_unlock(&eptzStateMutex);
+}
+
+/* A channel restart (MP4/sub/MJPEG enable) recreates the VPSS/VENC channel.
+ * rk_channel_bind() re-applies the stored crop and rotation before EnableChn,
+ * because the RV1106 ignores both calls on an already enabled channel. */
 
 int media_apply_rotation(void) {
     int index = -1;
@@ -1035,18 +1098,12 @@ int media_apply_rotation(void) {
         default: rotation = HAL_ROTATE_NONE; break;
     }
 
-    switch (plat) {
-#if defined(__ARM_PCS_VFP)
-        case HAL_PLATFORM_RK:
-            /* The RV1106 VPSS accepts SetChnRotation but does not change the
-             * encoded picture; the VENC rotation does.  Fall back to VPSS only
-             * when the encoder API is missing. */
-            if (rk_video_set_rotation(index, rotation) == EXIT_SUCCESS)
-                return EXIT_SUCCESS;
-            return rk_vpss_set_chn_rotation(index, rotation);
-#endif
-    }
-    return EXIT_FAILURE;
+    /* The rotation is applied by rk_channel_bind() before EnableChn, for the
+     * same reason as the crop: a runtime call has no effect (and can poison
+     * the next restart), so a change is only stored here. */
+    (void)index;
+    (void)rotation;
+    return EXIT_SUCCESS;
 }
 
 int media_apply_venc_extras(void) {
@@ -1117,6 +1174,8 @@ int media_apply_iq(const char *main, const char *sub, const char *file) {
 
 int sdk_start(void) {
     int ret;
+
+    mediaStarting = 1;
 
     switch (plat) {
 #if defined(__ARM_PCS_VFP)
@@ -1339,14 +1398,16 @@ int sdk_start(void) {
             app_config.aiisp_enable = HAL_AIISP_OFF;
         }
     }
-    if (app_config.eptz_enable && media_apply_eptz())
-        HAL_WARNING("media", "ePTZ could not be applied\n");
-    if (app_config.rotate_enable && media_apply_rotation())
-        HAL_WARNING("media", "Rotation could not be applied\n");
     if ((*app_config.iq_main_scene || *app_config.iq_file) &&
         media_apply_iq(app_config.iq_main_scene, app_config.iq_sub_scene,
             app_config.iq_file))
         HAL_WARNING("media", "IQ switch could not be applied\n");
+
+    /* Record the crop/rotation that rk_channel_bind() applied for /api/eptz
+     * without restarting a channel that has just been started. */
+    if (app_config.eptz_enable) media_apply_eptz();
+    if (app_config.rotate_enable) media_apply_rotation();
+    mediaStarting = 0;
 
 #if defined(__arm__) && !defined(__ARM_PCS_VFP)
     if (plat == HAL_PLATFORM_AK)

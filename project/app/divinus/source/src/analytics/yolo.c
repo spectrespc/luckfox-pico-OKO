@@ -15,6 +15,7 @@
 
 #include "yolo.h"
 #include "yolo_postprocess.h"
+#include "nn_geom.h"
 
 #include <errno.h>
 #include <pthread.h>
@@ -622,8 +623,8 @@ converted:
  *
  * Port of the vendor rkipc NN overlay (rv1106_ipc/video/video.c): a 2BPP
  * region with two palette entries, repainted through the region canvas after
- * every inference.  The drawing is aligned to the 16-pixel overlay grid,
- * which is also a hard requirement of the region position/size.
+ * every inference.  Positions and widths are aligned to 4 pixels (the 2BPP
+ * line granularity), not to the 16-pixel canvas alignment.
  * ---------------------------------------------------------------------- */
 
 static const unsigned char rgn_lut_0_left[4] = {0x03, 0x0f, 0x3f, 0xff};
@@ -698,6 +699,26 @@ static void yolo_boxes_geometry(int *width, int *height)
     *height = h;
 }
 
+/* Detection coordinates are normalized over the uncropped, unrotated source
+ * frame.  The canvas shows the ePTZ crop (scaled back to the channel size) and
+ * is rotated by VENC, so the mapping has to undo both transformations. */
+static void yolo_boxes_mapping(nn_geom *g)
+{
+    memset(g, 0, sizeof(*g));
+    g->src_w = app_config.mp4_width ? (int)app_config.mp4_width : 1920;
+    g->src_h = app_config.mp4_height ? (int)app_config.mp4_height : 1080;
+
+    if (app_config.eptz_enable && !app_config.eptz_stream) {
+        g->crop_enable = 1;
+        g->cx = app_config.eptz_x;
+        g->cy = app_config.eptz_y;
+        g->cw = app_config.eptz_w;
+        g->ch = app_config.eptz_h;
+    }
+    if (app_config.rotate_enable && !app_config.rotate_stream)
+        g->angle = app_config.rotate_angle;
+}
+
 static void yolo_boxes_sync(void)
 {
     int width, height;
@@ -746,6 +767,7 @@ static void yolo_boxes_render(const yolo_result *result)
 {
     void *addr;
     unsigned int stride, canvasW, canvasH;
+    nn_geom geom;
     static int commitWarned;
 
     if (!boxesReady) return;
@@ -761,26 +783,30 @@ static void yolo_boxes_render(const yolo_result *result)
      * after the object leaves the frame. */
     memset(addr, 0, (size_t)stride * canvasH / 4);
 
+    yolo_boxes_mapping(&geom);
+
     for (int i = 0; i < result->count; i++) {
         const yolo_detection *det = &result->det[i];
-        int x = (int)((long)boxesWidth * det->x / 10000);
-        int y = (int)((long)boxesHeight * det->y / 10000);
-        int w = (int)((long)boxesWidth * det->w / 10000);
-        int h = (int)((long)boxesHeight * det->h / 10000);
+        int x, y, w, h;
         int lut;
 
-        x &= ~15;
-        y &= ~15;
-        w = ((w + 15) / 16) * 16;
-        h = ((h + 15) / 16) * 16;
+        if (!nn_map_rect(&geom, det->x, det->y, det->w, det->h,
+                &x, &y, &w, &h))
+            continue;
+
+        /* draw_rect_2bpp needs a multiple of 4 for x and the width. */
+        x &= ~3;
+        y &= ~3;
+        w = (w + 3) & ~3;
+        h = (h + 3) & ~3;
         if (x < 0) x = 0;
         if (y < 0) y = 0;
         if (x >= boxesWidth || y >= boxesHeight) continue;
         /* The right edge byte sits just past the rectangle, so leave room
          * for it (the vendor requires x + w + line < width). */
-        if (x + w + 4 > boxesWidth) w = (boxesWidth - x - 4) & ~15;
-        if (y + h > boxesHeight) h = (boxesHeight - y) & ~15;
-        if (w < 16 || h < 16) continue;
+        if (x + w + 4 > boxesWidth) w = (boxesWidth - x - 4) & ~3;
+        if (y + h > boxesHeight) h = (boxesHeight - y) & ~3;
+        if (w < 4 || h < 4) continue;
 
         /* class 0 is person in COCO. */
         lut = det->class_id == 0 ? 0 : 1;

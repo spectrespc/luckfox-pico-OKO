@@ -118,6 +118,22 @@ def main():
             page.wait_for_timeout(500)
         if not media:
             failures.append("the preview did not start by itself")
+        mode_badge = (page.text_content("#preview-mode") or "").strip()
+        print("preview mode badge:", mode_badge)
+        if page.locator("#preview-mode").count() == 0:
+            failures.append("the #preview-mode badge is missing")
+        elif mode_badge not in ("MP4 · main", "MJPEG · separate channel",
+                                "still · JPEG", "stopped"):
+            failures.append("unexpected preview mode badge: %r" % mode_badge)
+        elif media:
+            media_kind = page.evaluate(
+                "() => { var p = document.getElementById('preview');"
+                " var m = p && p.querySelector('video, img');"
+                " return m ? (m.tagName === 'IMG' ? (m.alt || '') : 'video') : ''; }")
+            if media_kind == "MJPEG" and "MJPEG" not in mode_badge:
+                failures.append("the badge does not report the MJPEG channel")
+            if media_kind == "video" and "MP4" not in mode_badge:
+                failures.append("the badge does not report the MP4 channel")
         page.screenshot(path=os.path.join(SHOTS, "live-focus.png"), full_page=True)
 
         # Manual lens panel: step/speed selectors, jog buttons, readout and the

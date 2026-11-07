@@ -6,6 +6,7 @@
 #include "rk_af_stats.h"
 #include "rk_rgn_pack.h"
 #include "../../app_config.h"
+#include "../../analytics/nn_geom.h"
 
 rk_aiq_impl     rk_aiq;
 rk_aud_impl     rk_aud;
@@ -203,9 +204,47 @@ void *rk_audio_thread(void)
     HAL_INFO("rk_aud", "Shutting down encoding thread...\n");
 }
 
+/* The RV1106 honours RK_MPI_VPSS_SetChnCrop and the VENC rotation when they
+ * are set before RK_MPI_VPSS_EnableChn; a call on an already enabled channel
+ * returns success but leaves the picture unchanged.  Every channel (re)start
+ * therefore re-applies the stored settings before the channel is enabled. */
+static void rk_apply_stream_settings(char index)
+{
+    int role = rk_state[index].role;
+
+    if (app_config.eptz_enable &&
+        role == (app_config.eptz_stream ? HAL_CHNROLE_SUB : HAL_CHNROLE_MAIN)) {
+        hal_crop crop;
+
+        memset(&crop, 0, sizeof(crop));
+        crop.enable = 1;
+        crop.rect.x = app_config.eptz_x;
+        crop.rect.y = app_config.eptz_y;
+        crop.rect.width = app_config.eptz_w;
+        crop.rect.height = app_config.eptz_h;
+        rk_vpss_set_chn_crop(index, &crop);
+    }
+
+    if (app_config.rotate_enable &&
+        role == (app_config.rotate_stream ? HAL_CHNROLE_SUB : HAL_CHNROLE_MAIN)) {
+        hal_rotation rotation = HAL_ROTATE_NONE;
+
+        switch (app_config.rotate_enable ? app_config.rotate_angle : 0) {
+            case 90: rotation = HAL_ROTATE_90; break;
+            case 180: rotation = HAL_ROTATE_180; break;
+            case 270: rotation = HAL_ROTATE_270; break;
+            default: rotation = HAL_ROTATE_NONE; break;
+        }
+        if (rk_video_set_rotation(index, rotation) != EXIT_SUCCESS)
+            rk_vpss_set_chn_rotation(index, rotation);
+    }
+}
+
 int rk_channel_bind(char index)
 {
     int ret;
+
+    rk_apply_stream_settings(index);
 
     if (ret = rk_vpss.fnEnableChannel(_rk_vpss_grp, index))
         return ret;
@@ -463,6 +502,51 @@ static int rk_region_log_once(unsigned int *mask, int handle)
     return 1;
 }
 
+/* Text and bitmap overlays are composited after the VENC rotation, so their
+ * coordinates live in the encoded picture.  When the picture is rotated, the
+ * region must keep the same corner and margin instead of following the scene;
+ * nn_map_anchor() implements that rule.  The ePTZ crop does not move the
+ * overlay, so only the rotation and the channel size matter here. */
+static void rk_region_anchor(short *px, short *py, int channel,
+    short w, short h)
+{
+    nn_geom g;
+    int role = HAL_CHNROLE_MAIN;
+
+    if (channel >= 0 && channel < RK_VENC_CHN_NUM)
+        role = rk_state[channel].role;
+
+    memset(&g, 0, sizeof(g));
+    switch (role) {
+        case HAL_CHNROLE_SUB:
+            g.src_w = app_config.substream_width ? (int)app_config.substream_width : 640;
+            g.src_h = app_config.substream_height ? (int)app_config.substream_height : 360;
+            if (app_config.rotate_enable && app_config.rotate_stream)
+                g.angle = app_config.rotate_angle;
+            break;
+        case HAL_CHNROLE_JPEG:
+            g.src_w = app_config.jpeg_width ? (int)app_config.jpeg_width : 1920;
+            g.src_h = app_config.jpeg_height ? (int)app_config.jpeg_height : 1080;
+            break;
+        default:
+            g.src_w = app_config.mp4_width ? (int)app_config.mp4_width : 1920;
+            g.src_h = app_config.mp4_height ? (int)app_config.mp4_height : 1080;
+            if (app_config.rotate_enable && !app_config.rotate_stream)
+                g.angle = app_config.rotate_angle;
+            break;
+    }
+
+    if (g.src_w <= 0 || g.src_h <= 0) return;
+
+    {
+        int x = *px, y = *py;
+
+        nn_map_anchor(&g, w, h, &x, &y);
+        *px = (short)x;
+        *py = (short)y;
+    }
+}
+
 int rk_region_create2(char handle, hal_rect rect, short opacity,
     int module, int device, int channel)
 {
@@ -473,7 +557,11 @@ int rk_region_create2(char handle, hal_rect rect, short opacity,
     rk_rgn_chn attrib, attribCurr;
     // OKO: the RV1106 overlay requires 16-pixel aligned position and size and
     // accepts BGRA5551; text bitmaps are converted in rk_region_setbitmap.
-    short px = rect.x & ~15, py = rect.y & ~15;
+    short px = rect.x, py = rect.y;
+
+    rk_region_anchor(&px, &py, channel, rect.width, rect.height);
+    px &= ~15;
+    py &= ~15;
 
     if (rk_rgn.fnGetChannelConfig(handle, &target, &attribCurr)) {
         HAL_INFO("rk_rgn", "Attaching region %d to channel %d...\n",
@@ -1642,8 +1730,10 @@ int rk_system_identify(void)
 int rk_vpss_set_chn_crop(char channel, hal_crop *crop)
 {
     rk_vpss_crop cfg;
+    static int cropWarned;
+    int ret;
 
-    if (!rk_vpss.fnSetChnCrop) return EXIT_FAILURE;
+    if (!crop || !rk_vpss.fnSetChnCrop) return -1;
 
     memset(&cfg, 0, sizeof(cfg));
     cfg.enable = crop->enable ? 1 : 0;
@@ -1653,8 +1743,15 @@ int rk_vpss_set_chn_crop(char channel, hal_crop *crop)
     cfg.rect.width = crop->rect.width;
     cfg.rect.height = crop->rect.height;
 
-    return rk_vpss.fnSetChnCrop(_rk_vpss_grp, channel, &cfg)
-        ? EXIT_FAILURE : EXIT_SUCCESS;
+    ret = rk_vpss.fnSetChnCrop(_rk_vpss_grp, channel, &cfg);
+    if (ret && !cropWarned) {
+        HAL_DANGER("rk_vpss", "SetChnCrop on channel %d failed with %#x\n",
+            (int)channel, ret);
+        cropWarned = 1;
+    }
+    /* The numeric MPP code is returned to the caller (0 = applied) so that
+     * /api/eptz can distinguish a refusal from a successful crop. */
+    return ret;
 }
 
 int rk_vpss_set_chn_rotation(char channel, hal_rotation rotation)

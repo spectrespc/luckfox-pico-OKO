@@ -21,6 +21,7 @@ bench/run.sh dut.py 'mount | grep -w " / "'
 | `serial_exec.py` | вход в консоль по UART (`/dev/ttyACM*`, 115200 8N1) и выполнение команд на DUT |
 | `dut.py` | выполнение команд по SSH через `paramiko` |
 | `osd_check.py` | захват кадров RTSP (`--path`, по умолчанию `/live/0`), попарный диф боксов OSD-регионов, сохранение полных кадров и кропов |
+| `geometry_check.py` | геометрия оверлеев и ePTZ: `--what zoom` — кроп на main/sub, `/mjpeg`/`/image.jpg` и переживание рестарта MP4; `--what boxes`/`--what osd` (opt-in `OKO_GEOMETRY_TESTS=1`) — совмещение NN-рамок и OSD-текста на 0/90/180/270; артефакты — `output/bench/geometry` |
 | `api_check.py` | матрица HTTP API: GET всех эндпоинтов, POST no-op, экспорт конфига и журнала, негативные проверки (статика, имена файлов, NTP); opt-in `OKO_FOCUS_MOTOR_TESTS=1`/`OKO_FOCUS_AF_TESTS=1` — движение моторов и автофокус (`af=1` full/ROI и micro-fine `af=fine`) с записью AF-кривых |
 | `ui_check.py` | WebUI в headless Chromium: восемь разделов, EN/RU, Apply/dirty-state, автозапуск предпросмотра, двухшаговый выбор ROI и строка автофокуса в «Видео», несохранённый выбор «Включить» переживает опрос, кнопка «Автофокус» (`af=fine`), сводка SD-карты в «Система → Статус» (сверка с `window.lastStatus`, работает и без карты), раскладка под окно на 1440×900 и мобильная 390×844 (нижний навбар 4×2), скриншоты (нужен Playwright) |
 | `deploy_divinus.py` | копирование свежесобранного `divinus` в `/oem/usr/bin` по SSH и graceful restart (быстрая итерация, не замена прошивке) |
@@ -42,6 +43,13 @@ bench/run.sh osd_check.py --ip 192.168.52.97 --seconds 17
 
 # свои регионы (имя:x0,y0,x1,y1;...)
 bench/run.sh osd_check.py --regions 'telemetry:0,16,760,160;gps:1500,16,1920,64'
+
+# геометрия: кроп ePTZ и его сохранение после рестарта канала
+bench/run.sh geometry_check.py --what zoom
+# NN-рамки и OSD под 0/90/180/270 — только по явному разрешению:
+# нужны модель, объект в кадре и неподвижная камера; код 2 — нет детекций
+OKO_GEOMETRY_TESTS=1 bench/run.sh geometry_check.py --what boxes
+OKO_GEOMETRY_TESTS=1 bench/run.sh geometry_check.py --what osd
 
 # API: 96 проверок, код возврата 1 при ошибке
 bench/run.sh api_check.py

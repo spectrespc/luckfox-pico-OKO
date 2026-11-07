@@ -393,6 +393,11 @@ echo 'OKO MESSAGE 123' > /tmp/osd.fifo
 ls -l /tmp/osd-dyn.txt /tmp/osd-msg.txt /tmp/osd.fifo
 # OSD с хоста: попарный диф регионов по RTSP, кадры и кропы в output/bench/
 bench/run.sh osd_check.py --ip 192.168.52.97 --seconds 17
+# геометрия оверлеев и ePTZ: кроп, /mjpeg и /image.jpg, рестарт MP4
+bench/run.sh geometry_check.py --what zoom
+# NN-рамки и OSD под 0/90/180/270 — opt-in: модель, объект в кадре, штатив
+OKO_GEOMETRY_TESTS=1 bench/run.sh geometry_check.py --what boxes
+OKO_GEOMETRY_TESTS=1 bench/run.sh geometry_check.py --what osd
 # сообщение в reg2: сначала на DUT, затем повторить osd_check.py
 bench/run.sh serial_exec.py "echo 'OKO MSG TEST' > /tmp/osd.fifo"
 # RTSP-корень divinus — без /live/0:
