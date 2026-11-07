@@ -108,6 +108,28 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Добавлено
 
+- **Архив внешних исследований `research/` (OKO).** Создана не-сборочная
+  папка `research/` с правилами оформления тем: заметка о переносимости
+  upstream-кода, read-only снимки с провенансом (путь, лицензия, sha256,
+  размер, дата, пин) и лимит на тему. Первая тема —
+  `research/rockchip-npu-mainline/`: разбор mainline-драйвера NPU
+  `drivers/accel/rocket` (RK3588, четыре ioctl, job → tasks, отдельный
+  IOMMU-домен на fd) и вывод, что прямой перенос на RV1106 невозможен;
+  снимок шести upstream-файлов (включая `rocket_registers.h`) на пине
+  `d48723711bae9b8cdc56719c448ba42fef28cbee`, с обязанностью обновлять
+  `CHANGELOG.md` при каждой правке темы. Обновлены `STRUCTURE.md`,
+  `AGENTS.md` (карта документации) и `README_RU.md`.
+- **External research archive `research/` (OKO).** Added the non-build
+  `research/` folder with topic rules: a portability note, read-only upstream
+  snapshots with provenance (path, licence, sha256, size, date, pin) and a
+  per-topic limit. The first topic is `research/rockchip-npu-mainline/`: an
+  analysis of the mainline NPU driver `drivers/accel/rocket` (RK3588, four
+  ioctls, job → tasks, a separate IOMMU domain per fd) concluding that a
+  direct port to RV1106 is not possible; six upstream files (including
+  `rocket_registers.h`) are pinned at
+  `d48723711bae9b8cdc56719c448ba42fef28cbee`, and every topic change must
+  update `CHANGELOG.md`. Updated `STRUCTURE.md`, `AGENTS.md` (documentation
+  map) and `README_RU.md`.
 - **Рамки детекции YOLO на видеопотоке (OKO).** Порт вендорского NN-оверлея
   rkipc: регион RGN `12` (`layer 6`) формата 2BPP с двумя цветами (класс 0 —
   красный, прочие — синий), канва главного потока `1920×1088` ≈ 518 КиБ

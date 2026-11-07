@@ -266,6 +266,7 @@ I2C, `enter-boot`/`info`/`boot-reset` и обновление `app-2.0.1.ihx` ч
 | `KNOWN_ISSUES.md` | известные ошибки и ограничения: критичные, функциональные, прошивка, безопасность, инструменты |
 | `CHANGELOG.md` | история изменений OKO-форка (Keep a Changelog + SemVer) |
 | `bench/README.md` | утилиты стенда: UART/SSH-команды, проверка OSD по RTSP, фокус и прошивка контроллеров, venv |
+| `research/README.md` | архив внешних исследований: правила оформления тем, индекс и read-only снимки upstream-файлов с провенансом |
 | `README.md`, `README_CN.md` | вендорская документация SDK (EN/CN) |
 | `UPDATE_LOG.md`, `UPDATE_LOG_CN.md` | вендорская история версий SDK (EN/CN) |
 

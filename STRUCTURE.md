@@ -19,6 +19,7 @@
 |---|---|
 | `config/` | Извлечённые дефконфиги для быстрой настройки: `buildroot_defconfig`, `kernel_defconfig`, `dts_config`. |
 | `bench/` | Утилиты тестового стенда: UART/SSH-команды, проверка OSD по RTSP (`osd_check.py`), матрица HTTP API (`api_check.py`), WebUI в headless Chromium (`ui_check.py`), AF-метрика и CSV (`focus_check.py`), версии/прошивка контроллеров (`firmware_check.py`), выкатка бинарника в `/oem` (`deploy_divinus.py`), venv. В сборке прошивки не участвует. |
+| `research/` | Архив внешних исследований: заметки о переносимости upstream-кода и минимальные read-only снимки upstream-файлов с провенансом. В сборке прошивки не участвует. |
 | `media/` | Медиастек Rockchip: кодеки, 2D-ускорение, ISP, NPU, медиафреймворк и примеры. |
 | `project/` | Скрипты сборки, конфигурации плат и прикладные приложения. Основная точка входа сборки. |
 | `sysdrv/` | Системный уровень: исходники U-Boot, ядра, Buildroot, прошивка MCU и модули ядра. |
@@ -187,6 +188,19 @@
   `14b1afd61e8155bceecf78b358b225b34920f0f6`; используется только
   `project/app/stm8-motor/Makefile.stm8`, в основной builder не входит.
 - `windows/` — Windows-версии утилит (`DriverAssitant`, `FactoryTool`, `SocToolKit`).
+
+### `research/`
+
+- `README.md` — назначение архива внешних исследований, правила оформления тем
+  (разделы заметки, лимиты, провенанс, запрет сборочного участия) и индекс тем.
+  В сборке прошивки папка не участвует.
+- `rockchip-npu-mainline/` — первая тема: разбор mainline-драйвера NPU Rockchip
+  `drivers/accel/rocket` (RK3588), его UAPI и применимости к RV1106.
+  - `README.md` — вопрос, устройство драйвера, выводы для OKO, проверенные
+    факты, ссылки, провенанс и порядок обновления.
+  - `snapshot/` — read-only копии upstream-файлов: `rocket_Kconfig`,
+    `rocket_Makefile`, `rocket_drv.c`, `rocket_registers.h`, `rocket_accel.h`,
+    `index.rst` с пином `d48723711bae9b8cdc56719c448ba42fef28cbee`.
 
 ## Корневые файлы
 
