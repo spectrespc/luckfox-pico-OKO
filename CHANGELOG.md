@@ -561,6 +561,26 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Исправлено
 
+- **Долги ревью базы netboot (OKO).** `tools/native/setup_netboot.sh`
+  перезапускает `tftpd-hpa` после правки `/etc/default` и drop-in
+  (`systemctl enable` + `restart` вместо `enable --now`), поэтому
+  повторный запуск применяет конфигурацию. `KNOWN_ISSUES.md` (KI-047)
+  относит сборки «до миграции» к последнему коммиту Docker-эпохи
+  `9718258b0` (тег `OKO-v1-06.10.26`) вместо ошибочного `d8ba46293`.
+  Из `sysdrv/Makefile` удалены неиспользуемые `HCITOOL_TOOL_PATH` и
+  `MPV_PATCH_PATH`. В `bench/netboot.py` CMA вынесена в переменную
+  окружения `OKO_CMA_SIZE` (по умолчанию `66M`) — хардкод убран.
+- **Base netboot review debts (OKO).** `tools/native/setup_netboot.sh`
+  restarts `tftpd-hpa` after rewriting `/etc/default` and the drop-in
+  (`systemctl enable` + `restart` instead of `enable --now`), so a second
+  run applies the configuration. `KNOWN_ISSUES.md` (KI-047) now points
+  pre-migration builds at the last Docker-era commit `9718258b0` (tag
+  `OKO-v1-06.10.26`) instead of the wrong `d8ba46293`. Unused
+  `HCITOOL_TOOL_PATH` and `MPV_PATCH_PATH` were removed from
+  `sysdrv/Makefile`. In `bench/netboot.py` the CMA size is now the
+  `OKO_CMA_SIZE` environment variable (default `66M`) instead of a
+  hardcoded value.
+
 - **Сборка драйвера atbm на GNU make 4.4 (OKO).** В
   `sysdrv/drv_ko/wifi/atbm/Makefile.build.customer` переменные
   `SDIO_HOST`…`MODPMSTAYAWK` объявлены через `:=` вместо `?=` с

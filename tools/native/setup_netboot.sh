@@ -61,7 +61,8 @@ if ! grep -qs "^$NFS_DIR[[:space:]]" /etc/exports; then
 fi
 "${SUDO[@]}" exportfs -ra
 
-"${SUDO[@]}" systemctl enable --now tftpd-hpa
+"${SUDO[@]}" systemctl enable tftpd-hpa
+"${SUDO[@]}" systemctl restart tftpd-hpa
 "${SUDO[@]}" systemctl restart nfs-kernel-server
 
 if command -v ufw >/dev/null 2>&1 && "${SUDO[@]}" ufw status 2>/dev/null | grep -q 'Status: active'; then

@@ -310,8 +310,6 @@ SYSDRV_UBOOT_ENV_CFG_FILE :=$(SYSDRV_DIR_OUT_IMAGE)/.env.txt
 
 SYSDRV_RAMDISK_DIR ?= $(SYSDRV_DIR_OUT_BOARD)
 
-HCITOOL_TOOL_PATH :=$(SYSDRV_DIR)/tools/board/buildroot/hcitool_patch
-MPV_PATCH_PATH :=$(SYSDRV_DIR)/tools/board/buildroot/mpv_patch
 BUSYBOX_PATCH_PATH :=$(SYSDRV_DIR)/tools/board/buildroot/busybox_patch
 
 export SYSDRV_DIR_OUT_PC

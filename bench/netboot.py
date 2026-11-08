@@ -34,12 +34,13 @@ GATEWAY = os.environ.get("OKO_GATEWAY", "192.168.52.254")
 NETMASK = "255.255.255.0"
 NFSROOT = os.environ.get("OKO_NFSROOT", f"{SERVER_IP}:/srv/nfs/rootfs")
 PASSWORD = os.environ.get("OKO_DUT_PASSWORD", "luckfox")
+CMA = os.environ.get("OKO_CMA_SIZE", "66M")
 
 SYS_BOOTARGS = (
     "root=/dev/nfs rw "
     f"nfsroot={NFSROOT},vers=3,proto=tcp,nolock "
     f"ip={DUT_IP}:{SERVER_IP}:{GATEWAY}:{NETMASK}:luckfox:eth0:off "
-    "rk_dma_heap_cma=66M"
+    f"rk_dma_heap_cma={CMA}"
 )
 
 NETBOOT_CMDS = [

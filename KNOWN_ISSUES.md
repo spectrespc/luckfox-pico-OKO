@@ -324,7 +324,7 @@
   Контейнер `luckfox_oko_build_env` и `Dockerfile`/`start.sh` удалены;
   Buildroot 2023.02.6 заменён на 2026.08.1. Собрать точную прошивку до
   миграции можно только из артефактов `output/` или из истории git
-  (коммиты до `d8ba46293`). Для повторной проверки старого поведения
+  (коммиты до `9718258b0`). Для повторной проверки старого поведения
   используйте `git worktree` на коммите до миграции и вендорский
   rootfs из `IMAGE/`. Статус: **принятое ограничение**.
 
@@ -625,7 +625,7 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   The `luckfox_oko_build_env` container and `Dockerfile`/`start.sh` are gone,
   and Buildroot 2023.02.6 was replaced by 2026.08.1. The exact pre-migration
   image can only be rebuilt from `output/` artifacts or git history (commits
-  before `d8ba46293`). To retest the old behavior, use a `git worktree` at a
+  before `9718258b0`). To retest the old behavior, use a `git worktree` at a
   pre-migration commit and the vendor rootfs from `IMAGE/`. Status:
   **accepted limitation**.
 
