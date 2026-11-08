@@ -26,6 +26,34 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Добавлено
 
+- **Возвращён netboot-контур TFTP/NFS (OKO).** `bench/netboot.py`
+  (режимы `catch`/`reboot`/`cmd`, определение shell-приглашения
+  `root@luckfox`), фрагмент ядра `rv1106-netboot.config` (IP_PNP,
+  ROOT_NFS), конфиг
+  `BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI-NETBOOT.mk`
+  (оба фрагмента: netboot и SC230AI), NFS-ветки `oem`/`userdata` в
+  S20linkmount (`project/build.sh`) и пропуск DHCP в `RkLunch.sh` при
+  `nfsroot=` в cmdline. Хостовые сервисы настраивает
+  `tools/native/setup_netboot.sh`: `tftpd-hpa` с корнем
+  `<repo>/output/image` (chroot, `ProtectHome=read-only`, ACL на
+  обход домашнего каталога) и NFS-экспорт `/srv/nfs/rootfs` для
+  `192.168.52.0/24`. Первый прогон `netboot.py reboot`: TFTP boot.img,
+  NFS-root и статический `192.168.52.150` подтверждены на DUT.
+- **The TFTP/NFS netboot loop is back (OKO).** `bench/netboot.py`
+  (`catch`/`reboot`/`cmd` modes, detects the `root@luckfox` shell
+  prompt), the `rv1106-netboot.config` kernel fragment (IP_PNP,
+  ROOT_NFS), the
+  `BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI-NETBOOT.mk`
+  board config (both the netboot and SC230AI fragments), the
+  `oem`/`userdata` NFS branches in the S20linkmount generator
+  (`project/build.sh`) and the DHCP skip in `RkLunch.sh` when
+  `nfsroot=` is present in the cmdline. Host services are configured by
+  `tools/native/setup_netboot.sh`: `tftpd-hpa` rooted at
+  `<repo>/output/image` (chroot, `ProtectHome=read-only`, ACLs for the
+  home directory traversal) and the `/srv/nfs/rootfs` export for
+  `192.168.52.0/24`. The first `netboot.py reboot` run confirmed TFTP
+  boot.img, the NFS root and the static `192.168.52.150` on the DUT.
+
 - **Нативная сборка SDK на Debian 13 (OKO).** Добавлены
   `tools/native/setup_host.sh` (apt-чек-лист бывшего контейнера с именами
   пакетов trixie: `libncurses-dev`, `u-boot-tools`, `ninja-build`,

@@ -10,6 +10,7 @@
 bench/setup.sh                          # создать output/bench/venv и поставить зависимости
 bench/run.sh serial_exec.py 'cat /proc/uptime'
 bench/run.sh dut.py 'mount | grep -w " / "'
+bench/run.sh netboot.py catch           # затем сбросить питание DUT
 ```
 
 `bench/run.sh` сам вызывает `setup.sh`, если venv ещё нет.
@@ -20,6 +21,7 @@ bench/run.sh dut.py 'mount | grep -w " / "'
 |---|---|
 | `serial_exec.py` | вход в консоль по UART (`/dev/ttyACM*`, 115200 8N1) и выполнение команд на DUT |
 | `dut.py` | выполнение команд по SSH через `paramiko` |
+| `netboot.py` | управление U-Boot: `catch` (спам Ctrl-C до `=>`, затем netboot-команды), `reboot` (перезагрузка DUT с перехватом U-Boot), `cmd '<команда>'` (одна команда в U-Boot); ядро берётся по TFTP из `output/image/boot.img`, rootfs — по NFS |
 | `osd_check.py` | захват кадров RTSP (`--path`, по умолчанию `/live/0`), попарный диф боксов OSD-регионов, сохранение полных кадров и кропов |
 | `geometry_check.py` | геометрия оверлеев и ePTZ: `--what zoom` — кроп на main/sub, `/mjpeg`/`/image.jpg`, критерий — нормированная корреляция с ожидаемым центром (mean\|diff\| печатается для справки); рестарт MP4 — отдельный opt-in `OKO_GEOMETRY_MP4_TESTS=1` (после смены кропа он ненадёжен); `--what boxes`/`--what osd` (opt-in `OKO_GEOMETRY_TESTS=1`) — совмещение NN-рамок и OSD-текста на 0/90/180/270; артефакты — `output/bench/geometry` |
 | `api_check.py` | матрица HTTP API: GET всех эндпоинтов, POST no-op, экспорт конфига и журнала, негативные проверки (статика, имена файлов, NTP); opt-in `OKO_FOCUS_MOTOR_TESTS=1`/`OKO_FOCUS_AF_TESTS=1` — движение моторов и автофокус (`af=1` full/ROI и micro-fine `af=fine`) с записью AF-кривых |
@@ -37,6 +39,15 @@ bench/run.sh serial_exec.py --wait 5 'ps | grep -E "divinus|oko-osd|rkipc"' 'cat
 
 # SSH без пароля в командной строке (пароль — вендорский дефолт из TESTBENCH.md §6)
 bench/run.sh dut.py 'mount | grep -w " / "' 'cat /userdata/divinus.yaml'
+
+# обычный цикл netboot: запустить захват, затем сбросить питание вручную
+bench/run.sh netboot.py catch
+
+# перезагрузка из работающей системы: скрипт сам войдёт, перезагрузит и поймает U-Boot
+bench/run.sh netboot.py reboot
+
+# одна команда в уже открытом U-Boot
+bench/run.sh netboot.py cmd 'printenv ipaddr'
 
 # OSD: 17 с наблюдения; время меняется за 1 с, телеметрия и GPS — за 16 с
 bench/run.sh osd_check.py --ip 192.168.52.97 --seconds 17
@@ -172,6 +183,25 @@ sudo iptables -t nat -A POSTROUTING -o <uplink> -j MASQUERADE
 --profile output/bench/vpn/client.ovpn --creds-user oko --creds-pass secret
 --ping-target 10.8.0.1 --iperf-peer 192.168.52.1 --reboot`.
 
+## Netboot (TFTP/NFS)
+
+Итерационный контур без прошивки SPI NAND: ядро `output/image/boot.img`
+отдаётся по TFTP, rootfs монтируется по NFS с `/srv/nfs/rootfs`, а
+`oem`/`userdata` — из `<nfsroot>/.nfsroot/` (S20linkmount). На хосте нужны
+`tftpd-hpa` с корнем `output/image` и `nfs-kernel-server`; настройка,
+деплой rootfs и возврат на NAND — TESTBENCH.md §7D.
+
+```sh
+# деплой свежей rootfs в NFS-экспорт (бэкап — tar в output/bench/)
+sudo rsync -a --delete output/out/rootfs_uclibc_rv1106/ /srv/nfs/rootfs/
+sudo rsync -a --delete output/out/oem/ /srv/nfs/rootfs/.nfsroot/oem/
+sudo rsync -a --delete output/out/userdata/ /srv/nfs/rootfs/.nfsroot/userdata/
+
+# загрузка: boot.img должен содержать rv1106-netboot.config
+bench/run.sh netboot.py reboot
+bench/run.sh dut.py 'cat /proc/cmdline' 'mount | grep nfs'
+```
+
 ## Переменные окружения
 
 | Переменная | По умолчанию | Смысл |
@@ -182,6 +212,9 @@ sudo iptables -t nat -A POSTROUTING -o <uplink> -j MASQUERADE
 | `OKO_DUT_HOST` | `192.168.52.150` | адрес DUT по умолчанию (SSH/RTSP; текущий DHCP-адрес — `192.168.52.97`, см. TESTBENCH.md §5) |
 | `OKO_DUT_PASSWORD` | `luckfox` | пароль root (публичный вендорский дефолт) |
 | `OKO_RTSP_USER` / `OKO_RTSP_PASS` | `admin` / `oko-change-me` | учётка divinus (фабричный дефолт) |
+| `OKO_TFTP_HOST` | `192.168.52.200` | `serverip` для TFTP/NFS (netboot) |
+| `OKO_GATEWAY` | `192.168.52.254` | `gatewayip` (netboot) |
+| `OKO_NFSROOT` | `192.168.52.200:/srv/nfs/rootfs` | NFS-корень для `sys_bootargs` |
 | `OKO_VPN_PEER` | — | адрес VPN-пира на хосте для `vpn_check.py` (`--peer-host` важнее) |
 | `OKO_VPN_USER` / `OKO_VPN_PASS` | — | учётка `auth-user-pass` для OpenVPN-профиля (`--creds-user/--creds-pass`) |
 
@@ -190,6 +223,7 @@ sudo iptables -t nat -A POSTROUTING -o <uplink> -j MASQUERADE
 
 ## Артефакты
 
+- Логи U-Boot/netboot: `output/bench/netboot-<YYYYmmdd-HHMMSS>.log`.
 - Кадры и кропы OSD: `output/bench/osd-<YYYYmmdd-HHMMSS>-fNN[-<reg>].png`.
 - Скриншоты WebUI: `output/bench/ui/<раздел>.png` и `mobile-system.png`.
 - VPN: `output/bench/vpn/report.json`, `ssh.log`, `profile.conf` (тестовый
@@ -221,7 +255,9 @@ sudo iptables -t nat -A POSTROUTING -o <uplink> -j MASQUERADE
 - `Permission denied: '/dev/ttyACM0'` — добавьте пользователя в группу `dialout`
   и перелогиньтесь: `sudo usermod -aG dialout "$USER"`.
 - `device or resource busy` — порт держит другой процесс (`fuser /dev/ttyACM0`);
-  `serial_exec.py` запускайте после завершения других UART-сессий.
+  `netboot.py` и `serial_exec.py` запускайте последовательно.
+- `U-Boot prompt not found` — устройство уже загрузило Linux (используйте
+  `netboot.py reboot`) либо автозагрузка не прерывается (проверьте `bootdelay`).
 - PyAV не ставится из-за отсутствия колеса под версию Python — поставьте
   системный пакет (`sudo apt install python3-av`) и запускайте `osd_check.py`
   системным Python; остальные скрипты от этого не зависят.

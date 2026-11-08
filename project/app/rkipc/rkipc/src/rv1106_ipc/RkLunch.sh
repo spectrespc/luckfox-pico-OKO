@@ -28,6 +28,15 @@ check_linker() {
 }
 
 network_init() {
+	if grep -q 'nfsroot=' /proc/cmdline 2>/dev/null; then
+		# netboot: root fs and oem/userdata are mounted over NFS using the
+		# static address from the kernel ip= parameter. Changing the MAC or
+		# taking a DHCP lease would break the established NFS connections.
+		ifconfig eth0 up
+		echo "netboot: keep static eth0 config, skip dhcp"
+		return 0
+	fi
+
 	# OKO keeps the MAC and DHCP/static settings in the U-Boot env partition,
 	# so a full firmware update (which recreates /userdata) does not change the
 	# DHCP identity.  Fall back to the vendor logic if the helper is missing.
