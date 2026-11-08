@@ -274,6 +274,27 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Изменено
 
+- **NFS-root включён в штатное ядро SC230AI, дубль BoardConfig удалён
+  (OKO).** `RK_KERNEL_DEFCONFIG_FRAGMENT` основного конфига теперь
+  `"rv1106-netboot.config rv1106-sc230ai.config"`, поэтому `boot.img`
+  штатной NAND-сборки содержит `CONFIG_IP_PNP`, `IP_PNP_DHCP`,
+  `IP_PNP_BOOTP` и `CONFIG_ROOT_NFS`. Режим загрузки переключается только
+  переменной env U-Boot `sys_bootargs`, без перепрошивки ядра. Дубль
+  `BoardConfig-...-SC230AI-NETBOOT.mk` удалён. Гейты: diff `.config` —
+  только эти символы и их select'ы (`IP_PNP_RARP`), `boot.img`
+  3 740 672 байт при разделе 6 МиБ, `./build.sh firmware` собирает
+  `update.img`.
+- **NFS root is built into the stock SC230AI kernel and the duplicate
+  board config is gone (OKO).** `RK_KERNEL_DEFCONFIG_FRAGMENT` of the main
+  config is now `"rv1106-netboot.config rv1106-sc230ai.config"`, so the
+  stock NAND `boot.img` carries `CONFIG_IP_PNP`, `IP_PNP_DHCP`,
+  `IP_PNP_BOOTP` and `CONFIG_ROOT_NFS`. The boot mode is switched solely
+  through the U-Boot env variable `sys_bootargs`, with no kernel reflash.
+  The duplicate `BoardConfig-...-SC230AI-NETBOOT.mk` was removed. Gates:
+  the `.config` diff contains only those symbols and their selects
+  (`IP_PNP_RARP`), `boot.img` is 3 740 672 bytes against a 6 MiB
+  partition, and `./build.sh firmware` produces `update.img`.
+
 - **Rootfs 2026.08.1 проверена на DUT и прошита в SPI NAND (OKO).** По NFS:
   `api_check` 98/98, `osd_check` 5/5 кадров, RTSP 1920×1080, Python 3.14.8 +
   OpenSSL 3.6.5, `oem`/`userdata` из `<nfsroot>/.nfsroot/`. После возврата
