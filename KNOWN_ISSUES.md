@@ -1,6 +1,6 @@
 # Известные ошибки и ограничения OKO
 
-Обновлено: `2026-11-07`. В файле — открытые проблемы, подтверждённые
+Обновлено: `2026-11-08`. В файле — открытые проблемы, подтверждённые
 ограничения и недавно закрытые записи (KI-036). Проверенные функции и доказательства — в `VERIFIED_FUNCTIONS.md`,
 состав и статус функционала — в `FEATURES_VERIFIED.md` / `FEATURES_UNVERIFIED.md`,
 процедуры стенда — в `TESTBENCH.md`.
@@ -288,6 +288,25 @@
   приложения. Предпросмотр Live может показывать `/mjpeg` или `/image.jpg`,
   где кроп main не действует. Статус: **закрыто (2026-11-07)**.
 
+- **KI-045. Смена ABI rootfs: OpenSSL 3 и Python 3.14.**
+  После перехода на Buildroot 2026.08.1 в rootfs нет
+  `libssl.so.1.1`/`libcrypto.so.1.1` и `libpython3.11`; вместо них
+  `libssl.so.3`/`libcrypto.so.3` и `libpython3.14`. Штатные `divinus`,
+  `oko-*`, `wg`/`awg`, OpenVPN 2.7.8 пересобраны и проверены
+  (`api_check` 98/98, RTSP/OSD), но сторонние сборки в `/oem`, слинкованные
+  со старым ABI, не запустятся. Обход: пересобрать из исходников SDK; для
+  готовых blob'ов — совместимые копии библиотек рядом (не рекомендуется).
+  Статус: **принятое ограничение миграции**.
+
+- **KI-046. `luckfox_pico_w_defconfig` не мигрирован.**
+  Wi-Fi/audio-вариант (`bluez5_utils`, `mpv`) остался на старых патчах
+  `hcitool_patch`/`mpv_patch`; на Buildroot 2026.08.1 их применение к новым
+  версиям пакетов не проверялось. Активный `luckfox_pico_defconfig` эти
+  пакеты не использует — сборка образа OKO не затронута. Обход: не
+  переключать `.BoardConfig.mk` на w-вариант до ребейса патчей; при
+  необходимости — отключить пакеты или обновить патчи.
+  Статус: **открыто, untested**.
+
 ### Безопасность
 
 - **KI-029. WebUI работает по HTTP Basic без HTTPS.**
@@ -562,6 +581,25 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   around by the application restart. The Live preview may show `/mjpeg` or
   `/image.jpg`, where the main crop has no effect.
   Status: **closed (2026-11-07)**.
+
+- **KI-045. Rootfs ABI change: OpenSSL 3 and Python 3.14.**
+  After the Buildroot 2026.08.1 migration the rootfs no longer ships
+  `libssl.so.1.1`/`libcrypto.so.1.1` or `libpython3.11`; it provides
+  `libssl.so.3`/`libcrypto.so.3` and `libpython3.14` instead. The bundled
+  `divinus`, `oko-*`, `wg`/`awg` and OpenVPN 2.7.8 are rebuilt and verified
+  (`api_check` 98/98, RTSP/OSD), but third-party `/oem` binaries linked
+  against the old ABI will not start. Workaround: rebuild them from the SDK
+  sources; for prebuilt blobs, ship compatibility libraries alongside (not
+  recommended). Status: **accepted migration limitation**.
+
+- **KI-046. `luckfox_pico_w_defconfig` is not migrated.**
+  The Wi-Fi/audio variant (`bluez5_utils`, `mpv`) still relies on the old
+  `hcitool_patch`/`mpv_patch`; whether they apply to the newer package
+  versions on Buildroot 2026.08.1 is untested. The active
+  `luckfox_pico_defconfig` does not use these packages, so the OKO image
+  build is unaffected. Workaround: do not switch `.BoardConfig.mk` to the
+  w variant before rebasing the patches; otherwise disable the packages or
+  update the patches. Status: **open, untested**.
 
 ### Security
 

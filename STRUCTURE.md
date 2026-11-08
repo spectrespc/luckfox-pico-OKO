@@ -1,7 +1,7 @@
 # Структура проекта
 
 Репозиторий — это Luckfox Pico SDK (Rockchip RV1103/RV1106) с доработками под проект
-**OKO**: сборка в Docker-окружении, автономная загрузка с SPI NAND и поддержка
+**OKO**: нативная сборка на Debian 13, автономная загрузка с SPI NAND и поддержка
 сенсора SC230AI. Драйвер шагового двигателя 28BYJ-48 и прошивка сопроцессора
 на RT-Thread входят в вендорский SDK.
 
@@ -18,7 +18,7 @@
 | Папка | Назначение |
 |---|---|
 | `config/` | Извлечённые дефконфиги для быстрой настройки: `buildroot_defconfig`, `kernel_defconfig`, `dts_config`. |
-| `bench/` | Утилиты тестового стенда: UART/SSH-команды, проверка OSD по RTSP (`osd_check.py`), матрица HTTP API (`api_check.py`), WebUI в headless Chromium (`ui_check.py`), AF-метрика и CSV (`focus_check.py`), версии/прошивка контроллеров (`firmware_check.py`), выкатка бинарника в `/oem` (`deploy_divinus.py`), venv. В сборке прошивки не участвует. |
+| `bench/` | Утилиты тестового стенда: UART/SSH-команды, netboot через TFTP/NFS (`netboot.py`), проверка OSD по RTSP (`osd_check.py`), матрица HTTP API (`api_check.py`), WebUI в headless Chromium (`ui_check.py`), AF-метрика и CSV (`focus_check.py`), версии/прошивка контроллеров (`firmware_check.py`), выкатка бинарника в `/oem` (`deploy_divinus.py`), venv. В сборке прошивки не участвует. |
 | `research/` | Архив внешних исследований: заметки о переносимости upstream-кода и минимальные read-only снимки upstream-файлов с провенансом. В сборке прошивки не участвует. |
 | `media/` | Медиастек Rockchip: кодеки, 2D-ускорение, ISP, NPU, медиафреймворк и примеры. |
 | `project/` | Скрипты сборки, конфигурации плат и прикладные приложения. Основная точка входа сборки. |
@@ -171,6 +171,10 @@
 
 ### `tools/`
 
+- `native/` — нативная среда сборки: `setup_host.sh` (apt-пакеты Debian 13,
+  проверка кросс-тулчейна), `env.sh` (`PATH`, `CROSS_COMPILE`, `ARCH`, локаль),
+  `smoke.sh` (отчёт `output/bench/native/smoke.log`), `setup_netboot.sh`
+  (`tftpd-hpa` + NFS-экспорт для netboot).
 - `linux/toolchain/` — кросс-компилятор `arm-rockchip830-linux-uclibcgnueabihf`.
 - `linux/Linux_Pack_Firmware`, `linux/Linux_Upgrade_Tool` — упаковка образов и
   прошивка по USB.
@@ -195,7 +199,9 @@
 - `README.md` — назначение архива внешних исследований, правила оформления тем
   (разделы заметки, лимиты, провенанс, запрет сборочного участия) и индекс тем.
   В сборке прошивки папка не участвует.
-- `rockchip-npu-mainline/` — первая тема: разбор mainline-драйвера NPU Rockchip
+- `buildroot-2026-08/` — миграция rootfs на upstream Buildroot 2026.08.1:
+  вендорская дельта, патчи под uClibc/gcc 8, версии пакетов (`inventory.md`).
+- `rockchip-npu-mainline/` — разбор mainline-драйвера NPU Rockchip
   `drivers/accel/rocket` (RK3588), его UAPI и применимости к RV1106.
   - `README.md` — вопрос, устройство драйвера, выводы для OKO, проверенные
     факты, ссылки, провенанс и порядок обновления.
@@ -206,8 +212,6 @@
 ## Корневые файлы
 
 - `build.sh`, `rkflash.sh` — симлинки на `project/build.sh` и `project/rkflash.sh`.
-- `Dockerfile`, `docker-compose.yml`, `docker-entrypoint.sh` — Docker-окружение сборки.
-- `start.sh` — сборка образа, запуск контейнера и вход в shell.
 - `AGENTS.md` — правила агента `code`: карта документации, делегирование, инструменты.
 - `README_RU.md` — русскоязычная точка входа OKO-форка: быстрый старт, сборка, ссылки.
 - `FEATURES.md` — точка входа в описание функционала: паспорт платформы,

@@ -2,7 +2,7 @@
 
 Русскоязычная точка входа в репозиторий проекта **OKO** — форк SDK Luckfox Pico
 (Rockchip RV1103/RV1106). Доработки форка: IPC-камера на сенсоре **SC230AI**,
-сборка в Docker и автономная загрузка с **SPI NAND**.
+нативная сборка на Debian 13 и автономная загрузка с **SPI NAND**.
 
 Вендорская документация SDK не изменена и лежит рядом: `README.md` (EN),
 `README_CN.md` (CN), история версий SDK — `UPDATE_LOG.md` / `UPDATE_LOG_CN.md`.
@@ -22,7 +22,7 @@
 | `RK_CHIP` | `rv1106` | SoC RV1106 |
 | `RK_APP_TYPE` | `RKIPC_RV1106` | приложение `rkipc` |
 | `RK_BOOT_MEDIUM` | `spi_nand` | загрузка с SPI NAND |
-| `RK_PARTITION_CMD_IN_ENV` | `256K(env),256K@256K(idblock),512K(uboot),6M(boot),40M(oem),10M(userdata),198M(rootfs)` | разметка 256 МБ NAND: `boot` 6 МБ, `oem` 40 МБ, `rootfs` 198 МБ |
+| `RK_PARTITION_CMD_IN_ENV` | `256K(env),256K@256K(idblock),512K(uboot),6M(boot),40M(oem),40M(userdata),168M(rootfs)` | разметка 256 МБ NAND: `boot` 6 МБ, `oem` 40 МБ, `userdata` 40 МБ, `rootfs` 168 МБ |
 | `LF_TARGET_ROOTFS` | `buildroot` | корневая ФС Buildroot (busybox init) |
 | Режим | **SPI NAND** | автономная загрузка с flash (`root=ubi0:rootfs`) |
 | Сенсор | **SC230AI** | драйвер `sc230ai` + `rv1106-sc230ai.config`; 1080p30 и 480p120, `HDR_X2` экспериментально |
@@ -44,50 +44,44 @@ MIS5001, IMX415, MIA1321) выключены в DTS и config-фрагменте
 ./build.sh lunch
 ```
 
-## Быстрый старт (Docker)
+## Быстрый старт (Debian 13, без контейнера)
 
-Сборка выполняется в изолированном контейнере Ubuntu 22.04 с уже установленным
-кросс-тулчейном Rockchip.
+Сборка выполняется на хосте Debian 13 (trixie) с системным gcc 14 и вендорским
+кросс-тулчейном Rockchip из `tools/linux/toolchain/`. Один раз установите
+зависимости и проверьте окружение:
 
 ```sh
-./start.sh
+tools/native/setup_host.sh    # apt-пакеты trixie + проверка кросс-тулчейна
+tools/native/smoke.sh         # отчёт output/bench/native/smoke.log
 ```
 
-Скрипт:
-
-1. собирает образ `luckfox-builder:22.04` (`docker compose build`);
-2. поднимает контейнер `luckfox_oko_build_env` (`docker compose up -d`,
-   `network_mode: host`, рабочая папка `/workspace`, проект смонтирован туда же);
-3. при наличии `.gitattributes` подтягивает Git LFS-файлы;
-4. создаёт `output/image` (каталог готовых образов) и открывает shell внутри контейнера.
-
-Внутри контейнера:
+Перед сборкой в каждой новой оболочке:
 
 ```sh
+source tools/native/env.sh
 ./build.sh            # полная сборка (all)
 ./build.sh firmware   # только образ прошивки
 ```
 
-Результаты сборки — в `output/image/` (например, `update.img`), промежуточные
-артефакты — в `output/out/`, общий лог — `output/build_all.log`.
+`env.sh` добавляет кросс-тулчейн и `sbin` в `PATH`, выставляет
+`CROSS_COMPILE=arm-rockchip830-linux-uclibcgnueabihf-`, `ARCH=arm` и
+`LANG/LC_ALL=C.UTF-8`. Результаты сборки — в `output/image/` (например,
+`update.img`), промежуточные артефакты — в `output/out/`, общий лог —
+`output/build_all.log`.
 
-Контейнер не запускает сетевых сервисов: сборка и прошивка выполняются локально,
-готовые образы лежат в `output/image/`.
-
-## Сборка без Docker
-
-Сборка на чистом Ubuntu 22.04 с установкой зависимостей и ручной настройкой
-окружения описана в вендорском `README.md` (раздел про установку SDK). Требования
-к пакетам те же, что перечислены в `Dockerfile`, а тулчейн берётся из
-`tools/linux/toolchain/arm-rockchip830-linux-uclibcgnueabihf/bin`
-(`CROSS_COMPILE=arm-rockchip830-linux-uclibcgnueabihf-`, `ARCH=arm`).
+Сетевые сервисы стенда (TFTP/NFS для netboot) поднимаются на хосте отдельно:
+`tools/native/setup_netboot.sh` (см. `TESTBENCH.md` §7D). Отдельные
+Docker-пайплайны остались только для инструментов, не входящих в сборку
+прошивки: `tools/rknn-toolkit2/` (конвертация YOLO) и `tools/stm8-sdcc/`
+(прошивка STM8).
 
 ## Загрузка на устройство
 
 Используется SPI NAND.
 
 > **Внимание:** таблица разделов изменена (`boot` 6 МБ, `oem` 40 МБ,
-> `rootfs` 198 МБ). После первой прошивки этого образа покомпонентная прошивка
+> `userdata` 40 МБ, `rootfs` 168 МБ). После первой прошивки этого образа
+> покомпонентная прошивка
 > `oem`/`rootfs` со старой разметкой несовместима: нужна **полная прошивка**
 > `output/image/update.img`. Старые `/userdata` и данные на NAND будут
 > потеряны — сохраните нужное на microSD/хост до прошивки.
@@ -299,5 +293,6 @@ sh /oem/usr/ko/insmod_ko.sh      # ручная перезагрузка мод�
   `.BoardConfig.mk` и `output/`, а не на `IMAGE/`.
 - `output/`, `IMAGE/`, `config/` и объектные файлы (`*.o`, `*.ko`) исключены из
   Git — это артефакты, а не исходники.
-- Docker использует `network_mode: host`: контейнер видит сеть хоста, но не
-  запускает собственных сетевых сервисов.
+- Сборка идёт на хосте: сетевые сервисы TFTP/NFS для netboot поднимают
+  `tools/native/setup_netboot.sh` и systemd (`tftpd-hpa`, `nfs-kernel-server`),
+  контейнер сборки больше не используется.

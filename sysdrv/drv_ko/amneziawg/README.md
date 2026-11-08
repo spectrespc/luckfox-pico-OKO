@@ -22,7 +22,7 @@ Out-of-tree модуль `amneziawg.ko` для ядра Linux 5.10.160 (RV1106).
 Модуль собирается штатным `sysdrv`-конвейером при `RK_ENABLE_AWG=y`:
 
 ```
-./build.sh sysdrv        # внутри Docker
+./build.sh sysdrv        # на хосте
 ```
 
 `sysdrv/drv_ko/Makefile` вызывает этот Makefile, тот — Kbuild ядра:

@@ -101,7 +101,7 @@ bench/run.sh dut.py '/etc/init.d/S21oko-ec stop' \
 # ожидается device_type 2 → 1 → 2, версия и ячейки не меняются
 
 # быстрая выкатка собранного divinus в /oem без пересборки образа
-make -C project/app/divinus            # в Docker-цикле SDK
+make -C project/app/divinus            # в цикле сборки SDK
 bench/run.sh deploy_divinus.py
 
 # WebUI: отдельный venv с Playwright и Chromium
@@ -200,6 +200,9 @@ sudo rsync -a --delete output/out/userdata/ /srv/nfs/rootfs/.nfsroot/userdata/
 # загрузка: boot.img должен содержать rv1106-netboot.config
 bench/run.sh netboot.py reboot
 bench/run.sh dut.py 'cat /proc/cmdline' 'mount | grep nfs'
+
+# вход в rockusb без кнопки Maskrom (затем upgrade_tool ld / uf)
+bench/run.sh netboot.py reboot --uboot-command download
 ```
 
 ## Переменные окружения

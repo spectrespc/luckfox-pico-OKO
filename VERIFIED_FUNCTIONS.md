@@ -14,7 +14,7 @@
 | Стенд | `192.168.52.97` (DHCP, SSH), UART `/dev/ttyACM0` 115200 |
 | Методы | SSH, RTSP (PyAV), HTTP API (`curl`, `bench/api_check.py`), WebUI (`bench/ui_check.py`, headless Chromium), скриншоты в `output/bench/ui/` |
 | Примечание | 2026-11-05 выполнен полный `./rkflash.sh update` образа с разметкой `userdata` 40 МБ / `rootfs` 168 МБ; вход в Maskrom — `download` из U-Boot по UART (см. `TESTBENCH.md` §7A). 2026-11-06 полный `update.img` не заливался: USB OTG не подключён, компоненты `oem`/`rootfs` обновлены по SSH; образ собран из этих же исходников (`output/image/update.img`) |
-| Сборка | Docker, активный BoardConfig `BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI.mk` |
+| Сборка | нативная на Debian 13 (`tools/native/`), активный BoardConfig `BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI.mk` |
 
 ## 2. Функции
 
@@ -70,7 +70,7 @@
 | Ethernet: стабильный MAC | работает | MAC `02:47:8d:05:67:56` выводится из serial и хранится в env (`fw_printenv oko_mac`); после полной прошивки и reboot не меняется | `/userdata` и rootfs при полной прошивке пересоздаются, env — нет |
 | Ethernet: DHCP | работает | `dhcpcd` (один клиент, client ID = MAC, без DUID), IP `192.168.52.97` сохраняется после reboot; `S41dhcpcd` — заглушка, `udhcpc` не запускается | При смене MAC/сети адрес может измениться один раз |
 | Ethernet: static через WebUI/API | работает | `GET /api/network?mode=static&ipaddr=192.168.52.220&netmask=255.255.255.0&gateway=192.168.52.254&dns=192.168.52.254` → `.220`, маршрут/DNS применяются, `dhcpcd` остановлен; после reboot `.220` сохраняется; возврат `mode=dhcp` → `.97` | Ответ приходит до применения; страница может отключиться, нужен reconnect |
-| Переразметка NAND 6M/40M/198M | работает | `cat /proc/mtd`: `boot 00600000`, `oem 02800000`, `userdata 00a00000`, `rootfs 0c600000`; `cmdline` содержит новую `mtdparts` | Требуется полная прошивка `update.img`; старые `/userdata` и таблица разделов несовместимы |
+| Переразметка NAND 6M/40M/40M/168M | работает | `cat /proc/mtd`: `boot 00600000`, `oem 02800000`, `userdata 02800000`, `rootfs 0a800000`; `cmdline` содержит новую `mtdparts`; `/userdata` ≈29.1 МиБ | Требуется полная прошивка `update.img`; старые `/userdata` и таблица разделов несовместимы |
 | Сенсоры SC230AI-only | работает | `ls /oem/usr/ko` → только `sc230ai.ko`; `lsmod` → только `sc230ai`; IQ → только `sc230ai_CMK-OT2115-PC1_30IRC-F16.json`; `sample_*`/`simple_*` отсутствуют | Вендорские DTS/исходники других плат не тронуты |
 
 | Фокус: AF-метрика (A6) | работает | 2026-11-06, после `POST /api/focus?enable=1`: `status=running`, `af_hw_ver=2`, `cells_used=225`, 20 отсчётов `metric_avg` 527427–530023 (std 1124) в `output/bench/focus/focus-20261106-111557.csv` + снимок. ROI top-left 0,0,2000,2000 → `metric_avg=2635599` (9 ячеек), центр 2500,2500,5000,5000 → 0 (плоская область). Без `af_v31.TuningPara.contrast_af.enable=1` в IQ все ячейки нулевые | AFM-карта остаётся полнокадровой, ROI применяется выбором ячеек в `focus.c`; малые ходы мотора метрику не меняют — оптическая связь объектива не подтверждена |
@@ -210,7 +210,7 @@ on-link (`dev eth0`), SSH и WebUI доступны.
 
 ```sh
 strings output/image/env.img | grep mtdparts
-# ожидается: 6M(boot),40M(oem),...,198M(rootfs)
+# ожидается: 6M(boot),40M(oem),40M(userdata),168M(rootfs)
 ```
 
 На DUT после полной прошивки:

@@ -11,12 +11,11 @@ BootROM → U-Boot → ядро Linux → busybox init → init-скрипты �
 `output/out/` — это артефакт последней сборки; он может устареть и используется только
 для сверки фактического набора файлов.
 
-Сборка прошивки в форке OKO выполняется в Docker-контейнере `luckfox_oko_build_env`
-(образ `luckfox-builder:22.04`), настроенном в `docker-compose.yml` и запускаемом
-через `start.sh` (`docker compose build` + `docker compose up -d`). Команды сборки —
-внутри контейнера в `/workspace`; артефакты — в `output/image/`. Быстрый старт и
-зависимости — в `README_RU.md`; сборка на хосте без Docker там же описана как
-вендорский fallback.
+Сборка прошивки в форке OKO выполняется нативно на хосте Debian 13
+(без контейнера): `tools/native/setup_host.sh` ставит зависимости, затем
+`source tools/native/env.sh` и `./build.sh`. Команды выполняются в корне
+репозитория; артефакты — в `output/image/`. Быстрый старт и зависимости —
+в `README_RU.md`.
 
 ## 1. Активная конфигурация и пути загрузки
 
@@ -57,12 +56,12 @@ BootROM → U-Boot → ядро Linux → busybox init → init-скрипты �
    `/bin/busybox` (в текущем rootfs отдельного `/init` нет, `init=` в cmdline не задан).
 4. **busybox init** читает `/etc/inittab` (раздел 3).
 
-`start.sh` поднимает Docker-сборщик через `docker compose` (`build` + `up -d`)
-и открывает shell внутри контейнера.
+`tools/native/env.sh` добавляет кросс-тулчейн в `PATH` и задаёт
+`CROSS_COMPILE`/`ARCH`; отдельного контейнера сборки нет.
 
 ## 3. Инициализация busybox (inittab)
 
-Шаблон: `sysdrv/source/buildroot/buildroot-2023.02.6/package/busybox/inittab`.
+Шаблон: `sysdrv/source/buildroot/buildroot-2026.08.1/package/busybox/inittab`.
 Записи `::sysinit` выполняются по порядку:
 
 1. `mount -t proc proc /proc`
@@ -482,9 +481,9 @@ AIC8800 (`aic_load_fw` → `aic8800_fdrv`), AP6XXX (`bcmdhd`), RTL8723BS
 | Этап | Исходный файл |
 |---|---|
 | Конфигурация платы | `project/cfg/BoardConfig_IPC/BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI.mk` |
-| Окружение сборки (Docker) | `Dockerfile`, `docker-compose.yml`, `docker-entrypoint.sh`, `start.sh` |
+| Окружение сборки | `tools/native/setup_host.sh`, `tools/native/env.sh` |
 | U-Boot / ядро / cmdline | `project/build.sh` (генерация `S20linkmount`, `S21appinit`), `sysdrv/source/kernel/arch/arm/configs/rv1106-sc230ai.config` |
-| inittab | `sysdrv/source/buildroot/buildroot-2023.02.6/package/busybox/inittab` |
+| inittab | `sysdrv/source/buildroot/buildroot-2026.08.1/package/busybox/inittab` |
 | Init-скрипты (оверлей) | `project/cfg/BoardConfig_IPC/overlay/overlay-luckfox-buildroot-init/etc/init.d/` |
 | Загрузка модулей | `sysdrv/drv_ko/insmod_ko.sh` |
 | WiFi | `sysdrv/drv_ko/wifi/insmod_wifi.sh` |

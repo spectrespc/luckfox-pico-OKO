@@ -470,3 +470,17 @@ NPU 28%, `librkpostisp.so` загружен, пропусков в `/live/0` н�
       multi-attach RGN, который заблокирован (см. `FEATURES_UNVERIFIED.md`).
 - [x] Кроп ePTZ учитывается в маппинге (`nn_geom.c`); смена кропа/угла
       применяется graceful-рестартом приложения (KI-044 закрыт).
+
+## 12. Сборка и окружение (после миграции 2026-11-08)
+
+- [x] Нативная сборка на Debian 13: `tools/native/setup_host.sh`, `env.sh`,
+      `smoke.sh`; Docker-контейнер сборки удалён.
+- [x] Buildroot 2026.08.1: rootfs собран, проверен по NFS и прошит в SPI NAND
+      (`api_check` 98/98, RTSP/OSD).
+- [x] Netboot TFTP/NFS: `bench/netboot.py`, `tools/native/setup_netboot.sh`,
+      BoardConfig `*-SC230AI-NETBOOT.mk`.
+- [ ] `luckfox_pico_w_defconfig` (bluez5_utils/mpv): ребейс
+      `hcitool_patch`/`mpv_patch` под новые версии или отключение пакетов
+      (KI-046).
+- [ ] Сторонние `/oem`-blob'ы со старым ABI (`libssl.so.1.1`, Python 3.11):
+      пересобрать из SDK или добавить compat-копии (KI-045).

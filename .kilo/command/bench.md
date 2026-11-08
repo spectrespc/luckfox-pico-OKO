@@ -29,5 +29,5 @@ agent: code
    `TESTBENCH.md` и добавь запись в `CHANGELOG.md` → `[Не выпущено]` (см. §10 и
    `AGENTS.md` §4). Значения из `output/` не подменяют проверку скриптов.
 
-При сомнении источник истины — `bench/*.py`, `start.sh`,
-`docker-compose.yml` и активный `.BoardConfig.mk`, а не текст документа.
+При сомнении источник истины — `bench/*.py`, `tools/native/*.sh`
+и активный `.BoardConfig.mk`, а не текст документа.

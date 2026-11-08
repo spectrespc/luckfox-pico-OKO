@@ -439,7 +439,7 @@ STM8 и загрузчик — в `project/app/stm8-motor`; первая зап�
    - `server.c`/`res/index.html`/`app_config.*`/`gating.c`: `/api/focus`,
      `/api/flash`, `/api/firmware`, карточки Image/System и секции
      `[focus]`/`[flash]`.
-5. Перед коммитом пересобрать (`./build.sh` в Docker) и проверить наличие
+5. Перед коммитом пересобрать (`./build.sh` на хосте) и проверить наличие
    `output/out/oem/usr/bin/divinus` — цикл сборки приложений не прерывается на ошибке
    отдельного пакета. После применения HAL-патча прогнать хостовые тесты и
    дождаться `ok 660x46 rows placed at stride 672` и `ok rk_rgn_pack`:

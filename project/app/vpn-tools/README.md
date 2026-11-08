@@ -26,7 +26,7 @@
 ## Сборка
 
 ```sh
-./build.sh app        # внутри Docker; вызывает project/app/Makefile
+./build.sh app        # на хосте; вызывает project/app/Makefile
 # или точечно:
 make -C project/app/vpn-tools
 ```

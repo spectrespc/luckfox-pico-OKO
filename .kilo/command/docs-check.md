@@ -19,7 +19,7 @@ agent: code
 | `INIT_ORDER.md` | §4 | `ls output/out/rootfs_uclibc_rv1106/etc/init.d/S??*` и оверлей `project/cfg/BoardConfig_IPC/overlay/overlay-luckfox-buildroot-init/etc/init.d/` |
 | `INIT_ORDER.md` | §6 | `grep -n '__insmod\|insmod_wifi' sysdrv/drv_ko/insmod_ko.sh` |
 | `INIT_ORDER.md` | §7 | состав `sysdrv/drv_ko` и `M_DIRS`: `ls sysdrv/drv_ko`, `grep -n M_DIRS sysdrv/drv_ko/Makefile` |
-| `TESTBENCH.md` | §4–§5 | адреса DUT и шлюза в `bench/*.py`, `start.sh`, `docker-compose.yml` |
+| `TESTBENCH.md` | §4–§5 | адреса DUT и шлюза в `bench/*.py`, `tools/native/*.sh` |
 | `TESTBENCH.md` | §1 | «Дата обновления» — должна соответствовать дате последней правки дока |
 | `STRUCTURE.md` | Корневые папки/файлы | `ls` корня репозитория |
 

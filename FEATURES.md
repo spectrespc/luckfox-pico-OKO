@@ -28,7 +28,7 @@
 | Активный DTS | `rv1106g-luckfox-pico-pro-max-sc230ai.dts` |
 | Медиастек | `divinus` (OpenIPC), H.265/H.264, JPEG, RTSP, WebUI |
 | NPU-стек | драйвер `rknpu` 0.9.8 (`20240828`, non-IOMMU), мини-рантайм `librknnmrt.so` 1.6.0; опционально второй `librknnmrt2.so` 2.3.2 (`yolo.runtime: 2`), RGA-конверсия NV12→RGB888 по fd (`yolo.convert: rga`) и рамки детекции на видеопотоке (`yolo.boxes`, 2BPP RGN, два цвета) |
-| Сборка | Docker (`./start.sh`), результат — `output/image/update.img` |
+| Сборка | нативная на Debian 13 (`tools/native/setup_host.sh`, `./build.sh firmware`), результат — `output/image/update.img` |
 
 ### Как проверить
 
@@ -119,8 +119,8 @@ H.265/H.264, JPEG, RTSP, WebUI. NPU stack: `rknpu` driver 0.9.8 (`20240828`,
 non-IOMMU) with the `librknnmrt.so` 1.6.0 mini-runtime and an optional second
 `librknnmrt2.so` 2.3.2 (`yolo.runtime: 2`), optional RGA NV12→RGB888
 over dma-buf fds (`yolo.convert: rga`) and detection boxes on the stream
-(`yolo.boxes`, 2BPP RGN, two colours). Build: Docker (`./start.sh`), output
-`output/image/update.img`.
+(`yolo.boxes`, 2BPP RGN, two colours). Build: native on Debian 13
+(`./build.sh firmware`), output `output/image/update.img`.
 
 Shared notes: see the Russian section above; open defects are in
 `KNOWN_ISSUES.md`, and unverified stream combinations, YOLO, sensors and

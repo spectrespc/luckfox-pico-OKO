@@ -2,7 +2,7 @@
 
 Паспорт и рабочие параметры лабораторного стенда для отладки прошивки Luckfox Pico
 Pro Max (RV1106) с автономной загрузкой из SPI NAND. Значения сверены с `bench/*.py`,
-`start.sh`, `docker-compose.yml` и активным BoardConfig на дату обновления.
+`tools/native/*.sh` и активным BoardConfig на дату обновления.
 
 ## 1. Паспорт стенда
 
@@ -32,13 +32,13 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
 
 | Параметр | Значение |
 |---|---|
-| ОС | Ubuntu 22.04 |
-| Сборка | Docker, образ `luckfox-builder:22.04` |
-| Контейнер | `luckfox_oko_build_env` |
-| Сеть контейнера | `network_mode: host` (общий сетевой стек с хостом) |
-| Рабочая папка | `/workspace` (корень репозитория смонтирован туда) |
-| Сетевые сервисы | не запускаются; сборка и прошивка выполняются локально |
-| Запуск окружения | `./start.sh` |
+| ОС | Debian 13 trixie |
+| Компилятор хоста | gcc/g++ 14.2 (`host-tools` U-Boot/ядра собираются им) |
+| Целевой тулчейн | `arm-rockchip830-linux-uclibcgnueabihf` (gcc 8.3.0, uClibc-ng, `tools/linux/toolchain/`) |
+| Сборка | нативная, без контейнера: `tools/native/setup_host.sh`, `source tools/native/env.sh`, `./build.sh` |
+| Рабочая папка | корень репозитория на хосте |
+| Сетевые сервисы | на хосте: `tftpd-hpa` (корень `output/image`, chroot) и `nfs-kernel-server` (`/srv/nfs/rootfs`) |
+| Запуск окружения | `source tools/native/env.sh` (проверка — `tools/native/smoke.sh`) |
 
 ## 4. Подключения
 
@@ -79,7 +79,7 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
 | WiFi (`LF_WIFI_SSID`) | — | `<SSID стенда>` |
 | WiFi (`LF_WIFI_PSK`) | — | `<пароль WiFi — заполнять только при необходимости>` |
 | divinus Web/RTSP (фабричный) | `admin` | `oko-change-me` — публичный фабричный дефолт, сменить до подключения к недоверенной сети |
-| Хост / Docker | `builder` | без пароля внутри контейнера (`NOPASSWD` sudo) |
+| Хост | `spectre` | sudo по паролю; в репозитории и скриптах не хранится |
 
 Перед выдачей стенда наружу вендорский пароль `luckfox` необходимо сменить.
 
@@ -87,7 +87,7 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
 
 ### A. SPI NAND (автономная загрузка)
 
-1. В контейнере: `./build.sh firmware`.
+1. На хосте: `source tools/native/env.sh && ./build.sh firmware`.
 2. Результат: `output/image/update.img`.
 3. Перевести устройство в Maskrom — `<кнопка / перемычка>`.
 4. Прошить: `./rkflash.sh` или `tools/linux/Linux_Upgrade_Tool/upgrade_tool`.
@@ -223,6 +223,45 @@ docker run --rm --privileged \
 `enter-boot` → `info` → `boot-reset`. Восстановление при неудачной записи —
 тем же `factory-2.1.1.ihx`; приложение можно обновлять без ST-Link через
 `/api/flash` (имя с версией) или `oko-motor flash app-2.1.1.ihx`.
+
+### D. Netboot: TFTP + NFS (итерации без прошивки)
+
+Загрузка `boot.img` по TFTP и корня по NFS. Конфиг —
+`BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI-NETBOOT.mk`
+(фрагменты `rv1106-netboot.config` + `rv1106-sc230ai.config`), в NFS-режиме
+`oem`/`userdata` монтируются из `<nfsroot>/.nfsroot/`, DHCP в `RkLunch.sh`
+пропускается.
+
+1. Настроить хост один раз (нужен sudo):
+   ```sh
+   tools/native/setup_netboot.sh
+   ```
+   Скрипт ставит `tftpd-hpa` (корень `<repo>/output/image`, `--secure`,
+   `ProtectHome=read-only` и ACL на обход домашнего каталога), `nfs-kernel-server`
+   (экспорт `/srv/nfs/rootfs` для `192.168.52.0/24`) и `acl`.
+2. Собрать загрузчик с netboot-фрагментом (переключить `.BoardConfig.mk`, затем
+   вернуть основной конфиг перед финальной прошивкой):
+   ```sh
+   source tools/native/env.sh && ./build.sh kernel
+   ```
+3. Разложить rootfs и разделы в экспорт (бэкап — tar в `output/bench/nfs/`):
+   ```sh
+   sudo rsync -a --delete --exclude=/.nfsroot output/out/rootfs_uclibc_rv1106/ /srv/nfs/rootfs/
+   sudo rsync -a --delete output/out/oem/ /srv/nfs/rootfs/.nfsroot/oem/
+   sudo rsync -a --delete output/out/userdata/ /srv/nfs/rootfs/.nfsroot/userdata/
+   ```
+4. Загрузить DUT: `bench/run.sh netboot.py reboot` (логин/reboot по UART,
+   перехват U-Boot, `setenv ipaddr/serverip/sys_bootargs`, `tftp`, `boot_fit`).
+   Первый цикл можно поймать вручную: `bench/run.sh netboot.py catch` и сбросить
+   питание. Одна команда в U-Boot — `bench/run.sh netboot.py cmd 'printenv'`.
+5. Вернуться на SPI NAND: перезагрузить DUT без остановки U-Boot (грузится
+   `root=ubi0:rootfs`). Вход в rockusb без кнопки Maskrom:
+   `bench/run.sh netboot.py reboot --uboot-command download`, затем
+   `upgrade_tool ld` и `upgrade_tool uf output/image/update.img`.
+
+Логи — `output/bench/netboot-<дата>.log`. Скорость NFS в этом режиме ограничена
+`rsize/wsize=4096` (параметры `nfsroot`), для замеров производительности
+используйте SPI NAND.
 
 ## 8. Диагностика
 
@@ -491,8 +530,8 @@ dmesg | tail -50
   (сенсор 3 МП). Если геометрия кадра окажется некорректной, ini подбирается отдельно.
 - В автономном режиме `oem` и `userdata` монтируются из SPI NAND (ubifs).
   Изменения, сделанные на устройстве в `/userdata`, сохраняются в NAND.
-- Docker использует `network_mode: host`, но собственных сетевых сервисов
-  не запускает.
+- Сборка идёт на хосте; сетевые сервисы стенда (`tftpd-hpa`, `nfs-kernel-server`)
+  запускает systemd. Старый контейнер сборки не используется.
 - `divinus` — стример OpenIPC (MIT, `project/app/divinus/`), **по умолчанию**:
   маркер `/userdata/divinus.enable` создаёт `S20oko-osd`. Opt-out —
   `/userdata/rkipc.enable` (маркер divinus удаляется, запускается `rkipc`).
@@ -553,4 +592,4 @@ dmesg | tail -50
 2. При каждом обновлении менять «Дату обновления» в разделе 1.
 3. Секреты не хранить: только плейсхолдеры `<...>` и публичные вендорские дефолты.
 4. Расхождения между документом и скриптами трактовать в пользу скриптов
-   (`bench/*.py`, `start.sh`, BoardConfig) и сразу править документ.
+   (`bench/*.py`, `tools/native/*.sh`, BoardConfig) и сразу править документ.

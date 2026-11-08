@@ -274,6 +274,26 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Изменено
 
+- **Rootfs 2026.08.1 проверена на DUT и прошита в SPI NAND (OKO).** По NFS:
+  `api_check` 98/98, `osd_check` 5/5 кадров, RTSP 1920×1080, Python 3.14.8 +
+  OpenSSL 3.6.5, `oem`/`userdata` из `<nfsroot>/.nfsroot/`. После возврата
+  `.BoardConfig.mk` на SC230AI и полной пересборки `update.img`
+  (boot 6 МБ/oem 40 МБ/userdata 40 МБ/rootfs 168 МБ) прошит через Maskrom
+  (`download` → `upgrade_tool uf`); DUT грузится с `root=ubi0:rootfs`,
+  `/userdata` ≈29.1 МиБ, `api_check` 98/98, RTSP/OSD без регрессии,
+  `/dev/net/tun` и OpenVPN 2.7.8 на месте. ABI-риск для сторонних blob'ов
+  зафиксирован в KI-045, w-вариант — в KI-046.
+- **The 2026.08.1 rootfs is verified on the DUT and flashed to SPI NAND
+  (OKO).** Over NFS: `api_check` 98/98, `osd_check` 5/5 frames, RTSP at
+  1920×1080, Python 3.14.8 + OpenSSL 3.6.5, `oem`/`userdata` mounted from
+  `<nfsroot>/.nfsroot/`. After switching `.BoardConfig.mk` back to SC230AI
+  and rebuilding `update.img` (boot 6 MB/oem 40 MB/userdata 40 MB/rootfs
+  168 MB) it was flashed through Maskrom (`download` → `upgrade_tool uf`);
+  the DUT boots with `root=ubi0:rootfs`, `/userdata` ≈29.1 MiB,
+  `api_check` 98/98, RTSP/OSD clean, `/dev/net/tun` and OpenVPN 2.7.8
+  present. The third-party blob ABI risk is tracked in KI-045 and the w
+  variant in KI-046.
+
 - **Buildroot обновлён до upstream 2026.08.1 (OKO).** Вместо вендорского
   `buildroot-2023.02.6` используется официальный релиз 2026.08.1
   (tarball с закреплённым sha256, `make_tarball.sh`), вендорская дельта
@@ -686,6 +706,21 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   read before treating the scale as corrupted.
 
 ### Удалено
+
+- **Docker-окружение сборки прошивки удалено (OKO).** Удалены `Dockerfile`,
+  `docker-compose.yml`, `docker-entrypoint.sh`, `start.sh` и контейнер
+  `luckfox_oko_build_env`; сборка, прошивка и сетевые сервисы стенда
+  выполняются на хосте Debian 13 (`tools/native/`, systemd
+  `tftpd-hpa`/`nfs-kernel-server`). Из документации и правил агента убраны
+  ссылки на контейнер. Отдельные образы `tools/rknn-toolkit2/` и
+  `tools/stm8-sdcc/` не затронуты.
+- **The firmware build Docker environment is removed (OKO).** `Dockerfile`,
+  `docker-compose.yml`, `docker-entrypoint.sh`, `start.sh` and the
+  `luckfox_oko_build_env` container are gone; builds, flashing and the bench
+  network services now run on the Debian 13 host (`tools/native/`, systemd
+  `tftpd-hpa`/`nfs-kernel-server`). Container references were removed from
+  the docs and agent rules. The separate `tools/rknn-toolkit2/` and
+  `tools/stm8-sdcc/` images are unaffected.
 
 - **Драйвер `motor.ko` (28BYJ-48, pan/tilt) удалён из форка (OKO).** Удалён
   каталог `sysdrv/drv_ko/motor` (исходники, `sample`, `src`), `motor` убран из

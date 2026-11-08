@@ -151,6 +151,21 @@ def send_netboot_commands(session):
     session.log(b"\n[COMMANDS SENT]\n")
 
 
+def send_uboot_command(session, command, wait=15.0):
+    """Send one U-Boot command after the prompt was caught and log the reply."""
+    session.write(b"\r")
+    time.sleep(0.5)
+    session.read()
+    session.log(b"\n[SENDING U-BOOT COMMAND]\n")
+    session.log(b"\n>>> " + command.encode() + b"\n")
+    session.write(command.encode() + b"\r")
+    deadline = time.time() + wait
+    while time.time() < deadline:
+        if not session.read():
+            time.sleep(0.05)
+    session.log(b"\n[COMMAND SENT]\n")
+
+
 def wait_boot(session, timeout=180):
     deadline = time.time() + timeout
     markers = (b"login:", b"Please press Enter", b"root@luckfox")
@@ -177,6 +192,8 @@ def main():
                         help="seconds to wait for the U-Boot prompt")
     parser.add_argument("--boot-timeout", type=float, default=180.0,
                         help="seconds to wait for the Linux login prompt")
+    parser.add_argument("--uboot-command", default=None,
+                        help="for catch/reboot: send this one U-Boot command instead of the netboot sequence")
     args = parser.parse_args()
 
     if args.mode == "cmd" and not args.command:
@@ -199,7 +216,7 @@ def main():
             time.sleep(0.3)
 
         if args.mode == "cmd":
-            if not wait_prompt(session, min(args.prompt_timeout, 10.0)):
+            if not wait_prompt(session, args.prompt_timeout):
                 print("U-Boot prompt not found; is the DUT sitting in the bootloader?", file=sys.stderr)
                 return 3
             session.write((args.command + "\r").encode())
@@ -217,6 +234,10 @@ def main():
         if not wait_prompt(session, args.prompt_timeout):
             print("U-Boot prompt not found; reset the DUT or use mode 'reboot'", file=sys.stderr)
             return 3
+        if args.uboot_command:
+            print(f"U-Boot prompt detected, sending: {args.uboot_command}")
+            send_uboot_command(session, args.uboot_command)
+            return 0
         print("U-Boot prompt detected, sending netboot commands")
         send_netboot_commands(session)
         if not wait_boot(session, args.boot_timeout):
