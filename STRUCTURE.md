@@ -158,7 +158,13 @@
   `arch/arm/boot/dts/rv1106g-luckfox-pico-pro-max-sc230ai.dts` (Pro Max +
   выключенные `&sc3336`/`&mis5001`), фрагмент `rv1106-sc230ai.config` собирает
   только `sc230ai`.
-- `source/buildroot` — исходники Buildroot (корневая файловая система).
+- `source/buildroot` — распакованное дерево Buildroot (корневая файловая
+  система); в git не хранится.
+- `tools/board/buildroot` — вендорская обвязка Buildroot: tarball
+  `buildroot-2026.08.1.tar.gz` (sha256 в `make_tarball.sh`),
+  `luckfox_pico_defconfig`, `luckfox_pico_w_defconfig`, `busybox.config`,
+  `busybox_patch/` и патч-серия `patches-2026.08/` (gnutls, libv4l),
+  подключаемая через `BR2_GLOBAL_PATCH_DIR`.
 - `source/mcu` — прошивка сопроцессора MCU на RT-Thread (вендорская часть SDK).
 - `source/objs_kernel` — промежуточные объекты сборки ядра.
 - `drv_ko/kmpp`, `drv_ko/rockit`, `drv_ko/wifi` — модули ядра для медиастека и Wi-Fi.

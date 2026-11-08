@@ -320,6 +320,14 @@
 
 ### Инструменты разработки
 
+- **KI-047. Старые сборки (Docker/Ubuntu 22.04) не воспроизводятся.**
+  Контейнер `luckfox_oko_build_env` и `Dockerfile`/`start.sh` удалены;
+  Buildroot 2023.02.6 заменён на 2026.08.1. Собрать точную прошивку до
+  миграции можно только из артефактов `output/` или из истории git
+  (коммиты до `d8ba46293`). Для повторной проверки старого поведения
+  используйте `git worktree` на коммите до миграции и вендорский
+  rootfs из `IMAGE/`. Статус: **принятое ограничение**.
+
 - **KI-031. Headless Chromium требует `libasound.so.2`.**
   В хостовом окружении библиотеки нет. Обход без root:
   `apt-get download libasound2t64`, распаковать `dpkg-deb -x` и задать
@@ -327,7 +335,7 @@
 
 ## English
 
-Updated: `2026-11-07`. This file lists open problems, confirmed limitations and
+Updated: `2026-11-08`. This file lists open problems, confirmed limitations and
 recently closed entries (KI-036).
 Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
 `FEATURES_VERIFIED.md` / `FEATURES_UNVERIFIED.md`, bench procedures in
@@ -612,6 +620,14 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   network. Status: **operational requirement**.
 
 ### Development tools
+
+- **KI-047. Pre-migration builds (Docker/Ubuntu 22.04) are not reproducible.**
+  The `luckfox_oko_build_env` container and `Dockerfile`/`start.sh` are gone,
+  and Buildroot 2023.02.6 was replaced by 2026.08.1. The exact pre-migration
+  image can only be rebuilt from `output/` artifacts or git history (commits
+  before `d8ba46293`). To retest the old behavior, use a `git worktree` at a
+  pre-migration commit and the vendor rootfs from `IMAGE/`. Status:
+  **accepted limitation**.
 
 - **KI-031. Headless Chromium needs `libasound.so.2`.** The host image lacks
   it. Without root: `apt-get download libasound2t64`, unpack with `dpkg-deb -x`

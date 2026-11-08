@@ -208,6 +208,10 @@ on-link (`dev eth0`), SSH и WebUI доступны.
 
 ### Образ и разделы
 
+После миграции 2026-11-08 rootfs собран на Buildroot 2026.08.1: busybox
+1.38.0, Python 3.14.8, OpenSSL 3.6.5, GnuTLS 3.8.13, OpenVPN 2.7.8,
+OpenSSH 10.6p1; U-Boot и ядро 5.10.160 не менялись.
+
 ```sh
 strings output/image/env.img | grep mtdparts
 # ожидается: 6M(boot),40M(oem),40M(userdata),168M(rootfs)
@@ -218,7 +222,7 @@ strings output/image/env.img | grep mtdparts
 ```sh
 cat /proc/cmdline
 cat /proc/mtd
-# boot 0x600000, oem 0x02800000, rootfs 0x0c600000 (размеры в hex)
+# boot 0x600000, oem 0x02800000, userdata 0x02800000, rootfs 0x0a800000
 df -h /oem /mnt/sdcard
 ls /oem/usr/ko | grep -E 'sc3336|mis5001|imx415|mia1321'   # пусто
 ls /oem/usr/share/iqfiles                                   # только sc230ai_*.json

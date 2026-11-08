@@ -299,7 +299,9 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   (tarball с закреплённым sha256, `make_tarball.sh`), вендорская дельта
   перенесена внешними файлами: `luckfox_pico_defconfig`
   (`BR2_GLOBAL_PATCH_DIR`), `busybox.config`, патчи
-  `patches-2026.08/{gnutls,libv4l}`. Гейт внешнего тулчейна
+  `patches-2026.08/{gnutls,libv4l}`; копирование `hcitool_patch`/`mpv_patch`
+  в `buildroot_create`/`buildroot` убрано (пакеты не входят в активный
+  defconfig). Гейт внешнего тулчейна
   (`arm-rockchip830`, gcc 8.3.0, uClibc-ng, headers 5.10) пройден без
   ослабления `BR2_TOOLCHAIN_*`; состав `BR2_PACKAGE_*` defconfig
   сохранён. Пакетные правки: GnuTLS 3.8.13 не собирает gnulib
@@ -316,7 +318,9 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   `buildroot-2023.02.6` is replaced by the official 2026.08.1 release
   (sha256-pinned tarball, `make_tarball.sh`), with the vendor delta kept
   outside the tree: `luckfox_pico_defconfig` (`BR2_GLOBAL_PATCH_DIR`),
-  `busybox.config`, `patches-2026.08/{gnutls,libv4l}`. The external
+  `busybox.config`, `patches-2026.08/{gnutls,libv4l}`; the
+  `hcitool_patch`/`mpv_patch` copies in `buildroot_create`/`buildroot`
+  are removed (the packages are not part of the active defconfig). The external
   toolchain gate (`arm-rockchip830`, gcc 8.3.0, uClibc-ng, headers 5.10)
   passes without relaxing `BR2_TOOLCHAIN_*`; the defconfig
   `BR2_PACKAGE_*` set is unchanged. Package fixes: GnuTLS 3.8.13 skips

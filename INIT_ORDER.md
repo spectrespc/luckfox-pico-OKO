@@ -13,9 +13,10 @@ BootROM → U-Boot → ядро Linux → busybox init → init-скрипты �
 
 Сборка прошивки в форке OKO выполняется нативно на хосте Debian 13
 (без контейнера): `tools/native/setup_host.sh` ставит зависимости, затем
-`source tools/native/env.sh` и `./build.sh`. Команды выполняются в корне
-репозитория; артефакты — в `output/image/`. Быстрый старт и зависимости —
-в `README_RU.md`.
+`source tools/native/env.sh` и `./build.sh`. `env.sh` добавляет кросс-тулчейн
+и `sbin` в `PATH`, задаёт `CROSS_COMPILE`/`ARCH` и локаль `C.UTF-8`. Команды
+выполняются в корне репозитория; артефакты — в `output/image/`. Быстрый старт
+и зависимости — в `README_RU.md`.
 
 ## 1. Активная конфигурация и пути загрузки
 
@@ -56,8 +57,13 @@ BootROM → U-Boot → ядро Linux → busybox init → init-скрипты �
    `/bin/busybox` (в текущем rootfs отдельного `/init` нет, `init=` в cmdline не задан).
 4. **busybox init** читает `/etc/inittab` (раздел 3).
 
-`tools/native/env.sh` добавляет кросс-тулчейн в `PATH` и задаёт
-`CROSS_COMPILE`/`ARCH`; отдельного контейнера сборки нет.
+**Netboot-ветка (только для отладки).** BoardConfig `*-SC230AI-NETBOOT.mk`
+добавляет фрагмент `rv1106-netboot.config`: U-Boot получает `boot.img` по TFTP
+(`tftp ${ramdisk_addr_r} boot.img` + `boot_fit`), cmdline содержит
+`root=/dev/nfs rw nfsroot=192.168.52.200:/srv/nfs/rootfs,... ip=192.168.52.150::...`.
+Ядро монтирует корень по NFS, `S20linkmount` монтирует `oem`/`userdata` из
+`<nfsroot>/.nfsroot/`, а `RkLunch.sh` пропускает DHCP (см. раздел 5). После
+перезагрузки без остановки U-Boot плата снова грузится из SPI NAND.
 
 ## 3. Инициализация busybox (inittab)
 
@@ -165,7 +171,10 @@ esac
 1. Ожидает монтирование `/userdata` (до 30 попыток по 0.1 с, т.е. ~3 с).
 2. Выбирает каталог модулей: `/oem/usr/ko`, если там есть `insmod_ko.sh`, иначе `/ko`,
    и выполняет `sh insmod_ko.sh` (раздел 6).
-3. Запускает `network_init &`: если есть `/usr/bin/oko-net`, вызывает
+3. Запускает `network_init &`: если в `/proc/cmdline` есть `nfsroot=`,
+   функция только поднимает `eth0` (адрес уже задан параметром `ip=` ядра) и
+   не трогает MAC/DHCP — иначе развалились бы установленные NFS-соединения.
+   В обычной загрузке с NAND: если есть `/usr/bin/oko-net`, вызывает
    `oko-net apply`. MAC и режим сети (`oko_mac`, `oko_net_mode`, `oko_ipaddr`,
    `oko_netmask`, `oko_gateway`, `oko_dns`) читаются из env-раздела U-Boot
    через `fw_printenv`; MAC при первом запуске выводится из
