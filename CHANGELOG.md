@@ -509,6 +509,23 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Исправлено
 
+- **Сборка драйвера atbm на GNU make 4.4 (OKO).** В
+  `sysdrv/drv_ko/wifi/atbm/Makefile.build.customer` переменные
+  `SDIO_HOST`…`MODPMSTAYAWK` объявлены через `:=` вместо `?=` с
+  `$(shell echo …)`, а `DRIVER_PATH` в `atbm/Makefile` — через `:=`.
+  Причина: make 4.4 при голом `export` рекурсивно экспортирует такие
+  переменные и зависает на предупреждениях «не раскрывается рекурсивно
+  для экспорта в функцию оболочки»; на Ubuntu 22.04 (make 4.3) сборка
+  проходила. После правки `make -C sysdrv drv` завершается.
+- **The atbm driver builds with GNU make 4.4 (OKO).** In
+  `sysdrv/drv_ko/wifi/atbm/Makefile.build.customer` the
+  `SDIO_HOST`…`MODPMSTAYAWK` variables use `:=` instead of `?=` with
+  `$(shell echo …)`, and `DRIVER_PATH` in `atbm/Makefile` is also
+  simply expanded. With make 4.4 a bare `export` recursively exports
+  such variables and hangs on “recursive variable … references itself
+  for export to shell function” warnings; make 4.3 on Ubuntu 22.04
+  completed the build. `make -C sysdrv drv` now finishes.
+
 - **`parser-conf.sh` драйвера ssv6x5x сделан исполняемым (OKO).** Файл
   `sysdrv/drv_ko/wifi/ssv6x5x/parser-conf.sh` вызывается через `env` из
   Makefile, но лежал в git с режимом `100644`, из-за чего при каждой

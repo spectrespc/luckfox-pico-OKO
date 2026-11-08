@@ -41,7 +41,7 @@ platform ?= PLATFORM_ROCKCHIP
 ifeq ($(KERNELRELEASE),)
 export
 ATBM_BUILD_IN_KERNEL=n
-export DRIVER_PATH ?= $(shell pwd)
+export DRIVER_PATH := $(shell pwd)
 ifeq ($(CUSTOMER_SUPPORT_USED),y)
 $(info "hello makefile")
 MAKEFILE_SUB ?= Makefile.build.customer
