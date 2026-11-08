@@ -1,0 +1,109 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: OKO build <oko@localhost>
+Date: Sun, 8 Nov 2026 00:00:00 +0300
+Subject: [PATCH] edid-decode: build with the vendor gcc 8 C++ frontend
+
+ddc.cpp assigns designated initializers to i2c_msg variables:
+
+  write_message = {
+      .addr = ...,
+  };
+
+That is C++20 syntax. The arm-rockchip830 toolchain ships gcc 8.3 with
+gnu++11, which only accepts designated initializers in a functional
+cast, so the build fails with:
+
+  ddc.cpp: error: no match for 'operator=' (operand types are 'i2c_msg'
+  and '<brace-enclosed initializer list>')
+
+Wrap each initializer in an explicit i2c_msg temporary; gcc 8 accepts
+that as a GNU extension and the semantics are unchanged.
+---
+ utils/edid-decode/ddc.cpp | 22 +++++++++++-----------
+ 1 file changed, 11 insertions(+), 11 deletions(-)
+
+--- a/utils/edid-decode/ddc.cpp
++++ b/utils/edid-decode/ddc.cpp
+@@ -104,17 +104,17 @@
+ 	struct i2c_msg seg_message;
+ 	int err;
+ 
+-	seg_message = {
++	seg_message = i2c_msg{
+ 		.addr = SEGMENT_POINTER_ADDR,
+ 		.len = 1,
+ 		.buf = &segment
+ 	};
+-	write_message = {
++	write_message = i2c_msg{
+ 		.addr = EDID_ADDR,
+ 		.len = 1,
+ 		.buf = &offset
+ 	};
+-	read_message = {
++	read_message = i2c_msg{
+ 		.addr = EDID_ADDR,
+ 		.flags = I2C_M_RD,
+ 		.len = (__u16)(blocks * EDID_PAGE_SIZE),
+@@ -253,12 +253,12 @@
+ 	__u8 ksv_fifo_offset = 0x43;
+ 	int err;
+ 
+-	write_message = {
++	write_message = i2c_msg{
+ 		.addr = HDCP_PRIM_ADDR,
+ 		.len = 1,
+ 		.buf = &offset
+ 	};
+-	read_message = {
++	read_message = i2c_msg{
+ 		.addr = HDCP_PRIM_ADDR,
+ 		.flags = I2C_M_RD,
+ 		.len = 256,
+@@ -277,12 +277,12 @@
+ 		return -1;
+ 	}
+ 
+-	write_message = {
++	write_message = i2c_msg{
+ 		.addr = HDCP_PRIM_ADDR,
+ 		.len = 1,
+ 		.buf = &ksv_fifo_offset
+ 	};
+-	read_message = {
++	read_message = i2c_msg{
+ 		.addr = HDCP_PRIM_ADDR,
+ 		.flags = I2C_M_RD,
+ 		.len = (__u16)((hdcp_prim[0x41] & 0x7f) * 5),
+@@ -302,12 +302,12 @@
+ 		}
+ 	}
+ 
+-	write_message = {
++	write_message = i2c_msg{
+ 		.addr = HDCP_SEC_ADDR,
+ 		.len = 1,
+ 		.buf = &offset
+ 	};
+-	read_message = {
++	read_message = i2c_msg{
+ 		.addr = HDCP_SEC_ADDR,
+ 		.flags = I2C_M_RD,
+ 		.len = 256,
+@@ -434,12 +434,12 @@
+ 	__u8 offset = 8;
+ 	int err;
+ 
+-	write_message = {
++	write_message = i2c_msg{
+ 		.addr = HDCP_PRIM_ADDR,
+ 		.len = 1,
+ 		.buf = &offset
+ 	};
+-	read_message = {
++	read_message = i2c_msg{
+ 		.addr = HDCP_PRIM_ADDR,
+ 		.flags = I2C_M_RD,
+ 		.len = 2,
+-- 
+2.39.5

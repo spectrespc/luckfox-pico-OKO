@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: OKO build <oko@localhost>
+Date: Sun, 8 Nov 2026 00:00:00 +0300
+Subject: [PATCH] build: do not build gnulib self-tests
+
+GnuTLS imports gnulib with --with-tests, so src/gl/tests is built even
+with --disable-tests. Those tests include <signal.h> before <pthread.h>
+and the vendor uClibc-ng headers (arm-rockchip830 toolchain) declare
+pthread_t in bits/sigthread.h before pthread.h defines it, which fails
+with:
+
+  bits/sigthread.h: error: unknown type name 'pthread_t'
+
+The self-tests are not needed for the target rootfs; skip the subdir.
+
+Signed-off-by: OKO build <oko@localhost>
+---
+ src/gl/Makefile.am | 2 +-
+ src/gl/Makefile.in | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+--- a/src/gl/Makefile.am
++++ b/src/gl/Makefile.am
+@@ -128,7 +128,7 @@
+ DISTCLEANFILES =
+ MAINTAINERCLEANFILES =
+ # No GNU Make output.
+-SUBDIRS += . tests
++SUBDIRS += .
+ EXTRA_DIST += m4/gnulib-cache.m4
+ 
+ AM_CPPFLAGS =
+--- a/src/gl/Makefile.in
++++ b/src/gl/Makefile.in
+@@ -3974,7 +3974,7 @@
+ unistringtests_libunistring_LTLIBOBJS = @unistringtests_libunistring_LTLIBOBJS@
+ AUTOMAKE_OPTIONS = 1.14 gnits subdir-objects
+ # No GNU Make output.
+-SUBDIRS = . tests
++SUBDIRS = .
+ TESTS_ENVIRONMENT = 
+ noinst_HEADERS = 
+ noinst_LIBRARIES = 
+-- 
+2.39.5

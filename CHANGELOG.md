@@ -246,6 +246,42 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Изменено
 
+- **Buildroot обновлён до upstream 2026.08.1 (OKO).** Вместо вендорского
+  `buildroot-2023.02.6` используется официальный релиз 2026.08.1
+  (tarball с закреплённым sha256, `make_tarball.sh`), вендорская дельта
+  перенесена внешними файлами: `luckfox_pico_defconfig`
+  (`BR2_GLOBAL_PATCH_DIR`), `busybox.config`, патчи
+  `patches-2026.08/{gnutls,libv4l}`. Гейт внешнего тулчейна
+  (`arm-rockchip830`, gcc 8.3.0, uClibc-ng, headers 5.10) пройден без
+  ослабления `BR2_TOOLCHAIN_*`; состав `BR2_PACKAGE_*` defconfig
+  сохранён. Пакетные правки: GnuTLS 3.8.13 не собирает gnulib
+  self-тесты (`pthread_t` в uClibc `bits/sigthread.h`), v4l-utils 1.32.0
+  (`edid-decode`) использует `i2c_msg{...}` вместо C++20 designated
+  initializer, busybox 1.38.0 собирается с отключённым yescrypt (нет
+  `explicit_bzero` в uClibc-ng). Вендорские busybox-патчи перенумерованы
+  в `0100`/`0101`. Версии: OpenSSL 3.x (было 1.1.1), Python 3.14.8
+  (было 3.11.6), busybox 1.38.0 (было 1.36.1). `BUILDROOT_VER` и
+  `BUILDROOT_PATH` обновлены; `rootfs.tar` собран нативно
+  (`./build.sh rootfs`). Вендорская дельта и версии пакетов —
+  `research/buildroot-2026-08/`.
+- **Buildroot updated to upstream 2026.08.1 (OKO).** The vendor
+  `buildroot-2023.02.6` is replaced by the official 2026.08.1 release
+  (sha256-pinned tarball, `make_tarball.sh`), with the vendor delta kept
+  outside the tree: `luckfox_pico_defconfig` (`BR2_GLOBAL_PATCH_DIR`),
+  `busybox.config`, `patches-2026.08/{gnutls,libv4l}`. The external
+  toolchain gate (`arm-rockchip830`, gcc 8.3.0, uClibc-ng, headers 5.10)
+  passes without relaxing `BR2_TOOLCHAIN_*`; the defconfig
+  `BR2_PACKAGE_*` set is unchanged. Package fixes: GnuTLS 3.8.13 skips
+  the gnulib self-tests (`pthread_t` in the uClibc `bits/sigthread.h`),
+  v4l-utils 1.32.0 (`edid-decode`) uses `i2c_msg{...}` instead of a
+  C++20 designated initializer, and busybox 1.38.0 builds with yescrypt
+  disabled (no `explicit_bzero` in uClibc-ng). The vendor busybox
+  patches are renumbered to `0100`/`0101`. Versions: OpenSSL 3.x (was
+  1.1.1), Python 3.14.8 (was 3.11.6), busybox 1.38.0 (was 1.36.1).
+  `BUILDROOT_VER` and `BUILDROOT_PATH` are updated; `rootfs.tar` is built
+  natively (`./build.sh rootfs`). The vendor delta and package versions
+  are recorded in `research/buildroot-2026-08/`.
+
 - **Сборка U-Boot, ядра, media и app подтверждена на хосте без контейнера
   (OKO).** `./build.sh uboot|kernel|media|app` на Debian 13 с gcc 14.2 и
   вендорским кросс-gcc 8.3.0 прошли без правок исходников: host-tools
@@ -472,6 +508,17 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   `#af-state`) and `bench/README.md`.
 
 ### Исправлено
+
+- **`parser-conf.sh` драйвера ssv6x5x сделан исполняемым (OKO).** Файл
+  `sysdrv/drv_ko/wifi/ssv6x5x/parser-conf.sh` вызывается через `env` из
+  Makefile, но лежал в git с режимом `100644`, из-за чего при каждой
+  сборке печаталось `Permission denied` и заголовок парсера не
+  обновлялся. Режим исправлен на `100755`.
+- **The ssv6x5x `parser-conf.sh` is now executable (OKO).** The driver
+  Makefile calls `sysdrv/drv_ko/wifi/ssv6x5x/parser-conf.sh` through
+  `env`, but the file was tracked as `100644`, so every build printed
+  `Permission denied` and the parser header was never regenerated. The
+  mode is fixed to `100755`.
 
 - **Фокус: AF-метрика включается независимо от STM8 (OKO).** `POST
   /api/focus` применяет `enable`/`mode`/`fps`/ROI до взведения привода:
