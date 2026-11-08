@@ -26,6 +26,26 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Добавлено
 
+- **Нативная сборка SDK на Debian 13 (OKO).** Добавлены
+  `tools/native/setup_host.sh` (apt-чек-лист бывшего контейнера с именами
+  пакетов trixie: `libncurses-dev`, `u-boot-tools`, `ninja-build`,
+  `squashfs-tools`, `mtd-utils`; проверка `ldd`/запуска вендорского
+  кросс-тулчейна), `tools/native/env.sh` (`PATH`, `CROSS_COMPILE`, `ARCH`,
+  `LANG/LC_ALL=C.UTF-8`, `sbin` в `PATH`) и `tools/native/smoke.sh` (отчёт
+  `output/bench/native/smoke.log`: host-утилиты, кросс-gcc 8.3.0,
+  `upgrade_tool ld`). Хост стенда — Debian 13 trixie, gcc 14.2; тулчейн
+  `arm-rockchip830` запускается без библиотек совместимости.
+- **Native SDK build on Debian 13 (OKO).** Added
+  `tools/native/setup_host.sh` (the former container apt checklist with
+  trixie package names: `libncurses-dev`, `u-boot-tools`, `ninja-build`,
+  `squashfs-tools`, `mtd-utils`; verifies the vendor cross toolchain with
+  `ldd` and a test run), `tools/native/env.sh` (`PATH`, `CROSS_COMPILE`,
+  `ARCH`, `LANG/LC_ALL=C.UTF-8`, `sbin` in `PATH`) and
+  `tools/native/smoke.sh` (report in `output/bench/native/smoke.log`: host
+  tools, cross gcc 8.3.0, `upgrade_tool ld`). The bench host is Debian 13
+  trixie with gcc 14.2; the `arm-rockchip830` toolchain runs without
+  compatibility libraries.
+
 - **OpenVPN-клиент с управлением из WebUI (OKO).** Третий тип профиля
   `ovpn`: `oko-vpn` разбирает клиентский конфиг OpenVPN, отклоняет
   `dev tap`, `plugin`, `management`, скриптовые директивы, `askpass`,
