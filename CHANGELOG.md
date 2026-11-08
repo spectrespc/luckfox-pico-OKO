@@ -298,10 +298,11 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   `nfs-kernel-server`, `wireguard-tools`, `openvpn`), `docker-compose.yml`
   (`network_mode: host`, `privileged`, `restart: unless-stopped`) и
   `entrypoint.sh`, который монтирует `nfsd`, поднимает `rpcbind` и
-  `rpc.nfsd`, применяет `exportfs -ra` и запускает `supervisord`.
+  `rpc.nfsd` (со сбросом счётчика потоков, чтобы регистрация NFS переживала
+  restart контейнера), применяет `exportfs -ra` и запускает `supervisord`.
   TFTP-корень — `output/image` (`/srv/tftp`, ro), NFS-экспорт —
   `output/srv/nfs` (`/srv/nfs`, rw), конфигурация — `services/conf` (ro),
-  секреты — `output/srv/vpn/` (`/etc/oko-services/secrets`, ro).
+  секреты — `output/srv/vpn/` (`/etc/oko-secrets`, ro).
   Программы `wg`, `awg`, `openvpn` включены неактивными шаблонами
   (`autostart=false`). `tools/native/setup_netboot.sh` переписан в тонкую
   обёртку без `sudo`: проверка Docker, `mkdir -p output/srv/nfs/rootfs` и
@@ -309,19 +310,21 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   `showmount`/`ss`. NFS-хранилище перенесено в `output/srv/nfs/rootfs`
   (rsync с сохранением владельцев, ACL и xattr); путь экспорта внутри
   контейнера остался `/srv/nfs/rootfs`, поэтому строки `nfsroot=` на DUT и
-  скрипты `bench/` не менялись. Хостовые `tftpd-hpa` и
-  `nfs-kernel-server` пока не удалены: purge требует `sudo` и зелёной
-  матрицы `nfs_env.py on/off` на DUT. Подробности — `services/README.md`.
+  скрипты `bench/` не менялись. Матрица `nfs_env.py on/off` на DUT пройдена
+  до и после purge; затем удалены хостовые `tftpd-hpa`, `nfs-kernel-server`,
+  `nfs-common` и `rpcbind`, снят экспорт `/srv/nfs` и ACL `u:tftp`.
+  Подробности — `services/README.md`.
 - **Stand services run in the `services/` container (OKO).** New root
   directory `services/`: a `Dockerfile` (Debian trixie, `supervisor`,
   `tftpd-hpa`, `nfs-kernel-server`, `wireguard-tools`, `openvpn`), a
   `docker-compose.yml` (`network_mode: host`, `privileged`,
   `restart: unless-stopped`) and an `entrypoint.sh` that mounts `nfsd`,
-  starts `rpcbind` and `rpc.nfsd`, applies `exportfs -ra` and runs
-  `supervisord`. The TFTP root is `output/image` (`/srv/tftp`, ro), the NFS
+  starts `rpcbind` and `rpc.nfsd` (resetting the thread count so the NFS
+  registration survives a container restart), applies `exportfs -ra` and
+  runs `supervisord`. The TFTP root is `output/image` (`/srv/tftp`, ro), the NFS
   export is `output/srv/nfs` (`/srv/nfs`, rw), configuration lives in
   `services/conf` (ro), and secrets live in `output/srv/vpn`
-  (`/etc/oko-services/secrets`, ro). The `wg`, `awg` and `openvpn` programs
+  (`/etc/oko-secrets`, ro). The `wg`, `awg` and `openvpn` programs
   are shipped as inactive templates (`autostart=false`).
   `tools/native/setup_netboot.sh` is now a thin wrapper without `sudo`: a
   Docker check, `mkdir -p output/srv/nfs/rootfs` and `output/srv/vpn`,
@@ -329,9 +332,10 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   storage moved to `output/srv/nfs/rootfs` (rsync preserving owners, ACLs
   and xattrs); the export path inside the container stays
   `/srv/nfs/rootfs`, so the DUT `nfsroot=` strings and the `bench/` scripts
-  are unchanged. The host `tftpd-hpa` and `nfs-kernel-server` are not
-  removed yet: the purge needs `sudo` and a green `nfs_env.py on/off`
-  matrix on the DUT. See `services/README.md`.
+  are unchanged. The `nfs_env.py on/off` matrix passed on the DUT both before
+  and after the purge; the host `tftpd-hpa`, `nfs-kernel-server`,
+  `nfs-common` and `rpcbind` packages were then removed, and the `/srv/nfs`
+  export plus the `u:tftp` ACLs were cleaned up. See `services/README.md`.
 
 ### Изменено
 

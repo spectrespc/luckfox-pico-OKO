@@ -34,7 +34,7 @@ docker compose -f services/docker-compose.yml up -d --build
 ```sh
 docker exec oko-services exportfs -v
 docker exec oko-services rpcinfo -p localhost
-showmount -e localhost                  # нужен пакет nfs-common на хосте
+docker exec oko-services showmount -e localhost
 ss -lun 'sport = :69'
 ss -tln 'sport = :2049'
 curl tftp://192.168.52.200/boot.img -o /tmp/boot.img
@@ -50,7 +50,7 @@ cmp /tmp/boot.img output/image/boot.img
 |---|---|---|
 | `output/image` | `/srv/tftp` | ro |
 | `output/srv/nfs` | `/srv/nfs` | rw |
-| `output/srv/vpn` | `/etc/oko-services/secrets` | ro |
+| `output/srv/vpn` | `/etc/oko-secrets` | ro |
 | `services/conf` | `/etc/oko-services` | ro |
 | `services/conf/exports` | `/etc/exports` | ro |
 
@@ -69,7 +69,7 @@ Rootfs, `oem` и `userdata` в NFS-экспорте раскладываются
 `docker exec oko-services supervisorctl start <program>`.
 
 Секреты (ключи, сертификаты, CRL) в git не хранятся: только
-`output/srv/vpn/` (gitignore), в контейнере — `/etc/oko-services/secrets/`.
+`output/srv/vpn/` (gitignore), в контейнере — `/etc/oko-secrets/`.
 Публичные вендорские дефолты стенда допустимы.
 
 ## Оговорки
@@ -96,8 +96,9 @@ Rootfs, `oem` и `userdata` в NFS-экспорте раскладываются
 ## Переход с хостовых сервисов
 
 Выполняется один раз, требует `sudo` и доступного DUT (гейт — зелёная матрица
-`nfs_env.py on/off`). Данные сначала копируются, хост-сервисы удаляются только
-после успешной проверки контейнера:
+`nfs_env.py on/off`). На текущем стенде переход выполнен 2026-11-08; ниже —
+воспроизводимый порядок для нового хоста или отката. Данные сначала
+копируются, хост-сервисы удаляются только после успешной проверки контейнера:
 
 ```sh
 # 1. копия экспорта с сохранением владельцев/ACL/xattr (root внутри контейнера)
@@ -111,7 +112,8 @@ sudo systemctl stop tftpd-hpa nfs-server nfs-mountd rpcbind.socket rpcbind
 
 # 3. поднять контейнер и проверить TFTP/NFS + матрицу стенда
 tools/native/setup_netboot.sh
-bench/run.sh nfs_env.py on && bench/run.sh nfs_env.py off
+bench/run.sh nfs_env.py on --host 192.168.52.97
+bench/run.sh nfs_env.py off --host 192.168.52.150
 
 # 4. только после зелёной матрицы — удалить хостовый стек
 sudo apt-get purge --autoremove tftpd-hpa nfs-kernel-server nfs-common

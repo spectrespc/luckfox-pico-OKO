@@ -15,5 +15,5 @@ services:
       - ../output/srv/nfs:/srv/nfs
       - ./conf/exports:/etc/exports:ro
       - ./conf:/etc/oko-services:ro
-      - ../output/srv/vpn:/etc/oko-services/secrets:ro
+      - ../output/srv/vpn:/etc/oko-secrets:ro
       - /dev/net/tun:/dev/net/tun

@@ -23,6 +23,10 @@ for _ in 1 2 3 4 5 6 7 8 9 10; do
     sleep 0.2
 done
 
+# The kernel nfsd threads survive a container restart, and rpc.nfsd with an
+# unchanged thread count does not register again with the fresh portmapper.
+# Reset the thread count first so every start re-registers the NFS service.
+rpc.nfsd 0 2>/dev/null || true
 rpc.nfsd 8
 exportfs -ra
 

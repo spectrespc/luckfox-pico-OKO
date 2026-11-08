@@ -480,11 +480,10 @@ NPU 28%, `librkpostisp.so` загружен, пропусков в `/live/0` н�
 - [x] Netboot TFTP/NFS: `bench/netboot.py`, переключение NAND/NFS через env
       `bench/nfs_env.py`, `tools/native/setup_netboot.sh`; netboot-фрагмент
       входит в штатный `boot.img`.
-- [ ] Сервисы TFTP/NFS переведены в контейнер `services/`, NFS-хранилище
-      перенесено в `output/srv/nfs`; остаётся гейт на DUT
-      (`bench/run.sh nfs_env.py on` / `off`) и удаление хостовых
-      `tftpd-hpa`/`nfs-kernel-server`/`rpcbind` (нужен `sudo`, порядок —
-      в `services/README.md`).
+- [x] Сервисы TFTP/NFS переведены в контейнер `services/`, NFS-хранилище
+      перенесено в `output/srv/nfs`; матрица `nfs_env.py on/off` пройдена до
+      и после purge, хостовые `tftpd-hpa`/`nfs-kernel-server`/`nfs-common`/
+      `rpcbind` удалены, `/srv/nfs` и ACL `u:tftp` сняты.
 - [ ] `luckfox_pico_w_defconfig` (bluez5_utils/mpv): ребейс
       `hcitool_patch`/`mpv_patch` под новые версии или отключение пакетов
       (KI-046).
