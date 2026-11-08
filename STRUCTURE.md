@@ -19,13 +19,14 @@
 |---|---|
 | `config/` | Извлечённые дефконфиги для быстрой настройки: `buildroot_defconfig`, `kernel_defconfig`, `dts_config`. |
 | `bench/` | Утилиты тестового стенда: UART/SSH-команды, netboot через TFTP/NFS (`netboot.py`), переключение NAND/NFS через env U-Boot (`nfs_env.py`), проверка OSD по RTSP (`osd_check.py`), матрица HTTP API (`api_check.py`), WebUI в headless Chromium (`ui_check.py`), AF-метрика и CSV (`focus_check.py`), версии/прошивка контроллеров (`firmware_check.py`), выкатка бинарника в `/oem` (`deploy_divinus.py`), venv. В сборке прошивки не участвует. |
+| `services/` | Docker-контейнер сервисов стенда: TFTP (`output/image`), NFS-экспорт `output/srv/nfs/rootfs`, неактивные шаблоны WireGuard/AmneziaWG/OpenVPN (`conf/`). Запуск — `tools/native/setup_netboot.sh`. В сборке прошивки не участвует. |
 | `research/` | Архив внешних исследований: заметки о переносимости upstream-кода и минимальные read-only снимки upstream-файлов с провенансом. В сборке прошивки не участвует. |
 | `media/` | Медиастек Rockchip: кодеки, 2D-ускорение, ISP, NPU, медиафреймворк и примеры. |
 | `project/` | Скрипты сборки, конфигурации плат и прикладные приложения. Основная точка входа сборки. |
 | `sysdrv/` | Системный уровень: исходники U-Boot, ядра, Buildroot, прошивка MCU и модули ядра. |
 | `tools/` | Хостовые инструменты: кросс-тулчейн, утилиты упаковки и прошивки образов. |
-| `output/` | Результаты сборки: готовые образы в `image/`, промежуточные артефакты в `out/`, лог `build_all.log`. В `output/bench/` — venv, кадры OSD-проверок, CSV/снимки фокуса в `focus/`, скриншоты WebUI `ui/` (gitignore). |
-| `IMAGE/` | Готовые релизные образы: папка конкретного релиза с `IMAGES/`, `PATCHES/`, `DEBUG_FILES/` и `build_info.txt`. |
+| `output/` | Результаты сборки: готовые образы в `image/`, промежуточные артефакты в `out/`, лог `build_all.log`. В `output/srv/` — данные сервисов контейнера: NFS-экспорт `nfs/rootfs/` и секреты VPN `vpn/`. В `output/bench/` — venv, кадры OSD-проверок, CSV/снимки фокуса в `focus/`, скриншоты WebUI `ui/` (gitignore). |
+| `IMAGE/` | Готовые релизные образы: папка текущего релиза с `IMAGES/`, `PATCHES/`, `DEBUG_FILES/` и `build_info.txt`. |
 | `.kilo/` | Служебная конфигурация Kilo: команды (`command/`), skill `oko-docs` (`skills/`), планы (`plans/`), настройки (`kilo.jsonc`). Проектных агентов здесь нет. |
 
 ## Ключевые вложенные папки
@@ -180,7 +181,7 @@
 - `native/` — нативная среда сборки: `setup_host.sh` (apt-пакеты Debian 13,
   проверка кросс-тулчейна), `env.sh` (`PATH`, `CROSS_COMPILE`, `ARCH`, локаль),
   `smoke.sh` (отчёт `output/bench/native/smoke.log`), `setup_netboot.sh`
-  (`tftpd-hpa` + NFS-экспорт для netboot).
+  (поднимает контейнер `services/` с TFTP и NFS-экспортом).
 - `linux/toolchain/` — кросс-компилятор `arm-rockchip830-linux-uclibcgnueabihf`.
 - `linux/Linux_Pack_Firmware`, `linux/Linux_Upgrade_Tool` — упаковка образов и
   прошивка по USB.
@@ -245,9 +246,9 @@
 
 ## Примечания
 
-- `IMAGE/` содержит релизную папку
-  `IPC_SPI_NAND_BUILDROOT_RV1103_LUCKFOX_PICO_MINI_..._RELEASE_TEST` — это сборка под
-  **RV1103 Pico Mini**, она не соответствует активной конфигурации (RV1106 Pro Max).
-  Папка описывается как есть, без привязки к текущей плате.
+- `IMAGE/` содержит только актуальную релизную сборку
+  `SC230AI_SPI_NAND_BUILDROOT_RV1106_LUCKFOX_PICO_PRO_MAX_..._RELEASE_TEST`
+  под активную конфигурацию (RV1106 Pro Max + SC230AI). Устаревший артефакт
+  RV1103 Pico Mini удалён 2026-11-08.
 - Каталоги `out/`, `build/`, `objs_kernel/` — артефакты сборки, их внутреннее
   содержимое намеренно не детализируется.

@@ -76,6 +76,10 @@ BootROM → U-Boot → ядро Linux → busybox init → init-скрипты �
 U-Boot). После перезагрузки без остановки U-Boot плата снова грузится из
 SPI NAND, если `sys_bootargs` не сохранён в env.
 
+Хостовые TFTP и NFS (порты 69, 111, 2049, 20048) обслуживает контейнер
+`services/`; путь экспорта внутри контейнера — `/srv/nfs/rootfs`, поэтому
+строка `nfsroot=` выше не меняется (подробности — `TESTBENCH.md` §7D).
+
 ## 3. Инициализация busybox (inittab)
 
 Шаблон: `sysdrv/source/buildroot/buildroot-2026.08.1/package/busybox/inittab`.

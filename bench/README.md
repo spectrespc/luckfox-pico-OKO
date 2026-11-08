@@ -188,16 +188,18 @@ sudo iptables -t nat -A POSTROUTING -o <uplink> -j MASQUERADE
 
 Итерационный контур без прошивки SPI NAND: ядро `output/image/boot.img`
 отдаётся по TFTP, rootfs монтируется по NFS с `/srv/nfs/rootfs`, а
-`oem`/`userdata` — из `<nfsroot>/.nfsroot/` (S20linkmount). На хосте нужны
-`tftpd-hpa` с корнем `output/image` и `nfs-kernel-server`; настройка,
-деплой rootfs и возврат на NAND — TESTBENCH.md §7D.
+`oem`/`userdata` — из `<nfsroot>/.nfsroot/` (S20linkmount). Сервисы
+(TFTP с корнем `output/image` и NFS-экспорт) поднимает контейнер `services/`
+через `tools/native/setup_netboot.sh`; на хосте данные лежат в
+`output/srv/nfs/rootfs`, внутри контейнера путь остаётся `/srv/nfs/rootfs`.
+Настройка, деплой rootfs и возврат на NAND — TESTBENCH.md §7D.
 
 ```sh
 # деплой свежей rootfs в NFS-экспорт (бэкап — tar в output/bench/);
 # --exclude=/.nfsroot сохраняет oem/userdata-подкаталоги экспорта
-sudo rsync -a --delete --exclude=/.nfsroot output/out/rootfs_uclibc_rv1106/ /srv/nfs/rootfs/
-sudo rsync -a --delete output/out/oem/ /srv/nfs/rootfs/.nfsroot/oem/
-sudo rsync -a --delete output/out/userdata/ /srv/nfs/rootfs/.nfsroot/userdata/
+rsync -a --delete --exclude=/.nfsroot output/out/rootfs_uclibc_rv1106/ output/srv/nfs/rootfs/
+rsync -a --delete output/out/oem/ output/srv/nfs/rootfs/.nfsroot/oem/
+rsync -a --delete output/out/userdata/ output/srv/nfs/rootfs/.nfsroot/userdata/
 
 # загрузка: штатный boot.img уже содержит rv1106-netboot.config
 bench/run.sh netboot.py reboot

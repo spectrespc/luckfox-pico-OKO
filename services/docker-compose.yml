@@ -1,0 +1,19 @@
+name: oko-services
+
+services:
+  oko-services:
+    build: .
+    image: oko-services:local
+    container_name: oko-services
+    # Host networking keeps the DUT-facing addresses and ports unchanged; the
+    # privileged mode is needed for the shared kernel nfsd and /dev/net/tun.
+    network_mode: host
+    privileged: true
+    restart: unless-stopped
+    volumes:
+      - ../output/image:/srv/tftp:ro
+      - ../output/srv/nfs:/srv/nfs
+      - ./conf/exports:/etc/exports:ro
+      - ./conf:/etc/oko-services:ro
+      - ../output/srv/vpn:/etc/oko-services/secrets:ro
+      - /dev/net/tun:/dev/net/tun

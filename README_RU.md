@@ -69,11 +69,12 @@ source tools/native/env.sh
 `update.img`), промежуточные артефакты — в `output/out/`, общий лог —
 `output/build_all.log`.
 
-Сетевые сервисы стенда (TFTP/NFS для netboot) поднимаются на хосте отдельно:
-`tools/native/setup_netboot.sh` (см. `TESTBENCH.md` §7D). Отдельные
-Docker-пайплайны остались только для инструментов, не входящих в сборку
-прошивки: `tools/rknn-toolkit2/` (конвертация YOLO) и `tools/stm8-sdcc/`
-(прошивка STM8).
+Сетевые сервисы стенда (TFTP/NFS для netboot) поднимает контейнер `services/`:
+`tools/native/setup_netboot.sh` (нужны `docker.io` с плагином `docker compose`
+и членство в группе `docker`; см. `TESTBENCH.md` §7D и `services/README.md`).
+Отдельные Docker-пайплайны остались только для инструментов, не входящих в
+сборку прошивки: `tools/rknn-toolkit2/` (конвертация YOLO) и
+`tools/stm8-sdcc/` (прошивка STM8).
 
 ## Загрузка на устройство
 
@@ -286,11 +287,11 @@ sh /oem/usr/ko/insmod_ko.sh      # ручная перезагрузка мод�
 - **Не копируйте дерево под Windows.** В репозитории есть симлинки
   (`.BoardConfig.mk`, `build.sh`, `rkflash.sh`, `config/*`), которые теряются
   на NTFS/FAT. Используйте Linux или WSL с ext4.
-- **`IMAGE/` может содержать устаревший релиз** (`RV1103 Pico Mini`), который не
-  соответствует активной конфигурации `RV1106 Pro Max`. Ориентируйтесь на
-  `.BoardConfig.mk` и `output/`, а не на `IMAGE/`.
+- **`IMAGE/` содержит актуальный релиз** под активную конфигурацию
+  `RV1106 Pro Max` + SC230AI; устаревший артефакт `RV1103 Pico Mini` удалён
+  2026-11-08. Источник истины — `.BoardConfig.mk` и `output/`.
 - `output/`, `IMAGE/`, `config/` и объектные файлы (`*.o`, `*.ko`) исключены из
   Git — это артефакты, а не исходники.
-- Сборка идёт на хосте: сетевые сервисы TFTP/NFS для netboot поднимают
-  `tools/native/setup_netboot.sh` и systemd (`tftpd-hpa`, `nfs-kernel-server`),
-  контейнер сборки больше не используется.
+- Сборка идёт на хосте. Сетевые сервисы TFTP/NFS для netboot запускает
+  контейнер `services/` (`docker compose`, host network); контейнер сборки
+  прошивки больше не используется.

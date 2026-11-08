@@ -134,9 +134,10 @@
   подбирать отдельно. Статус: **риск, проверить при смене сценария**.
 
 - **KI-023. `IMAGE/` — устаревший артефакт RV1103 Pico Mini.**
-  Содержимое не соответствует активной конфигурации RV1106 Pro Max + SC230AI;
-  для прошивки использовать `output/image/update.img`.
-  Статус: **известный устаревший артефакт**.
+  Артефакт не соответствовал активной конфигурации RV1106 Pro Max + SC230AI;
+  удалён 2026-11-08, в `IMAGE/` остаётся только релиз под активную плату.
+  Для прошивки использовать `output/image/update.img`.
+  Статус: **закрыто (2026-11-08)**.
 
 ### Прошивка и конфигурация
 
@@ -449,9 +450,10 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   targets a 3 MP sensor; choose another ini if the frame geometry is wrong.
   Status: **risk, verify when the scenario changes**.
 
-- **KI-023. `IMAGE/` is an outdated RV1103 Pico Mini artifact.** It does not
-  match RV1106 Pro Max + SC230AI; flash `output/image/update.img` instead.
-  Status: **known stale artifact**.
+- **KI-023. `IMAGE/` is an outdated RV1103 Pico Mini artifact.** The artifact
+  did not match RV1106 Pro Max + SC230AI; it was removed on 2026-11-08 and
+  `IMAGE/` now holds only the release for the active board. Flash
+  `output/image/update.img` instead. Status: **closed (2026-11-08)**.
 
 ### Flashing and configuration
 

@@ -1,0 +1,4 @@
+# NFS export served by the container. The path is the same as the old host
+# export, so the DUT nfsroot= string does not change; only the host-side
+# storage location differs (output/srv/nfs/rootfs is mounted here as /srv/nfs).
+/srv/nfs/rootfs 192.168.52.0/24(rw,sync,no_subtree_check,no_root_squash,insecure)

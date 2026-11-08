@@ -293,6 +293,46 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   and `bench/README.md`; `bench/ui_check.py` compares the rendered texts with
   `window.lastStatus` and checks the format, so no card is required.
 
+- **Сервисы стенда в контейнере `services/` (OKO).** Новый корневой каталог
+  `services/`: `Dockerfile` (Debian trixie, `supervisor`, `tftpd-hpa`,
+  `nfs-kernel-server`, `wireguard-tools`, `openvpn`), `docker-compose.yml`
+  (`network_mode: host`, `privileged`, `restart: unless-stopped`) и
+  `entrypoint.sh`, который монтирует `nfsd`, поднимает `rpcbind` и
+  `rpc.nfsd`, применяет `exportfs -ra` и запускает `supervisord`.
+  TFTP-корень — `output/image` (`/srv/tftp`, ro), NFS-экспорт —
+  `output/srv/nfs` (`/srv/nfs`, rw), конфигурация — `services/conf` (ro),
+  секреты — `output/srv/vpn/` (`/etc/oko-services/secrets`, ro).
+  Программы `wg`, `awg`, `openvpn` включены неактивными шаблонами
+  (`autostart=false`). `tools/native/setup_netboot.sh` переписан в тонкую
+  обёртку без `sudo`: проверка Docker, `mkdir -p output/srv/nfs/rootfs` и
+  `output/srv/vpn`, `docker compose up -d --build`, диагностика
+  `showmount`/`ss`. NFS-хранилище перенесено в `output/srv/nfs/rootfs`
+  (rsync с сохранением владельцев, ACL и xattr); путь экспорта внутри
+  контейнера остался `/srv/nfs/rootfs`, поэтому строки `nfsroot=` на DUT и
+  скрипты `bench/` не менялись. Хостовые `tftpd-hpa` и
+  `nfs-kernel-server` пока не удалены: purge требует `sudo` и зелёной
+  матрицы `nfs_env.py on/off` на DUT. Подробности — `services/README.md`.
+- **Stand services run in the `services/` container (OKO).** New root
+  directory `services/`: a `Dockerfile` (Debian trixie, `supervisor`,
+  `tftpd-hpa`, `nfs-kernel-server`, `wireguard-tools`, `openvpn`), a
+  `docker-compose.yml` (`network_mode: host`, `privileged`,
+  `restart: unless-stopped`) and an `entrypoint.sh` that mounts `nfsd`,
+  starts `rpcbind` and `rpc.nfsd`, applies `exportfs -ra` and runs
+  `supervisord`. The TFTP root is `output/image` (`/srv/tftp`, ro), the NFS
+  export is `output/srv/nfs` (`/srv/nfs`, rw), configuration lives in
+  `services/conf` (ro), and secrets live in `output/srv/vpn`
+  (`/etc/oko-services/secrets`, ro). The `wg`, `awg` and `openvpn` programs
+  are shipped as inactive templates (`autostart=false`).
+  `tools/native/setup_netboot.sh` is now a thin wrapper without `sudo`: a
+  Docker check, `mkdir -p output/srv/nfs/rootfs` and `output/srv/vpn`,
+  `docker compose up -d --build`, and `showmount`/`ss` diagnostics. The NFS
+  storage moved to `output/srv/nfs/rootfs` (rsync preserving owners, ACLs
+  and xattrs); the export path inside the container stays
+  `/srv/nfs/rootfs`, so the DUT `nfsroot=` strings and the `bench/` scripts
+  are unchanged. The host `tftpd-hpa` and `nfs-kernel-server` are not
+  removed yet: the purge needs `sudo` and a green `nfs_env.py on/off`
+  matrix on the DUT. See `services/README.md`.
+
 ### Изменено
 
 - **Тест-матрикс `/oem` на BusyBox 1.38 при NFS-root пройден (OKO).**
@@ -860,6 +900,42 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   `INIT_ORDER.md` (§1, §6, §7, §8), `TESTBENCH.md` (§1, §8, §9),
   `README_RU.md`, `KNOWN_ISSUES.md`, `AGENTS.md` and the files under `.kilo/`
   are updated.
+
+- **Очистка устаревших артефактов и git-мусора (OKO).** Удалены 21 из 22
+  релизных каталогов `IMAGE/` (~6.4 ГБ); оставлен
+  `SC230AI_SPI_NAND_BUILDROOT_RV1106_LUCKFOX_PICO_PRO_MAX_20261108.0748_RELEASE_TEST`.
+  Вместе с промежуточными сборками 20261104–20261106 удалены все
+  `..._NETBOOT_...` и артефакт RV1103 Pico Mini — KI-023 закрыт. В
+  `output/bench/` удалены промежуточные OSD-кадры (кроме
+  `osd-20261108-100849-*`), каталоги `osd-*` (кроме `osd-fix2`),
+  `rknpu-{A,B,C,baseline}-*` (кроме `rknpu-O-20261107`), черновики
+  `stm8-*.ihx`, образы и логи U-Boot, `serial-capture.py`, `sha_test.c`;
+  `userdata-backup-20261106.tar` оставлен, потому что его содержимое не
+  дублируется в `rknpu-O-20261107/userdata-backup/`. Удалены `output/*.log`,
+  кроме `build_all.log`, и каталоги `__pycache__`. В git удалены
+  `sysdrv/drv_ko/wifi/atbm/hal_apollo/main.c.bak` и
+  `sysdrv/drv_ko/wifi/atbm/.config.old` (ссылок в сборке нет). Завершённые
+  планы `.kilo/plans/*.md` удалены, каталог сохранён. Обновлены
+  `STRUCTURE.md`, `TESTBENCH.md`, `README_RU.md`, `KNOWN_ISSUES.md`,
+  `bench/README.md` и `.kilo/skills/oko-docs/SKILL.md`.
+- **Obsolete artifacts and git junk removed (OKO).** 21 of the 22 `IMAGE/`
+  release directories (~6.4 GB) are gone; only
+  `SC230AI_SPI_NAND_BUILDROOT_RV1106_LUCKFOX_PICO_PRO_MAX_20261108.0748_RELEASE_TEST`
+  remains. The intermediate 20261104–20261106 builds went together with all
+  `..._NETBOOT_...` directories and the RV1103 Pico Mini artifact, closing
+  KI-023. Under `output/bench/` the intermediate OSD frames (except
+  `osd-20261108-100849-*`), the `osd-*` directories (except `osd-fix2`),
+  `rknpu-{A,B,C,baseline}-*` (except `rknpu-O-20261107`), the `stm8-*.ihx`
+  drafts, the U-Boot images and logs, `serial-capture.py` and `sha_test.c`
+  are removed; `userdata-backup-20261106.tar` is kept because its contents
+  are not duplicated in `rknpu-O-20261107/userdata-backup/`. `output/*.log`
+  (except `build_all.log`) and the `__pycache__` directories are removed.
+  Git no longer tracks `sysdrv/drv_ko/wifi/atbm/hal_apollo/main.c.bak` or
+  `sysdrv/drv_ko/wifi/atbm/.config.old` (nothing in the build referenced
+  them). The completed `.kilo/plans/*.md` files are deleted and the
+  directory is kept. `STRUCTURE.md`, `TESTBENCH.md`, `README_RU.md`,
+  `KNOWN_ISSUES.md`, `bench/README.md` and
+  `.kilo/skills/oko-docs/SKILL.md` are updated.
 
 ## [0.2.0] — 2026-11-07
 

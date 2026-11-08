@@ -105,5 +105,10 @@ SDK. Это read-only файлы: **никогда не редактироват
 - Секреты в `bench/` не хранятся: только публичные вендорские дефолты из
   `TESTBENCH.md` §6, переопределение переменными окружения
   (`OKO_DUT_PASSWORD`, `OKO_RTSP_USER`, `OKO_RTSP_PASS`, `OKO_DUT_HOST`).
+- Сетевые сервисы стенда (TFTP/NFS для netboot, опционально VPN) поднимает
+  docker-контейнер `services/` (`docker-compose.yml`, `network_mode: host`,
+  `privileged`); запуск — `tools/native/setup_netboot.sh`. NFS-данные —
+  `output/srv/nfs/`, секреты VPN — `output/srv/vpn/` (gitignore), оба пути
+  не коммитятся.
 - Новый скрипт или смена путей/аргументов — вместе с правкой `bench/README.md`,
   `TESTBENCH.md` (если меняется порядок работы на стенде) и записью в `CHANGELOG.md`.

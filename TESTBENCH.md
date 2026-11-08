@@ -37,7 +37,8 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
 | Целевой тулчейн | `arm-rockchip830-linux-uclibcgnueabihf` (gcc 8.3.0, uClibc-ng, `tools/linux/toolchain/`) |
 | Сборка | нативная, без контейнера: `tools/native/setup_host.sh`, `source tools/native/env.sh`, `./build.sh` |
 | Рабочая папка | корень репозитория на хосте |
-| Сетевые сервисы | на хосте: `tftpd-hpa` (корень `output/image`, chroot) и `nfs-kernel-server` (`/srv/nfs/rootfs`) |
+| Docker | `docker.io` + плагин `docker compose`, пользователь в группе `docker`; контейнер `services/` (`network_mode: host`, `privileged`) |
+| Сетевые сервисы | контейнер `services/`: `tftpd-hpa` (корень `output/image`, chroot) и `nfs-kernel-server` (экспорт `output/srv/nfs/rootfs` → `/srv/nfs/rootfs`) |
 | Запуск окружения | `source tools/native/env.sh` (проверка — `tools/native/smoke.sh`) |
 
 ## 4. Подключения
@@ -238,20 +239,27 @@ docker run --rm --privileged \
 перепрошивки ядра и без отдельного BoardConfig. В NFS-режиме `oem`/`userdata`
 монтируются из `<nfsroot>/.nfsroot/`, DHCP в `RkLunch.sh` пропускается.
 
-1. Настроить хост один раз (нужен sudo):
+1. Поднять сервисы (Sudo не нужен; нужны Docker и членство в группе `docker`):
    ```sh
    tools/native/setup_netboot.sh
    ```
-   Скрипт ставит `tftpd-hpa` (корень `<repo>/output/image`, `--secure`,
-   `ProtectHome=read-only` и ACL на обход домашнего каталога), `nfs-kernel-server`
-   (экспорт `/srv/nfs/rootfs` для `192.168.52.0/24`) и `acl`. Повторный запуск
-   перезапускает `tftpd-hpa`, поэтому правки `/etc/default` и drop-in применяются.
+   Скрипт собирает и запускает контейнер `services/` с `network_mode: host`:
+   TFTP отдаёт `output/image` (`/srv/tftp`, chroot, `--foreground --secure`),
+   NFS-сервер экспортирует `output/srv/nfs/rootfs` для `192.168.52.0/24`.
+   Внутри контейнера путь экспорта — `/srv/nfs/rootfs`, поэтому строки
+   `nfsroot=` на DUT не меняются. Логи — `docker logs -f oko-services`;
+   раскладка и оговорки — `services/README.md`. Если на хосте ещё работают
+   пакетные `tftpd-hpa`/`nfs-kernel-server`, сначала освободите порты
+   (раздел «Переход с хостовых сервисов» в `services/README.md`), иначе
+   контейнер не сможет занять 69/111/2049/20048.
 2. Разложить rootfs и разделы в экспорт (бэкап — tar в `output/bench/nfs/`):
    ```sh
-   sudo rsync -a --delete --exclude=/.nfsroot output/out/rootfs_uclibc_rv1106/ /srv/nfs/rootfs/
-   sudo rsync -a --delete output/out/oem/ /srv/nfs/rootfs/.nfsroot/oem/
-   sudo rsync -a --delete output/out/userdata/ /srv/nfs/rootfs/.nfsroot/userdata/
+   rsync -a --delete --exclude=/.nfsroot output/out/rootfs_uclibc_rv1106/ output/srv/nfs/rootfs/
+   rsync -a --delete output/out/oem/ output/srv/nfs/rootfs/.nfsroot/oem/
+   rsync -a --delete output/out/userdata/ output/srv/nfs/rootfs/.nfsroot/userdata/
    ```
+   Если rsync упирается в root-only каталоги экспорта (`var/lib/seedrng`),
+   выполните те же команды через `sudo rsync` от root.
 3. Переключить корень и проверить после перезагрузки:
    ```sh
    bench/run.sh nfs_env.py status --host 192.168.52.97   # режим и адрес до переключения
@@ -269,6 +277,13 @@ docker run --rm --privileged \
 4. Итерации ядра без прошивки (`netboot.py`) по-прежнему возможны: скрипт кладёт
    `output/image/boot.img` по TFTP и задаёт `sys_bootargs` только в RAM U-Boot,
    не сохраняя его в env.
+
+**Контейнер и NFS-root.** Останавливать контейнер `services/` при смонтированном
+на DUT NFS-root нельзя: клиент теряет `/` и зависает. Если контейнер уже
+остановлен или пересобирается, сначала верните DUT на NAND по процедуре ниже
+(через UART), затем поднимайте сервисы. Порты 69/111/2049/20048 занимает
+контейнер; хостовые `tftpd-hpa`, `nfs-kernel-server` и `rpcbind` должны быть
+остановлены и удалены.
 
 **Аварийное восстановление.** Неверная строка `sys_bootargs` (`nfsroot`
 недоступен) приводит к `VFS: Unable to mount root fs via NFS` и panic. Если в
@@ -547,8 +562,8 @@ dmesg | tail -50
   отвечает 200 и RTSP отдаёт кадры. После нескольких циклов
   `focus?enable=1/0` AF-метрика может оставаться `idle`/`no_stats` до
   перезагрузки.
-- `IMAGE/` содержит релиз для **RV1103 Pico Mini**; он не соответствует активной
-  конфигурации `RV1106 Pro Max` и является устаревшим артефактом.
+- `IMAGE/` содержит актуальную релизную сборку под `RV1106 Pro Max` + SC230AI;
+  устаревший артефакт `RV1103 Pico Mini` удалён 2026-11-08.
 - Драйвер `motor_24byj48` (`motor.ko`, шаговик 28BYJ-48) удалён из форка
   2026-11-07: в истории прошивок его не было, привод фокуса — STM8 по I2C.
 - `insmod_ko.sh` вызывается из `RkLunch.sh`, который запускает `S21appinit`;
@@ -558,8 +573,9 @@ dmesg | tail -50
   (сенсор 3 МП). Если геометрия кадра окажется некорректной, ini подбирается отдельно.
 - В автономном режиме `oem` и `userdata` монтируются из SPI NAND (ubifs).
   Изменения, сделанные на устройстве в `/userdata`, сохраняются в NAND.
-- Сборка идёт на хосте; сетевые сервисы стенда (`tftpd-hpa`, `nfs-kernel-server`)
-  запускает systemd. Старый контейнер сборки не используется.
+- Сборка идёт на хосте; сетевые сервисы стенда (`tftpd-hpa`,
+  `nfs-kernel-server`, `rpcbind`) запускает контейнер `services/` через
+  `tools/native/setup_netboot.sh`. Старый контейнер сборки не используется.
 - `divinus` — стример OpenIPC (MIT, `project/app/divinus/`), **по умолчанию**:
   маркер `/userdata/divinus.enable` создаёт `S20oko-osd`. Opt-out —
   `/userdata/rkipc.enable` (маркер divinus удаляется, запускается `rkipc`).
