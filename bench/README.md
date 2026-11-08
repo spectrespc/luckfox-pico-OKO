@@ -22,6 +22,7 @@ bench/run.sh netboot.py catch           # затем сбросить питан
 | `serial_exec.py` | вход в консоль по UART (`/dev/ttyACM*`, 115200 8N1) и выполнение команд на DUT |
 | `dut.py` | выполнение команд по SSH через `paramiko` |
 | `netboot.py` | управление U-Boot: `catch` (спам Ctrl-C до `=>`, затем netboot-команды), `reboot` (перезагрузка DUT с перехватом U-Boot), `cmd '<команда>'` (одна команда в U-Boot); ядро берётся по TFTP из `output/image/boot.img`, rootfs — по NFS |
+| `nfs_env.py` | переключение штатной загрузки через env U-Boot: `status` (текущий `sys_bootargs` и режим `nand`/`nfs`), `on` (NFS-root, проверка `/`, `/oem`, `/userdata`), `off` (возврат на `ubi0:rootfs`); `--no-reboot` пишет переменную без перезагрузки |
 | `osd_check.py` | захват кадров RTSP (`--path`, по умолчанию `/live/0`), попарный диф боксов OSD-регионов, сохранение полных кадров и кропов |
 | `geometry_check.py` | геометрия оверлеев и ePTZ: `--what zoom` — кроп на main/sub, `/mjpeg`/`/image.jpg`, критерий — нормированная корреляция с ожидаемым центром (mean\|diff\| печатается для справки); рестарт MP4 — отдельный opt-in `OKO_GEOMETRY_MP4_TESTS=1` (после смены кропа он ненадёжен); `--what boxes`/`--what osd` (opt-in `OKO_GEOMETRY_TESTS=1`) — совмещение NN-рамок и OSD-текста на 0/90/180/270; артефакты — `output/bench/geometry` |
 | `api_check.py` | матрица HTTP API: GET всех эндпоинтов, POST no-op, экспорт конфига и журнала, негативные проверки (статика, имена файлов, NTP); opt-in `OKO_FOCUS_MOTOR_TESTS=1`/`OKO_FOCUS_AF_TESTS=1` — движение моторов и автофокус (`af=1` full/ROI и micro-fine `af=fine`) с записью AF-кривых |
@@ -192,18 +193,44 @@ sudo iptables -t nat -A POSTROUTING -o <uplink> -j MASQUERADE
 деплой rootfs и возврат на NAND — TESTBENCH.md §7D.
 
 ```sh
-# деплой свежей rootfs в NFS-экспорт (бэкап — tar в output/bench/)
-sudo rsync -a --delete output/out/rootfs_uclibc_rv1106/ /srv/nfs/rootfs/
+# деплой свежей rootfs в NFS-экспорт (бэкап — tar в output/bench/);
+# --exclude=/.nfsroot сохраняет oem/userdata-подкаталоги экспорта
+sudo rsync -a --delete --exclude=/.nfsroot output/out/rootfs_uclibc_rv1106/ /srv/nfs/rootfs/
 sudo rsync -a --delete output/out/oem/ /srv/nfs/rootfs/.nfsroot/oem/
 sudo rsync -a --delete output/out/userdata/ /srv/nfs/rootfs/.nfsroot/userdata/
 
-# загрузка: boot.img должен содержать rv1106-netboot.config
+# загрузка: штатный boot.img уже содержит rv1106-netboot.config
 bench/run.sh netboot.py reboot
 bench/run.sh dut.py 'cat /proc/cmdline' 'mount | grep nfs'
 
 # вход в rockusb без кнопки Maskrom (затем upgrade_tool ld / uf)
 bench/run.sh netboot.py reboot --uboot-command download
 ```
+
+### Переключение NAND ↔ NFS через env U-Boot
+
+`nfs_env.py` пишет `sys_bootargs` в env-раздел (`fw_setenv`) и проверяет
+результат после перезагрузки. Перепрошивка ядра не нужна: NFS-root включён
+в штатный образ.
+
+```sh
+# режим и адрес DUT до переключения (при DHCP это 192.168.52.97)
+bench/run.sh nfs_env.py status --host 192.168.52.97
+
+# NFS-root: reboot, ожидание SSH на 192.168.52.150, проверка /,/oem,/userdata
+bench/run.sh nfs_env.py on --host 192.168.52.97
+
+# возврат на ubifs: проверка root=ubi0:rootfs и ubifs в mount
+bench/run.sh nfs_env.py off --host 192.168.52.150
+
+# только записать переменную без перезагрузки
+bench/run.sh nfs_env.py on --no-reboot --host 192.168.52.150
+```
+
+Строки `on`/`off` повторяют `netboot.py` и дефолт `output/image/.env.txt`;
+при смене разметки или `RK_BOOTARGS_CMA_SIZE` обновите `OKO_CMA_SIZE`
+и константу `NAND_BOOTARGS`. Аварийное восстановление из U-Boot по UART —
+TESTBENCH.md §7D.
 
 ## Переменные окружения
 
@@ -216,6 +243,8 @@ bench/run.sh netboot.py reboot --uboot-command download
 | `OKO_DUT_PASSWORD` | `luckfox` | пароль root (публичный вендорский дефолт) |
 | `OKO_RTSP_USER` / `OKO_RTSP_PASS` | `admin` / `oko-change-me` | учётка divinus (фабричный дефолт) |
 | `OKO_TFTP_HOST` | `192.168.52.200` | `serverip` для TFTP/NFS (netboot) |
+| `OKO_NFS_IP` | `192.168.52.150` | статический адрес DUT в NFS-режиме (`nfs_env.py`, `ip=`) |
+| `OKO_CMA_SIZE` | `66M` | `rk_dma_heap_cma` в строках `nfs_env.py`/`netboot.py` (как `RK_BOOTARGS_CMA_SIZE`) |
 | `OKO_GATEWAY` | `192.168.52.254` | `gatewayip` (netboot) |
 | `OKO_NFSROOT` | `192.168.52.200:/srv/nfs/rootfs` | NFS-корень для `sys_bootargs` |
 | `OKO_VPN_PEER` | — | адрес VPN-пира на хосте для `vpn_check.py` (`--peer-host` важнее) |
@@ -227,6 +256,7 @@ bench/run.sh netboot.py reboot --uboot-command download
 ## Артефакты
 
 - Логи U-Boot/netboot: `output/bench/netboot-<YYYYmmdd-HHMMSS>.log`.
+- Логи переключения NAND/NFS: `output/bench/nfs-env-<YYYYmmdd-HHMMSS>.log`.
 - Кадры и кропы OSD: `output/bench/osd-<YYYYmmdd-HHMMSS>-fNN[-<reg>].png`.
 - Скриншоты WebUI: `output/bench/ui/<раздел>.png` и `mobile-system.png`.
 - VPN: `output/bench/vpn/report.json`, `ssh.log`, `profile.conf` (тестовый

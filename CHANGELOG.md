@@ -26,6 +26,27 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Добавлено
 
+- **`bench/nfs_env.py` — переключение NAND ↔ NFS через env U-Boot (OKO).**
+  Режимы `status` (текущий `sys_bootargs`, распознанный `nand`/`nfs` и
+  сверка с `output/image/.env.txt`), `on` (`fw_setenv sys_bootargs` со
+  строкой `root=/dev/nfs … ip=…`, перезагрузка, ожидание SSH и проверка
+  `/`, `/oem`, `/userdata` как nfs3 с адреса NFS-сервера), `off` (возврат
+  на `ubi.mtd=6 root=ubi0:rootfs …`, проверка cmdline и ubifs). Флаги
+  `--host`, `--no-reboot`, `--timeout`; адреса и CMA — из тех же
+  переменных, что у `netboot.py` (`OKO_NFS_IP`, `OKO_TFTP_HOST`,
+  `OKO_GATEWAY`, `OKO_NFSROOT`, `OKO_CMA_SIZE`). Логи —
+  `output/bench/nfs-env-<stamp>.log`.
+- **`bench/nfs_env.py` switches NAND ↔ NFS through the U-Boot env (OKO).**
+  Modes: `status` (current `sys_bootargs`, recognised `nand`/`nfs` and a
+  comparison with `output/image/.env.txt`), `on` (`fw_setenv sys_bootargs`
+  with `root=/dev/nfs … ip=…`, reboot, wait for SSH and verify `/`, `/oem`,
+  `/userdata` as nfs3 from the NFS server), `off` (back to
+  `ubi.mtd=6 root=ubi0:rootfs …`, verify the cmdline and ubifs). Flags
+  `--host`, `--no-reboot`, `--timeout`; addresses and CMA come from the
+  same variables as `netboot.py` (`OKO_NFS_IP`, `OKO_TFTP_HOST`,
+  `OKO_GATEWAY`, `OKO_NFSROOT`, `OKO_CMA_SIZE`). Logs go to
+  `output/bench/nfs-env-<stamp>.log`.
+
 - **Возвращён netboot-контур TFTP/NFS (OKO).** `bench/netboot.py`
   (режимы `catch`/`reboot`/`cmd`, определение shell-приглашения
   `root@luckfox`), фрагмент ядра `rv1106-netboot.config` (IP_PNP,
