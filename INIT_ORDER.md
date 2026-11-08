@@ -97,7 +97,7 @@ BootROM → U-Boot → ядро Linux → busybox init → init-скрипты �
 | 4 | `S02sysctl` | применение `/etc/sysctl.conf` | `/proc` уже смонтирован |
 | 5 | `S10udev` | eudev, создание узлов устройств; правило `60-oko-sdcard.rules` вызывает `oko-sdcard add/remove` и монтирует карту в `/mnt/sdcard` (состояние — `/run/oko-sd.state`) | должен пройти до монтирования по `by-name`; `&sdmmc` в DTS — съёмная карта с `sdmmc0_det` |
 | 6 | `S20linkmount` | симлинки `/dev/block/by-name`, монтирование `oem`/`userdata` | ключевой этап, см. ниже |
-| 7 | `S20oko-osd` | divinus по умолчанию (`/userdata/divinus.enable`, opt-out — `/userdata/rkipc.enable`), бутстрап OSD-конфига, запуск `oko-osd` | оверлей OKO; после `S20linkmount`, до `S21appinit` |
+| 7 | `S20oko-osd` | divinus по умолчанию (`/userdata/divinus.enable`, opt-out — `/userdata/rkipc.enable`), бутстрап OSD-конфига, запуск `oko-osd`; `/tmp/osd-sys.txt` — `CPU …\nMEM FREE … SD FREE …\nT …C` | оверлей OKO; после `S20linkmount`, до `S21appinit` |
 | 8 | `S20urandom` | сохранение/восстановление seed urandom | — |
 | 9 | `S21appinit` | `sh /oem/usr/bin/RkLunch.sh` | **требует смонтированных `/oem` и `/userdata`** |
 | 10 | `S21oko-ec` | запуск `oko-ec daemon` (телеметрия EC/INA/SHT21 в `/tmp/oko-ec.json` и `/tmp/oko-ec.osd`) | оверлей OKO; после `S20linkmount` и `S21appinit` (лексикографический порядок), требует `/dev/i2c-3` и `/oem/usr/bin/oko-ec`; opt-out — `/userdata/oko-ec.disable` |
@@ -331,7 +331,8 @@ AIC8800 (`aic_load_fw` → `aic8800_fdrv`), AP6XXX (`bcmdhd`), RTL8723BS
   /var/run/ntpd.pid` (или поднимает его, если `S49ntp` не смог);
 - `reg1` — телеметрия `T/BAT/LTE/WiFi` четырьмя строками в левом верхнем углу,
   `reg2` — GPS в правом верхнем, `reg3` — сообщения из FIFO под телеметрией,
-  `reg4` — реальные CPU load, свободная память и температура CPU тремя
+  `reg4` — реальные CPU load, свободная память со сводкой SD
+  (`SD FREE <free>/<cap>GiB`, `SD FREE -` без карты) и температура CPU тремя
   строками в левом нижнем углу;
   телеметрия и GPS пишутся через `@file`-провайдер (локальный патч `region.c`):
   `/tmp/osd-dyn.txt`, `/tmp/osd-gps.txt`, `/tmp/osd-sys.txt` и

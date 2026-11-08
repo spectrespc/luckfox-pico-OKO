@@ -288,6 +288,7 @@ bench/run.sh firmware_check.py --flash --target stm8 \
   --file project/app/stm8-motor/build/app-2.1.1.ihx --confirm FLASH
 
 # NPU в OSD: строка должна появиться после старта YOLO
+# ожидаемый файл: CPU 20% NPU 17%\nMEM FREE 77% SD FREE 14.8/14.8GiB\nT 65.3C
 cat /tmp/osd-sys.txt; cat /proc/rknpu/load
 
 # RGA im2d fd-путь: копирование через CMA-буфер (rc=1 — нет /data/in0...bin,
@@ -339,6 +340,7 @@ bench/run.sh focus_check.py --enable --polls 10
 curl -s -u admin:oko-change-me 'http://192.168.52.97/api/focus?map=1'
 curl -s -u admin:oko-change-me 'http://192.168.52.97/api/focus' | grep -o '"af":{[^}]*}'
 i2cdetect -y 3 | grep -E ' 42 | 60 '
+# вторая строка несёт сводку SD: MEM FREE 77% SD FREE 14.8/14.8GiB
 cat /tmp/osd-sys.txt
 oko-motor info
 # прошивки контроллеров (без --flash — только версии)

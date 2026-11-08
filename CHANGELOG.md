@@ -26,6 +26,24 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Добавлено
 
+- **Сводка microSD в OSD (OKO).** `oko-osd` дописывает
+  ` SD FREE <free>/<cap>GiB` в строку `MEM FREE` региона `reg4` (свободно
+  первым, ёмкость второй, один знак после точки — как в WebUI); без
+  смонтированной карты выводится `SD FREE -`. Источник — `df -k /mnt/sdcard`
+  с проверкой монтирования по `/proc/mounts`, тот же паттерн, что у NPU:
+  строк остаётся три, регион не обрезается. Стенд: `MEM FREE 77% SD FREE
+  14.8/14.8GiB` совпало с `/api/status` (`15171/15177 MiB`), `umount` дал
+  `SD FREE -`, после `mount` числа вернулись; `ui_check` и `api_check`
+  (97/0) зелёные.
+- **microSD summary in OSD (OKO).** `oko-osd` appends
+  ` SD FREE <free>/<cap>GiB` to the `MEM FREE` line of `reg4` (free first,
+  capacity second, one decimal, as in the WebUI); without a mounted card it
+  reports `SD FREE -`. The source is `df -k /mnt/sdcard` guarded by
+  `/proc/mounts`, the same trick as the NPU suffix: the file keeps three lines
+  and the region does not clip. Bench result: `MEM FREE 77% SD FREE
+  14.8/14.8GiB` matched `/api/status` (`15171/15177 MiB`), `umount` produced
+  `SD FREE -`, and the numbers returned after `mount`; `ui_check` and
+  `api_check` (97/0) passed.
 - **Наблюдаемость ePTZ и геометрия оверлеев (OKO).** `rk_vpss_set_chn_crop`
   возвращает числовой код MPP, печатает его один раз и сохраняется в
   `media.c` под мьютексом (`media_eptz_last`); `/api/eptz` отдаёт фактические

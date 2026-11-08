@@ -37,7 +37,8 @@ osd:
   # reg1: SHT21/STM32/INA3221/LTE+WiFi (or T/BAT fallback), four lines, top-left;
   # reg2: GPS, top-right;
   # reg3: external text from /tmp/osd.fifo, top-left below telemetry.
-  # reg4: CPU load, free memory and CPU temperature, three lines, bottom-left.
+  # reg4: CPU load, free memory and SD summary, CPU temperature, three lines,
+  # bottom-left.
   # reg5: IVS motion indicator, below the message region (hidden when the
   # /tmp/osd-ivs.txt file is empty or absent).
   # Font size 24 px; text color RGB565 0x07e0 (bright green);
