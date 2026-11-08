@@ -164,6 +164,29 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Изменено
 
+- **Проверены сборки `sysdrv`/`app` и уточнена команда обновления `oem`
+  (OKO).** 2026-11-08: `./build.sh sysdrv` и `./build.sh app` проходят в
+  Docker-контейнере; `app` кладёт бинарник в `output/out/app_out/usr/bin`
+  (sha256 `ddbe6aa2…`, совпадает с `project/app/divinus/source/divinus`), но
+  `output/out/oem` не обновляет. Стейджинг `oem` пересобирает
+  `./build.sh firmware` (через `__PACKAGE_OEM`): после него
+  `output/out/oem/usr/bin/divinus` имеет тот же sha256, `output/image/update.img`
+  пересобран. В `FEATURES_VERIFIED.md` команда `make oem` заменена на фактические
+  `./build.sh app` / `./build.sh firmware` (цели `make oem` в репозитории нет).
+  В `bench/README.md` добавлен раздел «Порядок работы и CMA», в `TESTBENCH.md`
+  §9 — признаки исчерпания CMA и правило перезагрузки; дата §1 обновлена.
+- **`sysdrv`/`app` builds verified and the `oem` refresh command corrected
+  (OKO).** 2026-11-08: `./build.sh sysdrv` and `./build.sh app` pass in the
+  Docker container; `app` installs the binary into `output/out/app_out/usr/bin`
+  (sha256 `ddbe6aa2…`, identical to `project/app/divinus/source/divinus`) but
+  does not update `output/out/oem`. The `oem` staging is rebuilt by
+  `./build.sh firmware` (via `__PACKAGE_OEM`): afterwards
+  `output/out/oem/usr/bin/divinus` has the same sha256 and
+  `output/image/update.img` is regenerated. `FEATURES_VERIFIED.md` now names
+  the real `./build.sh app` / `./build.sh firmware` commands instead of
+  `make oem` (there is no `make oem` target). `bench/README.md` gained a
+  "Workflow and CMA" section, `TESTBENCH.md` §9 the CMA exhaustion signs and the
+  reboot rule, and the §1 date is updated.
 - **Измерена геометрия NN-рамок и OSD под поворотом (OKO).** Прогон
   `OKO_GEOMETRY_TESTS=1 geometry_check.py --what boxes|osd` 2026-11-07:
   рамки совпали с повёрнутой маской 0° — IoU 0.624 (90°), 0.713 (180°),
