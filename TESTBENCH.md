@@ -44,7 +44,7 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
 
 | Интерфейс | Значение | Примечание |
 |---|---|---|
-| UART | `/dev/ttyACM0` | `bench/serial_exec.py` берёт последний найденный `/dev/ttyACM*` |
+| UART | последний `/dev/ttyACM*` | `bench/serial_exec.py` берёт последний найденный; сейчас это `/dev/ttyACM1` (CH340), `/dev/ttyACM0` — CMSIS-DAP |
 | Скорость UART | `115200 8N1` | задана в скриптах `bench/` |
 | Ethernet | лабораторная сеть `192.168.52.0/24` | через порт устройства |
 | USB | `<порт / хаб>` | используется для Maskrom-прошивки |
@@ -57,14 +57,17 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
 
 | Узел | Адрес |
 |---|---|
-| Устройство (DUT) | `192.168.52.97` (DHCP, факт на `2026-11-04`) |
+| Устройство (DUT), NAND | `192.168.52.97` (DHCP, факт на `2026-11-04`) |
+| Устройство (DUT), NFS | `192.168.52.150` (статический из `ip=` в `sys_bootargs`) |
+| Хост TFTP/NFS | `192.168.52.200` |
 | Маска | `255.255.255.0` |
 | Шлюз | `192.168.52.254` |
 
-В автономном режиме адрес `eth0` выдаётся по DHCP (`RkLunch.sh` → `udhcpc`).
-Фактический адрес смотрите на DUT (`ifconfig eth0`) или в serial-консоли.
-Для стабильных проверок зарезервируйте адрес `192.168.52.150` в DHCP-сервере
-лабораторной сети.
+В автономном режиме адрес `eth0` выдаётся по DHCP (`RkLunch.sh` → `oko-net apply`).
+В NFS-режиме адрес задаётся в cmdline (`ip=192.168.52.150::…:off`), а `RkLunch.sh`
+пропускает DHCP. Фактический адрес смотрите на DUT (`ifconfig eth0`) или в
+serial-консоли. Для стабильных проверок зарезервируйте адрес `192.168.52.150`
+в DHCP-сервере лабораторной сети.
 
 ## 6. Учётные данные
 
@@ -154,24 +157,27 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
    нет, и он отвечает `parameter is invalid,please check!`. Рабочий путь —
    запись по LBA с **полным стиранием раздела** (после `db` таблицу можно
    проверить через `upgrade_tool pl`):
-   ```sh
-   ./tools/linux/Linux_Upgrade_Tool/upgrade_tool wl 0x3800 0x14000 output/image/oem.img
-   ./tools/linux/Linux_Upgrade_Tool/upgrade_tool wl 0x2B800 0x54000 output/image/rootfs.img
-   ./tools/linux/Linux_Upgrade_Tool/upgrade_tool rd
-   ```
-   Второй аргумент `wl` — размер **всего раздела** в секторах (oem 40M =
-   `0x14000`, rootfs 168M = `0x54000`), а не длина файла: tool стирает этот
-   диапазон и пишет образ. Если передать длину образа (oem `0x9D00`, rootfs
-   `0x1A500`), в хвосте останутся старые UBI-PEB с другим `image_seq`, и ядро
-   упадёт с `ubi0 error: ubi_attach: bad image sequence number …` (panic).
-   Maskrom нужен один раз: после `db` устройство остаётся в loader-режиме,
-   поэтому следующие разделы прошиваются без повторного входа.
-   `userdata` (LBA `0x17800`, 40M = `0x14000`) — только если менялось фабричное
-   содержимое раздела.
-4. `boot`, `idblock`, `uboot` и `env` этой фичей не менялись. При необходимости
-   прошивайте их полным `./rkflash.sh update` (§7A) или отдельной проверенной
-   процедурой; `di -b`/`di -uboot` в чистом Maskrom так же требуют загруженного
-   через `db` loader.
+```sh
+    ./tools/linux/Linux_Upgrade_Tool/upgrade_tool wl 0x800  0x3000 output/image/boot.img
+    ./tools/linux/Linux_Upgrade_Tool/upgrade_tool wl 0x3800 0x14000 output/image/oem.img
+    ./tools/linux/Linux_Upgrade_Tool/upgrade_tool wl 0x2B800 0x54000 output/image/rootfs.img
+    ./tools/linux/Linux_Upgrade_Tool/upgrade_tool rd
+    ```
+    Второй аргумент `wl` — размер **всего раздела** в секторах (boot 6M = `0x3000`,
+    oem 40M = `0x14000`, rootfs 168M = `0x54000`), а не длина файла: tool стирает
+    этот диапазон и пишет образ. Если передать длину образа (boot `0x391400/512`
+    ≈ `0x1C8A`, oem `0x9D00`, rootfs `0x1A500`), в хвосте останутся старые
+    UBI-PEB с другим `image_seq`, и ядро упадёт с
+    `ubi0 error: ubi_attach: bad image sequence number …` (panic).
+    Maskrom нужен один раз: после `db` устройство остаётся в loader-режиме,
+    поэтому следующие разделы прошиваются без повторного входа.
+    `userdata` (LBA `0x17800`, 40M = `0x14000`) — только если менялось фабричное
+    содержимое раздела.
+4. `idblock`, `uboot` и `env` этой фичей не менялись. `boot` перепрошивается, когда
+   меняются ядро, DTB или его конфиг (например, `rv1106-netboot.config`). При
+   необходимости прошивайте `idblock`/`uboot` полным `./rkflash.sh update` (§7A)
+   или отдельной проверенной процедурой; `di -b`/`di -uboot` в чистом Maskrom так
+   же требуют загруженного через `db` loader.
 5. Полный `./rkflash.sh update` (`upgrade_tool uf update.img`) — **только** при
    первичной прошивке, смене таблицы разделов (`parameter.txt`), loader
    (`idblock`/`uboot`) или U-Boot env. Он затирает и неизменённые разделы.
@@ -224,13 +230,13 @@ docker run --rm --privileged \
 тем же `factory-2.1.1.ihx`; приложение можно обновлять без ST-Link через
 `/api/flash` (имя с версией) или `oko-motor flash app-2.1.1.ihx`.
 
-### D. Netboot: TFTP + NFS (итерации без прошивки)
+### D. Переключение NAND ↔ NFS через env U-Boot
 
-Загрузка `boot.img` по TFTP и корня по NFS. Конфиг —
-`BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI-NETBOOT.mk`
-(фрагменты `rv1106-netboot.config` + `rv1106-sc230ai.config`), в NFS-режиме
-`oem`/`userdata` монтируются из `<nfsroot>/.nfsroot/`, DHCP в `RkLunch.sh`
-пропускается.
+Штатный `boot.img` (SC230AI) уже содержит фрагмент `rv1106-netboot.config`
+(`CONFIG_IP_PNP`, `IP_PNP_DHCP`, `IP_PNP_BOOTP`, `CONFIG_ROOT_NFS`), поэтому
+режим корня переключается только переменной U-Boot `sys_bootargs` — без
+перепрошивки ядра и без отдельного BoardConfig. В NFS-режиме `oem`/`userdata`
+монтируются из `<nfsroot>/.nfsroot/`, DHCP в `RkLunch.sh` пропускается.
 
 1. Настроить хост один раз (нужен sudo):
    ```sh
@@ -238,30 +244,52 @@ docker run --rm --privileged \
    ```
    Скрипт ставит `tftpd-hpa` (корень `<repo>/output/image`, `--secure`,
    `ProtectHome=read-only` и ACL на обход домашнего каталога), `nfs-kernel-server`
-   (экспорт `/srv/nfs/rootfs` для `192.168.52.0/24`) и `acl`.
-2. Собрать загрузчик с netboot-фрагментом (переключить `.BoardConfig.mk`, затем
-   вернуть основной конфиг перед финальной прошивкой):
-   ```sh
-   source tools/native/env.sh && ./build.sh kernel
-   ```
-3. Разложить rootfs и разделы в экспорт (бэкап — tar в `output/bench/nfs/`):
+   (экспорт `/srv/nfs/rootfs` для `192.168.52.0/24`) и `acl`. Повторный запуск
+   перезапускает `tftpd-hpa`, поэтому правки `/etc/default` и drop-in применяются.
+2. Разложить rootfs и разделы в экспорт (бэкап — tar в `output/bench/nfs/`):
    ```sh
    sudo rsync -a --delete --exclude=/.nfsroot output/out/rootfs_uclibc_rv1106/ /srv/nfs/rootfs/
    sudo rsync -a --delete output/out/oem/ /srv/nfs/rootfs/.nfsroot/oem/
    sudo rsync -a --delete output/out/userdata/ /srv/nfs/rootfs/.nfsroot/userdata/
    ```
-4. Загрузить DUT: `bench/run.sh netboot.py reboot` (логин/reboot по UART,
-   перехват U-Boot, `setenv ipaddr/serverip/sys_bootargs`, `tftp`, `boot_fit`).
-   Первый цикл можно поймать вручную: `bench/run.sh netboot.py catch` и сбросить
-   питание. Одна команда в U-Boot — `bench/run.sh netboot.py cmd 'printenv'`.
-5. Вернуться на SPI NAND: перезагрузить DUT без остановки U-Boot (грузится
-   `root=ubi0:rootfs`). Вход в rockusb без кнопки Maskrom:
-   `bench/run.sh netboot.py reboot --uboot-command download`, затем
-   `upgrade_tool ld` и `upgrade_tool uf output/image/update.img`.
+3. Переключить корень и проверить после перезагрузки:
+   ```sh
+   bench/run.sh nfs_env.py status --host 192.168.52.97   # режим и адрес до переключения
+   bench/run.sh nfs_env.py on  --host 192.168.52.97      # NFS-root
+   bench/run.sh nfs_env.py off --host 192.168.52.150     # возврат на ubi0:rootfs
+   ```
+   `on` пишет `sys_bootargs` с `root=/dev/nfs … ip=192.168.52.150:…:off`,
+   перезагружает плату и проверяет `/`, `/oem`, `/userdata` (nfs3 с
+   `192.168.52.200`); `off` пишет строку
+   `ubi.mtd=6 root=ubi0:rootfs rootfstype=ubifs rk_dma_heap_cma=66M` и проверяет
+   `root=ubi0:rootfs` и `ubifs`. Логи — `output/bench/nfs-env-<дата>.log`.
+   Строки и адреса — константы `bench/nfs_env.py` (`OKO_NFS_IP`,
+   `OKO_NAND_HOST`, `OKO_TFTP_HOST`, `OKO_GATEWAY`, `OKO_NFSROOT`,
+   `OKO_CMA_SIZE`); при смене разметки или CMA обновите их.
+4. Итерации ядра без прошивки (`netboot.py`) по-прежнему возможны: скрипт кладёт
+   `output/image/boot.img` по TFTP и задаёт `sys_bootargs` только в RAM U-Boot,
+   не сохраняя его в env.
+
+**Аварийное восстановление.** Неверная строка `sys_bootargs` (`nfsroot`
+недоступен) приводит к `VFS: Unable to mount root fs via NFS` и panic. Если в
+строке нет `panic=`, ядро зависает и нужен сброс питания. Проверенная процедура
+(2026-11-08, воспроизведено с несуществующим экспортом и `panic=5`):
+
+```sh
+# 1. поймать U-Boot по UART (Ctrl-C), 2. вернуть NAND-строку и сохранить env:
+bench/run.sh netboot.py cmd "setenv sys_bootargs 'ubi.mtd=6 root=ubi0:rootfs rootfstype=ubifs rk_dma_heap_cma=66M'"
+bench/run.sh netboot.py cmd 'printenv sys_bootargs'
+bench/run.sh netboot.py cmd 'saveenv'
+bench/run.sh netboot.py cmd 'reset'
+```
+
+Команды `setenv`/`saveenv`/`reset` отправляйте по одной: длинная строка в одной
+команде с `;` обрезается буфером U-Boot. Если плата зависла (panic без
+`panic=N`), сначала снимите и подайте питание, затем ловите U-Boot.
 
 Логи — `output/bench/netboot-<дата>.log`. Скорость NFS в этом режиме ограничена
-`rsize/wsize=4096` (параметры `nfsroot`), для замеров производительности
-используйте SPI NAND.
+`rsize/wsize=4096` для `/` (параметры `nfsroot`), `oem`/`userdata` монтируются
+с `rsize/wsize=1048576`; для замеров производительности используйте SPI NAND.
 
 ## 8. Диагностика
 

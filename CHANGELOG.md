@@ -295,6 +295,59 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Изменено
 
+- **Тест-матрикс `/oem` на BusyBox 1.38 при NFS-root пройден (OKO).**
+  Группа 0: `nfs_env.py on` → `root=/dev/nfs`, `ip=192.168.52.150`,
+  `/`, `/oem`, `/userdata` — nfs3 с `192.168.52.200`, `eth0` статический
+  без DHCP-демона. Группа 1: `sc230ai`, `rockit`, `rknpu`, `rve`,
+  `rk_dvbm`, `mpp_vcodec`, `rga3` загружены из NFS, ошибок загрузки
+  модулей нет. Группа 2: `api_check` 98/98, `osd_check` — кадры
+  1080p30 с UTF-8-текстом, `ui_check` зелёный, `/api/telemetry`
+  `available=true`, `oko_mac` не изменился. Группа 3: сообщение
+  `oko-osd` через `/tmp/osd.fifo` отрисовано в кадре (5000 пикселей
+  региона msg), `wg`/`awg` dry-cycle, `/dev/net/tun`, microSD и
+  `/api/storage`. Группа 4: `passwd` пишет `$5$`-хэш, init-скрипты без
+  `ash`-ошибок, обычный `reboot` переживает NFS-корень. Группа 5:
+  `off` → `root=ubi0:rootfs` и ubifs, `/userdata` 29.1 МиБ,
+  `api_check` 98/98 повторно; soak 10/10 on/off; 2 холодных старта.
+  Аварийный drill выполнен с недоступным NFS-экспортом и `panic=5`:
+  panic и восстановление env по UART (`setenv`/`saveenv`/`reset`
+  по одной команде) подтверждены; остановка `nfs-kernel-server`
+  требует физического сброса питания и остаётся ручной процедурой.
+- **The `/oem` test matrix on BusyBox 1.38 over NFS root passed (OKO).**
+  Group 0: `nfs_env.py on` → `root=/dev/nfs`, `ip=192.168.52.150`,
+  `/`, `/oem`, `/userdata` are nfs3 from `192.168.52.200`, `eth0` is
+  static with no DHCP daemon. Group 1: `sc230ai`, `rockit`, `rknpu`,
+  `rve`, `rk_dvbm`, `mpp_vcodec`, `rga3` loaded from NFS, no module
+  load errors. Group 2: `api_check` 98/98, `osd_check` 1080p30 frames
+  with UTF-8 text, `ui_check` passed, `/api/telemetry` `available=true`,
+  `oko_mac` unchanged. Group 3: an `oko-osd` `/tmp/osd.fifo` message
+  rendered in the frame (5000 pixels in the msg region), `wg`/`awg`
+  dry cycle, `/dev/net/tun`, microSD and `/api/storage`. Group 4:
+  `passwd` writes a `$5$` hash, init scripts have no `ash` errors, a
+  normal `reboot` survives the NFS root. Group 5: `off` →
+  `root=ubi0:rootfs` and ubifs, `/userdata` 29.1 MiB, `api_check`
+  98/98 again; soak 10/10 on/off cycles; 2 cold starts. The emergency
+  drill used an unreachable NFS export with `panic=5`: the panic and
+  the UART env recovery (`setenv`/`saveenv`/`reset` as separate
+  commands) are confirmed; stopping `nfs-kernel-server` needs a
+  physical power reset and remains a manual procedure.
+
+- **Документация переключения NAND ↔ NFS обновлена (OKO).**
+  `TESTBENCH.md` §7D переписан под `nfs_env.py` (без смены BoardConfig
+  и пересборки), §7B получил LBA `boot` (`0x800`, `0x3000`), §4/§5 —
+  фактический UART (`/dev/ttyACM1`) и адреса NAND/NFS. `INIT_ORDER.md`
+  §1/§2: netboot-фрагмент в основном конфиге, режим — переменная env.
+  `STRUCTURE.md`, `TO_DO.md` и `FEATURES_VERIFIED.md` — `nfs_env.py`
+  и подтверждённый матрикс без `*-NETBOOT.mk`.
+- **NAND ↔ NFS switching documentation updated (OKO).**
+  `TESTBENCH.md` §7D now describes `nfs_env.py` (no BoardConfig switch
+  or rebuild), §7B gained the `boot` LBA (`0x800`, `0x3000`), and §4/§5
+  reflect the actual UART (`/dev/ttyACM1`) and NAND/NFS addresses.
+  `INIT_ORDER.md` §1/§2: the netboot fragment is in the main config and
+  the mode is an env variable. `STRUCTURE.md`, `TO_DO.md` and
+  `FEATURES_VERIFIED.md` list `nfs_env.py` and the verified matrix
+  without `*-NETBOOT.mk`.
+
 - **NFS-root включён в штатное ядро SC230AI, дубль BoardConfig удалён
   (OKO).** `RK_KERNEL_DEFCONFIG_FRAGMENT` основного конфига теперь
   `"rv1106-netboot.config rv1106-sc230ai.config"`, поэтому `boot.img`

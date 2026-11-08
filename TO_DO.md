@@ -477,8 +477,9 @@ NPU 28%, `librkpostisp.so` загружен, пропусков в `/live/0` н�
       `smoke.sh`; Docker-контейнер сборки удалён.
 - [x] Buildroot 2026.08.1: rootfs собран, проверен по NFS и прошит в SPI NAND
       (`api_check` 98/98, RTSP/OSD).
-- [x] Netboot TFTP/NFS: `bench/netboot.py`, `tools/native/setup_netboot.sh`,
-      BoardConfig `*-SC230AI-NETBOOT.mk`.
+- [x] Netboot TFTP/NFS: `bench/netboot.py`, переключение NAND/NFS через env
+      `bench/nfs_env.py`, `tools/native/setup_netboot.sh`; netboot-фрагмент
+      входит в штатный `boot.img`.
 - [ ] `luckfox_pico_w_defconfig` (bluez5_utils/mpv): ребейс
       `hcitool_patch`/`mpv_patch` под новые версии или отключение пакетов
       (KI-046).

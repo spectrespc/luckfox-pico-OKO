@@ -244,6 +244,7 @@ TESTBENCH.md §7D.
 | `OKO_RTSP_USER` / `OKO_RTSP_PASS` | `admin` / `oko-change-me` | учётка divinus (фабричный дефолт) |
 | `OKO_TFTP_HOST` | `192.168.52.200` | `serverip` для TFTP/NFS (netboot) |
 | `OKO_NFS_IP` | `192.168.52.150` | статический адрес DUT в NFS-режиме (`nfs_env.py`, `ip=`) |
+| `OKO_NAND_HOST` | `192.168.52.97` | DHCP-адрес DUT в NAND-режиме (проверка после `nfs_env.py off`) |
 | `OKO_CMA_SIZE` | `66M` | `rk_dma_heap_cma` в строках `nfs_env.py`/`netboot.py` (как `RK_BOOTARGS_CMA_SIZE`) |
 | `OKO_GATEWAY` | `192.168.52.254` | `gatewayip` (netboot) |
 | `OKO_NFSROOT` | `192.168.52.200:/srv/nfs/rootfs` | NFS-корень для `sys_bootargs` |

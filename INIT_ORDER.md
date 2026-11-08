@@ -30,7 +30,7 @@ BootROM → U-Boot → ядро Linux → busybox init → init-скрипты �
 | `RK_UBOOT_DEFCONFIG` | `luckfox_rv1106_uboot_defconfig` | конфигурация U-Boot |
 | `RK_UBOOT_DEFCONFIG_FRAGMENT` | `rk-sfc.config` | поддержка SPI flash controller |
 | `RK_KERNEL_DEFCONFIG` | `luckfox_rv1106_linux_defconfig` | базовая конфигурация ядра |
-| `RK_KERNEL_DEFCONFIG_FRAGMENT` | `rv1106-sc230ai.config` | `CONFIG_VIDEO_SC230AI=m`; SC3336/IMX415/MIS5001/MIA1321 явно выключены |
+| `RK_KERNEL_DEFCONFIG_FRAGMENT` | `rv1106-netboot.config rv1106-sc230ai.config` | netboot (IP_PNP/ROOT_NFS) + `CONFIG_VIDEO_SC230AI=m`; SC3336/IMX415/MIS5001/MIA1321 явно выключены |
 | `RK_BOOTARGS_CMA_SIZE` | `66M` | в cmdline попадает как `rk_dma_heap_cma=66M` |
 | `RK_CAMERA_SENSOR_IQFILES` | `sc230ai_CMK-OT2115-PC1_30IRC-F16.json` | IQ-файл сенсора |
 | `RK_ENABLE_WIFI` | `y` | WiFi-модули собираются и копируются в `/oem/usr/ko` |
@@ -57,13 +57,24 @@ BootROM → U-Boot → ядро Linux → busybox init → init-скрипты �
    `/bin/busybox` (в текущем rootfs отдельного `/init` нет, `init=` в cmdline не задан).
 4. **busybox init** читает `/etc/inittab` (раздел 3).
 
-**Netboot-ветка (только для отладки).** BoardConfig `*-SC230AI-NETBOOT.mk`
-добавляет фрагмент `rv1106-netboot.config`: U-Boot получает `boot.img` по TFTP
-(`tftp ${ramdisk_addr_r} boot.img` + `boot_fit`), cmdline содержит
-`root=/dev/nfs rw nfsroot=192.168.52.200:/srv/nfs/rootfs,... ip=192.168.52.150::...`.
-Ядро монтирует корень по NFS, `S20linkmount` монтирует `oem`/`userdata` из
-`<nfsroot>/.nfsroot/`, а `RkLunch.sh` пропускает DHCP (см. раздел 5). После
-перезагрузки без остановки U-Boot плата снова грузится из SPI NAND.
+**Переключение на NFS-root (штатный образ).** Фрагмент `rv1106-netboot.config`
+(`CONFIG_IP_PNP`, `IP_PNP_DHCP`, `IP_PNP_BOOTP`, `CONFIG_ROOT_NFS`) входит в
+основной `boot.img`, отдельного BoardConfig нет. U-Boot при каждой загрузке
+дописывает переменную env `sys_bootargs` в `bootargs`
+(`arch/arm/mach-rockchip/board.c:bootargs_add_partition`), поэтому режим
+переключается только `fw_setenv`:
+
+- NAND (по умолчанию): `ubi.mtd=6 root=ubi0:rootfs rootfstype=ubifs rk_dma_heap_cma=66M`;
+- NFS: `root=/dev/nfs rw nfsroot=192.168.52.200:/srv/nfs/rootfs,vers=3,proto=tcp,nolock
+  ip=192.168.52.150:192.168.52.200:192.168.52.254:255.255.255.0:luckfox:eth0:off
+  rk_dma_heap_cma=66M`.
+
+В NFS-режиме `S20linkmount` монтирует `oem`/`userdata` из
+`<nfsroot>/.nfsroot/`, а `RkLunch.sh` пропускает DHCP (см. раздел 5).
+Переключение и проверка — `bench/nfs_env.py on|off`; итерации ядра без
+прошивки — `bench/netboot.py` (TFTP `boot.img`, `sys_bootargs` только в RAM
+U-Boot). После перезагрузки без остановки U-Boot плата снова грузится из
+SPI NAND, если `sys_bootargs` не сохранён в env.
 
 ## 3. Инициализация busybox (inittab)
 

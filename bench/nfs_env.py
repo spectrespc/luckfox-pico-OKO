@@ -15,6 +15,7 @@ environment variables that bench/netboot.py uses, so there is a single
 source of truth:
 
     OKO_NFS_IP     192.168.52.150   static DUT address in NFS mode
+    OKO_NAND_HOST  192.168.52.97    DHCP address of the NAND boot
     OKO_TFTP_HOST  192.168.52.200   NFS/TFTP server
     OKO_GATEWAY    192.168.52.254
     OKO_NFSROOT    192.168.52.200:/srv/nfs/rootfs
@@ -30,6 +31,7 @@ import argparse
 import os
 import re
 import shlex
+import socket
 import sys
 import time
 from pathlib import Path
@@ -41,6 +43,7 @@ DEFAULT_OUT = ROOT / "output" / "bench"
 ENV_FILE = ROOT / "output" / "image" / ".env.txt"
 
 NFS_IP = os.environ.get("OKO_NFS_IP", "192.168.52.150")
+NAND_IP = os.environ.get("OKO_NAND_HOST", "192.168.52.97")
 SERVER_IP = os.environ.get("OKO_TFTP_HOST", "192.168.52.200")
 GATEWAY = os.environ.get("OKO_GATEWAY", "192.168.52.254")
 NETMASK = "255.255.255.0"
@@ -95,6 +98,19 @@ def set_env(client, bootargs):
         return False
     log(f"sys_bootargs set: {actual}")
     return True
+
+
+def wait_down(host, timeout=40):
+    """Wait until the pre-reboot sshd stops accepting connections."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with socket.create_connection((host, 22), timeout=2):
+                pass
+        except OSError:
+            return True
+        time.sleep(1)
+    return False
 
 
 def reboot_and_wait(hosts, timeout):
@@ -214,7 +230,8 @@ def main():
         pass
     client.close()
 
-    hosts = [NFS_IP, args.host] if target == "nfs" else [args.host, NFS_IP]
+    wait_down(args.host)
+    hosts = [NFS_IP, args.host] if target == "nfs" else [NAND_IP, args.host, NFS_IP]
     hosts = list(dict.fromkeys(hosts))
     client, host = reboot_and_wait(hosts, args.timeout)
     if client is None:
