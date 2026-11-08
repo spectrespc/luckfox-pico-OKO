@@ -14,8 +14,6 @@
 
 | Группа | Функционал | Описание | Управление (API, секция YAML) | Что добавлено (OKO vs вендорский V1.4) | Статус |
 |---|---|---|---|---|---|
-| Видео и стриминг | Поворот | 90/180/270 через VENC | `/api/rotate`, `[rotate]` | поворот VENC stage `divinus` | **ограничено** — 90° подтверждён PyAV (1080×1920), 180° визуально, 270° не проверялся; пересчёт NN-рамок и переякорение OSD реализованы и покрыты хост-тестом, но визуальный замер под поворотом (`OKO_GEOMETRY_TESTS=1`) не выполнялся |
-| Видео и стриминг | ePTZ | Цифровой зум 1x/2x/4x кропом VPSS, `stream=main/sub` | `/api/eptz`, `[eptz]` | ePTZ stage `divinus` | **ограничено** — кроп, заданный до старта канала, подтверждён на main (mean\|diff\| 4.25 к центру кадра 1x, снимок не изменился); смена зума на лету не применяется и видна только после старта канала (KI-044); sub не проверялся — поток выключен |
 | Видео и стриминг | SmartP | Настройка GOP | `/api/venc`, `[venc]` | SmartP stage `divinus` | **ограничено** — применяется со следующего старта, не перепроверялся |
 | Видео и стриминг | IVS | Детекция движения/объектов, снимок, клип, OSD | `/api/ivs`, `[ivs]` | IVS stage `divinus` + `gating.c` | **ограничено** — MD проверен; OD и событие на статичной сцене не подтверждены |
 | Видео и стриминг | Runtime IQ | `switch_scene`, `updateIq` | `/api/iq`, `[iq]` | runtime IQ stage `divinus` | **ограничено** — сцена принята; `updateIq` не проверялся |
@@ -23,7 +21,6 @@
 | Видео и стриминг | OSD на всех потоках | `osd.scope=all` (main+sub+JPEG) | конфиг `[osd]`, гейт G4 | `gating.c` | **заблокировано** — multi-attach RGN не прошёл проверку |
 | Видео и стриминг | YOLO `source: vi1` | VI selfpath (chn1) как источник кадров | `/api/yolo`, `[yolo]` | `gating.c`, API и WebUI отклоняют значение | **заблокировано** — включение `vi1` привело к зависанию платы; значение отклоняется с причиной |
 | Видео и стриминг | Второй рантайм RKNN 2.x | Модели toolkit 2.x, `yolo.runtime: 2` | `/api/yolo` (`runtime`), `/api/models` (`runtime`) | `librknnmrt2.so` с отдельным SONAME, два handle в HAL, проверка SDK-версии | **ограничено** — AIISP на 1.6.0 + YOLO на 2.x в одном процессе, переключение runtime без рестарта и 2-часовой soak проверены; mAP 2.x-модели на размеченном наборе не измерен |
-| Видео и стриминг | Рамки детекции на потоке | `yolo.boxes`: 2BPP RGN, два цвета, выравнивание 4 px | `/api/yolo` (`boxes`), `[yolo]` | `rk_region_nn_*` в `hal/plus/rk_hal.c`, прорисовка в `analytics/yolo.c`, геометрия в `analytics/nn_geom.c` | **ограничено** — живое включение/выключение, очистка при нуле детекций, реальные детекции классов 0/прочие, синтетическая геометрия и поворот 90° проверены; 180/270 и точное совпадение рамок на повёрнутой сцене не измерялись; только главный поток (по `osd.scope`); цветов два (класс 0 и все прочие) |
 | Сеть | WiFi AIC8800 | Модули собираются и копируются в `/oem/usr/ko` | `RK_ENABLE_WIFI=y` | вендорские модули без правок OKO | **ограничено** — WiFi-стек не проверялся; сеть проверена по Ethernet |
 | Телеметрия (oko-ec) | Датчики | SHT21 `0x40` — T/RH; INA3221 или INA226 `0x41` — U/I/P; STM32 EC `0x42` — U/I/T, SOC, ячейки, OTA | `/dev/i2c-3`, `i2cdetect -y 3` | `i2c-dev` без драйверов (`CONFIG_HWMON` выключен), автоопределение INA | **ограничено** — адреса видны; у INA3221 силовые входы не подключены |
 | microSD | Hotplug | Извлечение и установка карты | udev, `/api/storage` | определение по `device/type=SD` | **ограничено** — проверено unbind/bind; физическое извлечение не проверялось |
@@ -50,8 +47,10 @@
   100 кадрах калибровки; активация, смешанная нагрузка и переключение рантайма
   без рестарта проверены. mAP на размеченном наборе не измерялся, поэтому
   «2.x не хуже 1.6.0» по точности пока не доказано.
-- **Поворот.** 90° подтверждён PyAV (1080×1920), 180° — визуально; 270° не
-  проверялся. Совмещение NN-рамок и OSD-текста под поворотом не измерялось.
+- **Поворот и рамки.** Канва 0/90/180/270 и совмещение NN-рамок проверены
+  `OKO_GEOMETRY_TESTS=1` 2026-11-07 (IoU 0.62/0.71/0.71), OSD-текст остаётся
+  в своих углах. Эталонной разметки положения рамок на повёрнутой сцене нет:
+  измерена воспроизводимость маппинга, а не абсолютная точность.
 - **Помощь фокусировке.** AF-мост включает `RKAIQ_AF_MODE_FIXED` и
   `manual_meascfg_v31.af_en=1`; обязательное условие ненулевой метрики —
   `contrast_af.enable=1` в IQ SC230AI (в OKO включено в IQ и в рантайме).
@@ -93,8 +92,6 @@ Status as of 2026-11-07.
 
 | Group | Feature | Description | Control (API, YAML section) | What was added (OKO vs vendor V1.4) | Status |
 |---|---|---|---|---|---|
-| Video and streaming | Rotation | 90/180/270 via VENC | `/api/rotate`, `[rotate]` | VENC rotation stage in `divinus` | **limited** — 90° confirmed by PyAV (1080×1920), 180° visually, 270° untested; the NN-box mapping and the OSD re-anchoring are implemented and covered by a host test, but no visual measurement under rotation (`OKO_GEOMETRY_TESTS=1`) was run |
-| Video and streaming | ePTZ | 1x/2x/4x digital zoom via a VPSS crop, `stream=main/sub` | `/api/eptz`, `[eptz]` | ePTZ stage in `divinus` | **limited** — a crop set before the channel starts is confirmed on main (mean\|diff\| 4.25 versus the centre of the 1x frame, the snapshot stayed unchanged); a runtime zoom change is not applied and needs a channel start (KI-044); sub was not tested because the stream is disabled |
 | Video and streaming | SmartP | GOP change | `/api/venc`, `[venc]` | SmartP stage in `divinus` | **limited** — applies on next start, not re-verified |
 | Video and streaming | IVS | Motion/object detection, snapshot, clip, OSD | `/api/ivs`, `[ivs]` | IVS stage in `divinus` + `gating.c` | **limited** — MD verified; OD and static-scene events unconfirmed |
 | Video and streaming | Runtime IQ | `switch_scene`, `updateIq` | `/api/iq`, `[iq]` | runtime IQ stage in `divinus` | **limited** — scene switch accepted, `updateIq` untested |
@@ -102,7 +99,6 @@ Status as of 2026-11-07.
 | Video and streaming | OSD on all streams | `osd.scope=all` (main+sub+JPEG) | `[osd]` config, gate G4 | `gating.c` | **blocked** — multi-attach RGN failed verification |
 | Video and streaming | YOLO `source: vi1` | VI selfpath (chn1) as the frame source | `/api/yolo`, `[yolo]` | `gating.c`, API and WebUI reject the value | **blocked** — enabling `vi1` hung the board; the value is refused with a reason |
 | Video and streaming | Second RKNN 2.x runtime | Models built by toolkit 2.x, `yolo.runtime: 2` | `/api/yolo` (`runtime`), `/api/models` (`runtime`) | `librknnmrt2.so` with a distinct SONAME, two HAL handles, SDK-version check | **limited** — AIISP on 1.6.0 plus YOLO on 2.x in one process, runtime switching without a restart and a 2-hour soak were verified; the 2.x model mAP on a labelled set is not measured |
-| Video and streaming | Detection boxes on the stream | `yolo.boxes`: 2BPP RGN, two colours, 4-pixel alignment | `/api/yolo` (`boxes`), `[yolo]` | `rk_region_nn_*` in `hal/plus/rk_hal.c`, painting in `analytics/yolo.c`, geometry in `analytics/nn_geom.c` | **limited** — live on/off, clearing on zero detections, real detections of class 0/other, synthetic geometry and 90° rotation were verified; 180/270 and exact box alignment on a rotated scene were not measured; main stream only (follows `osd.scope`); two colours only (class 0 and everything else) |
 | Network | WiFi AIC8800 | Modules are built and copied to `/oem/usr/ko` | `RK_ENABLE_WIFI=y` | vendor modules without OKO changes | **limited** — WiFi stack unverified; networking verified over Ethernet |
 | Telemetry (`oko-ec`) | Sensors | SHT21 `0x40` — T/RH; INA3221 or INA226 `0x41` — U/I/P; STM32 EC `0x42` — U/I/T, SOC, cells, OTA | `/dev/i2c-3`, `i2cdetect -y 3` | `i2c-dev` without drivers (`CONFIG_HWMON` off), INA autodetection | **limited** — addresses respond; INA3221 power inputs are not wired |
 | microSD | Hotplug | Card removal and insertion | udev, `/api/storage` | detection via `device/type=SD` | **limited** — verified with unbind/bind only; physical removal untested |
@@ -124,8 +120,11 @@ Status as of 2026-11-07.
 - **AIISP.** Night denoise accuracy is not measured. AIISP and YOLO on `vpss3`
   were verified together on the bench (640×640 demo: main 30–33 fps, NPU 28%,
   no drops).
-- **Rotation.** 90° is confirmed by PyAV (1080×1920), 180° visually; 270° was
-  not verified. NN box and OSD text alignment under rotation was not measured.
+- **Rotation and boxes.** The canvas at 0/90/180/270 and the NN box mapping
+  were measured with `OKO_GEOMETRY_TESTS=1` on 2026-11-07 (IoU
+  0.62/0.71/0.71), and the OSD text keeps its corners. There is no reference
+  markup for box positions on a rotated scene: reproducibility of the mapping
+  is measured, not absolute accuracy.
 - **Focus assist.** The AF bridge sets `RKAIQ_AF_MODE_FIXED` and
   `manual_meascfg_v31.af_en=1`; a non-zero metric requires
   `contrast_af.enable=1` in the SC230AI IQ (OKO sets it in the IQ and at

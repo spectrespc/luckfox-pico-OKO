@@ -102,7 +102,9 @@ def apply_change(path):
     if restarted:
         if not wait_up():
             failures.append("the application did not come back after a restart")
-        time.sleep(3.0)
+        # The pipeline needs a few seconds after the HTTP server is
+        # back: the first encoded frames can still be dark or noisy.
+        time.sleep(6.0)
     return dec, restarted
 
 
@@ -128,7 +130,7 @@ def jpeg_from_stream(path, timeout=6.0):
     raise RuntimeError("no JPEG in %s" % path)
 
 
-def capture(url, timeout=10, frames=12):
+def capture(url, timeout=10, frames=20):
     """Grab one decoded frame (the last of a short sample) from RTSP."""
     container = av.open(url, timeout=timeout)
     image = None

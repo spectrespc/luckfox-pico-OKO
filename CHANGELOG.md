@@ -164,6 +164,26 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Изменено
 
+- **Измерена геометрия NN-рамок и OSD под поворотом (OKO).** Прогон
+  `OKO_GEOMETRY_TESTS=1 geometry_check.py --what boxes|osd` 2026-11-07:
+  рамки совпали с повёрнутой маской 0° — IoU 0.624 (90°), 0.713 (180°),
+  0.711 (270°); OSD-текст остаётся в правом нижнем и левом верхнем углах на
+  всех четырёх углах (12 проверок). Канва: 1080x1920 на 90/270, 1920x1080
+  на 180. `geometry_check.py` после рестарта ждёт 6 с и берёт 20-й кадр:
+  первые кадры после подъёма сервера бывают тёмными и давали ложные провалы.
+  Рамки и поворот переведены в `FEATURES_VERIFIED.md`, в `TO_DO.md` §11.5
+  закрыты 180/270; эталонная разметка положения рамок остаётся открытой;
+  числа — в `VERIFIED_FUNCTIONS.md`.
+- **NN box and OSD geometry under rotation measured (OKO).** The 2026-11-07
+  `OKO_GEOMETRY_TESTS=1 geometry_check.py --what boxes|osd` run: the boxes
+  matched the rotated 0° mask — IoU 0.624 (90°), 0.713 (180°), 0.711 (270°);
+  the OSD text keeps the right-bottom and left-top corners at all four angles
+  (12 checks). Canvas: 1080x1920 at 90/270, 1920x1080 at 180.
+  `geometry_check.py` now waits 6 s after a restart and takes the 20th frame:
+  the first frames after the server comes back are sometimes dark and caused
+  false failures. Boxes and rotation moved to `FEATURES_VERIFIED.md`, the
+  180/270 item in `TO_DO.md` §11.5 is closed; the reference box markup stays
+  open; the numbers are in `VERIFIED_FUNCTIONS.md`.
 - **ePTZ: смена зума/поворота применяется graceful-рестартом (OKO).**
   `/api/eptz` и `/api/rotate` больше не пытаются менять работающий канал:
   новое значение сохраняется, ответ содержит `applied:false` и
