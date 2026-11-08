@@ -5,7 +5,7 @@
 `FEATURES_UNVERIFIED.md`; паспорт платформы, общие примечания и команды проверки —
 в `FEATURES.md`; доказательства — в `VERIFIED_FUNCTIONS.md`.
 
-Статус на 2026-11-07.
+Статус на 2026-11-08.
 
 ## Русский
 
@@ -50,6 +50,8 @@
 | Сеть | Статический IPv4 | Адрес, маска, шлюз, DNS | WebUI Network → Ethernet, `/api/network?mode=static` | `/api/network` и `oko-net` | **работает** — `.220` применяется и переживает reboot |
 | Сеть | Постоянный MAC | Выводится из serial SoC и хранится в env | `fw_printenv oko_mac` | `oko_mac`, восстановление из serial | **работает** — MAC не меняется после прошивки |
 | Сеть | Сохранение настроек | `oko_net_mode`, `oko_ipaddr`, `oko_netmask`, `oko_gateway`, `oko_dns` в U-Boot env | `fw_setenv`, `/etc/fw_env.config` | перенос настроек из `/userdata` в env | **работает** — переживает reboot и прошивку `oem`/`rootfs` |
+| Сеть | VPN — WireGuard | Профиль `wg0` из `.conf`: адреса, split-маршруты по `AllowedIPs`, autostart/watchdog, guard полного туннеля | `/api/vpn`, WebUI Network → VPN, `/usr/bin/oko-vpn` | встроенный `CONFIG_WIREGUARD=y`, `wg` в `/oem/usr/bin`, `oko-vpn` + `S45oko-vpn` | **работает (2026-11-08)** — внешний пир на хосте (`wgpeer0` 10.8.0.1, порт 51820): handshake 3 с, `ping` через туннель, split-маршрут и удаление после `down`; `bench/vpn_check.py` 19/19 |
+| Сеть | VPN — OpenVPN | Клиентский профиль `tun0` из `.ovpn`/`.conf`: inline CA/cert/key, `tls-crypt`, `auth-user-pass` через WebUI, full tunnel `def1` с guard, autostart | `/api/vpn` (поля `user`/`pass`), WebUI Network → VPN, `/usr/bin/oko-vpn` | `BR2_PACKAGE_OPENVPN=y` (`openvpn 2.5.7`, OpenSSL, LZO/LZ4), `CONFIG_TUN=y`, `/dev/net/tun`, `oko-vpn` + `S45oko-vpn` | **работает (2026-11-08)** — внешний сервер `192.168.52.200:1194`: inline-сертификаты и `tls-crypt`, учётка `auth-user-pass` из WebUI (`tun0.pass`, 0600), `tun0` 10.8.0.3/24, `ping` через туннель, iperf3 21–23 Мбит/с, full tunnel `redirect-gateway def1` + guard, `down` без маршрутов, autostart после reboot, отказы plugin/credentials; `bench/vpn_check.py` 23/23 (full+auth+reboot) и 21/21 (split); `api_check` 98/0, `ui_check` зелёный |
 | Телеметрия (oko-ec) | `oko-ec` CLI и демон | Опрос датчиков раз в 2 с, JSON и строки OSD | `oko-ec`, `scan`/`info`/`battery`/`cells`/`temp`/`ina226`/`sht21`/`sensors`/`flash`/`reset`/`daemon`, `S21oko-ec` | пакет `project/app/oko-ec`, демон и opt-out | **работает** — демон запущен, `/tmp/oko-ec.json` обновляется |
 | Телеметрия (oko-ec) | OSD-телеметрия | Реальные строки, иначе симуляция после 30 с без данных | `/tmp/oko-ec.osd`, `/userdata/oko-ec.disable` | `oko-osd` + `reg1` | **работает** — T/BAT из свежего файла |
 | Телеметрия (oko-ec) | I2C3-M1 | Шина 100 кГц на `GPIO1_D2`/`GPIO1_D3` | `/dev/i2c-3`, DTS `&i2c3` | `status = "okay"`, `clock-frequency = <100000>`, `i2c3m1_xfer` | **работает** — `0x186a0`, 4 адреса на шине |
@@ -94,7 +96,7 @@ and partially verified capabilities are in `FEATURES_UNVERIFIED.md`; the
 platform passport, shared notes and verification commands are in `FEATURES.md`;
 evidence is in `VERIFIED_FUNCTIONS.md`.
 
-Status as of 2026-11-07.
+Status as of 2026-11-08.
 
 | Group | Feature | Control (API, YAML section) | What was added (OKO vs vendor V1.4) | Verified & works |
 |---|---|---|---|---|
@@ -135,6 +137,8 @@ Status as of 2026-11-07.
 | Network | Static IPv4: address, mask, gateway, DNS | WebUI Network → Ethernet, `/api/network?mode=static` | `/api/network` and `oko-net` | **works** — `.220` applies and survives reboot |
 | Network | Persistent MAC derived from the SoC serial and stored in env | `fw_printenv oko_mac` | `oko_mac`, restore from serial | **works** — MAC unchanged after flashing |
 | Network | Settings persistence: `oko_net_mode`, `oko_ipaddr`, `oko_netmask`, `oko_gateway`, `oko_dns` in U-Boot env | `fw_setenv`, `/etc/fw_env.config` | moved settings from `/userdata` to env | **works** — survives reboot and `oem`/`rootfs` flashing |
+| Network | VPN — WireGuard | `wg0` profile from a `.conf`: addresses, split routes from `AllowedIPs`, autostart/watchdog, full-tunnel guard | `/api/vpn`, WebUI Network → VPN, `/usr/bin/oko-vpn` | built-in `CONFIG_WIREGUARD=y`, `wg` in `/oem/usr/bin`, `oko-vpn` + `S45oko-vpn` | **works (2026-11-08)** — external host peer (`wgpeer0` 10.8.0.1, port 51820): 3 s handshake, tunnel `ping`, split route and removal after `down`; `bench/vpn_check.py` 19/19 |
+| Network | VPN — OpenVPN | `tun0` client from `.ovpn`/`.conf`: inline CA/cert/key, `tls-crypt`, WebUI `auth-user-pass`, full tunnel `def1` with the guard, autostart | `/api/vpn` (`user`/`pass` fields), WebUI Network → VPN, `/usr/bin/oko-vpn` | `BR2_PACKAGE_OPENVPN=y` (`openvpn 2.5.7`, OpenSSL, LZO/LZ4), `CONFIG_TUN=y`, `/dev/net/tun`, `oko-vpn` + `S45oko-vpn` | **works (2026-11-08)** — external server `192.168.52.200:1194`: inline certificates and `tls-crypt`, `auth-user-pass` credentials from the WebUI (`tun0.pass`, 0600), `tun0` 10.8.0.3/24, tunnel `ping`, iperf3 21–23 Mbit/s, full tunnel `redirect-gateway def1` with the guard, `down` removes routes, autostart after reboot, plugin/credentials rejects; `bench/vpn_check.py` 23/23 (full+auth+reboot) and 21/21 (split); `api_check` 98/0, `ui_check` passed |
 | Telemetry (`oko-ec`) | `oko-ec` CLI and daemon: sensors polled every 2 s, JSON and OSD lines | `oko-ec`, `scan`/`info`/`battery`/`cells`/`temp`/`ina226`/`sht21`/`sensors`/`flash`/`reset`/`daemon`, `S21oko-ec` | `project/app/oko-ec` package, daemon and opt-out | **works** — daemon runs, `/tmp/oko-ec.json` updates |
 | Telemetry (`oko-ec`) | OSD telemetry: real lines, otherwise simulation after 30 s without data | `/tmp/oko-ec.osd`, `/userdata/oko-ec.disable` | `oko-osd` + `reg1` | **works** — T/BAT from a fresh file |
 | Telemetry (`oko-ec`) | I2C3-M1: 100 kHz bus on `GPIO1_D2`/`GPIO1_D3` | `/dev/i2c-3`, DTS `&i2c3` | `status = "okay"`, `clock-frequency = <100000>`, `i2c3m1_xfer` | **works** — `0x186a0`, 4 addresses on the bus |

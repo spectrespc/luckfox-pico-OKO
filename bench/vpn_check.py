@@ -112,18 +112,28 @@ class Web:
         return self.call("POST", "/api/vpn", body,
                          "application/x-www-form-urlencoded")
 
-    def import_profile(self, text, kind):
+    def import_profile(self, text, kind, user="", password=""):
         boundary = "----oko-vpn-" + uuid.uuid4().hex
         body = (
             f"--{boundary}\r\n"
             f'Content-Disposition: form-data; name="file"; filename="vpn.conf"\r\n'
             "Content-Type: text/plain\r\n\r\n"
-        ).encode() + text.encode() + f"\r\n--{boundary}--\r\n".encode()
+        ).encode() + text.encode()
+        if user or password:
+            for name, value in (("user", user), ("pass", password)):
+                body += (f"\r\n--{boundary}\r\n"
+                         f'Content-Disposition: form-data; name="{name}"'
+                         "\r\n\r\n" + value).encode()
+        body += f"\r\n--{boundary}--\r\n".encode()
         return self.call("POST", f"/api/vpn/import?type={kind}", body,
                          f"multipart/form-data; boundary={boundary}")
 
-    def import_text(self, text, kind="auto"):
-        body = urllib.parse.urlencode({"text": text, "type": kind}).encode()
+    def import_text(self, text, kind="auto", user="", password=""):
+        fields = {"text": text, "type": kind}
+        if user or password:
+            fields["user"] = user
+            fields["pass"] = password
+        body = urllib.parse.urlencode(fields).encode()
         return self.call("POST", "/api/vpn/import", body,
                          "application/x-www-form-urlencoded")
 
@@ -140,7 +150,13 @@ def wait_state(web, name, wanted, timeout):
     deadline = time.time() + timeout
     last = None
     while time.time() < deadline:
-        status, payload = web.vpn()
+        try:
+            status, payload = web.vpn()
+        except Exception:
+            # Right after a reboot the HTTP server may be down or the route
+            # may still be changing; keep polling.
+            time.sleep(2)
+            continue
         if status == 200 and isinstance(payload, dict):
             profile = profile_by_name(payload, name)
             last = profile
@@ -203,6 +219,18 @@ AllowedIPs = 10.99.0.0/24
     return hook, full
 
 
+def ovpn_negative_configs():
+    base = ("client\n"
+            "dev tun\n"
+            "proto udp\n"
+            "remote 127.0.0.1 1194\n"
+            "nobind\n"
+            "auth-user-pass\n")
+    plugin = base + "plugin /tmp/evil.so\n"
+    full = base.replace("auth-user-pass\n", "") + "redirect-gateway\n"
+    return plugin, full
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--dut", default=os.environ.get("OKO_DUT_HOST",
@@ -210,7 +238,14 @@ def main():
     parser.add_argument("--peer-host", default=os.environ.get("OKO_VPN_PEER"),
                         help="VPN peer address on the host (informational)")
     parser.add_argument("--profile", help="local wg-quick .conf to import")
-    parser.add_argument("--type", default="auto", choices=["auto", "wg", "awg"])
+    parser.add_argument("--type", default="auto",
+                        choices=["auto", "wg", "awg", "ovpn"])
+    parser.add_argument("--creds-user", default=os.environ.get("OKO_VPN_USER",
+                        ""), help="OpenVPN auth-user-pass user")
+    parser.add_argument("--creds-pass", default=os.environ.get("OKO_VPN_PASS",
+                        ""), help="OpenVPN auth-user-pass password")
+    parser.add_argument("--iperf-peer", help="host running iperf3 -s for a "
+                        "throughput check from the DUT")
     parser.add_argument("--user", default=os.environ.get("OKO_DUT_USER", "root"))
     parser.add_argument("--password", default=os.environ.get("OKO_DUT_PASSWORD",
                         "luckfox"))
@@ -240,18 +275,30 @@ def main():
         ssh.connect()
         check.ok("ssh connected", args.dut)
 
-        rc, out_text = ssh.run("lsmod | grep -q '^amneziawg' || "
-                               "insmod /oem/usr/ko/amneziawg.ko")
-        rc2, mod_text = ssh.run("lsmod | grep '^amneziawg'")
-        if rc2 == 0:
-            check.ok("amneziawg module", mod_text.strip().splitlines()[0])
+        if args.type == "ovpn":
+            rc, tun_text = ssh.run("test -c /dev/net/tun && echo tun-ok")
+            if rc == 0:
+                check.ok("/dev/net/tun")
+            else:
+                check.fail("/dev/net/tun", tun_text.strip())
+            rc, ver_text = ssh.run("openvpn --version 2>&1 | head -n 1")
+            if rc == 0 and "openvpn" in ver_text.lower():
+                check.ok("openvpn version", ver_text.strip())
+            else:
+                check.fail("openvpn version", ver_text.strip())
         else:
-            check.fail("amneziawg module", out_text.strip())
+            rc, out_text = ssh.run("lsmod | grep -q '^amneziawg' || "
+                                   "insmod /oem/usr/ko/amneziawg.ko")
+            rc2, mod_text = ssh.run("lsmod | grep '^amneziawg'")
+            if rc2 == 0:
+                check.ok("amneziawg module", mod_text.strip().splitlines()[0])
+            else:
+                check.fail("amneziawg module", out_text.strip())
 
-        rc, awg_text = ssh.run("command -v awg >/dev/null 2>&1 && awg version || "
-                               "/oem/usr/bin/awg version")
-        check.ok("awg version", awg_text.strip()) if rc == 0 else \
-            check.fail("awg version", awg_text.strip())
+            rc, awg_text = ssh.run("command -v awg >/dev/null 2>&1 && awg version || "
+                                   "/oem/usr/bin/awg version")
+            check.ok("awg version", awg_text.strip()) if rc == 0 else \
+                check.fail("awg version", awg_text.strip())
 
         status, payload = web.vpn()
         if status == 200 and isinstance(payload, dict):
@@ -259,8 +306,9 @@ def main():
             check.ok("GET /api/vpn", json.dumps(available))
             if not available.get("helper"):
                 check.fail("oko-vpn helper", "not installed")
-            if not (available.get("wg") or available.get("awg_bin")):
-                check.fail("userspace tools", "wg/awg not installed")
+            if not (available.get("wg") or available.get("awg_bin") or
+                    available.get("ovpn_bin")):
+                check.fail("userspace tools", "wg/awg/openvpn not installed")
             token = payload.get("token", "")
         else:
             check.fail("GET /api/vpn", f"HTTP {status}")
@@ -273,7 +321,8 @@ def main():
         text = Path(args.profile).read_text()
         (out / "profile.conf").write_text(text)
 
-        status, payload = web.import_profile(text, args.type)
+        status, payload = web.import_profile(text, args.type,
+                                            args.creds_user, args.creds_pass)
         if status == 200 and isinstance(payload, dict) and payload.get("imported"):
             name = payload.get("name", "")
             check.ok("profile imported", name)
@@ -303,23 +352,46 @@ def main():
 
         ifname = profile.get("ifname")
         allowed = profile.get("allowedips", "")
-        rc, routes = ssh.run(f"ip route show dev {ifname}")
-        missing = []
-        for item in allowed.split(","):
-            item = item.strip()
-            if item and item not in ("0.0.0.0/0", "::/0") and item not in routes:
-                missing.append(item)
-        if missing:
-            check.fail("split routes", ", ".join(missing))
+        if args.type == "ovpn":
+            rc, addr = ssh.run(f"ip -4 addr show dev {ifname}")
+            if rc == 0 and "inet " in addr:
+                check.ok("tunnel address", addr.split("inet ")[1].split()[0])
+            else:
+                check.fail("tunnel address", addr.strip()[-200:])
         else:
-            check.ok("split routes", routes.strip().replace("\n", "; "))
+            rc, routes = ssh.run(f"ip route show dev {ifname}")
+            missing = []
+            for item in allowed.split(","):
+                item = item.strip()
+                if item and item not in ("0.0.0.0/0", "::/0") and item not in routes:
+                    missing.append(item)
+            if missing:
+                check.fail("split routes", ", ".join(missing))
+            else:
+                check.ok("split routes", routes.strip().replace("\n", "; "))
 
         status, payload = web.vpn()
         live = (payload.get("live") or {}).get(ifname) if isinstance(payload, dict) else None
+        if args.type != "ovpn":
+            # A WireGuard/AmneziaWG handshake may take a few seconds after
+            # the interface is reported up.
+            for _ in range(6):
+                age = live.get("handshake_age") if live else None
+                if age is not None and age >= 0:
+                    break
+                time.sleep(2)
+                status, payload = web.vpn()
+                live = (payload.get("live") or {}).get(ifname) \
+                    if isinstance(payload, dict) else None
         if live:
             check.ok("live counters", f"handshake_age={live.get('handshake_age')} "
                      f"rx={live.get('rx')} tx={live.get('tx')}")
-            if live.get("handshake_age", -1) is not None and live.get("handshake_age", -1) >= 0:
+            if args.type == "ovpn":
+                if live.get("tunip"):
+                    check.ok("live tunnel ip", live.get("tunip"))
+                else:
+                    check.fail("live tunnel ip", json.dumps(live)[:200])
+            elif live.get("handshake_age", -1) is not None and live.get("handshake_age", -1) >= 0:
                 check.ok("handshake")
             else:
                 check.fail("handshake", "never")
@@ -333,6 +405,15 @@ def main():
                 check.fail("ping through tunnel", f"{target}: {ping.strip()[-200:]}")
         else:
             check.ok("ping through tunnel", "skipped: no target")
+
+        if args.iperf_peer:
+            rc, iperf = ssh.run(f"iperf3 -c {shlex.quote(args.iperf_peer)} -t 5",
+                                timeout=40)
+            if rc == 0:
+                line = [l for l in iperf.splitlines() if "sender" in l]
+                check.ok("iperf3 throughput", line[-1].strip() if line else "ok")
+            else:
+                check.fail("iperf3 throughput", iperf.strip()[-200:])
 
         status, payload = web.action("down", name)
         if status == 200 and isinstance(payload, dict) and not payload.get("error"):
@@ -349,13 +430,33 @@ def main():
             check.fail("routes removed", routes.strip())
 
         # Negative checks: hooks and a delete without the token must be blocked.
-        hook, full = negative_configs()
-        status, payload = web.import_text(hook)
-        reason = payload.get("reason", "") if isinstance(payload, dict) else ""
-        if "script hooks" in reason:
-            check.ok("hook config rejected")
+        if args.type == "ovpn":
+            hook, full = ovpn_negative_configs()
+            status, payload = web.import_text(hook, "ovpn",
+                                              args.creds_user, args.creds_pass)
+            reason = payload.get("reason", "") if isinstance(payload, dict) else ""
+            if "not supported" in reason:
+                check.ok("unsafe openvpn directive rejected")
+            else:
+                check.fail("unsafe openvpn directive rejected",
+                           json.dumps(payload)[:300])
+            status, payload = web.import_text(
+                "client\ndev tun\nremote 127.0.0.1 1194\nauth-user-pass\n",
+                "ovpn")
+            reason = payload.get("reason", "") if isinstance(payload, dict) else ""
+            if "credentials required" in reason:
+                check.ok("missing credentials rejected")
+            else:
+                check.fail("missing credentials rejected",
+                           json.dumps(payload)[:300])
         else:
-            check.fail("hook config rejected", json.dumps(payload)[:300])
+            hook, full = negative_configs()
+            status, payload = web.import_text(hook)
+            reason = payload.get("reason", "") if isinstance(payload, dict) else ""
+            if "script hooks" in reason:
+                check.ok("hook config rejected")
+            else:
+                check.fail("hook config rejected", json.dumps(payload)[:300])
 
         status, payload = web.action("delete", name)
         reason = payload.get("reason", "") if isinstance(payload, dict) else ""
@@ -365,7 +466,8 @@ def main():
             check.fail("delete without token rejected", json.dumps(payload)[:300])
 
         # A full tunnel is allowed by R2 and must be reported as such.
-        status, payload = web.import_text(full, args.type)
+        status, payload = web.import_text(full, args.type, args.creds_user,
+                                          args.creds_pass)
         if status == 200 and isinstance(payload, dict) and payload.get("imported"):
             full_name = payload.get("name", "")
             status, payload = web.vpn()
@@ -378,7 +480,8 @@ def main():
             if full_name == name:
                 # The full-tunnel probe replaced the profile under test;
                 # restore the original file so the cleanup below works.
-                web.import_profile(text, args.type)
+                web.import_profile(text, args.type, args.creds_user,
+                                   args.creds_pass)
             else:
                 web.action("delete", full_name, token)
         else:

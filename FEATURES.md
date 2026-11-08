@@ -75,15 +75,21 @@ curl -u admin:oko-change-me http://192.168.52.97/api/status
 - В `divinus` нельзя использовать макросы ctype (`isalnum`, `isspace`):
   `compat.c` определяет `__ctype_b` и перекрывает таблицу uClibc — процесс
   падает. Проверки символов делаются ASCII-сравнениями.
-- VPN: WireGuard (`type=wg`, встроенный модуль ядра) и AmneziaWG (`type=awg`,
-  out-of-tree `amneziawg.ko`, `RK_ENABLE_AWG=y`) применяются своим POSIX-хелпером
+- VPN: WireGuard (`type=wg`, встроенный модуль ядра), AmneziaWG (`type=awg`,
+  out-of-tree `amneziawg.ko`, `RK_ENABLE_AWG=y`) и OpenVPN-клиент (`type=ovpn`,
+  пакет `openvpn 2.5.7` + `CONFIG_TUN=y`) применяются своим POSIX-хелпером
   `/usr/bin/oko-vpn`; `wg-quick`/`awg-quick` и скриптовые хуки не используются.
-  Профили — `/userdata/vpn/*.conf` (chmod 600), не более двух (`wg0`/`awg0`),
-  autostart — `S45oko-vpn` + watchdog. `AllowedIPs` дают split-tunnel; для
-  `0.0.0.0/0`/`::/0` включается guard с откатом default route через 15 с.
-  Приватные ключи не отдаются в `GET /api/vpn`; `GET /api/vpn/export` скачивает
-  файл целиком (как `/api/log`). Статус проверки — в
-  `FEATURES_UNVERIFIED.md`.
+  Профили — `/userdata/vpn/*.conf` (chmod 600), по одному на интерфейс
+  (`wg0`, `awg0`, `tun0`), autostart — `S45oko-vpn` + watchdog. OpenVPN
+  клиентский: `dev tap`, `plugin`, `management`, внешние скрипты и
+  `auth-user-pass <файл>` отклоняются; `auth-user-pass` через WebUI
+  сохраняется в `/userdata/vpn/<name>.pass` (0600) и не отдаётся API.
+  `redirect-gateway` принудительно получает `def1`; `AllowedIPs` дают
+  split-tunnel, для `0.0.0.0/0`/`::/0` (и OpenVPN full tunnel) включается
+  guard с откатом default route через 15 с. Приватные ключи не отдаются в
+  `GET /api/vpn`; `GET /api/vpn/export` скачивает файл целиком (как
+  `/api/log`). Статус проверки — в `FEATURES_VERIFIED.md` (WG/OpenVPN) и
+  `FEATURES_UNVERIFIED.md` (AWG).
 - Ограничения и непроверенные комбинации потоков, YOLO, датчиков и microSD
   собраны в `FEATURES_UNVERIFIED.md`.
 - Помощь фокусировке, STM8/STM32, WebUI и прочие подтверждённые функции —

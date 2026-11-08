@@ -26,12 +26,16 @@ typedef struct {
     int fulltunnel;
     int auto_start;
     int dns_tunnel;
+    /* OpenVPN only: a bare "auth-user-pass" needs credentials from the
+     * WebUI; an inline <auth-user-pass> block carries them already. */
+    int needs_credentials;
+    int credentials_inline;
 } vpn_conf_t;
 
 /*
- * Parses a wg-quick-style configuration.  Script hooks are rejected, the
- * working keys are validated, and the type is taken from the "# oko:" line
- * or inferred from the AmneziaWG-only keys.
+ * Parses a wg-quick-style or an OpenVPN client configuration.  Script hooks
+ * and unsafe OpenVPN directives are rejected, the working keys are validated,
+ * and the type is taken from the "# oko:" line or inferred from the syntax.
  *
  * Returns 0 on success, -1 with a message in "error" otherwise.
  */
@@ -44,6 +48,10 @@ int vpn_conf_parse_file(const char *path, vpn_conf_t *out,
 /* Replaces (or adds) "type=" in the first "# oko:" line.  The text buffer
  * must hold the configuration plus a possible metadata line. */
 int vpn_conf_set_type(char *text, size_t capacity, const char *type);
+
+/* Rewrites a bare "redirect-gateway" of an OpenVPN profile to
+ * "redirect-gateway def1" so a rollback keeps the LAN route. */
+int vpn_conf_normalize_ovpn(char *text, size_t capacity);
 
 /* Name rules shared by the API and the helper: [a-z0-9_-]{1,31}. */
 int vpn_conf_valid_name(const char *name);

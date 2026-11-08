@@ -982,6 +982,53 @@ static void gating_block(http_request_t *req, gating_result gate)
     send_and_close(req->clntFd, response, len);
 }
 
+/* Extracts a plain text field from a multipart/form-data body.  The VPN
+ * import uses it for the OpenVPN "user" and "pass" fields. */
+static int multipart_field(const char *payload, int body_len,
+    const char *boundary, const char *field, char *out, size_t out_size)
+{
+    char marker[104];
+    char needle[96];
+    const char *cursor = payload;
+    const char *limit = payload + body_len;
+
+    if (!payload || !boundary || !field || !out || out_size == 0) return -1;
+    out[0] = '\0';
+    snprintf(marker, sizeof(marker), "--%s", boundary);
+    snprintf(needle, sizeof(needle), "name=\"%s\"", field);
+    while (cursor < limit) {
+        char *part = memstr((char *)cursor, marker,
+            (int)(limit - cursor), (char)strlen(marker));
+        char *header_end, *body, *next, *body_end;
+        size_t len;
+
+        if (!part) break;
+        part += strlen(marker);
+        if (part + 2 <= limit && part[0] == '-' && part[1] == '-') break;
+        while (part < limit && (*part == '\r' || *part == '\n')) part++;
+        header_end = memstr(part, "\r\n\r\n", (int)(limit - part), 4);
+        if (!header_end) break;
+        body = header_end + 4;
+        next = memstr(body, marker, (int)(limit - body),
+            (char)strlen(marker));
+        body_end = next ? next : (char *)limit;
+        while (body_end > body &&
+            (body_end[-1] == '\n' || body_end[-1] == '\r'))
+            body_end--;
+        if (memstr(part, needle, (int)(header_end + 4 - part),
+                (char)strlen(needle))) {
+            len = (size_t)(body_end - body);
+            if (len >= out_size) len = out_size - 1;
+            memcpy(out, body, len);
+            out[len] = '\0';
+            return 0;
+        }
+        if (!next) break;
+        cursor = next;
+    }
+    return -1;
+}
+
 void respond_request(http_request_t *req) {
     char response[8192] = {0};
     int respLen = 0;
@@ -4082,6 +4129,7 @@ void respond_request(http_request_t *req) {
             char *type = request_header("Content-Type");
             int body_len = req->total - req->header_len;
             char hint[8] = "";
+            char user[128] = "", pass[128] = "";
             char name[VPN_PROFILE_NAME_MAX];
             char error[VPN_ERROR_MAX];
             char body[320];
@@ -4113,6 +4161,10 @@ void respond_request(http_request_t *req) {
                         unescape_uri(value);
                         if (EQUALS(key, "type"))
                             snprintf(hint, sizeof(hint), "%s", value);
+                        else if (EQUALS(key, "user"))
+                            snprintf(user, sizeof(user), "%s", value);
+                        else if (EQUALS(key, "pass"))
+                            snprintf(pass, sizeof(pass), "%s", value);
                     }
                 }
                 boundary = strstr(type, "boundary=");
@@ -4156,10 +4208,14 @@ void respond_request(http_request_t *req) {
                     stop = req->payload + body_len;
                 }
                 uploaded_len = (size_t)(stop - start);
-                if (vpn_import_text(start, uploaded_len, hint, name,
-                        sizeof(name), error, sizeof(error))) {
+                multipart_field(req->payload, body_len, bound, "user",
+                    user, sizeof(user));
+                multipart_field(req->payload, body_len, bound, "pass",
+                    pass, sizeof(pass));
+                if (vpn_import_text(start, uploaded_len, hint, user, pass,
+                        name, sizeof(name), error, sizeof(error))) {
                     reply_error(req->clntFd, "blocked", error,
-                        "the file must be a wg-quick style .conf");
+                        "the file must be a wg-quick or an OpenVPN profile");
                     return;
                 }
             } else if (type && STARTS_WITH(type,
@@ -4188,6 +4244,10 @@ void respond_request(http_request_t *req) {
                             text_len = strlen(text);
                         } else if (EQUALS(key, "type")) {
                             snprintf(hint, sizeof(hint), "%s", value);
+                        } else if (EQUALS(key, "user")) {
+                            snprintf(user, sizeof(user), "%s", value);
+                        } else if (EQUALS(key, "pass")) {
+                            snprintf(pass, sizeof(pass), "%s", value);
                         }
                     }
                 }
@@ -4197,7 +4257,7 @@ void respond_request(http_request_t *req) {
                         "paste the configuration into the text area");
                     return;
                 }
-                if (vpn_import_text(text, text_len, hint, name,
+                if (vpn_import_text(text, text_len, hint, user, pass, name,
                         sizeof(name), error, sizeof(error))) {
                     reply_error(req->clntFd, "blocked", error,
                         "script hooks, missing keys and bad endpoints are "

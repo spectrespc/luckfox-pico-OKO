@@ -1,11 +1,13 @@
 #!/bin/sh
 #
-# OKO VPN helper: applies WireGuard and AmneziaWG profiles.
+# OKO VPN helper: applies WireGuard, AmneziaWG and OpenVPN client profiles.
 #
-# Profiles live in /userdata/vpn/<name>.conf and are imported from a
-# wg-quick-style configuration.  The helper does not use wg-quick: it parses
-# the file itself, rejects script hooks, strips the wg-quick-only keys and
-# feeds the rest to "wg syncconf" or "awg syncconf".
+# Profiles live in /userdata/vpn/<name>.conf and are imported either from a
+# wg-quick-style configuration or from an OpenVPN client configuration.  The
+# helper does not use wg-quick: it parses the file itself, rejects script
+# hooks and unsafe OpenVPN directives, strips the wg-quick-only keys and feeds
+# the rest to "wg syncconf" or "awg syncconf".  OpenVPN profiles are started
+# as a daemon by /usr/sbin/openvpn with a sanitized copy of the profile.
 #
 #   oko-vpn validate <file|->        print parsed fields as key=value
 #   oko-vpn up <profile>             create and configure the interface
@@ -127,6 +129,142 @@ meta_set() {
 	chmod 600 "$_f" 2>/dev/null || true
 }
 
+# An OpenVPN client profile has "client" or "pull" and a "remote" directive.
+# The wg parser below has no sections or "=" keys in such a file, so it is
+# detected before the format-specific parsing starts.  A "dev tap" profile is
+# still detected here so that the rejection names the real problem.
+is_ovpn_conf() {
+	grep -Eq '^[[:space:]]*(client|pull)[[:space:]]*$' "$1" 2>/dev/null || return 1
+	grep -Eq '^[[:space:]]*remote[[:space:]]' "$1" 2>/dev/null || return 1
+	return 0
+}
+
+# Parses an OpenVPN client configuration.  Script hooks, process/management
+# options and a "dev tap" are rejected, because the WebUI owns the process and
+# the routing guard.
+parse_ovpn() {
+	_f=$1
+	_parsed=$(
+		awk '
+		function trim(s) { gsub(/^[ \t\r]+/, "", s); gsub(/[ \t\r]+$/, "", s); return s }
+		BEGIN { inline = 0 }
+		{
+			line = $0
+			sub(/\r$/, "", line)
+			t = trim(line)
+			if (inline) {
+				if (t ~ /^<\//) inline = 0
+				next
+			}
+			if (t ~ /^<[A-Za-z0-9_-]+>$/) {
+				tag = t
+				gsub(/[<>]/, "", tag)
+				print "inline=" tag
+				inline = 1
+				next
+			}
+			if (t == "" || t ~ /^[#;]/) next
+			n = split(t, part, /[ \t]+/)
+			key = part[1]
+			if (key == "client" || key == "pull")
+				print "client=1"
+			else if (key == "dev")
+				print "dev=" part[2]
+			else if (key == "remote")
+				print "remote=" t
+			else if (key == "redirect-gateway")
+				print "redirect=" t
+			else if (key == "auth-user-pass")
+				print "auth=" (n > 1 ? part[2] : "")
+			else if (key == "up" || key == "down" || key == "route-up" || \
+				key == "route-pre-down" || key == "ipchange" || \
+				key == "client-disconnect" || key == "tls-verify" || \
+				key == "management" || key == "management-client-auth" || \
+				key == "plugin" || key == "daemon" || key == "log" || \
+				key == "log-append" || key == "pid" || key == "pidfile" || \
+				key == "status" || key == "dev-node" || key == "iep-proxy" || \
+				key == "askpass" || key == "config" || key == "cd" || \
+				key == "auth-user-pass-verify" || key == "client-connect" || \
+				key == "learn-address")
+				print "forbid=" key
+		}' "$_f"
+	) || return 1
+
+	P_TYPE=ovpn
+	P_IFNAME=tun0
+	P_CLIENT=0
+	P_DEV=
+	P_REDIRECT=0
+	P_AUTH=0
+	P_AUTH_INLINE=0
+	P_AUTH_FILE=
+	P_FORBID=
+	_remote_line=
+	while IFS='=' read -r _k _v; do
+		case "$_k" in
+			client) P_CLIENT=1 ;;
+			dev) P_DEV=$_v ;;
+			remote) [ -n "$_remote_line" ] || _remote_line=$_v ;;
+			redirect) P_REDIRECT=1 ;;
+			auth)
+				P_AUTH=1
+				P_AUTH_FILE=$_v
+				;;
+			inline) [ "$_v" = auth-user-pass ] && P_AUTH_INLINE=1 ;;
+			forbid) P_FORBID="${P_FORBID:+$P_FORBID }$_v" ;;
+		esac
+	done <<EOF
+$_parsed
+EOF
+
+	[ -z "$P_FORBID" ] ||
+		die "openvpn directive(s) are not supported ($P_FORBID)"
+	[ "$P_CLIENT" = 1 ] ||
+		die "the OpenVPN profile needs 'client' or 'pull'"
+	[ -n "$P_DEV" ] || die "the OpenVPN profile needs 'dev tun'"
+	case "$P_DEV" in
+		tun|tun[0-9]|tun[0-9][0-9]) ;;
+		*) die "only 'dev tun' is supported (got 'dev $P_DEV')" ;;
+	esac
+	[ -n "$_remote_line" ] || die "at least one 'remote' is required"
+	[ -z "$P_AUTH_FILE" ] ||
+		die "auth-user-pass with a file is not supported; use the WebUI fields"
+
+	# Word splitting of the remote directive is intentional.
+	# shellcheck disable=SC2086
+	set -- $_remote_line
+	_host=${2:-}
+	_port=${3:-1194}
+	case "$_port" in
+		''|*[!0-9]*) _port=1194 ;;
+	esac
+	[ -n "$_host" ] || die "the remote host is missing"
+	case "$_host" in
+		*[!A-Za-z0-9._:\[\]-]*) die "the remote host is invalid: $_host" ;;
+	esac
+	[ "$_port" -ge 1 ] 2>/dev/null && [ "$_port" -le 65535 ] ||
+		die "the remote port is invalid: $_port"
+	P_EP=$_host:$_port
+
+	P_ADDR4=
+	P_ADDR6=
+	P_ALLOWED=
+	P_PRIV=0
+	P_PEERS=0
+	P_PEER_OK=0
+	P_HOOKS=
+	P_AWG=0
+	P_FULLTUNNEL=$P_REDIRECT
+	P_MTU_LINE=
+	P_DNS_LINE=
+	[ -n "$P_MTU" ] || P_MTU=$DEFAULT_MTU
+	case "$P_MTU" in
+		''|*[!0-9]*) die "MTU must be a number" ;;
+	esac
+	[ "$P_MTU" -ge 576 ] && [ "$P_MTU" -le 1500 ] ||
+		die "MTU must be between 576 and 1500"
+}
+
 # Parses a configuration and fills the globals below.  Prints key=value
 # fields for the "validate" command, and returns non-zero on rejection.
 #
@@ -154,6 +292,13 @@ parse_conf() {
 	P_AWG=0
 	P_PEER_OK=0
 	_section=
+
+	if [ "$P_TYPE" = ovpn ] ||
+		{ [ -z "$P_TYPE" ] && is_ovpn_conf "$_f"; }; then
+		P_TYPE=ovpn
+		parse_ovpn "$_f"
+		return 0
+	fi
 
 	_parsed=$(
 		awk '
@@ -316,6 +461,7 @@ print_validate() {
 
 tool_path() {
 	case "$1" in
+		ovpn) find_tool openvpn ;;
 		awg) find_tool awg ;;
 		wg) find_tool wg ;;
 	esac
@@ -578,6 +724,203 @@ guard_restore() {
 	state_set "$_profile" default_changed 0
 }
 
+# Writes a sanitized OpenVPN client copy: "redirect-gateway" always gets
+# "def1", so the rollback keeps a reachable LAN default route.
+sanitize_ovpn_conf() {
+	_src=$1
+	_dst=$2
+	awk '
+		{
+			t = $0
+			sub(/^[ \t]+/, "", t)
+			if (t ~ /^redirect-gateway([ \t]|$)/) {
+				rest = t
+				sub(/^redirect-gateway[ \t]*/, "", rest)
+				if (rest !~ /(^|[ \t])def1([ \t]|$)/) {
+					if (rest == "")
+						print "redirect-gateway def1"
+					else
+						print "redirect-gateway def1 " rest
+					next
+				}
+			}
+			print
+		}' "$_src" >"$_dst"
+	chmod 600 "$_dst"
+}
+
+# True when the profile has a live process/interface.
+profile_alive() {
+	_type=$1
+	_profile=$2
+	_ifname=$3
+	if [ "$_type" = ovpn ]; then
+		_pid=$(state_get "$_profile" pid)
+		[ -n "$_pid" ] || _pid=$(cat "/var/run/ovpn-$_profile.pid" 2>/dev/null)
+		[ -n "$_pid" ] && kill -0 "$_pid" 2>/dev/null && return 0
+		return 1
+	fi
+	ip link show "$_ifname" >/dev/null 2>&1
+}
+
+# Connectivity guard for a full-tunnel OpenVPN profile.  OpenVPN installs the
+# redirect-gateway routes itself, so a failed guard stops the daemon instead
+# of editing the routing table manually.
+guard_ovpn() {
+	_profile=$1
+	eth0_state
+	[ -n "$DEF_GW" ] || {
+		log "profile $_profile: no default route, guard cannot run"
+		return 1
+	}
+	sleep 15
+	profile_alive ovpn "$_profile" tun0 || {
+		log "profile $_profile: openvpn died during the guard"
+		return 1
+	}
+	_ip_ok=0
+	ip -4 addr show dev tun0 2>/dev/null | grep -q 'inet ' && _ip_ok=1
+	_ping_ok=0
+	ping -c1 -W2 -I "$DEF_DEV" "$DEF_GW" >/dev/null 2>&1 && _ping_ok=1
+	if [ "$_ip_ok" = 1 ] && [ "$_ping_ok" = 1 ]; then
+		log "profile $_profile: guard passed (tun0 up, gw reachable)"
+		return 0
+	fi
+	log "profile $_profile: guard failed (tun0 $_ip_ok, gw ping $_ping_ok)"
+	return 1
+}
+
+up_profile_ovpn() {
+	_profile=$1
+	_tool=$2
+	_conf=$(profile_file "$_profile")
+	_ifname=tun0
+	[ -c /dev/net/tun ] ||
+		die "/dev/net/tun is missing (kernel CONFIG_TUN is not enabled)"
+
+	_tmp=/tmp/oko-vpn.$_profile.ovpn
+	_log=/var/log/ovpn-$_profile.log
+	_status=/tmp/ovpn-$_profile.status
+	_pidf=/var/run/ovpn-$_profile.pid
+
+	ip link del "$_ifname" >/dev/null 2>&1 || true
+	rm -f "$_tmp" "$_status" "$_pidf"
+	: >"$_log" 2>/dev/null || true
+	sanitize_ovpn_conf "$_conf" "$_tmp"
+
+	# Pin the server route to the physical interface before OpenVPN computes
+	# redirect-gateway routes.  Without it, a server on the local LAN gets a
+	# "/32 via <default gateway>" route and its replies are NATed away.
+	_ep_route=
+	eth0_state
+	_ep_ip=$(resolve_endpoint "$P_EP")
+	if [ -n "$_ep_ip" ] && [ -n "$DEF_DEV" ]; then
+		if [ -n "$ETH_IP" ]; then
+			ip route replace "$_ep_ip/32" dev "$DEF_DEV" src "$ETH_IP" 2>/dev/null ||
+				ip route replace "$_ep_ip/32" dev "$DEF_DEV" 2>/dev/null || true
+		else
+			ip route replace "$_ep_ip/32" dev "$DEF_DEV" 2>/dev/null || true
+		fi
+		_ep_route=$_ep_ip/32
+	fi
+
+	_auth=
+	if [ "$P_AUTH" = 1 ] && [ "$P_AUTH_INLINE" != 1 ]; then
+		_pass=$VPN_DIR/$_profile.pass
+		[ -s "$_pass" ] || {
+			rm -f "$_tmp"
+			die "credentials for profile $_profile are missing"
+		}
+		_auth="--auth-user-pass $_pass"
+	fi
+
+	# shellcheck disable=SC2086
+	"$_tool" --config "$_tmp" --dev "$_ifname" \
+		--daemon "ovpn:$_profile" --writepid "$_pidf" \
+		--status "$_status" 10 --log "$_log" $_auth || {
+		rm -f "$_tmp"
+		die "cannot start openvpn for profile $_profile"
+	}
+
+	_i=0
+	_ready=0
+	_pid=
+	while [ "$_i" -lt 30 ]; do
+		_pid=$(cat "$_pidf" 2>/dev/null)
+		if [ -n "$_pid" ] && kill -0 "$_pid" 2>/dev/null &&
+			ip -4 addr show dev "$_ifname" 2>/dev/null | grep -q 'inet ' &&
+			grep -q 'Initialization Sequence Completed' "$_log" 2>/dev/null;
+		then
+			_ready=1
+			break
+		fi
+		if [ -n "$_pid" ] && ! kill -0 "$_pid" 2>/dev/null; then
+			break
+		fi
+		_i=$((_i + 1))
+		sleep 1
+	done
+
+	if [ "$_ready" != 1 ]; then
+		[ -n "$_pid" ] && kill "$_pid" 2>/dev/null || true
+		sleep 1
+		[ -n "$_pid" ] && kill -9 "$_pid" 2>/dev/null || true
+		ip link del "$_ifname" 2>/dev/null || true
+		rm -f "$_tmp" "$_status" "$_pidf"
+		[ -n "$_ep_route" ] && ip route del "$_ep_route" 2>/dev/null || true
+		die "openvpn for profile $_profile did not come up (see $_log)"
+	fi
+	rm -f "$_tmp"
+
+	# OpenVPN may still pin the server through the old default gateway; drop
+	# that duplicate and make sure the direct on-link route is present, so
+	# LAN replies leave directly and keepalives do not loop into the tunnel.
+	if [ -n "$_ep_ip" ] && [ -n "$DEF_DEV" ]; then
+		[ -n "$DEF_GW" ] &&
+			ip route del "$_ep_ip/32" via "$DEF_GW" dev "$DEF_DEV" 2>/dev/null || true
+		if [ -n "$ETH_IP" ]; then
+			ip route replace "$_ep_ip/32" dev "$DEF_DEV" src "$ETH_IP" 2>/dev/null ||
+				ip route replace "$_ep_ip/32" dev "$DEF_DEV" 2>/dev/null || true
+		else
+			ip route replace "$_ep_ip/32" dev "$DEF_DEV" 2>/dev/null || true
+		fi
+	fi
+
+	state_reset "$_profile" ovpn "$_ifname"
+	state_set "$_profile" pid "$_pid"
+	[ -n "$_ep_route" ] && state_add "$_profile" "route=$_ep_route"
+
+	if [ "$P_FULLTUNNEL" = 1 ]; then
+		if ! guard_ovpn "$_profile"; then
+			log "profile $_profile: full tunnel guard failed, disconnecting"
+			down_profile "$_profile" >/dev/null 2>&1 || true
+			state_reset "$_profile" ovpn "$_ifname"
+			state_set "$_profile" guard_reverted 1
+			die "the full tunnel did not pass the connectivity guard"
+		fi
+	fi
+	state_set "$_profile" configured 1
+	log "profile $_profile is up on $_ifname (ovpn)"
+}
+
+down_ovpn() {
+	_profile=$1
+	_pid=$(state_get "$_profile" pid)
+	[ -n "$_pid" ] || _pid=$(cat "/var/run/ovpn-$_profile.pid" 2>/dev/null)
+	if [ -n "$_pid" ] && kill -0 "$_pid" 2>/dev/null; then
+		kill "$_pid" 2>/dev/null || true
+		_i=0
+		while kill -0 "$_pid" 2>/dev/null && [ "$_i" -lt 10 ]; do
+			_i=$((_i + 1))
+			sleep 1
+		done
+		kill -9 "$_pid" 2>/dev/null || true
+	fi
+	rm -f "/var/run/ovpn-$_profile.pid" "/tmp/ovpn-$_profile.status" \
+		"/tmp/oko-vpn.$_profile.ovpn"
+	ip link del tun0 2>/dev/null || true
+}
+
 up_profile() {
 	_profile=$1
 	valid_profile "$_profile" || die "invalid profile name"
@@ -598,6 +941,13 @@ up_profile() {
 	if ip link show "$_ifname" >/dev/null 2>&1; then
 		ip link del "$_ifname" >/dev/null 2>&1 || true
 	fi
+
+	case "$P_TYPE" in
+		ovpn)
+			up_profile_ovpn "$_profile" "$_tool"
+			return 0
+			;;
+	esac
 
 	ensure_module "$P_TYPE"
 
@@ -645,11 +995,13 @@ down_profile() {
 	fi
 	[ -n "$_ifname" ] || {
 		case "$_type" in
+			ovpn) _ifname=tun0 ;;
 			awg) _ifname=awg0 ;;
 			*) _ifname=wg0 ;;
 		esac
 	}
 
+	[ "$_type" = ovpn ] && down_ovpn "$_profile"
 	guard_restore "$_profile" "$_ifname"
 	remove_routes "$_profile"
 	restore_dns "$_profile"
@@ -691,11 +1043,20 @@ $_info
 LIST
 	[ -n "$_type" ] || _type=${_v_type:-wg}
 	_ifname=${_v_ifname:-}
-	[ -n "$_ifname" ] || { [ "$_type" = awg ] && _ifname=awg0 || _ifname=wg0; }
+	[ -n "$_ifname" ] || {
+		case "$_type" in
+			ovpn) _ifname=tun0 ;;
+			awg) _ifname=awg0 ;;
+			*) _ifname=wg0 ;;
+		esac
+	}
 	_state=down
-	if ip link show "$_ifname" >/dev/null 2>&1 &&
-		[ "$(state_get "$_profile" configured)" = 1 ]; then
-		_state=up
+	if [ "$(state_get "$_profile" configured)" = 1 ]; then
+		if [ "$_type" = ovpn ]; then
+			profile_alive ovpn "$_profile" "$_ifname" && _state=up
+		elif ip link show "$_ifname" >/dev/null 2>&1; then
+			_state=up
+		fi
 	fi
 	_ep=$_v_ep
 	_aips=$_v_aips
@@ -707,16 +1068,34 @@ LIST
 	_tx=
 	_rx=
 	_mtu=
+	_tunip=
 	if [ "$_state" = up ]; then
-		_tool=$(tool_path "$_type")
-		if [ -n "$_tool" ]; then
-			_dump=$("$_tool" show "$_ifname" dump 2>/dev/null)
-			_hs=$(printf '%s\n' "$_dump" | awk 'NR == 2 { print $5 }')
-			_rx=$(printf '%s\n' "$_dump" | awk 'NR == 2 { print $6 }')
-			_tx=$(printf '%s\n' "$_dump" | awk 'NR == 2 { print $7 }')
-		fi
 		_mtu=$(ip -o link show dev "$_ifname" 2>/dev/null |
 			awk '{ for (i = 1; i < NF; i++) if ($i == "mtu") print $(i + 1) }')
+		_tunip=$(ip -4 addr show dev "$_ifname" 2>/dev/null |
+			awk '/inet /{ print $2; exit }')
+		if [ "$_type" = ovpn ]; then
+			# Client status: TUN read is outbound, TUN write is inbound.
+			# The interface counters are more reliable and update instantly;
+			# the status file is a fallback for older kernels.
+			_st=/tmp/ovpn-$_profile.status
+			_rx=$(cat "/sys/class/net/$_ifname/statistics/rx_bytes" 2>/dev/null)
+			_tx=$(cat "/sys/class/net/$_ifname/statistics/tx_bytes" 2>/dev/null)
+			[ -n "$_rx" ] ||
+				_rx=$(awk -F, '/^TUN\/TAP write bytes/ { print $2 }' "$_st" 2>/dev/null)
+			[ -n "$_tx" ] ||
+				_tx=$(awk -F, '/^TUN\/TAP read bytes/ { print $2 }' "$_st" 2>/dev/null)
+			_routes=$(ip route show dev "$_ifname" 2>/dev/null |
+				awk '{ print $1 }' | tr '\n' ' ')
+		else
+			_tool=$(tool_path "$_type")
+			if [ -n "$_tool" ]; then
+				_dump=$("$_tool" show "$_ifname" dump 2>/dev/null)
+				_hs=$(printf '%s\n' "$_dump" | awk 'NR == 2 { print $5 }')
+				_rx=$(printf '%s\n' "$_dump" | awk 'NR == 2 { print $6 }')
+				_tx=$(printf '%s\n' "$_dump" | awk 'NR == 2 { print $7 }')
+			fi
+		fi
 	fi
 	_now=$(date +%s)
 	_age=
@@ -730,14 +1109,19 @@ LIST
 		printf '"state":"%s","valid":%s,"guard_reverted":%s,' \
 			"$_state" "$_p_ok" "$_gr"
 		if [ "$_state" = up ]; then
-			printf '"live":{"handshake_age":%s,"tx":%s,"rx":%s,"mtu":%s,"routes":"%s"}' \
-				"${_age:--1}" "${_tx:-0}" "${_rx:-0}" "${_mtu:-0}" "$_routes"
+			if [ "$_type" = ovpn ]; then
+				printf '"live":{"handshake_age":null,"tx":%s,"rx":%s,"mtu":%s,"tunip":"%s","routes":"%s"}' \
+					"${_tx:-0}" "${_rx:-0}" "${_mtu:-0}" "$_tunip" "$_routes"
+			else
+				printf '"live":{"handshake_age":%s,"tx":%s,"rx":%s,"mtu":%s,"tunip":"%s","routes":"%s"}' \
+					"${_age:--1}" "${_tx:-0}" "${_rx:-0}" "${_mtu:-0}" "$_tunip" "$_routes"
+			fi
 		else
 			printf '"live":null'
 		fi
 		printf '}'
 	else
-		echo "profile=$_profile type=$_type ifname=$_ifname auto=$_auto state=$_state valid=$_p_ok endpoint=$_ep allowedips=$_aips fulltunnel=$_ft guard_reverted=$_gr routes=$_routes handshake_age=${_age:--1} tx=${_tx:-0} rx=${_rx:-0} mtu=${_mtu:-0}"
+		echo "profile=$_profile type=$_type ifname=$_ifname auto=$_auto state=$_state valid=$_p_ok endpoint=$_ep allowedips=$_aips fulltunnel=$_ft guard_reverted=$_gr routes=$_routes handshake_age=${_age:--1} tx=${_tx:-0} rx=${_rx:-0} mtu=${_mtu:-0} tunip=$_tunip"
 	fi
 }
 
@@ -782,9 +1166,13 @@ cmd_autostart() {
 		[ "$(meta_get "$_conf" auto)" = 1 ] || continue
 		lock_acquire
 		_type=$(meta_get "$_conf" type)
-		_ifname=wg0
-		[ "$_type" = awg ] && _ifname=awg0
-		if ip link show "$_ifname" >/dev/null 2>&1; then
+		case "$_type" in
+			ovpn) _ifname=tun0 ;;
+			awg) _ifname=awg0 ;;
+			*) _ifname=wg0 ;;
+		esac
+		[ -n "$_type" ] || _type=wg
+		if profile_alive "$_type" "$_p" "$_ifname"; then
 			lock_release
 			continue
 		fi
@@ -807,11 +1195,18 @@ cmd_watchdog() {
 			_conf=$(profile_file "$_p")
 			[ "$(meta_get "$_conf" auto)" = 1 ] || continue
 			_type=$(meta_get "$_conf" type)
-			_ifname=wg0
-			[ "$_type" = awg ] && _ifname=awg0
-			if ! ip link show "$_ifname" >/dev/null 2>&1; then
+			[ -n "$_type" ] || _type=wg
+			case "$_type" in
+				ovpn) _ifname=tun0 ;;
+				awg) _ifname=awg0 ;;
+				*) _ifname=wg0 ;;
+			esac
+			if ! profile_alive "$_type" "$_p" "$_ifname"; then
 				lock_acquire
-				if ! ip link show "$_ifname" >/dev/null 2>&1; then
+				if ! profile_alive "$_type" "$_p" "$_ifname"; then
+					if [ "$_type" = ovpn ]; then
+						down_profile "$_p" >/dev/null 2>&1 || true
+					fi
 					( up_profile "$_p" ) || log "watchdog: profile $_p failed"
 				fi
 				lock_release
@@ -827,7 +1222,8 @@ cmd_delete() {
 	[ -f "$(profile_file "$_profile")" ] || die "profile $_profile does not exist"
 	down_profile "$_profile"
 	rm -f "$(profile_file "$_profile")" "$(state_file "$_profile")" \
-		"$STATE_DIR/$_profile.resolv"
+		"$STATE_DIR/$_profile.resolv" "$VPN_DIR/$_profile.pass" \
+		"/tmp/ovpn-$_profile.status" "/var/log/ovpn-$_profile.log"
 	log "profile $_profile deleted"
 }
 

@@ -118,6 +118,58 @@ int main(void)
         "PrivateKey = YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXo9\n"
         "Address = 10.0.0.2/24\n";
 
+    static const char *ovpn_conf =
+        "# oko: type=ovpn auto=1\n"
+        "client\n"
+        "dev tun\n"
+        "proto udp\n"
+        "remote vpn.example.com 1194\n"
+        "resolv-retry infinite\n"
+        "nobind\n"
+        "persist-key\n"
+        "persist-tun\n"
+        "remote-cert-tls server\n"
+        "auth-user-pass\n"
+        "redirect-gateway\n"
+        "<ca>\n"
+        "-----BEGIN CERTIFICATE-----\n"
+        "MIIB\n"
+        "-----END CERTIFICATE-----\n"
+        "</ca>\n"
+        "<tls-crypt>\n"
+        "tls-key\n"
+        "</tls-crypt>\n";
+
+    static const char *ovpn_inline_auth_conf =
+        "client\n"
+        "dev tun0\n"
+        "remote 10.1.2.3\n"
+        "<auth-user-pass>\n"
+        "user\n"
+        "pass\n"
+        "</auth-user-pass>\n";
+
+    static const char *ovpn_tap_conf =
+        "client\n"
+        "dev tap\n"
+        "remote 10.1.2.3 1194\n";
+
+    static const char *ovpn_plugin_conf =
+        "client\n"
+        "dev tun\n"
+        "remote 10.1.2.3 1194\n"
+        "plugin /tmp/evil.so\n";
+
+    static const char *ovpn_auth_file_conf =
+        "client\n"
+        "dev tun\n"
+        "remote 10.1.2.3 1194\n"
+        "auth-user-pass /etc/openvpn/creds\n";
+
+    static const char *ovpn_no_remote_conf =
+        "client\n"
+        "dev tun\n";
+
     /* A valid WireGuard profile with metadata. */
     check(parse(wg_conf, &conf, error, sizeof(error)) == 0, "wg accepted");
     check(!strcmp(conf.type, "wg"), "wg type");
@@ -173,6 +225,66 @@ int main(void)
     check(parse(bad_protection_conf, &conf, error, sizeof(error)) != 0,
         "header protection without S4 rejected");
     check(strstr(error, "S4") != NULL, "header protection S4 reason");
+
+    /* OpenVPN client profiles: detection, fields and inline blocks. */
+    check(parse(ovpn_conf, &conf, error, sizeof(error)) == 0, "ovpn accepted");
+    check(!strcmp(conf.type, "ovpn"), "ovpn type");
+    check(!strcmp(conf.ifname, "tun0"), "ovpn ifname");
+    check(!strcmp(conf.endpoint, "vpn.example.com:1194"), "ovpn endpoint");
+    check(conf.fulltunnel == 1, "ovpn redirect-gateway");
+    check(conf.needs_credentials == 1, "ovpn credentials required");
+    check(conf.credentials_inline == 0, "ovpn no inline credentials");
+    check(conf.auto_start == 1, "ovpn auto from metadata");
+
+    check(parse(ovpn_inline_auth_conf, &conf, error, sizeof(error)) == 0,
+        "ovpn inline auth accepted");
+    check(!strcmp(conf.endpoint, "10.1.2.3:1194"), "ovpn default port");
+    check(conf.needs_credentials == 0, "ovpn inline credentials");
+    check(conf.credentials_inline == 1, "ovpn inline flag");
+
+    check(parse(ovpn_tap_conf, &conf, error, sizeof(error)) != 0,
+        "ovpn dev tap rejected");
+    check(strstr(error, "dev tun") != NULL, "ovpn dev tap reason");
+    check(parse(ovpn_plugin_conf, &conf, error, sizeof(error)) != 0,
+        "ovpn plugin rejected");
+    check(strstr(error, "not supported") != NULL, "ovpn plugin reason");
+    check(parse(ovpn_auth_file_conf, &conf, error, sizeof(error)) != 0,
+        "ovpn auth file rejected");
+    check(strstr(error, "auth-user-pass") != NULL, "ovpn auth file reason");
+    check(parse(ovpn_no_remote_conf, &conf, error, sizeof(error)) != 0,
+        "ovpn without remote rejected");
+
+    /* redirect-gateway normalization. */
+    snprintf(buffer, sizeof(buffer), "%s", ovpn_conf);
+    check(vpn_conf_normalize_ovpn(buffer, sizeof(buffer)) == 0,
+        "ovpn normalize");
+    check(strstr(buffer, "redirect-gateway def1\n") != NULL,
+        "ovpn def1 added");
+    check(!strstr(buffer, "redirect-gateway \n") &&
+        !strstr(buffer, "redirect-gateway\n"), "ovpn bare redirect gone");
+    check(strstr(buffer, "<ca>") && strstr(buffer, "MIIB"),
+        "ovpn inline block preserved");
+    snprintf(buffer, sizeof(buffer),
+        "client\ndev tun\nremote 1.2.3.4\n"
+        "redirect-gateway def1 bypass-dhcp\n");
+    check(vpn_conf_normalize_ovpn(buffer, sizeof(buffer)) == 0,
+        "ovpn normalize def1");
+    check(strstr(buffer, "redirect-gateway def1 bypass-dhcp") != NULL,
+        "ovpn def1 flags kept");
+    check(!strstr(buffer, "def1 def1"), "ovpn def1 not doubled");
+    snprintf(buffer, sizeof(buffer),
+        "client\ndev tun\nremote 1.2.3.4\n"
+        "redirect-gateway bypass-dns block-local\n");
+    check(vpn_conf_normalize_ovpn(buffer, sizeof(buffer)) == 0,
+        "ovpn normalize flags");
+    check(strstr(buffer,
+        "redirect-gateway def1 bypass-dns block-local") != NULL,
+        "ovpn all flags kept");
+    snprintf(buffer, sizeof(buffer), "%s", ovpn_conf);
+    check(vpn_conf_set_type(buffer, sizeof(buffer), "ovpn") == 0,
+        "ovpn set type");
+    check(strstr(buffer, "# oko: auto=1 type=ovpn") != NULL,
+        "ovpn metadata rewrite");
 
     /* Profile names. */
     check(vpn_conf_valid_name("wg0") == 1, "name wg0");

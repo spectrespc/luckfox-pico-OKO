@@ -104,20 +104,21 @@ BootROM → U-Boot → ядро Linux → busybox init → init-скрипты �
 | 11 | `S35iptables` | правила firewall | сеть ещё не обязательна |
 | 12 | `S40network` | базовая настройка сети | — |
 | 13 | `S41dhcpcd` | заглушка OKO; DHCP управляется `/usr/bin/oko-net` | после `S40network` |
-| 14 | `S45oko-vpn` | autostart профилей VPN с `auto=1` и watchdog | оверлей OKO; после `S41dhcpcd` (ждёт default route до 60 с), требует `/oem/usr/bin/{wg,awg}`, `/usr/bin/oko-vpn` и `/userdata/vpn`; opt-out — нет профилей с `auto=1` |
+| 14 | `S45oko-vpn` | autostart профилей VPN с `auto=1` и watchdog | оверлей OKO; после `S41dhcpcd` (ждёт default route до 60 с), требует `/oem/usr/bin/{wg,awg}` или `/usr/sbin/openvpn`, `/usr/bin/oko-vpn` и `/userdata/vpn`; профили `wg0`/`awg0`/`tun0`; opt-out — нет профилей с `auto=1` |
 | 15 | `S49ntp` | синхронизация времени | требует рабочей сети; `divinus` (запущен раньше, из `S21appinit`) через 10 с учитывает `ntp_enable`/`ntp_server` и может остановить этот демон |
 | 16 | `S50sshd` | SSH-сервер | сеть |
 | 17 | `S50telnet` | telnet-сервер | сеть |
 | 18 | `S50usbdevice` | настройка USB-режима (gadget) | — |
 | 19 | `S60micinit` | настройка микрофонного тракта через `amixer` | аудио-модули ядра |
-| 20 | `S99_auto_reboot` | скрипты rockchip_test (auto-reboot / power-lost) | `/oem/rockchip_test`, `/data/cfg` |
-| 21 | `S99hciinit` | `hciattach` для AIC8800 и поднятие `wlan0` | зависит от `aic8800_fdrv` |
-| 22 | `S99luckfoxconfigload` | `luckfox-config load` — восстановление настроек | `/userdata` |
-| 23 | `S99luckfoxcustomoverlay` | применение пользовательского DT-overlay из `/mnt/cfg` | `dtc`, `configfs` |
-| 24 | `S99oko-test` | тестовый маркер OKO: пишет `/tmp/oko-test-ok` и строку в `/dev/kmsg` | оверлей OKO, `MARKER` в скрипте |
-| 25 | `S99python` | запуск `/root/main.py` или `/root/boot.py` | `/usr/bin/python` |
-| 26 | `S99rtcinit` | калибровка RTC при «нулевом» времени | — |
-| 27 | `S99usb0config` | назначение IP `172.32.0.93` интерфейсу `usb0` | может перезапускать `S50usbdevice` |
+| 20 | `S60openvpn` | штатный init-скрипт пакета buildroot | **неактивен**: читает `/etc/openvpn/*.conf` (каталога нет), профилями OKO управляет `S45oko-vpn`; не удалять, чтобы пакет оставался целостным |
+| 21 | `S99_auto_reboot` | скрипты rockchip_test (auto-reboot / power-lost) | `/oem/rockchip_test`, `/data/cfg` |
+| 22 | `S99hciinit` | `hciattach` для AIC8800 и поднятие `wlan0` | зависит от `aic8800_fdrv` |
+| 23 | `S99luckfoxconfigload` | `luckfox-config load` — восстановление настроек | `/userdata` |
+| 24 | `S99luckfoxcustomoverlay` | применение пользовательского DT-overlay из `/mnt/cfg` | `dtc`, `configfs` |
+| 25 | `S99oko-test` | тестовый маркер OKO: пишет `/tmp/oko-test-ok` и строку в `/dev/kmsg` | оверлей OKO, `MARKER` в скрипте |
+| 26 | `S99python` | запуск `/root/main.py` или `/root/boot.py` | `/usr/bin/python` |
+| 27 | `S99rtcinit` | калибровка RTC при «нулевом» времени | — |
+| 28 | `S99usb0config` | назначение IP `172.32.0.93` интерфейсу `usb0` | может перезапускать `S50usbdevice` |
 
 `S20linkmount` генерируется в `project/build.sh` (при разборе таблицы разделов) в файл
 `$RK_PROJECT_OUTPUT/S20linkmount` с `bootmedium=$RK_BOOT_MEDIUM`. Для `spi_nand` он:
@@ -372,6 +373,22 @@ AIC8800 (`aic_load_fw` → `aic8800_fdrv`), AP6XXX (`bcmdhd`), RTL8723BS
   взаимоисключающие: одновременно не запускаются, выбор — маркерами
   `divinus.enable`/`rkipc.enable`.
 
+### VPN (`oko-vpn`)
+
+- `S45oko-vpn` запускает `oko-vpn autostart` и `oko-vpn watchdog 30` после
+  `S41dhcpcd`, поэтому профилям нужен default route и адрес на `eth0`.
+- `wg`/`awg` лежат в `/oem/usr/bin` (модуль `amneziawg.ko` — в
+  `/oem/usr/ko`), `openvpn` — в `/usr/sbin` rootfs (пакет buildroot
+  `openvpn 2.5.7`), TUN — `/dev/net/tun` из ядра (`CONFIG_TUN=y`).
+- Профили и состояние — `/userdata/vpn` (`<profile>.conf`, `<profile>.pass`,
+  `state/`), логи — `/var/log/vpn.log` и `/var/log/ovpn-<profile>.log`.
+- Для `ovpn` helper до старта демона добавляет on-link маршрут
+  `<server>/32 dev eth0`, а после `Initialization Sequence Completed`
+  удаляет `via <default-gateway>` и восстанавливает прямой маршрут, иначе
+  ответы LAN-сервера уходят через шлюз с NAT и `tun0` теряет keepalive.
+- `S60openvpn` из пакета buildroot неактивен: `/etc/openvpn/` нет, профилями
+  владеет `oko-vpn` (`tun0`).
+
 ### Демон oko-ec
 
 `/oem/usr/bin/oko-ec daemon` запускается из `S21oko-ec` (после `S20linkmount`,
@@ -447,6 +464,11 @@ AIC8800 (`aic_load_fw` → `aic8800_fdrv`), AP6XXX (`bcmdhd`), RTL8723BS
 - `RkLunch.sh` вызывает `oko-net apply`; `S41dhcpcd` заменён заглушкой.
 - `S45oko-vpn` выполняется после `S41dhcpcd`, ждёт default route до 60 с,
   запускает `oko-vpn autostart` (профили с `auto=1`) и `oko-vpn watchdog 30`.
+  Watchdog считает профиль `ovpn` живым по pid-файлу
+  `/var/run/ovpn-<profile>.pid` и перезапускает демон, если он упал.
+  `S60openvpn` из пакета buildroot неактивен: `/etc/openvpn/` отсутствует,
+  OpenVPN-клиентами владеет `oko-vpn` (`tun0`, конфиг `/userdata/vpn/tun0.conf`,
+  учётные данные `/userdata/vpn/tun0.pass`).
   Профили и состояние маршрутов — `/userdata/vpn` (теряются при полной
   прошивке `update.img`, как и остальной `/userdata`).
   MAC хранится в env (`oko_mac`), поэтому не зависит от `/userdata` и

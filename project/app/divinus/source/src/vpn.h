@@ -9,9 +9,12 @@
 size_t vpn_status_json(char *buffer, size_t capacity);
 
 /* Saves an imported configuration as /userdata/vpn/<ifname>.conf.
- * "type_hint" is "auto", "wg" or "awg" (empty means auto).
+ * "type_hint" is "auto", "wg", "awg" or "ovpn" (empty means auto).
+ * "creds_user"/"creds_pass" are used only by an OpenVPN profile with a bare
+ * "auth-user-pass" and are stored in /userdata/vpn/<ifname>.pass (0600).
  * Returns 0 and the profile name on success. */
 int vpn_import_text(const char *text, size_t length, const char *type_hint,
+    const char *creds_user, const char *creds_pass,
     char *name, size_t name_size, char *error, size_t error_size);
 
 /* Performs up/down/enable/disable/delete.  "delete" requires the token shown

@@ -27,7 +27,7 @@ bench/run.sh dut.py 'mount | grep -w " / "'
 | `deploy_divinus.py` | копирование свежесобранного `divinus` в `/oem/usr/bin` по SSH и graceful restart (быстрая итерация, не замена прошивке) |
 | `focus_check.py` | `/api/focus`: статус AF-метрики, ROI, мотор; `--enable`, `--roi x,y,w,h`, `--move`, `--seconds/--interval/--snapshot/--strict`, CSV в `--out` (по умолчанию `output/bench/focus`); код 2 — API жив, но снимок не снят, код 1 — метрика нулевая |
 | `firmware_check.py` | `/api/firmware` и `/api/flash`: версии STM32/STM8, состояние задачи; `--flash --confirm FLASH` запускает прошивку, `--negative` прогоняет проверки валидации (400) |
-| `vpn_check.py` | WireGuard/AmneziaWG на DUT: модуль, `awg version`, импорт `.conf` через API, `up`, handshake, маршруты, ping, `down`, негатив (хуки, delete без токена), опционально reboot + автозапуск; артефакты — `output/bench/vpn` |
+| `vpn_check.py` | WireGuard/AmneziaWG/OpenVPN на DUT: модуль или `/dev/net/tun`, импорт профиля через API, `up`, handshake или адрес `tun0`, маршруты, ping, `down`, негатив (хуки/plugin, delete без токена, credentials required), опционально `--iperf-peer`, reboot + автозапуск; артефакты — `output/bench/vpn` |
 
 ## Примеры
 
@@ -155,6 +155,23 @@ sudo ip link set awgpeer0 up
 если не указан `--keep`. Артефакты: `output/bench/vpn/report.json`, `ssh.log`,
 `profile.conf`.
 
+## OpenVPN-пир на хосте
+
+`vpn_check.py` принимает `.ovpn`-профиль с `--type ovpn`; при
+`auth-user-pass` логин и пароль передаются через `--creds-user/--creds-pass`
+(или `OKO_VPN_USER`/`OKO_VPN_PASS`), на DUT они сохраняются в
+`/userdata/vpn/tun0.pass` с правами 0600. Для полного туннеля и проброса в LAN
+на хосте:
+
+```sh
+sudo sysctl -w net.ipv4.ip_forward=1
+sudo iptables -t nat -A POSTROUTING -o <uplink> -j MASQUERADE
+```
+
+Пример прогона: `bench/run.sh vpn_check.py --type ovpn
+--profile output/bench/vpn/client.ovpn --creds-user oko --creds-pass secret
+--ping-target 10.8.0.1 --iperf-peer 192.168.52.1 --reboot`.
+
 ## Переменные окружения
 
 | Переменная | По умолчанию | Смысл |
@@ -166,6 +183,7 @@ sudo ip link set awgpeer0 up
 | `OKO_DUT_PASSWORD` | `luckfox` | пароль root (публичный вендорский дефолт) |
 | `OKO_RTSP_USER` / `OKO_RTSP_PASS` | `admin` / `oko-change-me` | учётка divinus (фабричный дефолт) |
 | `OKO_VPN_PEER` | — | адрес VPN-пира на хосте для `vpn_check.py` (`--peer-host` важнее) |
+| `OKO_VPN_USER` / `OKO_VPN_PASS` | — | учётка `auth-user-pass` для OpenVPN-профиля (`--creds-user/--creds-pass`) |
 
 Секреты в репозитории не хранятся: только публичные вендорские дефолты и
 переопределение переменными окружения.

@@ -539,8 +539,20 @@ def main():
                 failures.append("VPN element %s is missing" % selector)
         vpn_types = page.eval_on_selector_all("#vpn_type option",
             "els => els.map(e => e.value)")
-        if vpn_types != ["auto", "wg", "awg"]:
+        if vpn_types != ["auto", "wg", "awg", "ovpn"]:
             failures.append("unexpected VPN type options: %r" % vpn_types)
+        page.select_option("#vpn_type", "ovpn")
+        page.wait_for_timeout(300)
+        if not page.is_visible("#vpn_user_row") or \
+                not page.is_visible("#vpn_pass_row"):
+            failures.append("OpenVPN credential fields are hidden")
+        accept = page.get_attribute("#vpn_file", "accept") or ""
+        if ".ovpn" not in accept:
+            failures.append("VPN file picker does not accept .ovpn: %r" % accept)
+        page.select_option("#vpn_type", "wg")
+        page.wait_for_timeout(300)
+        if page.is_visible("#vpn_user_row"):
+            failures.append("credential fields are visible for WireGuard")
         if not page.is_visible("#vpn-card"):
             failures.append("VPN card is not visible in Network")
         page.screenshot(path=os.path.join(SHOTS, "network-vpn.png"), full_page=True)

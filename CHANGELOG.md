@@ -26,6 +26,50 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Добавлено
 
+- **OpenVPN-клиент с управлением из WebUI (OKO).** Третий тип профиля
+  `ovpn`: `oko-vpn` разбирает клиентский конфиг OpenVPN, отклоняет
+  `dev tap`, `plugin`, `management`, скриптовые директивы, `askpass`,
+  `config` и `auth-user-pass <файл>`, принудительно ставит
+  `redirect-gateway def1`, запускает демон `/usr/sbin/openvpn` с
+  pid/status-файлами, ждёт `Initialization Sequence Completed` и адрес
+  `tun0`, а для full tunnel выполняет тот же 15-секундный guard с откатом.
+  Профили и учётные данные — `/userdata/vpn/<name>.conf` и
+  `<name>.pass` (0600); `S45oko-vpn` подхватывает `tun0` в autostart и
+  watchdog по pid. Импорт через `/api/vpn/import` принимает поля
+  `user`/`pass` (multipart и form), WebUI показывает их только для типа
+  `ovpn`; `GET /api/vpn` отдаёт `ovpn_bin`, `tunip`, `rx/tx` и
+  `handshake_age: null`. Сборка: `BR2_PACKAGE_OPENVPN=y` (openvpn 2.5.7,
+  OpenSSL, LZO/LZ4) в `luckfox_pico_defconfig` и `CONFIG_TUN=y` в
+  `luckfox_rv1106_linux_defconfig`. Обновлены `FEATURES*.md`,
+  `INIT_ORDER.md` (§4: `S60openvpn` неактивен), `bench/README.md` и
+  хостовый тест `vpn_conf_test.c` (детект, отказы, `def1`). Стенд
+  2026-11-08: внешний сервер OpenVPN (`192.168.52.200:1194`), inline
+  сертификаты + `tls-crypt` + `auth-user-pass`, `tun0` 10.8.0.3/24, ping
+  через туннель, iperf3 21–23 Мбит/с, full tunnel `def1` с guard, `down`
+  без маршрутов, autostart после reboot; `vpn_check.py` 23/23 и 21/21,
+  регрессия WG 19/19, `api_check` 98/0, `ui_check` зелёный.
+- **OpenVPN client managed from the WebUI (OKO).** A third profile type
+  `ovpn`: `oko-vpn` parses an OpenVPN client configuration, rejects
+  `dev tap`, `plugin`, `management`, script directives, `askpass`,
+  `config` and `auth-user-pass <file>`, forces `redirect-gateway def1`,
+  starts the `/usr/sbin/openvpn` daemon with pid/status files, waits for
+  `Initialization Sequence Completed` and a `tun0` address, and runs the
+  same 15-second full-tunnel guard with a rollback. Profiles and
+  credentials live in `/userdata/vpn/<name>.conf` and `<name>.pass`
+  (0600); `S45oko-vpn` covers `tun0` in autostart and the pid-based
+  watchdog. `/api/vpn/import` accepts `user`/`pass` (multipart and form),
+  the WebUI shows them only for `ovpn`, and `GET /api/vpn` exposes
+  `ovpn_bin`, `tunip`, `rx/tx` and `handshake_age: null`. Build:
+  `BR2_PACKAGE_OPENVPN=y` (openvpn 2.5.7, OpenSSL, LZO/LZ4) in
+  `luckfox_pico_defconfig` and `CONFIG_TUN=y` in
+  `luckfox_rv1106_linux_defconfig`. `FEATURES*.md`, `INIT_ORDER.md`
+  (§4: inactive `S60openvpn`), `bench/README.md` and the host test
+  `vpn_conf_test.c` (detection, rejects, `def1`) are updated. Bench
+  2026-11-08: an external OpenVPN server (`192.168.52.200:1194`) with inline
+  certificates, `tls-crypt` and `auth-user-pass`, `tun0` 10.8.0.3/24, a
+  tunnel ping, iperf3 21–23 Mbit/s, full tunnel `def1` with the guard,
+  route-free `down` and autostart after a reboot; `vpn_check.py` 23/23 and
+  21/21, the WG regression 19/19, `api_check` 98/0 and `ui_check` passed.
 - **Сводка microSD в OSD (OKO).** `oko-osd` дописывает
   ` SD FREE <free>/<cap>GiB` в строку `MEM FREE` региона `reg4` (свободно
   первым, ёмкость второй, один знак после точки — как в WebUI); без

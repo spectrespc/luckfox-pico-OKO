@@ -17,8 +17,9 @@
 #define VPN_DIR "/userdata/vpn"
 #define VPN_STATE_DIR "/userdata/vpn/state"
 #define VPN_HELPER "/usr/bin/oko-vpn"
-#define VPN_MAX_PROFILES 2
+#define VPN_MAX_PROFILES 3
 #define VPN_STATUS_BUF 8192
+#define VPN_CREDS_MAX 256
 
 #define VPN_ERR(reason)                                                   \
     do {                                                                  \
@@ -33,6 +34,7 @@ typedef struct {
     char endpoint[VPN_ENDPOINT_MAX];
     char allowedips[VPN_ALLOWED_MAX];
     char routes[VPN_ADDR_MAX];
+    char tunip[VPN_ENDPOINT_MAX];
     int auto_start;
     int fulltunnel;
     int valid;
@@ -119,6 +121,7 @@ int vpn_available(void)
     if (!file_executable(VPN_HELPER)) return 0;
     if (tool_path("wg", path, sizeof(path)) == 0) return 1;
     if (tool_path("awg", path, sizeof(path)) == 0) return 1;
+    if (tool_path("openvpn", path, sizeof(path)) == 0) return 1;
     return 0;
 }
 
@@ -254,6 +257,8 @@ static int parse_status_line(const char *line, vpn_live_t *profile)
             profile->rx = strtoull(value, NULL, 10);
         else if (!strcmp(token, "mtu"))
             profile->mtu = (int)strtol(value, NULL, 10);
+        else if (!strcmp(token, "tunip"))
+            snprintf(profile->tunip, sizeof(profile->tunip), "%s", value);
     }
     return profile->name[0] ? 0 : -1;
 }
@@ -325,9 +330,15 @@ static void append_live_json(vpn_sbuf_t *sb, const vpn_live_t *profiles,
         first = 0;
         sb_json_string(sb, p->ifname[0] ? p->ifname : p->name);
         sb_puts(sb, ":{");
-        sb_printf(sb, "\"handshake_age\":%ld,", p->handshake_age);
+        if (!strcmp(p->type, "ovpn"))
+            sb_puts(sb, "\"handshake_age\":null,");
+        else
+            sb_printf(sb, "\"handshake_age\":%ld,", p->handshake_age);
         sb_printf(sb, "\"tx\":%llu,\"rx\":%llu,", p->tx, p->rx);
         sb_printf(sb, "\"mtu\":%d,", p->mtu);
+        sb_puts(sb, "\"tunip\":");
+        sb_json_string(sb, p->tunip);
+        sb_puts(sb, ",");
         sb_puts(sb, "\"routes\":[");
         snprintf(routes, sizeof(routes), "%s", p->routes);
         for (route = strtok_r(routes, " ", &save); route;
@@ -346,7 +357,7 @@ size_t vpn_status_json(char *buffer, size_t capacity)
     vpn_live_t profiles[VPN_MAX_PROFILES];
     size_t count;
     vpn_sbuf_t sb;
-    char wg[256] = "", awg[256] = "";
+    char wg[256] = "", awg[256] = "", ovpn[256] = "";
 
     if (!buffer || capacity < 64) return 0;
     sb_init(&sb, buffer, capacity);
@@ -360,6 +371,8 @@ size_t vpn_status_json(char *buffer, size_t capacity)
         tool_path("wg", wg, sizeof(wg)) == 0 ? "true" : "false");
     sb_printf(&sb, ",\"awg_bin\":%s",
         tool_path("awg", awg, sizeof(awg)) == 0 ? "true" : "false");
+    sb_printf(&sb, ",\"ovpn_bin\":%s",
+        tool_path("openvpn", ovpn, sizeof(ovpn)) == 0 ? "true" : "false");
     sb_printf(&sb, ",\"helper\":%s",
         file_executable(VPN_HELPER) ? "true" : "false");
     sb_puts(&sb, "},\"guard\":{\"revert_seconds\":15},\"token\":");
@@ -387,13 +400,15 @@ static int mkdir_profile_dir(void)
 }
 
 int vpn_import_text(const char *text, size_t length, const char *type_hint,
+    const char *creds_user, const char *creds_pass,
     char *name, size_t name_size, char *error, size_t error_size)
 {
     vpn_conf_t conf;
     char copy[VPN_CONF_MAX_BYTES + VPN_CONF_LINE_MAX];
-    char path[256], tmp[320];
+    char path[256], tmp[320], pass_path[256], pass_tmp[320];
     FILE *file;
     const char *hint = type_hint ? type_hint : "";
+    int need_pass = 0;
 
     if (!text || length == 0) {
         VPN_ERR("the configuration is empty");
@@ -417,8 +432,8 @@ int vpn_import_text(const char *text, size_t length, const char *type_hint,
     if (vpn_conf_parse_text(copy, length, &conf, error, error_size)) return -1;
 
     if (*hint && strcmp(hint, "auto") && strcmp(hint, "wg") &&
-        strcmp(hint, "awg")) {
-        VPN_ERR("type must be auto, wg or awg");
+        strcmp(hint, "awg") && strcmp(hint, "ovpn")) {
+        VPN_ERR("type must be auto, wg, awg or ovpn");
         return -1;
     }
     if (*hint && strcmp(hint, "auto") && strcmp(hint, conf.type)) {
@@ -429,6 +444,24 @@ int vpn_import_text(const char *text, size_t length, const char *type_hint,
         if (vpn_conf_parse_text(copy, strlen(copy), &conf, error,
                 error_size))
             return -1;
+    }
+
+    if (!strcmp(conf.type, "ovpn")) {
+        if (vpn_conf_normalize_ovpn(copy, sizeof(copy))) {
+            VPN_ERR("the configuration is too large to rewrite");
+            return -1;
+        }
+        if (vpn_conf_parse_text(copy, strlen(copy), &conf, error,
+                error_size))
+            return -1;
+        if (conf.needs_credentials) {
+            if (!creds_user || !*creds_user) {
+                VPN_ERR("credentials required: set the user and password "
+                    "for this OpenVPN profile");
+                return -1;
+            }
+            need_pass = 1;
+        }
     }
 
     if (!vpn_conf_valid_name(conf.ifname)) {
@@ -472,6 +505,48 @@ int vpn_import_text(const char *text, size_t length, const char *type_hint,
         VPN_ERR("cannot save the profile");
         return -1;
     }
+
+    snprintf(pass_path, sizeof(pass_path), VPN_DIR "/%s.pass", conf.ifname);
+    if (need_pass) {
+        size_t user_len = strlen(creds_user);
+        size_t pass_len = creds_pass ? strlen(creds_pass) : 0;
+
+        if (user_len > VPN_CREDS_MAX || pass_len > VPN_CREDS_MAX ||
+            strpbrk(creds_user, "\r\n") ||
+            (creds_pass && strpbrk(creds_pass, "\r\n"))) {
+            unlink(path);
+            VPN_ERR("the credentials are invalid");
+            return -1;
+        }
+        snprintf(pass_tmp, sizeof(pass_tmp), VPN_DIR "/.%s.pass.%d",
+            conf.ifname, (int)getpid());
+        file = fopen(pass_tmp, "w");
+        if (!file) {
+            unlink(path);
+            VPN_ERR("cannot write the credentials");
+            return -1;
+        }
+        if (fprintf(file, "%s\n%s\n", creds_user,
+                creds_pass ? creds_pass : "") < 0) {
+            fclose(file);
+            unlink(pass_tmp);
+            unlink(path);
+            VPN_ERR("cannot write the credentials");
+            return -1;
+        }
+        fflush(file);
+        fclose(file);
+        chmod(pass_tmp, 0600);
+        if (rename(pass_tmp, pass_path)) {
+            unlink(pass_tmp);
+            unlink(path);
+            VPN_ERR("cannot save the credentials");
+            return -1;
+        }
+    } else {
+        unlink(pass_path);
+    }
+
     if (name && name_size) snprintf(name, name_size, "%s", conf.ifname);
     return 0;
 }

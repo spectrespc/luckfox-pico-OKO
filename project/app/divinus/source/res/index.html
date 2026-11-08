@@ -910,19 +910,24 @@
 				</div>
 				<h3 style="margin-top:1em"><span data-i18n="vpn_import">Import configuration</span></h3>
 				<div class="field"><label data-i18n="vpn_type">Type</label>
-					<div class="ctl"><select id="vpn_type">
+					<div class="ctl"><select id="vpn_type" onchange="vpnTypeChange()">
 						<option value="auto" data-i18n="vpn_type_auto">Auto-detect</option>
 						<option value="wg">WireGuard</option><option value="awg">AmneziaWG</option>
+						<option value="ovpn">OpenVPN</option>
 					</select></div></div>
+				<div class="field" id="vpn_user_row" style="display:none"><label data-i18n="vpn_user">Username</label>
+					<div class="ctl"><input type="text" id="vpn_user" autocomplete="off" spellcheck="false"></div></div>
+				<div class="field" id="vpn_pass_row" style="display:none"><label data-i18n="vpn_pass">Password</label>
+					<div class="ctl"><input type="password" id="vpn_pass" autocomplete="new-password"></div></div>
 				<div class="field"><label data-i18n="vpn_paste">Configuration</label>
 					<div class="ctl"><textarea id="vpn_text" class="vpn-text" placeholder="[Interface]&#10;PrivateKey = ...&#10;Address = 10.8.0.2/24&#10;&#10;[Peer]&#10;PublicKey = ...&#10;Endpoint = host:51820&#10;AllowedIPs = 10.8.0.0/24"></textarea></div></div>
 				<div class="field"><label data-i18n="vpn_file">Configuration file</label>
-					<div class="ctl"><input type="file" id="vpn_file" accept=".conf,.txt"></div></div>
+					<div class="ctl"><input type="file" id="vpn_file" accept=".ovpn,.conf,.txt"></div></div>
 				<div class="actions">
 					<button type="button" class="btn primary" onclick="vpnImportText()" data-i18n="vpn_import_text">Import text</button>
 					<button type="button" class="btn" onclick="vpnImportFile()" data-i18n="vpn_import_file">Import file</button>
 				</div>
-				<p class="note" data-i18n="vpn_note">The configuration is stored in /userdata/vpn and applied by /usr/bin/oko-vpn. Script hooks (PreUp/PostUp/PreDown/PostDown) are rejected; the default route is only replaced for 0.0.0.0/0 with an automatic rollback.</p>
+				<p class="note" data-i18n="vpn_note">The configuration is stored in /userdata/vpn and applied by /usr/bin/oko-vpn. WireGuard script hooks (PreUp/PostUp/PreDown/PostDown) and OpenVPN script/management directives are rejected; OpenVPN redirect-gateway is forced to def1 and the default route is rolled back when the tunnel cannot pass the guard.</p>
 			</div>
 
 			<div class="card">
@@ -1241,11 +1246,13 @@ var I18N = {
 		usage: "Used",
 		vpn: "VPN", vpn_profile: "Profile", vpn_type: "Type",
 		vpn_type_auto: "Auto-detect", vpn_import: "Import configuration",
+		vpn_user: "Username", vpn_pass: "Password", vpn_tunip: "Tunnel address",
+		vpn_note: "Stored in /userdata/vpn and applied by /usr/bin/oko-vpn. WireGuard script hooks and OpenVPN script/management directives are rejected; OpenVPN redirect-gateway is forced to def1 with an automatic rollback.",
 		vpn_import_text: "Import text", vpn_import_file: "Import file",
 		vpn_paste: "Configuration", vpn_file: "Configuration file",
 		vpn_connect: "Connect", vpn_disconnect: "Disconnect",
 		vpn_ready: "ready", vpn_unavailable: "tools are missing",
-		vpn_no_profiles: "No VPN profiles yet. Import a wg-quick style .conf below.",
+		vpn_no_profiles: "No VPN profiles yet. Import a wg-quick or OpenVPN configuration below.",
 		vpn_endpoint: "Endpoint", vpn_allowedips: "Allowed IPs",
 		vpn_handshake: "Last handshake", vpn_transfer: "Received / sent",
 		vpn_mtu: "MTU", vpn_routes: "Added routes", vpn_guard: "Full-tunnel guard",
@@ -1430,11 +1437,13 @@ var I18N = {
 		usage: "Занято",
 		vpn: "VPN", vpn_profile: "Профиль", vpn_type: "Тип",
 		vpn_type_auto: "Автоопределение", vpn_import: "Импорт конфигурации",
+		vpn_user: "Логин", vpn_pass: "Пароль", vpn_tunip: "Адрес туннеля",
+		vpn_note: "Хранится в /userdata/vpn и применяется /usr/bin/oko-vpn. Скриптовые хуки WireGuard и скриптовые/management-директивы OpenVPN отклоняются; redirect-gateway OpenVPN принудительно получает def1 с автоматическим откатом.",
 		vpn_import_text: "Импорт текста", vpn_import_file: "Импорт файла",
 		vpn_paste: "Конфигурация", vpn_file: "Файл конфигурации",
 		vpn_connect: "Подключить", vpn_disconnect: "Отключить",
 		vpn_ready: "готово", vpn_unavailable: "нет утилит",
-		vpn_no_profiles: "Профилей VPN пока нет. Импортируйте .conf в формате wg-quick ниже.",
+		vpn_no_profiles: "Профилей VPN пока нет. Импортируйте конфигурацию wg-quick или OpenVPN ниже.",
 		vpn_endpoint: "Сервер", vpn_allowedips: "Разрешённые IP",
 		vpn_handshake: "Последний handshake", vpn_transfer: "Принято / отправлено",
 		vpn_mtu: "MTU", vpn_routes: "Добавленные маршруты", vpn_guard: "Защита полного туннеля",
@@ -2250,6 +2259,18 @@ function vpnAge(seconds) {
 	return Math.floor(seconds / 3600) + ' h ' + Math.floor((seconds % 3600) / 60) + ' min';
 }
 
+function vpnTypeChange() {
+	var type = $('vpn_type') ? $('vpn_type').value : 'auto';
+	var isOvpn = type === 'ovpn';
+	if ($('vpn_user_row')) $('vpn_user_row').style.display = isOvpn ? '' : 'none';
+	if ($('vpn_pass_row')) $('vpn_pass_row').style.display = isOvpn ? '' : 'none';
+	if ($('vpn_text')) {
+		$('vpn_text').placeholder = isOvpn
+			? 'client\ndev tun\nproto udp\nremote vpn.example.com 1194\nresolv-retry infinite\nnobind\npersist-key\npersist-tun\nremote-cert-tls server\nauth-user-pass\nredirect-gateway\n<ca>\n...\n</ca>'
+			: '[Interface]\nPrivateKey = ...\nAddress = 10.8.0.2/24\n\n[Peer]\nPublicKey = ...\nEndpoint = host:51820\nAllowedIPs = 10.8.0.0/24';
+	}
+}
+
 function vpnLoad() {
 	getJson('/api/vpn', function (dec) {
 		if (dec && !dec.error) vpnLast = dec;
@@ -2264,7 +2285,7 @@ function vpnRender() {
 	var old = sel ? sel.value : '';
 	var available = $('vpn-available');
 	var a = (dec && dec.available) || {};
-	var toolsOk = a.helper && (a.wg || a.awg_bin);
+	var toolsOk = a.helper && (a.wg || a.awg_bin || a.ovpn_bin);
 
 	if (available) {
 		available.className = 'badge-state ' + (toolsOk ? 'on' : 'off');
@@ -2278,7 +2299,8 @@ function vpnRender() {
 			var opt = document.createElement('option');
 			opt.value = profiles[i].name;
 			opt.textContent = profiles[i].name + ' · ' +
-				(profiles[i].type === 'awg' ? 'AmneziaWG' : 'WireGuard') + ' · ' +
+				(profiles[i].type === 'awg' ? 'AmneziaWG' :
+					profiles[i].type === 'ovpn' ? 'OpenVPN' : 'WireGuard') + ' · ' +
 				(profiles[i].state === 'up' ? t('vpn_up') : t('vpn_down'));
 			sel.appendChild(opt);
 		}
@@ -2309,12 +2331,17 @@ function vpnRender() {
 		var routes = (live && live.routes && live.routes.length)
 			? live.routes.join(', ') : '–';
 		var handshake = live ? vpnAge(live.handshake_age) : t('vpn_never');
+		var hsLabel = t('vpn_handshake'), hsValue = handshake;
+		if (p.type === 'ovpn') {
+			hsLabel = t('vpn_tunip');
+			hsValue = (live && live.tunip) ? live.tunip : '–';
+		}
 		var transfer = live ? (formatSize(live.rx) + ' / ' + formatSize(live.tx)) : '–';
 		var cells = [
 			[t('state'), up ? t('vpn_up') : t('vpn_down'), false],
 			[t('vpn_endpoint'), p.endpoint || '–', false],
 			[t('vpn_allowedips'), p.allowedips || '–', false],
-			[t('vpn_handshake'), handshake, false],
+			[hsLabel, hsValue, false],
 			[t('vpn_transfer'), transfer, false],
 			[t('vpn_mtu'), live ? String(live.mtu) : '–', false],
 			[t('vpn_routes'), routes, false],
@@ -2386,6 +2413,7 @@ function vpnImportDone(input) {
 		toast('ok', t('vpn_imported'), dec.name || '');
 		if (input) input.value = '';
 		if ($('vpn_text')) $('vpn_text').value = '';
+		if ($('vpn_pass')) $('vpn_pass').value = '';
 		vpnLoad();
 	};
 }
@@ -2398,6 +2426,10 @@ function vpnImportFile() {
 	var type = $('vpn_type') ? $('vpn_type').value : 'auto';
 	var form = new FormData();
 	form.append('file', file);
+	if (type === 'ovpn') {
+		form.append('user', $('vpn_user') ? $('vpn_user').value : '');
+		form.append('pass', $('vpn_pass') ? $('vpn_pass').value : '');
+	}
 	var req = new XMLHttpRequest();
 	req.onreadystatechange = vpnImportDone(input);
 	req.open('POST', '/api/vpn/import?type=' + encodeURIComponent(type));
@@ -2412,11 +2444,17 @@ function vpnImportText() {
 	}
 	if (text.length > 8 * 1024) { toast('err', t('vpn_import_too_big')); return; }
 	var type = $('vpn_type') ? $('vpn_type').value : 'auto';
-	request('POST', '/api/vpn/import', encodeForm({ text: text, type: type }),
+	var fields = { text: text, type: type };
+	if (type === 'ovpn') {
+		fields.user = $('vpn_user') ? $('vpn_user').value : '';
+		fields.pass = $('vpn_pass') ? $('vpn_pass').value : '';
+	}
+	request('POST', '/api/vpn/import', encodeForm(fields),
 		'application/x-www-form-urlencoded', function (dec) {
 			if (!dec || dec.error) { toastError(dec); return; }
 			toast('ok', t('vpn_imported'), dec.name || '');
 			if ($('vpn_text')) $('vpn_text').value = '';
+			if ($('vpn_pass')) $('vpn_pass').value = '';
 			vpnLoad();
 		});
 }
@@ -3146,6 +3184,7 @@ function init() {
 
 	buildOsd();
 	initGroups();
+	vpnTypeChange();
 	/* Baseline for the focus card: without it the very first edit before the
 	   2 s poll would look clean and be overwritten. */
 	snapshotGroup('focus');

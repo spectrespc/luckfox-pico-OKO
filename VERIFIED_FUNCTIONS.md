@@ -8,9 +8,9 @@
 
 | Поле | Значение |
 |---|---|
-| Дата | `2026-11-07` |
+| Дата | `2026-11-08` |
 | Плата | Luckfox Pico Pro Max (RV1106), сенсор SC230AI |
-| Прошивка | `output/image/update.img` (sha256 `33a86d50…`); полная прошивка SPI NAND 2026-11-07 из слитого дерева, после загрузки восстановлены модели через `/api/models` |
+| Прошивка | `output/image/update.img` (sha256 `b72ff200…`); полная прошивка SPI NAND 2026-11-08 с `CONFIG_TUN=y` и `openvpn 2.5.7`, после загрузки восстановлены модели через `/api/models` |
 | Стенд | `192.168.52.97` (DHCP, SSH), UART `/dev/ttyACM0` 115200 |
 | Методы | SSH, RTSP (PyAV), HTTP API (`curl`, `bench/api_check.py`), WebUI (`bench/ui_check.py`, headless Chromium), скриншоты в `output/bench/ui/` |
 | Примечание | 2026-11-05 выполнен полный `./rkflash.sh update` образа с разметкой `userdata` 40 МБ / `rootfs` 168 МБ; вход в Maskrom — `download` из U-Boot по UART (см. `TESTBENCH.md` §7A). 2026-11-06 полный `update.img` не заливался: USB OTG не подключён, компоненты `oem`/`rootfs` обновлены по SSH; образ собран из этих же исходников (`output/image/update.img`) |
@@ -45,6 +45,8 @@
 | WebUI 2026-11-07: 8 разделов, EN/RU, dirty-state | работает | `bench/ui_check.py`: все восемь разделов открываются, `#isp_mirror` включает `Apply` и точку в меню, после применения кнопка снова выключена, переключение на RU даёт «Видео», 9 плиток телеметрии, 10 OSD-регионов, нет горизонтальной прокрутки на 1440 и 390 px, нет ошибок консоли; `UI check passed`, код 0; прогон с `OKO_FOCUS_AF_TESTS=1` тоже `UI check passed`, код 0 | Playwright + Chromium; установка браузера — см. `bench/README.md` |
 | WebUI: сводка SD в «Система → Статус» | работает | 2026-11-07: `bench/ui_check.py` напечатал `SD summary: 14.8 GiB / 14.8 GiB (raw 15177/15171 MiB)`, тексты `#status_sd_total_mb`/`#status_sd_free_mb` совпали с `window.lastStatus` через `fmtMiB`, формат `GiB`, `free ≤ total`; `UI check passed`, код 0; повтор с `OKO_FOCUS_AF_TESTS=1` — тоже `UI check passed` | Наличие карты не требуется: при `sd_total_mb=0` ожидается прочерк; подпись `MB` в карточке «Накопитель» не менялась |
 | API-матрица 2026-11-07 | работает | `bench/api_check.py`: 97 проверок — 40 GET, 33 POST no-op, export/log, три 404 на статику, HTTP 400 для `yolo.source=vi1`/`bogus` и негативных параметров фокуса, отказы delete (`..`, `x.txt`, пусто), отказы NTP (`bad..host`) и VPN; 0 ошибок, код 0 | Нужны учётные данные стенда |
+| VPN: WireGuard `wg0` | работает | 2026-11-08: внешний пир на хосте `wgpeer0` 10.8.0.1:51820, handshake 3 с, `ping` 10.8.0.1 через туннель, split-маршрут `10.8.0.0/24 dev wg0` и его удаление после `down`; `bench/vpn_check.py --type wg` 19/19 | Внешний пир поднимался в привилегированном контейнере; AWG-пир не прогонялся |
+| VPN: OpenVPN `tun0` | работает | 2026-11-08: внешний сервер `192.168.52.200:1194`, inline CA/cert/key + `tls-crypt`, `auth-user-pass` из WebUI (`tun0.pass`, 0600), `tun0` 10.8.0.3/24, `ping` 10.8.0.1, iperf3 21–23 Мбит/с; full tunnel `redirect-gateway def1` с guard 15 с, `down` убирает `0.0.0.0/1` и `128.0.0.0/1`; autostart после reboot; отказы plugin и пустых credentials; `bench/vpn_check.py` 23/23 (full+auth+reboot), 21/21 (split); `api_check` 98/0, `ui_check` passed | TAP, `plugin`, `management`, скрипты, `askpass`, `config`, `auth-user-pass <файл>` отклоняются по дизайну |
 | NTP через API | работает | `POST /api/time` с `ntp=off` останавливает `ntpd`; `ntp=on&ntp_server=pool.ntp.org` запускает `ntpd -g -c /tmp/divinus-ntp.conf -p /tmp/divinus-ntpd.pid`; пустой `ntp_server` возвращает вендорский `/usr/sbin/ntpd -g -p /var/run/ntpd.pid`; `bad..host` → `{"error":"blocked"}` | Не сохраняется без `/api/cmd?save` |
 | NTP после перезагрузки | работает | Три reboot с сохранённым конфигом: `ntp_enable=false` → `pidof ntpd` пуст и `ntp_running=false`; `ntp_enable=true` + пустой сервер → `ntpd -g -p /var/run/ntpd.pid`; `ntp_server=pool.ntp.org` → `ntpd -g -c /tmp/divinus-ntp.conf -p /tmp/divinus-ntpd.pid`, файл содержит `server pool.ntp.org iburst` | Применяется через 10 с после старта (после `S49ntp`); `/api/time` и `date +%s` совпадают после `ts=` |
 | Смена пароля спецсимволами | работает | Пароль `P@ss w=rd%1` (пробел, `=`, `%`, `@`): `POST /api/web-auth` → `ok`, старый 401, новый 200, в YAML `web_auth_pass: P@ss w=rd%1`; возврат к `oko-change-me` → 200 | Проверяет порядок `url_decode` после `split` |
@@ -179,6 +181,30 @@ ls output/bench/ui/
 Если Chromium не стартует с `libasound.so.2: cannot open shared object file`,
 поставьте пакет `libasound2t64`/`libasound2` или распакуйте его в каталог и
 запустите с `LD_LIBRARY_PATH`.
+
+### VPN (2026-11-08)
+
+Полный `update.img` с `CONFIG_TUN=y` и `openvpn 2.5.7` прошит через Maskrom
+(`download` из U-Boot, `./rkflash.sh update`). На хосте поднят привилегированный
+контейнер `oko-ovpn-server` (`--network host`): сервер OpenVPN на
+`192.168.52.200:1194` (`10.8.0.0/24`, `tls-crypt`, `auth-user-pass-optional`),
+`iperf3 -s`, а также `wgpeer0` 10.8.0.1:51820 для регрессии WireGuard.
+
+```sh
+bench/run.sh vpn_check.py --dut 192.168.52.97 --type ovpn   --profile output/bench/vpn-server/client-full.ovpn   --creds-user oko --creds-pass oko-secret   --ping-target 10.8.0.1 --iperf-peer 10.8.0.1 --reboot
+# 23/23: import, up, tun0 10.8.0.3/24, ping, iperf3, down, отказы,
+# full tunnel, autostart после reboot, delete
+bench/run.sh vpn_check.py --dut 192.168.52.97 --type ovpn   --profile output/bench/vpn-server/client-split.ovpn   --ping-target 10.8.0.1 --iperf-peer 10.8.0.1
+# 21/21: профиль без auth-user-pass
+bench/run.sh vpn_check.py --dut 192.168.52.97 --type wg   --profile /tmp/kilo/wg0.conf --ping-target 10.8.0.1
+# 19/19: регрессия WG
+```
+
+Проверено: `ls -l /dev/net/tun`, `openvpn --version` → 2.5.7 (OpenSSL,
+LZO, LZ4), `GET /api/vpn` → `ovpn_bin=true`, `tunip`, `rx/tx`, `handshake_age:
+null`; `GET /api/vpn` не содержит ключей; `S60openvpn` неактивен; после
+`reboot` профиль `auto=1` поднимается сам, `192.168.52.200/32` остаётся
+on-link (`dev eth0`), SSH и WebUI доступны.
 
 ### Образ и разделы
 

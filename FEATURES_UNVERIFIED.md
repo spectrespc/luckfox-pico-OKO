@@ -24,8 +24,7 @@
 | Сеть | WiFi AIC8800 | Модули собираются и копируются в `/oem/usr/ko` | `RK_ENABLE_WIFI=y` | вендорские модули без правок OKO | **ограничено** — WiFi-стек не проверялся; сеть проверена по Ethernet |
 | Телеметрия (oko-ec) | Датчики | SHT21 `0x40` — T/RH; INA3221 или INA226 `0x41` — U/I/P; STM32 EC `0x42` — U/I/T, SOC, ячейки, OTA | `/dev/i2c-3`, `i2cdetect -y 3` | `i2c-dev` без драйверов (`CONFIG_HWMON` выключен), автоопределение INA | **ограничено** — адреса видны; у INA3221 силовые входы не подключены |
 | microSD | Hotplug | Извлечение и установка карты | udev, `/api/storage` | определение по `device/type=SD` | **ограничено** — проверено unbind/bind; физическое извлечение не проверялось |
-| Сеть | VPN — WireGuard | Профиль `wg0` из импортированного `.conf`: адреса, маршруты по `AllowedIPs`, split-tunnel, автозапуск и watchdog | `/api/vpn`, WebUI Network → VPN, `/usr/bin/oko-vpn`, `/userdata/vpn` | встроенный `CONFIG_WIREGUARD=y`, `wireguard-tools` 1.0.20210914 в `/oem/usr/bin/wg`, `oko-vpn` + `S45oko-vpn`, API и карточка WebUI | **ограничено** — на стенде 2026-11-06 проверены: handshake с loopback-пиром (`wg show`: 8 с, transfer 92/212 B), split-маршрут, API/WebUI, autostart+watchdog после reboot, guard positive/negative (default вернулся); внешний пир и `ping` через туннель не прогонялись |
-| Сеть | VPN — AmneziaWG | Профиль `awg0`, параметры AWG v3.1, модуль загружается по требованию | `/api/vpn`, WebUI Network → VPN, `/usr/bin/oko-vpn` | out-of-tree `amneziawg.ko` (`v3.1.20260906`), `awg` (`v3.1.20260812`), `RK_ENABLE_AWG=y` | **ограничено** — модуль загружается (`dmesg`: `AmneziaWG 3.1.20260906`), handshake v3.1 с loopback-пиром прошёл со всеми параметрами (`I1/I5`, `HeaderProtectionKey`, `S3/S4`, `AdvancedSecurity`), guard positive/negative проверен; внешний пир не прогонялся |
+| Сеть | VPN — AmneziaWG | Профиль `awg0`, параметры AWG v3.1, модуль загружается по требованию | `/api/vpn`, WebUI Network → VPN, `/usr/bin/oko-vpn` | out-of-tree `amneziawg.ko` (`v3.1.20260906`), `awg` (`v3.1.20260812`), `RK_ENABLE_AWG=y` | **ограничено** — модуль загружается (`dmesg`: `AmneziaWG 3.1.20260906`), handshake v3.1 с loopback-пиром прошёл со всеми параметрами (`I1/I5`, `HeaderProtectionKey`, `S3/S4`, `AdvancedSecurity`), guard positive/negative проверен; 2026-11-08 loopback-регрессия `bench/vpn_check.py --type awg` — 19/19 (handshake 3 с, split-маршрут, `down`); внешний пир не прогонялся |
 | Прошивка | Обрыв питания при обновлении | Восстановление после потери питания STM32/STM8 | `flash.c`, загрузчики | `oko-flash`, I2C-загрузчик STM8 | **ограничено** — обрыв хостового `oko-motor flash` проверен (загрузчик жив, повторная загрузка успешна); полный обрыв питания не имитировался |
 
 ### Примечания
@@ -70,13 +69,17 @@
   стенда оптически не связан с приводом, поэтому сходимость на реальной сцене
   не подтверждена. Компоновка WebUI проверена headless-Chromium на
   1440×900 и 390×844, но не на физическом телефоне.
-- **VPN.** Модуль `amneziawg.ko` собран под 5.10.160 и загружается по требованию
-  из `oko-vpn`; `wg`/`awg` собраны app-тулчейном (ELF ARM, uClibc). Парсер
-  `.conf` отклоняет `PreUp/PostUp/PreDown/PostDown`, поддерживает AWG v3.1
-  (`I1…I5`, `HeaderProtectionKey`, `AdvancedSecurity`) и проверен хостовым
-  тестом. Полный прогон `bench/vpn_check.py` требует пира на хосте (WireGuard
-  для `wg0`, AmneziaWG из вендорных исходников для `awg0`) и ещё не выполнялся;
-  после него строки переходят в `FEATURES_VERIFIED.md`.
+- **VPN.** WireGuard и OpenVPN подтверждены внешним пиром 2026-11-08 и
+  перенесены в `FEATURES_VERIFIED.md` (`bench/vpn_check.py`: WG 19/19,
+  OpenVPN 23/23 full+auth+reboot и 21/21 split, iperf3 21–23 Мбит/с).
+  Остаётся AmneziaWG: модуль `amneziawg.ko` собран под 5.10.160 и
+  загружается по требованию из `oko-vpn`; `wg`/`awg` собраны app-тулчейном
+  (ELF ARM, uClibc). Парсер `.conf` отклоняет
+  `PreUp/PostUp/PreDown/PostDown`, поддерживает AWG v3.1 (`I1…I5`,
+  `HeaderProtectionKey`, `AdvancedSecurity`) и проверен хостовым тестом;
+  handshake v3.1 с loopback-пиром и guard positive/negative пройдены, но
+  внешний пир AWG не прогонялся (для хоста нужен out-of-tree модуль под
+  ядро 6.12).
 - **Датчики.** Адреса SHT21/INA/EC видны на `/dev/i2c-3`; у INA3221 силовые
   входы не подключены, поэтому ток/мощность могут быть недостоверны.
 
@@ -102,8 +105,7 @@ Status as of 2026-11-07.
 | Network | WiFi AIC8800 | Modules are built and copied to `/oem/usr/ko` | `RK_ENABLE_WIFI=y` | vendor modules without OKO changes | **limited** — WiFi stack unverified; networking verified over Ethernet |
 | Telemetry (`oko-ec`) | Sensors | SHT21 `0x40` — T/RH; INA3221 or INA226 `0x41` — U/I/P; STM32 EC `0x42` — U/I/T, SOC, cells, OTA | `/dev/i2c-3`, `i2cdetect -y 3` | `i2c-dev` without drivers (`CONFIG_HWMON` off), INA autodetection | **limited** — addresses respond; INA3221 power inputs are not wired |
 | microSD | Hotplug | Card removal and insertion | udev, `/api/storage` | detection via `device/type=SD` | **limited** — verified with unbind/bind only; physical removal untested |
-| Network | VPN — WireGuard | `wg0` profile imported from a `.conf`: addresses, routes from `AllowedIPs`, split tunnel, autostart and watchdog | `/api/vpn`, WebUI Network → VPN, `/usr/bin/oko-vpn`, `/userdata/vpn` | built-in `CONFIG_WIREGUARD=y`, `wireguard-tools` 1.0.20210914 as `/oem/usr/bin/wg`, `oko-vpn` + `S45oko-vpn`, API and WebUI card | **limited** — bench 2026-11-06: handshake with a loopback peer (`wg show`: 8 s, transfer 92/212 B), split route, API/WebUI, autostart+watchdog after reboot, guard positive/negative (the default route was restored); an external peer and a tunnel `ping` were not run |
-| Network | VPN — AmneziaWG | `awg0` profile, AWG v3.1 parameters, module loaded on demand | `/api/vpn`, WebUI Network → VPN, `/usr/bin/oko-vpn` | out-of-tree `amneziawg.ko` (`v3.1.20260906`), `awg` (`v3.1.20260812`), `RK_ENABLE_AWG=y` | **limited** — the module loads (`dmesg`: `AmneziaWG 3.1.20260906`), the v3.1 handshake with a loopback peer passed with all parameters (`I1/I5`, `HeaderProtectionKey`, `S3/S4`, `AdvancedSecurity`), and the guard positive/negative path was verified; an external peer was not run |
+| Network | VPN — AmneziaWG | `awg0` profile, AWG v3.1 parameters, module loaded on demand | `/api/vpn`, WebUI Network → VPN, `/usr/bin/oko-vpn` | out-of-tree `amneziawg.ko` (`v3.1.20260906`), `awg` (`v3.1.20260812`), `RK_ENABLE_AWG=y` | **limited** — the module loads (`dmesg`: `AmneziaWG 3.1.20260906`), the v3.1 handshake with a loopback peer passed with all parameters (`I1/I5`, `HeaderProtectionKey`, `S3/S4`, `AdvancedSecurity`), and the guard positive/negative path was verified; the 2026-11-08 loopback regression `bench/vpn_check.py --type awg` passed 19/19 (3 s handshake, split route, `down`); an external peer was not run |
 | Firmware | Power loss during an update | Recovery of STM32/STM8 | `flash.c`, bootloaders | `oko-flash`, STM8 I2C bootloader | **limited** — killing the host `oko-motor flash` was tested (bootloader stays usable, the next upload recovers); a full power cut was not emulated |
 
 ### Notes
@@ -146,12 +148,15 @@ Status as of 2026-11-07.
   position — the bench lens is not optically coupled to the drive, so
   convergence on a real scene is not confirmed. The WebUI layout was checked
   with headless Chromium at 1440×900 and 390×844, but not on a physical phone.
-- **VPN.** `amneziawg.ko` builds for 5.10.160 and is loaded on demand by
-  `oko-vpn`; `wg`/`awg` are built with the app toolchain (ARM ELF, uClibc). The
-  `.conf` parser rejects `PreUp/PostUp/PreDown/PostDown`, supports AWG v3.1
+- **VPN.** WireGuard and OpenVPN were confirmed against an external peer on
+  2026-11-08 and moved to `FEATURES_VERIFIED.md` (`bench/vpn_check.py`: WG
+  19/19, OpenVPN 23/23 full+auth+reboot and 21/21 split, iperf3 21–23 Mbit/s).
+  AmneziaWG remains: `amneziawg.ko` builds for 5.10.160 and is loaded on demand
+  by `oko-vpn`; `wg`/`awg` are built with the app toolchain (ARM ELF, uClibc).
+  The `.conf` parser rejects `PreUp/PostUp/PreDown/PostDown`, supports AWG v3.1
   (`I1…I5`, `HeaderProtectionKey`, `AdvancedSecurity`) and is covered by a host
-  test. The full `bench/vpn_check.py` needs a host peer (WireGuard for `wg0`,
-  AmneziaWG from the vendored sources for `awg0`) and has not been run yet;
-  after it passes, the rows move to `FEATURES_VERIFIED.md`.
+  test; the v3.1 loopback handshake and the guard positive/negative path pass,
+  but an external AWG peer was not run (the host needs the out-of-tree module
+  for kernel 6.12).
 - **Sensors.** SHT21/INA/EC addresses respond on `/dev/i2c-3`; the INA3221 power
   inputs are not wired, so current and power readings may be inaccurate.
