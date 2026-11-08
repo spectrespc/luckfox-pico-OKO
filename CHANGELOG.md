@@ -164,6 +164,36 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Изменено
 
+- **Итоговая регрессия KI-043/KI-044 и устойчивость bench-скриптов (OKO).**
+  2026-11-08 на свежей загрузке: `nn_geom` 52/52, `api_check.py` 97/0
+  (`OKO_FOCUS_MOTOR_TESTS=1` — 107/0), `ui_check.py` в обычном режиме и с
+  `OKO_FOCUS_AF_TESTS=1` — passed, `geometry_check.py --what zoom` — 6
+  проверок (кроп 4.28 против 53.02 к полному кадру, корреляция 0.985/0.112;
+  возврат к 1x — 4.24, корреляция 1.000). `geometry_check.py`:
+  `stable_capture()` отбрасывает тёмные первые кадры после рестарта, критерий
+  кропа — нормированная корреляция вместо `mean|diff|` (её сбивает общий сдвиг
+  яркости/AWB), рестарт MP4 вынесен в opt-in `OKO_GEOMETRY_MP4_TESTS=1`
+  (после смены кропа он клинит RTSP). `api_check.py` опрашивает
+  `focus.status` до 20 с: после нескольких циклов `enable=1/0` AFM может
+  отдавать `idle`/`no_stats` до перезагрузки — это записано в
+  `bench/README.md` и `TESTBENCH.md` §9, как и уточнённые признаки CMA
+  (`cma_alloc -12`/503/нет кадров; высокий `loadavg` и `DW`-потоки сами по
+  себе не признак).
+- **Final KI-043/KI-044 regression and bench-script robustness (OKO).**
+  2026-11-08 on a fresh boot: `nn_geom` 52/52, `api_check.py` 97/0
+  (`OKO_FOCUS_MOTOR_TESTS=1` — 107/0), `ui_check.py` both in the default mode
+  and with `OKO_FOCUS_AF_TESTS=1` passed, `geometry_check.py --what zoom` — 6
+  checks (crop 4.28 versus 53.02 to the full frame, correlation 0.985/0.112;
+  back to 1x — 4.24, correlation 1.000). `geometry_check.py`:
+  `stable_capture()` drops the dark first frames after a restart, the crop
+  criterion is normalised correlation instead of `mean|diff|` (a global
+  brightness/AWB shift skews it), and the MP4 restart is opt-in via
+  `OKO_GEOMETRY_MP4_TESTS=1` (after a crop change it wedges RTSP).
+  `api_check.py` polls `focus.status` for up to 20 s: after several
+  `enable=1/0` cycles the AFM can report `idle`/`no_stats` until a reboot —
+  recorded in `bench/README.md` and `TESTBENCH.md` §9 together with the
+  refined CMA signs (`cma_alloc -12`/503/no frames; high `loadavg` and `DW`
+  threads are not a sign by themselves).
 - **Проверены сборки `sysdrv`/`app` и уточнена команда обновления `oem`
   (OKO).** 2026-11-08: `./build.sh sysdrv` и `./build.sh app` проходят в
   Docker-контейнере; `app` кладёт бинарник в `output/out/app_out/usr/bin`

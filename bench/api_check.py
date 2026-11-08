@@ -324,7 +324,7 @@ def focus_checks(failures, checks):
     checks += 1
     status, dec = post_focus("enable=1")
     # The statistics thread needs a frame before it reports "running".
-    deadline = time.time() + 6
+    deadline = time.time() + 20
     while status == 200 and dec.get("enable") and \
             dec.get("status") != "running" and time.time() < deadline:
         time.sleep(0.25)
