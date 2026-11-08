@@ -246,6 +246,19 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Изменено
 
+- **Сборка U-Boot, ядра, media и app подтверждена на хосте без контейнера
+  (OKO).** `./build.sh uboot|kernel|media|app` на Debian 13 с gcc 14.2 и
+  вендорским кросс-gcc 8.3.0 прошли без правок исходников: host-tools
+  U-Boot 2017 (`scripts/dtc`, `tools/`) и ядра 5.10 собраны gcc-14 только
+  с предупреждениями, целевой код по-прежнему собирает кросс-gcc 8.
+  Изменения сборки не потребовались.
+- **U-Boot, kernel, media and app build on the container-free host (OKO).**
+  `./build.sh uboot|kernel|media|app` on Debian 13 with gcc 14.2 and the
+  vendor cross gcc 8.3.0 passed without source changes: the U-Boot 2017
+  host tools (`scripts/dtc`, `tools/`) and the 5.10 kernel host tools build
+  with gcc-14 warnings only, while target code still uses cross gcc 8. No
+  build changes were required.
+
 - **Итоговая регрессия KI-043/KI-044 и устойчивость bench-скриптов (OKO).**
   2026-11-08 на свежей загрузке: `nn_geom` 52/52, `api_check.py` 97/0
   (`OKO_FOCUS_MOTOR_TESTS=1` — 107/0), `ui_check.py` в обычном режиме и с
