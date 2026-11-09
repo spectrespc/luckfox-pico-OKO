@@ -805,6 +805,19 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Исправлено
 
+- **ONVIF: падение `divinus` при включении (OKO).** Поток ONVIF создавался
+  со стеком 16 КиБ, но использует два 4-КиБ SOAP-буфера и кадры
+  `snprintf`: при `onvif.enable=true` процесс падал с `SIGSEGV` ещё до старта
+  медиастека. Стек увеличен до 256 КиБ; `GetDeviceInformation` на
+  `/onvif/device_service` отвечает, WebUI/RTSP работают. Проверено на стенде
+  2026-11-09.
+- **ONVIF: `divinus` crashed when ONVIF was enabled (OKO).** The ONVIF thread
+  was created with a 16 KiB stack but uses two 4 KiB SOAP buffers and
+  `snprintf` frames, so `onvif.enable=true` made the process die with `SIGSEGV`
+  before the media stack started. The stack is now 256 KiB;
+  `GetDeviceInformation` on `/onvif/device_service` responds and WebUI/RTSP
+  keep working. Verified on the bench on 2026-11-09.
+
 - **Долги ревью базы netboot (OKO).** `tools/native/setup_netboot.sh`
   перезапускает `tftpd-hpa` после правки `/etc/default` и drop-in
   (`systemctl enable` + `restart` вместо `enable --now`), поэтому

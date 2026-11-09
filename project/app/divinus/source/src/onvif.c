@@ -32,7 +32,10 @@ int start_onvif(void) {
     pthread_attr_init(&thread_attr);
     size_t stacksize;
     pthread_attr_getstacksize(&thread_attr, &stacksize);
-    size_t new_stacksize = 16 * 1024;
+    /* The thread has two 4 KiB SOAP buffers plus stdio/snprintf frames; a 16 KiB
+     * stack overflowed and the process died with SIGSEGV as soon as ONVIF was
+     * enabled.  256 KiB matches the usual pthread default on this target. */
+    size_t new_stacksize = 256 * 1024;
     if (pthread_attr_setstacksize(&thread_attr, new_stacksize))
         HAL_DANGER("onvif", "Can't set stack size %zu\n", new_stacksize);
     pthread_create(&onvifPid, &thread_attr, (void *(*)(void *))onvif_thread, NULL);
