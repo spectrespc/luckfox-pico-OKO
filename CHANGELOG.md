@@ -405,6 +405,21 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Изменено
 
+- **Документация приведена к составу slim-образа (OKO).** `INIT_ORDER.md`
+  описывает `RkLunch.sh` без rkipc-ветки и обновлённую таблицу init-скриптов
+  (без `S99python`/`S99_auto_reboot`); `TESTBENCH.md` — divinus как
+  единственный стример, сохранённую диагностику `v4l2-ctl`/`media-ctl`/
+  `rgaImDemo` и проверку `check_image_contents.sh`; `README_RU.md`,
+  `STRUCTURE.md`, `FEATURES*.md`, `KNOWN_ISSUES.md` (KI-045, KI-050) — тот же
+  состав.
+- **Documentation aligned with the slim image contents (OKO).** `INIT_ORDER.md`
+  describes `RkLunch.sh` without the rkipc branch and the updated init-script
+  table (no `S99python`/`S99_auto_reboot`); `TESTBENCH.md` covers divinus as
+  the only streamer, the retained `v4l2-ctl`/`media-ctl`/`rgaImDemo`
+  diagnostics and the `check_image_contents.sh` check; `README_RU.md`,
+  `STRUCTURE.md`, `FEATURES*.md`, `KNOWN_ISSUES.md` (KI-045, KI-050) follow
+  the same layout.
+
 - **Запуск OKO без rkipc-ветки (OKO).** `RkLunch.sh` больше не выбирает
   `rkipc-*.ini`, не копирует `image.bmp`, не запускает `rk_mpi_ao_test` и не
   переключает `csi_unite`; единственный стример — `divinus`, при отсутствии

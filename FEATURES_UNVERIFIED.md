@@ -30,6 +30,13 @@
 
 ### Примечания
 
+- **rkipc и вендорские тест-утилиты вырезаны из образа.** `rkipc`,
+  `rkaiq_3A_server`, `rkaiq_tool_server`, `rk_*_test`, `rk_mpi_*_test`,
+  `luckfox_*_test` и лишние v4l-утилиты перечислены в `oko-prune.list` и
+  отсутствуют в прошивке; диагностика через них недоступна. Сохранены
+  `v4l2-ctl`, `media-ctl` и `rgaImDemo`. Стендовый цикл этой ветки —
+  отложенный гейт, см. `KNOWN_ISSUES.md`.
+
 - **Бюджет каналов VPSS — 4.** Без IVS доступны main + sub + MJPEG + JPEG; с
   включённым IVS свободных каналов меньше. Проверено 2026-11-05: IVS + MJPEG
   (субпоток выключен) работают вместе; комбинация sub + MJPEG + IVS не
@@ -111,6 +118,13 @@ Status as of 2026-11-09.
 | Firmware | Power loss during an update | Recovery of STM32/STM8 | `flash.c`, bootloaders | `oko-flash`, STM8 I2C bootloader | **limited** — killing the host `oko-motor flash` was tested (bootloader stays usable, the next upload recovers); a full power cut was not emulated |
 
 ### Notes
+
+- **rkipc and the vendor test utilities are pruned from the image.** `rkipc`,
+  `rkaiq_3A_server`, `rkaiq_tool_server`, `rk_*_test`, `rk_mpi_*_test`,
+  `luckfox_*_test` and the extra v4l utilities are listed in `oko-prune.list`
+  and are absent from the firmware, so diagnostics through them are
+  unavailable. `v4l2-ctl`, `media-ctl` and `rgaImDemo` are kept. The bench
+  cycle for this branch is a deferred gate, see `KNOWN_ISSUES.md`.
 
 - **VPSS channel budget is 4.** Without IVS, main + sub + MJPEG + JPEG are
   available; with IVS there are fewer free channels. On 2026-11-05, IVS + MJPEG

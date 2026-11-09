@@ -37,6 +37,9 @@
 bench/run.sh api_check.py
 bench/run.sh ui_check.py            # нужен Playwright + Chromium
 
+# состав образа: обязательные файлы на месте, вырезанных нет
+tools/native/check_image_contents.sh
+
 # помощь фокусировке и прошивка контроллеров
 bench/run.sh focus_check.py --enable --seconds 20 --snapshot
 bench/run.sh firmware_check.py --negative
@@ -113,7 +116,7 @@ Entry point for OKO capabilities on the Luckfox Pico Pro Max (RV1106, SPI NAND,
 Buildroot) with the SC230AI sensor: platform passport, an index of the
 verification-status files and short verification commands.
 
-Status as of 2026-11-08. Markers: **works**, **limited**, **blocked**.
+Status as of 2026-11-09. Markers: **works**, **limited**, **blocked**.
 
 | File | Content |
 |---|---|

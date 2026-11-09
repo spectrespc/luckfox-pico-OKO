@@ -20,7 +20,7 @@
 | Параметр | Значение | Смысл |
 |---|---|---|
 | `RK_CHIP` | `rv1106` | SoC RV1106 |
-| `RK_APP_TYPE` | `RKIPC_RV1106` | приложение `rkipc` |
+| `RK_APP_TYPE` | `RKIPC_RV1106` | пакет приложения (устанавливает `RkLunch.sh`); `rkipc` вырезан из образа |
 | `RK_BOOT_MEDIUM` | `spi_nand` | загрузка с SPI NAND |
 | `RK_PARTITION_CMD_IN_ENV` | `256K(env),256K@256K(idblock),512K(uboot),6M(boot),40M(oem),40M(userdata),168M(rootfs)` | разметка 256 МБ NAND: `boot` 6 МБ, `oem` 40 МБ, `userdata` 40 МБ, `rootfs` 168 МБ |
 | `LF_TARGET_ROOTFS` | `buildroot` | корневая ФС Buildroot (busybox init) |
@@ -260,7 +260,7 @@ I2C, `enter-boot`/`info`/`boot-reset` и обновление `app-2.1.1.ihx` ч
 | Файл | Содержание |
 |---|---|
 | `STRUCTURE.md` | структура репозитория: папки, ключевые файлы, назначение |
-| `INIT_ORDER.md` | порядок инициализации: U-Boot → ядро → busybox init → модули → `divinus`/`rkipc` |
+| `INIT_ORDER.md` | порядок инициализации: U-Boot → ядро → busybox init → модули → `divinus` |
 | `TESTBENCH.md` | паспорт тестового стенда: железо, сеть, учётки, прошивка, диагностика |
 | `FEATURES.md` | точка входа в описание функционала: паспорт платформы, индекс по файлам статусов и краткие команды проверки |
 | `FEATURES_VERIFIED.md` | подтверждённые функции: видео, сеть, `oko-ec`, WebUI/API, microSD |
@@ -289,9 +289,9 @@ sh /oem/usr/ko/insmod_ko.sh      # ручная перезагрузка мод�
   телеметрия `T/BAT/LTE/WiFi` четырьмя строками слева сверху, GPS справа
   сверху, сообщения из `/tmp/osd.fifo` слева сверху, CPU/свободная память/
   температура CPU слева снизу; ярко-зелёный текст `0x07e0` с чёрным контуром,
-  30 fps); вернуть штатный `rkipc` —
-  `touch /userdata/rkipc.enable && reboot`. Подробности — `INIT_ORDER.md`,
-  `TESTBENCH.md` и `project/app/divinus/README.md`.
+  30 fps); `rkipc` вырезан из образа (`oko-prune.list`), поэтому стример
+  один. Подробности — `INIT_ORDER.md`, `TESTBENCH.md` и
+  `project/app/divinus/README.md`.
 
 ## Важные примечания
 

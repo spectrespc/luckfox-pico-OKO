@@ -2,7 +2,7 @@
 
 Документ описывает полную цепочку запуска прошивки Luckfox Pico Pro Max (RV1106):
 BootROM → U-Boot → ядро Linux → busybox init → init-скрипты → загрузка модулей ядра →
-запуск приложения `rkipc`, а также зависимости между разделами, модулями и сервисами.
+запуск приложения `divinus`, а также зависимости между разделами, модулями и сервисами.
 
 Активная конфигурация определяется симлинком `.BoardConfig.mk`, который указывает на
 `project/cfg/BoardConfig_IPC/BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI.mk`.
@@ -23,7 +23,7 @@ BootROM → U-Boot → ядро Linux → busybox init → init-скрипты �
 | Параметр | Значение | Комментарий |
 |---|---|---|
 | `RK_CHIP` | `rv1106` | RV1106 (Cortex-A7 + NPU + ISP) |
-| `RK_APP_TYPE` | `RKIPC_RV1106` | приложение rkipc |
+| `RK_APP_TYPE` | `RKIPC_RV1106` | пакет app (устанавливает `RkLunch.sh`; сам `rkipc` вырезан из образа) |
 | `RK_BOOT_MEDIUM` | `spi_nand` | загрузка с SPI NAND |
 | `RK_KERNEL_DTS` | `rv1106g-luckfox-pico-pro-max-sc230ai.dts` | device tree активной платы; `&sc3336`/`&mis5001` выключены |
 | I2C3-M1 | `okay`, `100000` Гц, `pinctrl-0 = <&i2c3m1_xfer>` | включён в `rv1106g-luckfox-pico-pro-max-sc230ai.dts`; выводы `GPIO1_D2`/`GPIO1_D3`, узел `/dev/i2c-3` |
@@ -117,7 +117,7 @@ SPI NAND, если `sys_bootargs` не сохранён в env.
 | 4 | `S02sysctl` | применение `/etc/sysctl.conf` | `/proc` уже смонтирован |
 | 5 | `S10udev` | eudev, создание узлов устройств; правило `60-oko-sdcard.rules` вызывает `oko-sdcard add/remove` и монтирует карту в `/mnt/sdcard` (состояние — `/run/oko-sd.state`) | должен пройти до монтирования по `by-name`; `&sdmmc` в DTS — съёмная карта с `sdmmc0_det` |
 | 6 | `S20linkmount` | симлинки `/dev/block/by-name`, монтирование `oem`/`userdata` | ключевой этап, см. ниже |
-| 7 | `S20oko-osd` | divinus по умолчанию (`/userdata/divinus.enable`, opt-out — `/userdata/rkipc.enable`), бутстрап OSD-конфига, запуск `oko-osd`; `/tmp/osd-sys.txt` — `CPU …\nMEM FREE … SD FREE …\nT …C` | оверлей OKO; после `S20linkmount`, до `S21appinit` |
+| 7 | `S20oko-osd` | `divinus` — единственный стример (всегда создаёт `/userdata/divinus.enable`), бутстрап OSD-конфига, запуск `oko-osd`; `/tmp/osd-sys.txt` — `CPU …\nMEM FREE … SD FREE …\nT …C` | оверлей OKO; после `S20linkmount`, до `S21appinit` |
 | 8 | `S20oko-update` | пост-проверка обновления ПО: сравнивает `/etc/oko-release` с `/userdata/oko-update.pending`, пишет `/userdata/oko-update.state`, удаляет `sd_update.txt` и образы с microSD | оверлей OKO; после `S20linkmount` (и `S20oko-osd`), до `S21appinit`; при отсутствии `.pending` завершается без работы |
 | 9 | `S20okotz` | применение `[system] tz` из `/userdata/divinus.yaml` к `/etc/TZ`: относительный симлинк на `usr/share/zoneinfo/uclibc/<зона>` | оверлей OKO; после `S20linkmount`/`S20oko-osd`, до `S21appinit`; нет ключа или зона невалидна — остаётся зона образа (`Europe/Moscow`) |
 | 10 | `S20urandom` | сохранение/восстановление seed urandom | — |
@@ -133,14 +133,12 @@ SPI NAND, если `sys_bootargs` не сохранён в env.
 | 20 | `S50usbdevice` | настройка USB-режима (gadget) | — |
 | 21 | `S60micinit` | настройка микрофонного тракта через `amixer` | аудио-модули ядра |
 | 22 | `S60openvpn` | штатный init-скрипт пакета buildroot | **неактивен**: читает `/etc/openvpn/*.conf` (каталога нет), профилями OKO управляет `S45oko-vpn`; не удалять, чтобы пакет оставался целостным |
-| 23 | `S99_auto_reboot` | скрипты rockchip_test (auto-reboot / power-lost) | `/oem/rockchip_test`, `/data/cfg` |
-| 24 | `S99hciinit` | `hciattach` для AIC8800 и поднятие `wlan0` | зависит от `aic8800_fdrv` |
-| 25 | `S99luckfoxconfigload` | `luckfox-config load` — восстановление настроек | `/userdata` |
-| 26 | `S99luckfoxcustomoverlay` | применение пользовательского DT-overlay из `/mnt/cfg` | `dtc`, `configfs` |
-| 27 | `S99oko-test` | тестовый маркер OKO: пишет `/tmp/oko-test-ok` и строку в `/dev/kmsg` | оверлей OKO, `MARKER` в скрипте |
-| 28 | `S99python` | запуск `/root/main.py` или `/root/boot.py` | `/usr/bin/python` |
-| 29 | `S99rtcinit` | калибровка RTC при «нулевом» времени; RTC хранится в UTC (`hwclock -u`, `date -u`) | — |
-| 30 | `S99usb0config` | назначение IP `172.32.0.93` интерфейсу `usb0` | может перезапускать `S50usbdevice` |
+| 23 | `S99hciinit` | `hciattach` для AIC8800 и поднятие `wlan0` | зависит от `aic8800_fdrv` |
+| 24 | `S99luckfoxconfigload` | `luckfox-config load` — восстановление настроек | `/userdata` |
+| 25 | `S99luckfoxcustomoverlay` | применение пользовательского DT-overlay из `/mnt/cfg` | `dtc`, `configfs` |
+| 26 | `S99oko-test` | тестовый маркер OKO: пишет `/tmp/oko-test-ok` и строку в `/dev/kmsg` | оверлей OKO, `MARKER` в скрипте |
+| 27 | `S99rtcinit` | калибровка RTC при «нулевом» времени; RTC хранится в UTC (`hwclock -u`, `date -u`) | — |
+| 28 | `S99usb0config` | назначение IP `172.32.0.93` интерфейсу `usb0` | может перезапускать `S50usbdevice` |
 
 `S20linkmount` генерируется в `project/build.sh` (при разборе таблицы разделов) в файл
 `$RK_PROJECT_OUTPUT/S20linkmount` с `bootmedium=$RK_BOOT_MEDIUM`. Для `spi_nand` он:
@@ -258,47 +256,25 @@ esac
    `/run/oko-sd.lock`, чтобы udev не вмешался в форматирование. При активной
    записи `/api/storage` блокирует `unmount`/`format`; при потере монтирования
    recorder закрывает текущий сегмент и не пишет в NAND.
-5. Проверяет маркер `/userdata/divinus.enable` — переключатель стримера OpenIPC
-   `divinus` (MIT, вендорен в `project/app/divinus/`). Маркер создаётся по
-   умолчанию скриптом `S20oko-osd` (оверлей OKO, выполняется до `S21appinit`);
-   opt-out — файл `/userdata/rkipc.enable`: при его наличии `S20oko-osd` удаляет
-   divinus-маркер, и `post_chk` запускает штатный `rkipc`. Если маркер есть:
-- `S20oko-osd` заранее бутстрапит `/userdata/divinus.yaml`: при отсутствии
-      файла или отсутствии в нём `reg0_text`/`reg0_size`/`reg0_color`/`reg3_text`
-      (старый/ручной конфиг) файл сохраняется как `divinus.yaml.bak` и
-      перезаписывается фабричным `/oem/usr/share/divinus/divinus.yaml` с тремя
-      OSD-регионами (дата/время, телеметрия, внешние сообщения); в `post_chk`
-      остаётся только резервное копирование фабричного конфига при отсутствии
-      файла;
+5. Проверяет маркер `/userdata/divinus.enable` — `divinus` (MIT, вендорен в
+   `project/app/divinus/`) единственный стример: `rkipc` и его ресурсы
+   вырезаны из образа при упаковке (`oko-prune.list`), поэтому fallback на
+   `rkipc` в `RkLunch.sh` отсутствует. Маркер всегда создаётся скриптом
+   `S20oko-osd` (оверлей OKO, выполняется до `S21appinit`).
+   - `S20oko-osd` заранее бутстрапит `/userdata/divinus.yaml`: при отсутствии
+     файла или отсутствии в нём `reg0_text`/`reg0_size`/`reg0_color`/`reg3_text`
+     (старый/ручной конфиг) файл сохраняется как `divinus.yaml.bak` и
+     перезаписывается фабричным `/oem/usr/share/divinus/divinus.yaml` с тремя
+     OSD-регионами (дата/время, телеметрия, внешние сообщения); в `post_chk`
+     остаётся только резервное копирование фабричного конфига при отсутствии
+     файла;
    - `post_chk` переходит в `/userdata` (конфиг ищется в каталоге исполняемого
      файла, затем в `./`, затем в `/etc/divinus.yaml`; при сохранении из WebUI файл
      пере-создаётся рядом с текущим каталогом, поэтому `/userdata/divinus.yaml`
      остаётся постоянным);
-   - запускается `/oem/usr/bin/divinus &`, после чего `post_chk` завершается:
-     секции rkipc ниже (ini, `image.bmp`, `speaker_test`, `csi_unite`, запуск
-     rkipc) не выполняются. Удаление маркера возвращает штатный запуск `rkipc`.
-     Если бинарь divinus отсутствует в неполной сборке, ветка не активируется и
-     запускается `rkipc`.
-6. Готовит `rkipc.ini`:
-   - если `/oem/usr/share/rkipc.ini` отсутствует, фабричный ini выбирается по
-     загруженному сенсору (`lsmod`): `mia1321` → `rkipc-mia1321-100w.ini`,
-     `mis5001` → `rkipc-mis5001-500w.ini`, `sc530ai` → `rkipc-500w.ini`,
-     `sc4336` → `rkipc-400w.ini`, `sc230ai` → `rkipc-300w.ini`,
-     `sc3336` → `rkipc-300w.ini`, `imx415` → `rkipc-800w.ini`;
-   - выбранный файл копируется в `/userdata/rkipc.ini`;
-   - если ни один вариант не найден, печатается `Error: not found rkipc.ini !!!`
-     и `post_chk` завершается с ошибкой.
-7. Копирует `/oem/usr/share/image.bmp` в `/userdata`, при наличии проигрывает
-   `speaker_test.wav` через `rk_mpi_ao_test`.
-8. Вызывает `luckfox-config get_csi_unite`; для `imx415` требуется `unite=1`, для
-   остальных — `0`. При расхождении значение меняется и `post_chk` возвращается без
-   запуска rkipc (требуется перезагрузка).
-9. Запускает `rkipc -a /oem/usr/share/iqfiles &` (или `rkipc &`, если каталога IQ нет).
-
-> **Особенность SC230AI:** отдельной ветки выбора ini долго не было — исправлено:
-> `post_chk` сопоставляет `sc230ai` шаблону `/oem/usr/share/rkipc-300w.ini`
-> (сенсор 3 МП, ближайшая геометрия). Если `rkipc` стартует с некорректной геометрией,
-> шаблон подбирается отдельно.
+   - если маркера или `/oem/usr/bin/divinus` нет, в консоль выводится явное
+     сообщение и стример не запускается; иначе выполняется
+     `/oem/usr/bin/divinus &`.
 
 ## 6. Порядок загрузки модулей ядра (`insmod_ko.sh`)
 
@@ -330,7 +306,7 @@ esac
 `insmod_wifi.sh` определяет чип по `uevent` SDIO/USB и загружает соответствующий набор:
 AIC8800 (`aic_load_fw` → `aic8800_fdrv`), AP6XXX (`bcmdhd`), RTL8723BS
 (`cfg80211` + `mac80211` + `r8723bs`), RTL8723DS, RTL8189FS, RTL8188FU, ATBM и др.
-Загрузка WiFi не блокирует запуск `rkipc`.
+Загрузка WiFi не блокирует запуск `divinus`.
 
 `amneziawg.ko` в этот список **не входит**: модуль лежит в `/oem/usr/ko`, но
 загружается по требованию из `/usr/bin/oko-vpn` при первом `up` профиля
@@ -346,25 +322,20 @@ AIC8800 (`aic_load_fw` → `aic8800_fdrv`), AP6XXX (`bcmdhd`), RTL8723BS
   не найдёт `/oem/usr/bin/RkLunch.sh`, модули и IQ-файлы. Источник этих разделов —
   ubifs из SPI NAND.
 - `/etc/iqfiles` — симлинк на `../oem/usr/share/iqfiles`, создаётся при упаковке
-  (`build.sh`); `rkipc` запускается с `-a /oem/usr/share/iqfiles` напрямую.
-- `rkipc.ini` хранится в `/userdata` (переживает перепрошивку), фабричный шаблон — в
-  `/oem/usr/share`.
+  (`build.sh`); IQ-файлы сенсора использует медиастек `divinus`/`librkaiq`.
 
-### Приложение rkipc
+### Пакет rkipc (в образ не входит)
 
-`rkipc` зависит от:
+Пакет `project/app/rkipc` по-прежнему собирается, потому что устанавливает
+`RkLunch.sh`/`RkLunch-stop.sh`, но сам стример и его ресурсы перечислены в
+`oko-prune.list` и вырезаются при упаковке. Выбор `rkipc-*.ini`,
+`/userdata/rkipc.ini`, `image.bmp`, `speaker_test.wav` и переключение
+`csi_unite` из `RkLunch.sh` удалены.
 
-- `insmod_ko.sh` — весь медиастек (ISP, CIF, RGA, MPP, NPU, rockit, rve);
-- IQ-файлов сенсора в `/oem/usr/share/iqfiles`;
-- корректного `rkipc.ini` в `/userdata`;
-- `luckfox-config` (проверка/установка `csi_unite`);
-- смонтированных `/oem` и `/userdata`.
-
-### Приложение divinus (по умолчанию, opt-out через `rkipc.enable`)
+### Приложение divinus (единственный стример)
 
 `/oem/usr/bin/divinus` запускается из `post_chk` при наличии
-`/userdata/divinus.enable`; маркер создаёт `S20oko-osd`, если нет
-`/userdata/rkipc.enable` (opt-out):
+`/userdata/divinus.enable`; маркер всегда создаёт `S20oko-osd`:
 
 - зависит от тех же `insmod_ko.sh`, `/oem/usr/share/iqfiles` и смонтированных
   `/oem`/`/userdata`; отдельного набора модулей ядра не требует;
@@ -424,9 +395,8 @@ AIC8800 (`aic_load_fw` → `aic8800_fdrv`), AP6XXX (`bcmdhd`), RTL8723BS
   `blocked`;
 - `divinus` использует пропатченный `compat.c` (libc `mmap` с 32-битным `off_t`),
   поэтому дополнительный `LD_PRELOAD` не нужен;
-- `divinus` и `rkipc` используют один rockit/ISP-конвейер, поэтому
-  взаимоисключающие: одновременно не запускаются, выбор — маркерами
-  `divinus.enable`/`rkipc.enable`.
+- `divinus` — единственный пользователь rockit/ISP-конвейера в образе
+  (`rkipc` вырезан в `oko-prune.list`), поэтому конфликта за конвейер нет.
 
 ### VPN (`oko-vpn`)
 
@@ -560,6 +530,7 @@ AIC8800 (`aic_load_fw` → `aic8800_fdrv`), AP6XXX (`bcmdhd`), RTL8723BS
 | Загрузка модулей | `sysdrv/drv_ko/insmod_ko.sh` |
 | WiFi | `sysdrv/drv_ko/wifi/insmod_wifi.sh` |
 | Приложение | `project/app/rkipc/rkipc/src/rv1106_ipc/RkLunch.sh` |
+| Вырезание из образа | `project/cfg/BoardConfig_IPC/oko-prune.list`, `project/build.sh` (`__RUN_POST_CLEAN_FILES`) |
 | Сверка артефакта | `output/out/rootfs_uclibc_rv1106/etc/init.d/`, `output/out/oem/usr/ko/` |
 
 Быстрая проверка после изменений:
@@ -575,6 +546,9 @@ grep -n "__insmod\|insmod_wifi" sysdrv/drv_ko/insmod_ko.sh
 ls output/out/oem/usr/ko/ | grep -E "motor|hpmcu"
 
 # зависимости приложения
-grep -n "insmod_ko\|rkipc.ini\|iqfiles\|luckfox-config" \
+grep -n "insmod_ko\|iqfiles\|divinus" \
   project/app/rkipc/rkipc/src/rv1106_ipc/RkLunch.sh
+
+# вырезанные из образа пути
+tools/native/check_image_contents.sh
 ```

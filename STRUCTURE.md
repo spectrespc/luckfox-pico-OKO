@@ -59,8 +59,9 @@
 
 - `build.sh` — основной скрипт сборки SDK.
 - `rkflash.sh` — прошивка собранного образа на плату.
-- `app/` — прикладные приложения: `rkipc` (штатное IPC-приложение), `divinus`
-  (вендоренный OpenIPC-стример, по умолчанию вместо rkipc), `uvc_app_tiny`,
+- `app/` — прикладные приложения: `rkipc` (пакет собирается ради
+  `RkLunch.sh`; сам `rkipc` вырезан из образа), `divinus`
+  (вендоренный OpenIPC-стример, единственный стример в образе), `uvc_app_tiny`,
   `ipcweb` (веб-интерфейс), `rk_smart_door`, `wifi_app`, `fastboot_client`,
   `component` (общие компоненты).
 - `app/divinus/` — пакет `divinus`: `source/` (вендорские `src/`, `res/`, `doc/`,
@@ -135,8 +136,9 @@
   с оверлеями rootfs и pre/post-скрипты (`*-pre.sh`, `*-post.sh`),
   `oko-prune.list` (пути, вырезаемые из rootfs и `oem` при упаковке; применяет
   `__RUN_POST_CLEAN_FILES`). В оверлее OKO
-  `overlay-luckfox-buildroot-init/`: `etc/init.d/S20oko-osd` (divinus по
-  умолчанию, бутстрап OSD-конфига, запуск демона), `etc/init.d/S21oko-ec`
+  `overlay-luckfox-buildroot-init/`: `etc/init.d/S20oko-osd` (divinus —
+  единственный стример, всегда создаёт маркер, бутстрап OSD-конфига, запуск
+  демона), `etc/init.d/S21oko-ec`
   (запуск `oko-ec daemon`, opt-out `/userdata/oko-ec.disable`), `usr/bin/oko-osd`
   (телеметрия и FIFO-сообщения для OSD; реальные `T`/`BAT` из
   `/tmp/oko-ec.osd`), `usr/bin/oko-sdcard` + `lib/udev/rules.d/60-oko-sdcard.rules`

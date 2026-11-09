@@ -137,7 +137,7 @@ serial-консоли. Для стабильных проверок зарезе
 | `env` | U-Boot env (MAC и пр.) | `output/image/env.img` (этой фичей не изменялся) |
 | `idblock`, `uboot` | SPL/DDR, U-Boot | `output/image/idblock.img`, `uboot.img` |
 | `boot` | ядро + DTB | `output/image/boot.img` |
-| `oem` | `/oem/usr/bin/divinus`, `/oem/usr/bin/wg`, `/oem/usr/bin/awg`, `/oem/usr/ko/amneziawg.ko`, `/oem/usr/share/divinus/divinus.yaml`, `/oem/usr/share/rkipc*`, библиотеки | `output/out/oem/` |
+| `oem` | `/oem/usr/bin/divinus`, `/oem/usr/bin/wg`, `/oem/usr/bin/awg`, `/oem/usr/ko/amneziawg.ko`, `/oem/usr/share/divinus/divinus.yaml`, `/oem/usr/share/iqfiles`, библиотеки | `output/out/oem/` |
 | `userdata` | фабричное содержимое раздела; рабочие маркеры и конфиг живут на устройстве | `output/out/userdata/` |
 | `rootfs` | корневая ФС, включая `/etc/init.d/S20oko-osd`, `/usr/bin/oko-osd`, `/usr/bin/oko-vpn` и `/etc/init.d/S45oko-vpn` | `output/out/rootfs_uclibc_rv1106/` |
 
@@ -505,11 +505,12 @@ curl -s -u admin:oko-change-me \
 # MAC восстановится из serial.
 ps | grep dhcpcd | grep -v grep
 
-# приложение запущено: divinus по умолчанию, rkipc — только при opt-out
+# приложение запущено: divinus — единственный стример (rkipc вырезан из образа)
 ps | grep -E 'divinus|rkipc'
 ls -l /oem/usr/bin/divinus /userdata/divinus.enable
-ls -l /userdata/divinus.yaml /userdata/rkipc.enable 2>/dev/null
-# opt-out на DUT: touch /userdata/rkipc.enable && reboot
+ls -l /userdata/divinus.yaml
+# проверка вырезанного состава (на хосте, после сборки)
+tools/native/check_image_contents.sh
 curl -s -u admin:oko-change-me http://192.168.52.97/api/status
 curl -s -u admin:oko-change-me -o /tmp/snap.jpg http://192.168.52.97/image.jpg
 # OSD: time — bottom-right, telemetry (4 lines) — top-left, GPS — top-right,
@@ -575,14 +576,13 @@ dmesg | tail -50
 |---|---|
 | Нет загрузки после прошивки | не прошит `rootfs`/`oem`, повреждён UBI (неполное стирание раздела), неверная таблица разделов |
 | `ubi0 error: ubi_attach: bad image sequence number` | раздел записан по длине образа, а не по полному размеру (`wl` вторым аргументом передан неверный размер) |
-| `rkipc` не стартует | нет `rkipc.ini` для сенсора или не смонтирован `/oem` (см. `INIT_ORDER.md`) |
-| `divinus` не стартует (ожидается по умолчанию) | есть `/userdata/rkipc.enable` (opt-out), нет `/oem/usr/bin/divinus` (сборка пакета упала молча), нет IQ-файла сенсора, `dlopen` не находит `librockit.so`/`librkaiq.so` (`LD_LIBRARY_PATH` без `/oem/usr/lib`) |
+| `divinus` не стартует (единственный стример) | нет `/userdata/divinus.enable` (не выполнился `S20oko-osd`), нет `/oem/usr/bin/divinus` (сборка пакета упала молча), нет IQ-файла сенсора, `dlopen` не находит `librockit.so`/`librkaiq.so` (`LD_LIBRARY_PATH` без `/oem/usr/lib`) |
 | `divinus`: нет картинки, AIQ-ошибки | геометрия в `divinus.yaml` не совпадает с режимом сенсора (SC230AI — 1920x1080), IQ не найден по имени модуля из `/proc/rkisp-vir0` |
 | `divinus`: `mmap part 1 failed!`, пустые JPEG/RTSP | в сборке не применён патч `compat.c` (ABI `mmap`): на uClibc hard-float не должен определяться собственный 64-битный `mmap`; см. `project/app/divinus/README.md` |
 | OSD: нет телеметрии/сообщений, `@/tmp/...` виден как текст | не применён патч `region.c` (`@file`-провайдер) или не запущен `oko-osd`: `ps` не показывает процесс, `/etc/init.d/S20oko-osd status` сообщает `not running`, файлов `/tmp/osd-*` нет |
 | OSD: шрифт не найден | в `regN_font` указан отсутствующий шрифт; в rootfs есть только `/oem/usr/share/simsun_en.ttf` (`regN_font: simsun_en`) |
 | `/userdata/divinus.yaml` перезаписан после загрузки | ожидаемо: `S20oko-osd` заменяет конфиг без `reg0_text`/`reg0_size`/`reg0_color`/`reg3_text` фабричным (старый формат); первый прежний файл сохраняется как `divinus.yaml.bak` |
-| Запущены и `divinus`, и `rkipc` | маркер появился после старта `rkipc`; перезагрузить DUT (ветки взаимоисключающие) |
+| `check_image_contents.sh` сообщает об уцелевшем пути | инкрементальная сборка не применила prune-список: пересобрать `./build.sh firmware` (или полную сборку) и повторить проверку |
 | Нет `/dev/video*` | `insmod_ko.sh` не выполнился или `sc230ai.ko` отсутствует |
 | `oko-ec scan` не находит `0x40`/`0x41`/`0x42` | нет внешних pull-up на `GPIO1_D2`/`GPIO1_D3`, неверный pinmux (I2C3-M1 вместо M0) или INA3221 с другой перемычкой `A0` (ожидается `0x41`) |
 | `oko-ec ina226` показывает нули | силовые входы INA3221 (`VIN+`/`VIN-`, `VBUS`) не подключены к нагрузке/шине; обмен по I2C при этом работает |
@@ -610,19 +610,21 @@ dmesg | tail -50
 - `insmod_ko.sh` вызывается из `RkLunch.sh`, который запускает `S21appinit`;
   каталог `/oem/usr/etc/init.d/` пуст, вся логика приложения зашита в `post_chk`.
   Подробнее — `INIT_ORDER.md`.
-- `post_chk` выбирает для `sc230ai` шаблон `/oem/usr/share/rkipc-300w.ini`
-  (сенсор 3 МП). Если геометрия кадра окажется некорректной, ini подбирается отдельно.
+- `post_chk` больше не выбирает `rkipc-*.ini` и не переключает `csi_unite`:
+  `rkipc` вырезан из образа вместе с ini, `image.bmp` и `speaker_test.wav`
+  (`oko-prune.list`). Диагностика через `rkipc`, `rk_mpi_*_test`,
+  `rkaiq_3A_server` и `rkaiq_tool_server` недоступна; остаются `v4l2-ctl`,
+  `media-ctl` и `rgaImDemo`.
 - В автономном режиме `oem` и `userdata` монтируются из SPI NAND (ubifs).
   Изменения, сделанные на устройстве в `/userdata`, сохраняются в NAND.
 - Сборка идёт на хосте; сетевые сервисы стенда (`tftpd-hpa`,
   `nfs-kernel-server`, `rpcbind`) запускает контейнер `services/` через
   `tools/native/setup_netboot.sh`. Старый контейнер сборки не используется.
-- `divinus` — стример OpenIPC (MIT, `project/app/divinus/`), **по умолчанию**:
-  маркер `/userdata/divinus.enable` создаёт `S20oko-osd`. Opt-out —
-  `/userdata/rkipc.enable` (маркер divinus удаляется, запускается `rkipc`).
+- `divinus` — единственный стример OpenIPC (MIT, `project/app/divinus/`):
+  маркер `/userdata/divinus.enable` всегда создаёт `S20oko-osd`; `rkipc`
+  вырезан из образа, opt-out больше нет.
   RV11xx-HAL в upstream ещё «в разработке»: RTSP/fMP4/JPEG работают,
-  аудио ограничено. Web-порт divinus — `80`, RTSP — `554`; пока divinus активен,
-  web/RTSP rkipc не запускаются.
+  аудио ограничено. Web-порт divinus — `80`, RTSP — `554`.
 - OSD divinus включён в фабричном конфиге: время — в правом нижнем углу
   (`reg0`), телеметрия `T/BAT/LTE/WiFi` — четырьмя строками в левом верхнем
   (`reg1`), GPS — в правом верхнем (`reg2`), сообщения из `/tmp/osd.fifo` —

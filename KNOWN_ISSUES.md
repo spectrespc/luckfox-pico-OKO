@@ -234,6 +234,14 @@
   До закрытия гейтов механизм считается непроверенным; штатная прошивка —
   покомпонентная по `TESTBENCH.md` §7B. Статус: **открыто (P3)**.
 
+- **KI-050. Ветка `feature/slim-image`: стендовый гейт после вырезания.**
+  Статическая проверка `tools/native/check_image_contents.sh` проходит, но
+  цикл на подключённом DUT (прошивка `update.img`, старт `divinus`, OSD,
+  RTSP/ONVIF, `api_check`/`ui_check`/`osd_check`) и OTA-гейты KI-049 должны
+  быть выполнены до мержа в `main`. До их прохождения ветка считается
+  непроверенной; если гейт не пройден, мерж блокируется.
+  Статус: **отложенный гейт перед мержем**.
+
 ### VPN
 
 - **KI-037. `resolvconf` в образе нет.**
@@ -307,15 +315,16 @@
   приложения. Предпросмотр Live может показывать `/mjpeg` или `/image.jpg`,
   где кроп main не действует. Статус: **закрыто (2026-11-07)**.
 
-- **KI-045. Смена ABI rootfs: OpenSSL 3 и Python 3.14.**
+- **KI-045. Смена ABI rootfs: OpenSSL 3 (Python 3.14 удалён).**
   После перехода на Buildroot 2026.08.1 в rootfs нет
-  `libssl.so.1.1`/`libcrypto.so.1.1` и `libpython3.11`; вместо них
-  `libssl.so.3`/`libcrypto.so.3` и `libpython3.14`. Штатные `divinus`,
-  `oko-*`, `wg`/`awg`, OpenVPN 2.7.8 пересобраны и проверены
+  `libssl.so.1.1`/`libcrypto.so.1.1`; вместо них `libssl.so.3`/`libcrypto.so.3`.
+  Штатные `divinus`, `oko-*`, `wg`/`awg`, OpenVPN 2.7.8 пересобраны и проверены
   (`api_check` 98/98, RTSP/OSD), но сторонние сборки в `/oem`, слинкованные
-  со старым ABI, не запустятся. Обход: пересобрать из исходников SDK; для
-  готовых blob'ов — совместимые копии библиотек рядом (не рекомендуется).
-  Статус: **принятое ограничение миграции**.
+  со старым ABI, не запустятся. Python 3.14 с 2026-11-09 в образ не входит
+  (`oko-prune.list`, defconfig), поэтому `libpython3.14` и Python-пакеты
+  недоступны. Обход: пересобрать из исходников SDK; для готовых blob'ов —
+  совместимые копии библиотек рядом (не рекомендуется).
+  Статус: **принятое ограничение миграции (обновлено 2026-11-09)**.
 
 - **KI-046. `luckfox_pico_w_defconfig` не мигрирован.**
   Wi-Fi/audio-вариант (`bluez5_utils`, `mpv`) остался на старых патчах
@@ -558,6 +567,13 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   are closed the mechanism is unverified; the supported flashing path remains
   the per-partition procedure in `TESTBENCH.md` §7B. Status: **open (P3)**.
 
+- **KI-050. `feature/slim-image` branch: bench gate after pruning.**
+  The static `tools/native/check_image_contents.sh` check passes, but the cycle
+  on the connected DUT (flash `update.img`, `divinus` start, OSD, RTSP/ONVIF,
+  `api_check`/`ui_check`/`osd_check`) and the KI-049 OTA gates must be completed
+  before merging into `main`. Until then the branch is unverified; a failed
+  gate blocks the merge. Status: **deferred pre-merge gate**.
+
 ### VPN
 
 - **KI-037. `resolvconf` is not in the image.** The wg-quick `DNS=` path cannot
@@ -628,15 +644,17 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   `/image.jpg`, where the main crop has no effect.
   Status: **closed (2026-11-07)**.
 
-- **KI-045. Rootfs ABI change: OpenSSL 3 and Python 3.14.**
+- **KI-045. Rootfs ABI change: OpenSSL 3 (Python 3.14 removed).**
   After the Buildroot 2026.08.1 migration the rootfs no longer ships
-  `libssl.so.1.1`/`libcrypto.so.1.1` or `libpython3.11`; it provides
-  `libssl.so.3`/`libcrypto.so.3` and `libpython3.14` instead. The bundled
-  `divinus`, `oko-*`, `wg`/`awg` and OpenVPN 2.7.8 are rebuilt and verified
-  (`api_check` 98/98, RTSP/OSD), but third-party `/oem` binaries linked
-  against the old ABI will not start. Workaround: rebuild them from the SDK
-  sources; for prebuilt blobs, ship compatibility libraries alongside (not
-  recommended). Status: **accepted migration limitation**.
+  `libssl.so.1.1`/`libcrypto.so.1.1`; it provides `libssl.so.3`/`libcrypto.so.3`
+  instead. The bundled `divinus`, `oko-*`, `wg`/`awg` and OpenVPN 2.7.8 are
+  rebuilt and verified (`api_check` 98/98, RTSP/OSD), but third-party `/oem`
+  binaries linked against the old ABI will not start. Since 2026-11-09 Python
+  3.14 is not part of the image (`oko-prune.list`, defconfig), so
+  `libpython3.14` and the Python packages are unavailable. Workaround: rebuild
+  them from the SDK sources; for prebuilt blobs, ship compatibility libraries
+  alongside (not recommended). Status: **accepted migration limitation
+  (updated 2026-11-09)**.
 
 - **KI-046. `luckfox_pico_w_defconfig` is not migrated.**
   The Wi-Fi/audio variant (`bluez5_utils`, `mpv`) still relies on the old

@@ -5,7 +5,7 @@
 `FEATURES_UNVERIFIED.md`; паспорт платформы, общие примечания и команды проверки —
 в `FEATURES.md`; доказательства — в `VERIFIED_FUNCTIONS.md`.
 
-Статус на 2026-11-08.
+Статус на 2026-11-09.
 
 ## Русский
 
@@ -15,7 +15,7 @@
 |---|---|---|---|---|---|
 | Платформа и образ | Разметка SPI NAND | `boot` 6M, `oem` 40M, `userdata` 40M, `rootfs` 168M; нужна полная прошивка `update.img` | `update.img`, BoardConfig | `boot` 4→6M, `oem` 30→40M, `userdata` 10→40M, `rootfs` 198→168M | **работает** — `/proc/mtd`: `00600000`, `02800000`, `02800000`, `0a800000`; `df -h /userdata` — 29.1 МиБ; загрузка `.rknn` 3 МиБ проходит |
 | Платформа и образ | Сенсоры SC230AI-only | В образе только `sc230ai.ko` и IQ SC230AI; DTS выключает `sc3336`/`mis5001` | BoardConfig, `rv1106-sc230ai.config`, активный DTS | DTS `rv1106g-...-sc230ai.dts`, фрагмент ядра, `insmod_ko.sh` | **работает** — в `/oem/usr/ko` только `sc230ai.ko` |
-| Платформа и образ | Состав `oem` | Удалены `sample_*`/`simple_*`; диагностические `rk_*_test`/`rk_mpi_*_test` сохранены | `./build.sh app` → `project/app/out`; `./build.sh firmware` → `output/out/oem`; BoardConfig | список удаления в сборке oem | **работает** — `sample_*`/`simple_*` отсутствуют; цели `make oem` в репозитории нет |
+| Платформа и образ | Состав `oem`/rootfs | Вендорские `sample_*`/`simple_*`, `rkipc`, серверы rkaiq, `rk_*_test`/`rk_mpi_*_test`, лишние v4l-утилиты и Python вырезаны; диагностика `v4l2-ctl`/`media-ctl`/`rgaImDemo` сохранена | `project/cfg/BoardConfig_IPC/oko-prune.list`, `tools/native/check_image_contents.sh` | единый prune-список и хук `__RUN_POST_CLEAN_FILES` | **вырезано (2026-11-09)** — `check_image_contents.sh`: 61 запрещённый путь отсутствует, 22 обязательных на месте |
 | Платформа и образ | AIISP-модель | В `/oem/usr/lib` только модель из `RK_AIISP_MODEL` | `RK_AIISP_MODEL=rkmodel_1080_1920.aiisp` | копирование модели до `build_mkimg oem` | **работает** — модель и `librkpostisp.so` в образе |
 | Платформа и образ | Buildroot-утилиты | `fw_printenv`/`fw_setenv`, `mount`/`fdisk`/`sfdisk`/`wipefs` | `fw_printenv`, `/etc/fw_env.config` | `BR2_PACKAGE_UBOOT_TOOLS*`, `UTIL_LINUX_WIPEFS` | **работает** — env читается, карта форматируется |
 | Платформа и образ | Сборка образа | нативная сборка на Debian 13, результат `output/image/update.img` | `tools/native/setup_host.sh`, `source tools/native/env.sh`, `./build.sh firmware`, `.BoardConfig.mk` | `tools/native/`: setup_host, env, smoke; Buildroot 2026.08.1 | **работает** — образ собран и прошит в SPI NAND |
@@ -99,13 +99,13 @@ and partially verified capabilities are in `FEATURES_UNVERIFIED.md`; the
 platform passport, shared notes and verification commands are in `FEATURES.md`;
 evidence is in `VERIFIED_FUNCTIONS.md`.
 
-Status as of 2026-11-08.
+Status as of 2026-11-09.
 
 | Group | Feature | Control (API, YAML section) | What was added (OKO vs vendor V1.4) | Verified & works |
 |---|---|---|---|---|
 | Platform and image | SPI NAND layout: `boot` 6M, `oem` 40M, `userdata` 40M, `rootfs` 168M; full `update.img` required | `update.img`, BoardConfig | `boot` 4→6M, `oem` 30→40M, `userdata` 10→40M, `rootfs` 198→168M | **works** — `/proc/mtd` shows `00600000`, `02800000`, `02800000`, `0a800000`; `/userdata` is 29.1 MiB and a 3 MiB `.rknn` upload succeeds |
 | Platform and image | SC230AI-only sensors: only `sc230ai.ko` and SC230AI IQ, `sc3336`/`mis5001` disabled in the DTS | BoardConfig, `rv1106-sc230ai.config`, active DTS | DTS `rv1106g-...-sc230ai.dts`, kernel fragment, `insmod_ko.sh` | **works** — only `sc230ai.ko` in `/oem/usr/ko` |
-| Platform and image | `oem` contents: `sample_*`/`simple_*` removed, diagnostic `rk_*_test`/`rk_mpi_*_test` kept | `./build.sh app` → `project/app/out`; `./build.sh firmware` → `output/out/oem`; BoardConfig | removal list in the oem build | **works** — no `sample_*`/`simple_*`; there is no `make oem` target |
+| Platform and image | `oem`/rootfs contents: vendor `sample_*`/`simple_*`, `rkipc`, rkaiq servers, `rk_*_test`/`rk_mpi_*_test`, extra v4l utilities and Python are pruned; `v4l2-ctl`/`media-ctl`/`rgaImDemo` diagnostics are kept | `project/cfg/BoardConfig_IPC/oko-prune.list`, `tools/native/check_image_contents.sh` | one prune list and the `__RUN_POST_CLEAN_FILES` hook | **pruned (2026-11-09)** — `check_image_contents.sh`: 61 forbidden paths absent, 22 required paths present |
 | Platform and image | AIISP model: only `RK_AIISP_MODEL` is placed in `/oem/usr/lib` | `RK_AIISP_MODEL=rkmodel_1080_1920.aiisp` | model copied before `build_mkimg oem` | **works** — model and `librkpostisp.so` present |
 | Platform and image | Buildroot utilities: `fw_printenv`/`fw_setenv`, `mount`/`fdisk`/`sfdisk`/`wipefs` | `fw_printenv`, `/etc/fw_env.config` | `BR2_PACKAGE_UBOOT_TOOLS*`, `UTIL_LINUX_WIPEFS` | **works** — env readable, card formattable |
 | Platform and image | Native Debian 13 build producing `output/image/update.img` | `tools/native/setup_host.sh`, `source tools/native/env.sh`, `./build.sh firmware`, `.BoardConfig.mk` | `tools/native/`: setup_host, env, smoke; Buildroot 2026.08.1 | **works** — image built and flashed to SPI NAND |
