@@ -17,6 +17,7 @@
 #include "gating.h"
 #include "ivs_events.h"
 #include "ntp.h"
+#include "update.h"
 #include "vpn.h"
 #include "analytics/models.h"
 #include "analytics/yolo.h"
@@ -45,6 +46,11 @@ typedef struct {
     int paysize, total;
     size_t buf_size;
     int header_len;
+    int prepared;               /* headers were inspected for a streamed body */
+    int uploading;              /* POST /api/update/upload is in progress */
+    long long upload_total;
+    long long upload_received;
+    time_t last_activity;
 } http_request_t;
 
 struct {
@@ -92,6 +98,35 @@ static bool is_local_address(const char *client_ip) {
         return true;
 
     return false;
+}
+
+
+/* Shared access checks.  The streamed update upload parses the raw header
+ * block itself, so the whitelist and Basic-auth rules must live in one place
+ * instead of being copied into that path. */
+static bool ip_whitelisted(const char *client_ip)
+{
+    if (EMPTY(*app_config.web_whitelist))
+        return true;
+    if (!client_ip)
+        return false;
+    for (int i = 0; app_config.web_whitelist[i] &&
+         *app_config.web_whitelist[i]; i++)
+        if (ip_in_cidr(client_ip, app_config.web_whitelist[i]))
+            return true;
+    return false;
+}
+
+static bool credentials_valid(const char *auth)
+{
+    char cred[80], valid[192];
+
+    if (!auth) return false;
+    snprintf(cred, sizeof(cred), "%s:%s", app_config.web_auth_user,
+        app_config.web_auth_pass);
+    snprintf(valid, sizeof(valid), "Basic ");
+    base64_encode(valid + 6, cred, strlen(cred));
+    return !strcmp(auth, valid);
 }
 
 static char storageFormatToken[17];
@@ -249,8 +284,9 @@ static void reply_bad_request(int fd, const char *reason, const char *hint) {
 static void reply_status_json(int fd, int code, const char *body) {
     char header[192];
     const char *reason = code == 202 ? "Accepted" :
+        (code == 401 ? "Unauthorized" : (code == 403 ? "Forbidden" :
         (code == 409 ? "Conflict" : (code == 502 ? "Bad Gateway" :
-        (code == 400 ? "Bad Request" : "OK")));
+        (code == 400 ? "Bad Request" : "OK")))));
     int len = (int)strlen(body);
     int headerLen = snprintf(header, sizeof(header),
         "HTTP/1.1 %d %s\r\n"
@@ -956,6 +992,162 @@ char *request_header(const char *name) {
 
 http_header_t *request_headers(void) { return http_headers; }
 
+
+/* ---------------------------------------------------------------------------
+ * Streamed update upload.
+ *
+ * The generic request buffer is capped at 4 MiB, while a full OKO package is
+ * about 86 MiB.  POST /api/update/upload is therefore recognised as soon as
+ * the headers arrive: the whitelist/auth checks run first, then the body goes
+ * straight to the microSD card.  Only this endpoint bypasses parse_request();
+ * everything else still waits for the complete body.
+ * ------------------------------------------------------------------------- */
+
+static int raw_header(const char *block, int len, const char *name,
+    char *out, size_t out_size)
+{
+    size_t name_len = strlen(name);
+    const char *p, *limit = block + len;
+
+    if (!block || !name || !out || out_size == 0) return -1;
+    out[0] = '\0';
+    p = memstr((char *)block, "\r\n", len, 2);
+    if (!p) return -1;
+    p += 2;
+    while (p < limit) {
+        const char *end = memstr((char *)p, "\r\n", (int)(limit - p), 2);
+        if (!end || end == p) break;
+        if ((size_t)(end - p) > name_len && p[name_len] == ':' &&
+            !strncasecmp(p, name, name_len)) {
+            const char *v = p + name_len + 1;
+            size_t n;
+            while (v < end && (*v == ' ' || *v == '\t')) v++;
+            n = (size_t)(end - v);
+            if (n >= out_size) n = out_size - 1;
+            memcpy(out, v, n);
+            out[n] = '\0';
+            return 0;
+        }
+        p = end + 2;
+    }
+    return -1;
+}
+
+static bool is_update_upload_request(const char *block, int len)
+{
+    static const char path[] = "/api/update/upload";
+    const char *uri;
+    char after;
+
+    if (!block || len < 6 || strncmp(block, "POST ", 5)) return false;
+    uri = block + 5;
+    if ((size_t)len < 5 + sizeof(path) - 1) return false;
+    if (strncmp(uri, path, sizeof(path) - 1)) return false;
+    after = uri[sizeof(path) - 1];
+    return after == ' ' || after == '?' || after == '\r' || after == '\n';
+}
+
+/* Whitelist and Basic auth for the streaming path; respond_request() repeats
+ * the same checks for normal requests. */
+static bool stream_request_allowed(int fd, const char *block, int len)
+{
+    struct sockaddr_in client_sock;
+    socklen_t client_sock_len = sizeof(client_sock);
+    char *client_ip = NULL;
+
+    if (!EMPTY(*app_config.web_whitelist) ||
+        (app_config.web_enable_auth && app_config.web_auth_skiplocal)) {
+        memset(&client_sock, 0, client_sock_len);
+        if (getpeername(fd, (struct sockaddr *)&client_sock,
+                &client_sock_len) == 0)
+            client_ip = inet_ntoa(client_sock.sin_addr);
+    }
+
+    if (!ip_whitelisted(client_ip)) return false;
+    if (!app_config.web_enable_auth) return true;
+    if (app_config.web_auth_skiplocal && is_local_address(client_ip))
+        return true;
+
+    {
+        char auth[512];
+        if (raw_header(block, len, "Authorization", auth, sizeof(auth)))
+            return false;
+        return credentials_valid(auth);
+    }
+}
+
+/* 1 = the upload already finished, 0 = keep streaming, -1 = answered/closed. */
+static int begin_update_upload(http_request_t *req)
+{
+    char value[64];
+    char body[640];
+    int prefix;
+    int len;
+
+    if (!stream_request_allowed(req->clntFd, req->input, req->header_len)) {
+        reply_status_json(req->clntFd, 401,
+            "{\"error\":\"forbidden\",\"reason\":\"authentication is required\","
+            "\"hint\":\"reload the page and sign in\"}");
+        return -1;
+    }
+    if (req->paysize <= 0) {
+        reply_status_json(req->clntFd, 400,
+            "{\"error\":\"invalid\",\"reason\":\"Content-Length is required\","
+            "\"hint\":\"send the package as the raw request body\"}");
+        return -1;
+    }
+    if (update_upload_open(req->paysize) != 0) {
+        len = snprintf(body, sizeof(body),
+            "{\"error\":\"blocked\",\"reason\":\"%s\"}",
+            update_upload_error());
+        reply_status_json(req->clntFd, 409, body);
+        return -1;
+    }
+
+    if (!raw_header(req->input, req->header_len, "Expect", value,
+            sizeof(value)) && !strncasecmp(value, "100-continue", 12))
+        send_to_fd(req->clntFd, "HTTP/1.1 100 Continue\r\n\r\n", 25);
+
+    req->uploading = 1;
+    req->upload_total = req->paysize;
+    req->upload_received = 0;
+    req->last_activity = time(NULL);
+
+    /* Body bytes that arrived together with the headers. */
+    prefix = req->total - req->header_len;
+    if (prefix > req->paysize) prefix = req->paysize;
+    if (prefix > 0) {
+        if (update_upload_write(req->input + req->header_len, prefix) < 0) {
+            update_upload_abort("cannot write to the microSD card");
+            reply_status_json(req->clntFd, 500,
+                "{\"error\":\"failed\",\"reason\":\"cannot write to the microSD card\"}");
+            return -1;
+        }
+        req->upload_received = prefix;
+    }
+    req->total = 0;
+
+    if (req->upload_received >= req->upload_total) {
+        if (update_upload_finish() != 0) {
+            reply_status_json(req->clntFd, 500,
+                "{\"error\":\"failed\",\"reason\":\"cannot start the staging worker\"}");
+        } else {
+            reply_status_json(req->clntFd, 202, "{\"state\":\"staging\"}");
+        }
+        return 1;
+    }
+    return 0;
+}
+
+static void finish_update_upload(http_request_t *req)
+{
+    if (update_upload_finish() != 0)
+        reply_status_json(req->clntFd, 500,
+            "{\"error\":\"failed\",\"reason\":\"cannot start the staging worker\"}");
+    else
+        reply_status_json(req->clntFd, 202, "{\"state\":\"staging\"}");
+}
+
 void parse_request(http_request_t *req) {
     struct sockaddr_in client_sock;
     socklen_t client_sock_len = sizeof(client_sock);
@@ -965,15 +1157,12 @@ void parse_request(http_request_t *req) {
         (struct sockaddr *)&client_sock, &client_sock_len);
     char *client_ip = inet_ntoa(client_sock.sin_addr);
 
-    if (!EMPTY(*app_config.web_whitelist)) {
-        for (int i = 0; app_config.web_whitelist[i] && *app_config.web_whitelist[i]; i++)
-            if (ip_in_cidr(client_ip, app_config.web_whitelist[i])) goto grant_access;
+    if (!ip_whitelisted(client_ip)) {
         close_socket_fd(req->clntFd);
         req->clntFd = -1;
         return;
     }
 
-grant_access:
     if (req->total <= 0) return;
 
     req->input[req->total] = '\0';
@@ -1193,15 +1382,8 @@ void respond_request(http_request_t *req) {
 
         if (!should_skip_auth) {
             char *auth = request_header("Authorization");
-            char cred[66], valid[256];
 
-            strcpy(cred, app_config.web_auth_user);
-            strcpy(cred + strlen(app_config.web_auth_user), ":");
-            strcpy(cred + strlen(app_config.web_auth_user) + 1, app_config.web_auth_pass);
-            strcpy(valid, "Basic ");
-            base64_encode(valid + 6, cred, strlen(cred));
-
-            if (!auth || !EQUALS(auth, valid)) {
+            if (!credentials_valid(auth)) {
                 respLen = sprintf(response,
                     "HTTP/1.1 401 Unauthorized\r\n"
                     "Content-Type: text/plain\r\n"
@@ -3710,6 +3892,163 @@ void respond_request(http_request_t *req) {
         }
     }
 
+    /* OKO: software update through the microSD card.
+     *   GET  /api/update             — snapshot, staged package, apply token
+     *   POST /api/update/upload      — streamed raw body (server_thread)
+     *   POST /api/update/fetch?url=  — curl download, then stage
+     *   POST /api/update/apply       — confirm=APPLY&token=...
+     *   POST /api/update?clear=1     — drop the staged files
+     *   POST /api/update?cancel=1    — stop the current worker/upload */
+    if (STARTS_WITH(req->uri, "/api/update")) {
+        if (EQUALS(req->uri, "/api/update")) {
+            if (EQUALS(req->method, "GET")) {
+                char *body = update_json();
+                if (!body)
+                    reply_error(req->clntFd, "failed", "out of memory", "");
+                else {
+                    reply_json(req->clntFd, body, strlen(body));
+                    free(body);
+                }
+                return;
+            }
+            if (EQUALS(req->method, "POST")) {
+                int clear = 0, cancel = 0;
+
+                if (req->query) {
+                    while (req->query) {
+                        char *value = split(&req->query, "&");
+                        if (!value || !*value) continue;
+                        char *key = split(&value, "=");
+                        if (!key || !*key || !value || !*value) continue;
+                        unescape_uri(value);
+                        if (EQUALS(key, "clear") && query_bool(value))
+                            clear = 1;
+                        else if (EQUALS(key, "cancel") && query_bool(value))
+                            cancel = 1;
+                    }
+                }
+                if (cancel) {
+                    if (update_cancel() != 0) {
+                        reply_status_json(req->clntFd, 409,
+                            "{\"error\":\"busy\",\"reason\":\"the update is "
+                            "already armed and cannot be cancelled\"}");
+                    } else {
+                        static const char cancelled[] =
+                            "{\"cancelled\":true}";
+                        reply_json(req->clntFd, cancelled,
+                            sizeof(cancelled) - 1);
+                    }
+                    return;
+                }
+                if (clear) {
+                    char reason[192];
+                    if (update_clear(reason, sizeof(reason))) {
+                        char body[320];
+                        int len = snprintf(body, sizeof(body),
+                            "{\"error\":\"blocked\",\"reason\":\"%s\"}",
+                            reason);
+                        reply_status_json(req->clntFd, 409, body);
+                    } else {
+                        {
+                            static const char cleared[] = "{\"cleared\":true}";
+                            reply_json(req->clntFd, cleared,
+                                sizeof(cleared) - 1);
+                        }
+                    }
+                    return;
+                }
+                {
+                    char *body = update_json();
+                    if (!body)
+                        reply_error(req->clntFd, "failed", "out of memory",
+                            "");
+                    else {
+                        reply_json(req->clntFd, body, strlen(body));
+                        free(body);
+                    }
+                }
+                return;
+            }
+            send_http_error(req->clntFd, 405);
+            return;
+        }
+        if (EQUALS(req->uri, "/api/update/upload")) {
+            if (!EQUALS(req->method, "POST")) {
+                send_http_error(req->clntFd, 405);
+                return;
+            }
+            reply_bad_request(req->clntFd,
+                "the package body must be streamed",
+                "send the .okp file as the raw request body");
+            return;
+        }
+        if (EQUALS(req->uri, "/api/update/fetch")) {
+            char url[1024] = "";
+            char reason[192];
+
+            if (!EQUALS(req->method, "POST")) {
+                send_http_error(req->clntFd, 405);
+                return;
+            }
+            if (req->query) {
+                while (req->query) {
+                    char *value = split(&req->query, "&");
+                    if (!value || !*value) continue;
+                    char *key = split(&value, "=");
+                    if (!key || !*key || !value || !*value) continue;
+                    unescape_uri(value);
+                    if (EQUALS(key, "url"))
+                        snprintf(url, sizeof(url), "%s", value);
+                }
+            }
+            if (update_fetch_start(url, reason, sizeof(reason))) {
+                char body[320];
+                int len = snprintf(body, sizeof(body),
+                    "{\"error\":\"blocked\",\"reason\":\"%s\"}", reason);
+                reply_status_json(req->clntFd, 409, body);
+            } else {
+                reply_status_json(req->clntFd, 202,
+                    "{\"state\":\"fetching\"}");
+            }
+            return;
+        }
+        if (EQUALS(req->uri, "/api/update/apply")) {
+            char confirm[16] = "", token[64] = "";
+            char reason[192];
+
+            if (!EQUALS(req->method, "POST")) {
+                send_http_error(req->clntFd, 405);
+                return;
+            }
+            if (req->query) {
+                while (req->query) {
+                    char *value = split(&req->query, "&");
+                    if (!value || !*value) continue;
+                    char *key = split(&value, "=");
+                    if (!key || !*key || !value || !*value) continue;
+                    unescape_uri(value);
+                    if (EQUALS(key, "confirm"))
+                        snprintf(confirm, sizeof(confirm), "%s", value);
+                    else if (EQUALS(key, "token"))
+                        snprintf(token, sizeof(token), "%s", value);
+                }
+            }
+            if (update_apply_start(confirm, token, reason, sizeof(reason))) {
+                char body[320];
+                int len = snprintf(body, sizeof(body),
+                    "{\"error\":\"blocked\",\"reason\":\"%s\"}", reason);
+                int status = strstr(reason, "another update job") ? 409 : 400;
+                reply_status_json(req->clntFd, status, body);
+            } else {
+                reply_status_json(req->clntFd, 202,
+                    "{\"state\":\"applying\"}");
+            }
+            return;
+        }
+        send_http_error(req->clntFd, 404);
+        return;
+    }
+
     if (EQUALS(req->uri, "/api/firmware")) {
         char *body;
         if (!EQUALS(req->method, "GET")) {
@@ -5039,6 +5378,11 @@ void *server_thread(void *vargp) {
                         reqs[i].input = malloc(reqs[i].buf_size + 1);
                         reqs[i].header_len = 0;
                         reqs[i].paysize = 0;
+                        reqs[i].prepared = 0;
+                        reqs[i].uploading = 0;
+                        reqs[i].upload_total = 0;
+                        reqs[i].upload_received = 0;
+                        reqs[i].last_activity = 0;
                         break;
                     }
                 }
@@ -5051,6 +5395,8 @@ void *server_thread(void *vargp) {
         for (int i = 0; i < HTTP_MAX_CLIENTS; i++) {
             if (fds[i + 1].fd != -1) {
                 if (fds[i + 1].revents & (POLLERR | POLLHUP | POLLNVAL)) {
+                    if (reqs[i].uploading)
+                        update_upload_abort("the upload connection was lost");
                     close_socket_fd(fds[i + 1].fd);
                     fds[i + 1].fd = -1;
                     free(reqs[i].input);
@@ -5059,6 +5405,71 @@ void *server_thread(void *vargp) {
                 }
                 if (fds[i + 1].revents & POLLIN) {
                     http_request_t *req = &reqs[i];
+
+                    /* Streamed update upload: the body never enters req->input,
+                     * so the 4 MiB request limit does not apply. */
+                    if (req->uploading) {
+                        char chunk[16384];
+                        long long remaining =
+                            req->upload_total - req->upload_received;
+                        int want = remaining < (long long)sizeof(chunk)
+                            ? (int)remaining : (int)sizeof(chunk);
+                        int received;
+
+                        if (want <= 0) {
+                            finish_update_upload(req);
+                            fds[i + 1].fd = -1;
+                            free(req->input);
+                            req->input = NULL;
+                            continue;
+                        }
+                        received = recv(req->clntFd, chunk, want, 0);
+                        if (received < 0) {
+                            if (errno == EAGAIN || errno == EWOULDBLOCK ||
+                                errno == EINTR)
+                                continue;
+                            update_upload_abort(
+                                "the upload connection was lost");
+                            close_socket_fd(req->clntFd);
+                            fds[i + 1].fd = -1;
+                            free(req->input);
+                            req->input = NULL;
+                            continue;
+                        } else if (received == 0) {
+                            update_upload_abort("the upload was interrupted");
+                            close_socket_fd(req->clntFd);
+                            fds[i + 1].fd = -1;
+                            free(req->input);
+                            req->input = NULL;
+                            continue;
+                        }
+                        req->last_activity = time(NULL);
+                        if (update_upload_write(chunk, received) < 0) {
+                            update_upload_abort(
+                                "cannot write to the microSD card");
+                            close_socket_fd(req->clntFd);
+                            fds[i + 1].fd = -1;
+                            free(req->input);
+                            req->input = NULL;
+                            continue;
+                        }
+                        req->upload_received += received;
+                        if (update_upload_cancelled()) {
+                            update_upload_abort("cancelled by the operator");
+                            close_socket_fd(req->clntFd);
+                            fds[i + 1].fd = -1;
+                            free(req->input);
+                            req->input = NULL;
+                            continue;
+                        }
+                        if (req->upload_received >= req->upload_total) {
+                            finish_update_upload(req);
+                            fds[i + 1].fd = -1;
+                            free(req->input);
+                            req->input = NULL;
+                        }
+                        continue;
+                    }
 
                     if (req->total == req->buf_size) {
                         req->buf_size *= 2;
@@ -5109,7 +5520,22 @@ void *server_thread(void *vargp) {
                         }
                     }
 
-                    if (req->header_len > 0 && req->total >= req->header_len + req->paysize) {
+                    if (!req->prepared && req->header_len > 0) {
+                        req->prepared = 1;
+                        req->last_activity = time(NULL);
+                        if (is_update_upload_request(req->input,
+                                req->header_len)) {
+                            if (begin_update_upload(req) != 0) {
+                                fds[i + 1].fd = -1;
+                                free(req->input);
+                                req->input = NULL;
+                            }
+                            continue;
+                        }
+                    }
+
+                    if (!req->uploading && req->header_len > 0 &&
+                        req->total >= req->header_len + req->paysize) {
                         parse_request(req);
                         if (req->clntFd != -1) {
                             fcntl(req->clntFd, F_SETFL, fcntl(req->clntFd, F_GETFL, 0) & ~O_NONBLOCK);
@@ -5125,6 +5551,18 @@ void *server_thread(void *vargp) {
                         free(req->input);
                         req->input = NULL;
                     }
+                }
+
+                if (fds[i + 1].fd != -1 && reqs[i].uploading &&
+                    (update_upload_cancelled() ||
+                     (reqs[i].last_activity &&
+                      time(NULL) - reqs[i].last_activity > 120))) {
+                    update_upload_abort(update_upload_cancelled()
+                        ? "cancelled by the operator" : "the upload timed out");
+                    close_socket_fd(fds[i + 1].fd);
+                    fds[i + 1].fd = -1;
+                    free(reqs[i].input);
+                    reqs[i].input = NULL;
                 }
             }
         }
@@ -5144,6 +5582,7 @@ void *server_thread(void *vargp) {
 
 int server_start() {
     flash_init();
+    update_init();
     focus_home_init();
     focus_af_init();
     for (int i = 0; i < HTTP_MAX_CLIENTS; i++) {
@@ -5178,6 +5617,7 @@ int server_stop() {
     focus_af_shutdown();
     flash_shutdown();
     focus_home_shutdown();
+    update_shutdown();
 
     close_socket_fd(server_fd);
     pthread_join(server_thread_id, NULL);

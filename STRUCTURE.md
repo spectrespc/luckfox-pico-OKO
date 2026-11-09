@@ -141,6 +141,11 @@
   (монтирование microSD в `/mnt/sdcard`, состояние `/run/oko-sd.state`,
   `mount`/`unmount`/`format` для `/api/storage`, lock `/run/oko-sd.lock`;
   eudev в этом образе читает только `/lib/udev/rules.d`),
+  `usr/bin/oko-update` (подготовка `.okp` на microSD: манифест, sha256,
+  размеры разделов, `sd_update.txt`; `stage`/`apply`/`postcheck`/`clear`,
+  состояние `/run/oko-update.stage`, токен `/run/oko-update.token`),
+  `etc/init.d/S20oko-update` (пост-проверка после прошивки и очистка карты),
+  `etc/oko-release` (`OKO_VERSION`, синхронизируется с выпуском CHANGELOG),
   `usr/bin/oko-net` + `etc/fw_env.config` (MAC, DHCP/static в env-разделе
   U-Boot), `usr/bin/oko-vpn` (применение профилей WireGuard/AmneziaWG,
   маршруты, guard полного туннеля, autostart/watchdog; профили и состояние —
@@ -181,7 +186,9 @@
 - `native/` — нативная среда сборки: `setup_host.sh` (apt-пакеты Debian 13,
   проверка кросс-тулчейна), `env.sh` (`PATH`, `CROSS_COMPILE`, `ARCH`, локаль),
   `smoke.sh` (отчёт `output/bench/native/smoke.log`), `setup_netboot.sh`
-  (поднимает контейнер `services/` с TFTP и NFS-экспортом).
+  (поднимает контейнер `services/` с TFTP и NFS-экспортом),
+  `make_oko_update.sh` (пакет `.okp` для обновления из WebUI: манифест
+  `oko-update.conf` + `boot.img`/`oem.img`/`rootfs.img`, несжатый tar).
 - `linux/toolchain/` — кросс-компилятор `arm-rockchip830-linux-uclibcgnueabihf`.
 - `linux/Linux_Pack_Firmware`, `linux/Linux_Upgrade_Tool` — упаковка образов и
   прошивка по USB.

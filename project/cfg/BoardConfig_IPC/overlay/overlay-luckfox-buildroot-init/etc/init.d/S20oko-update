@@ -1,0 +1,44 @@
+#!/bin/sh
+#
+# OKO update postcheck: record the result of a WebUI-driven reflash.
+#
+# apply writes /userdata/oko-update.pending before rebooting; U-Boot then
+# consumes sd_update.txt from the microSD card.  On the next Linux boot this
+# script compares /etc/oko-release with the expected version, stores the result
+# in /userdata/oko-update.state for GET /api/update, and removes the staged
+# card files so a card left in the slot cannot reflash the board again.
+#
+# Runs after S20linkmount (lexicographic order) and before S21appinit, so the
+# result is ready before divinus answers the first request.
+
+TOOL=/usr/bin/oko-update
+
+wait_userdata() {
+	i=0
+	while [ "$i" -lt 30 ]; do
+		mount | grep -qw /userdata && return 0
+		i=$((i + 1))
+		sleep 0.1
+	done
+	return 1
+}
+
+case "$1" in
+	start)
+		[ -x "$TOOL" ] || exit 0
+		# Without a pending marker there is nothing to check; avoid a lock
+		# round trip on every ordinary boot.
+		[ -f /userdata/oko-update.pending ] || exit 0
+		if ! wait_userdata; then
+			echo "oko-update: /userdata is not mounted, skipping"
+			exit 1
+		fi
+		"$TOOL" postcheck >/dev/null 2>&1
+		;;
+	*)
+		echo "Usage: $0 {start}"
+		exit 1
+		;;
+esac
+
+exit 0

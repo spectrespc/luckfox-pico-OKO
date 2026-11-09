@@ -285,6 +285,11 @@ mjpeg:
 #   enable: true          # controller firmware upload via the WebUI
 #   max_bytes: 262144
 
+# update:
+#   enable: true          # software update from the WebUI (staged on microSD)
+#   max_package_mb: 200   # upload/download limit for one .okp package
+#   allow_insecure_url: true  # allow plain http:// package URLs
+
 # iq:
 #   main_scene: normal
 #   sub_scene: day

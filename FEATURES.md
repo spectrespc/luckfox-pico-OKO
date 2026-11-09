@@ -4,7 +4,7 @@
 (RV1106, SPI NAND, Buildroot) с сенсором SC230AI: паспорт платформы, индекс по
 файлам статусов проверки и краткие команды проверки.
 
-Статус на 2026-11-08. Пометки: **работает** — проверено на стенде;
+Статус на 2026-11-09. Пометки: **работает** — проверено на стенде;
 **ограничено** — работает с оговоркой; **заблокировано** — отказ с причиной.
 
 | Файл | Содержание |
@@ -98,6 +98,11 @@ curl -u admin:oko-change-me http://192.168.52.97/api/status
   текущий пояс `tz_current`), при загрузке применяет `S20okotz`; RTC хранится
   в UTC (`S99rtcinit`), поэтому смена пояса не сдвигает время при перезагрузке.
   Статус проверки — `FEATURES_VERIFIED.md`.
+- Обновление ПО из WebUI: пакет `.okp` (манифест + `boot`/`oem`/`rootfs`)
+  готовится на microSD (`/api/update*`, `/usr/bin/oko-update`), прошивку
+  выполняет U-Boot `sd_update` после `confirm=APPLY` и перезагрузки;
+  пост-проверка — `S20oko-update`. Статус — **не проверено** на стенде
+  (гейтовые эксперименты не выполнены), см. `FEATURES_UNVERIFIED.md`.
 - Помощь фокусировке, STM8/STM32, WebUI и прочие подтверждённые функции —
   в `FEATURES_VERIFIED.md`; ограничения — в `FEATURES_UNVERIFIED.md`; открытые
   дефекты и обходы — в `KNOWN_ISSUES.md`.
@@ -128,8 +133,12 @@ over dma-buf fds (`yolo.convert: rga`) and detection boxes on the stream
 (`yolo.boxes`, 2BPP RGN, two colours). Build: native on Debian 13
 (`./build.sh firmware`), output `output/image/update.img`.
 
-Shared notes: see the Russian section above; open defects are in
-`KNOWN_ISSUES.md`, and unverified stream combinations, YOLO, sensors and
+Software update from the WebUI stages a `.okp` package (manifest + `boot`,
+`oem`, `rootfs`) on the microSD card (`/api/update*`, `/usr/bin/oko-update`);
+U-Boot `sd_update` flashes after `confirm=APPLY` and a reboot, and
+`S20oko-update` records the result. It is **unverified** on the bench (the gating
+experiments were not run); see `FEATURES_UNVERIFIED.md`. Shared notes: see the
+Russian section above; open defects are in `KNOWN_ISSUES.md`, and unverified stream combinations, YOLO, sensors and
 microSD limits are in `FEATURES_UNVERIFIED.md`. A real STM32 update (CBT6,
 WebUI `app-1.0.1.bin` → rollback `app-1.0.0.bin`, dotted `1.0.0` in
 `/api/firmware`) is verified. Flashing procedure and bench addresses are in

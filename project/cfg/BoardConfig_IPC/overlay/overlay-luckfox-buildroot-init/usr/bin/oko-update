@@ -1,0 +1,612 @@
+#!/bin/sh
+#
+# OKO update staging helper for the RkLunch/divinus image.
+#
+# The U-Boot on this board runs `sd_update` on every boot: when the microSD
+# card holds sd_update.txt and the referenced images, U-Boot flashes the SPI
+# NAND partitions before starting Linux.  This helper prepares that card, and
+# never flashes from the running kernel.
+#
+#   oko-update status
+#   oko-update token                  # one-time apply token in /run
+#   oko-update stage <package.okp>    # verify and unpack to the card
+#   oko-update apply <token>          # set the U-Boot flag and the pending file
+#   oko-update postcheck              # called at boot by S20oko-update
+#   oko-update clear                  # drop the staged images and the script
+#
+# The package is an uncompressed tar with oko-update.conf (key=value manifest)
+# and boot.img/oem.img/rootfs.img.  Only these three partitions are updatable:
+# env/idblock/uboot would brick the board and are restored over USB instead.
+#
+# Layout on the FAT card:
+#   /mnt/sdcard/sd_update.txt          consumed by the U-Boot script runner
+#   /mnt/sdcard/boot.img,oem.img,...   images referenced by that script
+#   /mnt/sdcard/oko-update/            upload.okp, manifest, work directory
+#
+# State:
+#   /run/oko-update.stage              staged package summary (key=value)
+#   /run/oko-update.token              one-time apply token
+#   /userdata/oko-update.pending       written by apply, removed by postcheck
+#   /userdata/oko-update.state         result of the last apply attempt
+#
+# Every flash line is wrapped in `if env exists oko_update; then … fi`, and the
+# U-Boot script clears the flag after the last write.  postcheck removes the
+# card files after a boot, so a card left in the slot is not flashed again.
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+# Paths are overridable so the staging logic can be exercised on the host.
+MNT=${OKO_UPDATE_MNT:-/mnt/sdcard}
+DIR=$MNT/oko-update
+UPLOAD=$DIR/upload.okp
+MANIFEST=$DIR/oko-update.conf
+SCRIPT=$MNT/sd_update.txt
+STATE=${OKO_UPDATE_STATE:-/run/oko-update.stage}
+TOKEN_FILE=${OKO_UPDATE_TOKEN:-/run/oko-update.token}
+LOCK=${OKO_UPDATE_LOCK:-/run/oko-update.lock}
+PENDING=${OKO_UPDATE_PENDING:-/userdata/oko-update.pending}
+RESULT=${OKO_UPDATE_RESULT:-/userdata/oko-update.state}
+RELEASE=${OKO_UPDATE_RELEASE:-/etc/oko-release}
+LOG=${OKO_UPDATE_LOG:-/tmp/oko-update.log}
+PARTS_ALL="boot oem rootfs"
+
+log() {
+	echo "oko-update: $*" 2>/dev/null >> "$LOG" || true
+	echo "oko-update: $*" 2>/dev/null > /dev/kmsg || true
+}
+
+json_escape() {
+	# The allowed token set is narrow, but never emit a quote or a control
+	# byte into the JSON that divinus embeds verbatim.
+	printf '%s' "$1" | tr -cd 'A-Za-z0-9._,-'
+}
+
+is_mounted() {
+	# OKO_UPDATE_TEST_MNT=1 exercises the staging logic in a host directory.
+	[ "${OKO_UPDATE_TEST_MNT:-0}" = "1" ] && return 0
+	grep -q " $MNT " /proc/mounts
+}
+
+state_value() {
+	[ -f "$STATE" ] || return 1
+	sed -n "s/^$1=//p" "$STATE" 2>/dev/null | head -n 1
+}
+
+write_state() {
+	# $1 staged (0/1), $2 version, $3 parts, $4 ok (0/1), $5 error
+	_tmp="$STATE.tmp.$$"
+	{
+		echo "staged=$1"
+		echo "version=$2"
+		echo "parts=$3"
+		echo "ok=$4"
+		echo "error=$5"
+		echo "timestamp=$(date +%s)"
+	} > "$_tmp"
+	mv -f "$_tmp" "$STATE"
+}
+
+clear_state() {
+	rm -f "$STATE"
+}
+
+lock_acquire() {
+	_i=0
+	while ! mkdir "$LOCK" 2>/dev/null; do
+		_i=$(( _i + 1 ))
+		if [ "$_i" -ge 200 ]; then
+			log "lock timeout"
+			return 1
+		fi
+		sleep 0.1
+	done
+	# A cancelled stage/apply is SIGTERM-ed by divinus; release the lock even
+	# then, otherwise every later call waits 20 s and fails.
+	trap 'rmdir "$LOCK" 2>/dev/null' EXIT INT TERM HUP
+	return 0
+}
+
+lock_release() {
+	rmdir "$LOCK" 2>/dev/null
+}
+
+conf_get() {
+	# During staging the manifest lives in the work directory; apply reads the
+	# verified copy next to the staged images.
+	_file=${CONF_FILE:-$MANIFEST}
+	[ -f "$_file" ] || return 1
+	sed -n "s/^$1=//p" "$_file" 2>/dev/null | head -n 1
+}
+
+release_version() {
+	[ -f "$RELEASE" ] || return 1
+	sed -n 's/^OKO_VERSION=//p' "$RELEASE" 2>/dev/null | head -n 1
+}
+
+part_allowed() {
+	case " $PARTS_ALL " in
+		*" $1 "*) return 0 ;;
+	esac
+	return 1
+}
+
+part_offset() {
+	case "$1" in
+		boot) echo 0x100000 ;;
+		oem) echo 0x700000 ;;
+		rootfs) echo 0x5700000 ;;
+		*) return 1 ;;
+	esac
+}
+
+valid_version() {
+	case "$1" in
+		''|*[!0-9A-Za-z._-]*) return 1 ;;
+	esac
+	return 0
+}
+
+pending_exists() {
+	[ -f "$PENDING" ]
+}
+
+# The images must live in the FAT root: sd_update is loaded as
+# `fatload mmc 1 … sd_update.txt`, and the known-good vendor script references
+# bare file names, so a subdirectory path would be an untested U-Boot case.
+remove_staging_files() {
+	rm -f "$SCRIPT" "$SCRIPT.tmp" \
+		"$MNT/boot.img" "$MNT/oem.img" "$MNT/rootfs.img"
+	rm -rf "$DIR"
+}
+
+free_kb() {
+	df -Pk "$MNT" 2>/dev/null | awk 'NR==2 {print $4}'
+}
+
+require_sd() {
+	is_mounted || {
+		log "microSD is not mounted at $MNT"
+		return 1
+	}
+	mkdir -p "$DIR" || {
+		log "cannot create $DIR"
+		return 1
+	}
+	return 0
+}
+
+do_token() {
+	mkdir -p /run
+	_new=$(od -An -N8 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')
+	if [ "${#_new}" -ne 16 ]; then
+		log "cannot read /dev/urandom for the apply token"
+		return 1
+	fi
+	printf '%s\n' "$_new" > "$TOKEN_FILE.tmp.$$"
+	mv -f "$TOKEN_FILE.tmp.$$" "$TOKEN_FILE"
+	chmod 600 "$TOKEN_FILE" 2>/dev/null
+	echo "$_new"
+	return 0
+}
+
+token_get() {
+	[ -f "$TOKEN_FILE" ] || return 1
+	head -n 1 "$TOKEN_FILE"
+}
+
+# Prints the staged summary as compact JSON.  Values passed through
+# json_escape() only contain [A-Za-z0-9._,-], so the object is valid JSON.
+do_status() {
+	_staged=0
+	_version=""
+	_parts=""
+	_ok=0
+	_error=""
+	_ts=0
+	if [ -f "$STATE" ]; then
+		_staged=$(state_value staged)
+		_version=$(state_value version)
+		_parts=$(state_value parts)
+		_ok=$(state_value ok)
+		_error=$(state_value error)
+		_ts=$(state_value timestamp)
+	fi
+	_mounted=false
+	is_mounted && _mounted=true
+	_pending=false
+	pending_exists && _pending=true
+	printf '{"sd_mounted":%s,"staged":%s,"version":"%s","parts":"%s","ok":%s,"error":"%s","timestamp":%s,"pending":%s}\n' \
+		"$_mounted" \
+		"$([ "$_staged" = "1" ] && echo true || echo false)" \
+		"$(json_escape "$_version")" \
+		"$(json_escape "$_parts")" \
+		"$([ "$_ok" = "1" ] && echo true || echo false)" \
+		"$(json_escape "$_error")" \
+		"${_ts:-0}" \
+		"$_pending"
+	return 0
+}
+
+do_stage() {
+	_pkg="$1"
+	[ -n "$_pkg" ] || _pkg="$UPLOAD"
+
+	if ! require_sd; then
+		write_state 0 "" "" 0 "sd-not-mounted"
+		return 1
+	fi
+	if [ ! -f "$_pkg" ] || [ ! -s "$_pkg" ]; then
+		write_state 0 "" "" 0 "package-missing"
+		log "package not found: $_pkg"
+		return 1
+	fi
+	if pending_exists; then
+		write_state 0 "" "" 0 "apply-pending"
+		log "refusing to stage while an apply is pending"
+		return 1
+	fi
+
+	# Drop work directories left by an interrupted stage.
+	rm -rf "$DIR"/work.*
+	_work="$DIR/work.$$"
+	rm -rf "$_work"
+	mkdir -p "$_work" || {
+		write_state 0 "" "" 0 "workdir-failed"
+		return 1
+	}
+
+	# Reject any archive member that is not a plain expected file name.  The
+	# package comes from the WebUI, so a hostile tar must not be able to write
+	# outside the work directory through paths, links or devices.
+	_bad=$(tar -tf "$_pkg" 2>/dev/null |
+		grep -v -E '^(oko-update.conf|boot\.img|oem\.img|rootfs\.img)$')
+	if [ -n "$_bad" ] || ! tar -tf "$_pkg" >/dev/null 2>&1; then
+		rm -rf "$_work"
+		write_state 0 "" "" 0 "package-invalid"
+		log "package contains unexpected entries"
+		return 1
+	fi
+	if ! tar -xf "$_pkg" -C "$_work" oko-update.conf 2>>"$LOG" ||
+		[ ! -f "$_work/oko-update.conf" ]; then
+		rm -rf "$_work"
+		write_state 0 "" "" 0 "manifest-missing"
+		log "package has no readable oko-update.conf"
+		return 1
+	fi
+
+	_ok=1
+	_error=""
+	CONF_FILE="$_work/oko-update.conf"
+	_version=$(sed -n 's/^VERSION=//p' "$_work/oko-update.conf" | head -n 1)
+	_parts=$(sed -n 's/^PARTS=//p' "$_work/oko-update.conf" | head -n 1)
+	_marker=$(sed -n 's/^OKOUPDATE=//p' "$_work/oko-update.conf" | head -n 1)
+
+	if [ "$_marker" != "1" ]; then
+		_ok=0
+		_error="bad-manifest"
+	elif ! valid_version "$_version"; then
+		_ok=0
+		_error="bad-version"
+	elif [ -z "$_parts" ]; then
+		_ok=0
+		_error="no-parts"
+	fi
+
+	# Validate the manifest and the free space before extracting 86 MiB of
+	# images, so a known-bad package does not fill the card.
+	_need_kb=0
+	if [ "$_ok" = "1" ]; then
+		for _part in $(echo "$_parts" | tr ',' ' '); do
+			if ! part_allowed "$_part"; then
+				_ok=0; _error="bad-part"; break
+			fi
+			_bytes=$(conf_get "${_part}_BYTES")
+			_sha=$(conf_get "${_part}_SHA256")
+			_mtd=$(conf_get "${_part}_MTD_SIZE")
+			_offset=$(conf_get "${_part}_OFFSET")
+			if [ -z "$_bytes" ] || [ -z "$_sha" ] || [ -z "$_mtd" ] ||
+				[ -z "$_offset" ]; then
+				_ok=0; _error="size-mismatch"; break
+			fi
+			if [ "$_bytes" -gt "$((_mtd))" ]; then
+				_ok=0; _error="too-large"; break
+			fi
+			_need_kb=$(( _need_kb + (_bytes + 1023) / 1024 ))
+		done
+	fi
+
+	_free=$(free_kb)
+	# The uploaded package is still on the card, so staging needs room for the
+	# extracted copy of every image plus a small reserve.
+	if [ "$_ok" = "1" ] && [ -n "$_free" ] &&
+		[ "$((_need_kb + 1024))" -gt "$_free" ]; then
+		_ok=0
+		_error="no-space"
+	fi
+
+	if [ "$_ok" != "1" ]; then
+		rm -rf "$_work"
+		write_state 0 "$_version" "$_parts" 0 "$_error"
+		log "staging failed: $_error"
+		return 1
+	fi
+
+	# Extract only the declared parts, then verify each image against the
+	# manifest before it is committed to the card root.
+	for _part in $(echo "$_parts" | tr ',' ' '); do
+		if ! tar -xf "$_pkg" -C "$_work" "$_part.img" 2>>"$LOG"; then
+			rm -rf "$_work"
+			write_state 0 "$_version" "$_parts" 0 "unpack-failed"
+			log "cannot unpack $_part.img"
+			return 1
+		fi
+	done
+	for _part in $(echo "$_parts" | tr ',' ' '); do
+		_bytes=$(conf_get "${_part}_BYTES")
+		_sha=$(conf_get "${_part}_SHA256")
+		_actual_bytes=$(stat -c %s "$_work/$_part.img" 2>/dev/null)
+		if [ "$_actual_bytes" != "$_bytes" ]; then
+			_ok=0; _error="size-mismatch"; break
+		fi
+		_actual_sha=$(sha256sum "$_work/$_part.img" | cut -d' ' -f1)
+		if [ "$_actual_sha" != "$_sha" ]; then
+			_ok=0; _error="sha256-failed"; break
+		fi
+	done
+
+	if [ "$_ok" != "1" ]; then
+		rm -rf "$_work"
+		write_state 0 "$_version" "$_parts" 0 "$_error"
+		log "staging failed: $_error"
+		return 1
+	fi
+
+	# sd_update.txt uses the vendor erase/write line, but every flash is guarded
+	# by `env exists oko_update`: U-Boot runs sd_update on every boot, so the
+	# staged files alone must not flash anything before the operator confirms
+	# the update.  apply sets that env flag; the tail of the script clears it.
+	_script="$SCRIPT.tmp.$$"
+	: > "$_script" || {
+		rm -rf "$_work"
+		write_state 0 "$_version" "$_parts" 0 "script-failed"
+		return 1
+	}
+	echo "# OKO update $_version $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$_script"
+	for _part in $PARTS_ALL; do
+		case ",$_parts," in
+			*",$_part,"*) ;;
+			*) continue ;;
+		esac
+		_bytes=$(conf_get "${_part}_BYTES")
+		_offset=$(conf_get "${_part}_OFFSET")
+		_mtd=$(conf_get "${_part}_MTD_SIZE")
+		printf 'if env exists oko_update; then mw.b ${ramdisk_addr_r} 0xff 0x%X; fatload mmc 1 ${ramdisk_addr_r} %s.img; mtd erase spi-nand0 %s %s; mtd write spi-nand0 ${ramdisk_addr_r} %s 0x%X; fi\n' \
+			"$_bytes" "$_part" "$_offset" "$_mtd" "$_offset" "$_bytes" \
+			>> "$_script"
+	done
+	echo "if env exists oko_update; then env delete oko_update; env save; fi" >> "$_script"
+	echo "% end of OKO update $_version" >> "$_script"
+
+	# Commit: drop the old script first, then the images, then the new script.
+	# A power loss anywhere in this window leaves no sd_update.txt, so U-Boot
+	# never flashes a mix of old and new images.
+	rm -f "$SCRIPT"
+	for _part in $PARTS_ALL; do
+		case ",$_parts," in
+			*",$_part,"*) ;;
+			*) continue ;;
+		esac
+		if ! mv -f "$_work/$_part.img" "$MNT/$_part.img"; then
+			rm -f "$_script"
+			rm -rf "$_work"
+			write_state 0 "$_version" "$_parts" 0 "commit-failed"
+			return 1
+		fi
+	done
+	cp -f "$_work/oko-update.conf" "$MANIFEST.tmp.$$" &&
+		mv -f "$MANIFEST.tmp.$$" "$MANIFEST" &&
+		mv -f "$_script" "$SCRIPT" || {
+			rm -f "$_script"
+			rm -rf "$_work"
+			write_state 0 "$_version" "$_parts" 0 "commit-failed"
+			return 1
+		}
+	sync
+	rm -rf "$_work"
+	# The package is no longer needed and would double the card usage.
+	rm -f "$_pkg"
+	write_state 1 "$_version" "$_parts" 1 ""
+	log "staged $_version ($_parts)"
+	echo "staged $_version"
+	return 0
+}
+
+# Re-check the root images against the saved manifest.  Returns 1 and prints a
+# reason when the card contents no longer match the staged package.
+verify_root() {
+	_parts="$1"
+	CONF_FILE="$MANIFEST"
+	for _part in $(echo "$_parts" | tr ',' ' '); do
+		[ -f "$MNT/$_part.img" ] || { echo "part-missing"; return 1; }
+		_bytes=$(conf_get "${_part}_BYTES")
+		_sha=$(conf_get "${_part}_SHA256")
+		_actual_bytes=$(stat -c %s "$MNT/$_part.img" 2>/dev/null)
+		[ "$_actual_bytes" = "$_bytes" ] || { echo "size-mismatch"; return 1; }
+		_actual_sha=$(sha256sum "$MNT/$_part.img" | cut -d' ' -f1)
+		[ "$_actual_sha" = "$_sha" ] || { echo "sha256-failed"; return 1; }
+	done
+	[ -f "$SCRIPT" ] || { echo "script-missing"; return 1; }
+	return 0
+}
+
+do_apply() {
+	_given="$1"
+
+	_staged=$(state_value staged)
+	_parts=$(state_value parts)
+	_version=$(state_value version)
+	_ok=$(state_value ok)
+
+	if [ "$_staged" != "1" ] || [ "$_ok" != "1" ]; then
+		log "nothing staged"
+		return 1
+	fi
+	if pending_exists; then
+		log "apply is already pending"
+		return 1
+	fi
+	if [ -z "$_given" ] || [ "$_given" != "$(token_get)" ]; then
+		log "invalid apply token"
+		return 1
+	fi
+	_reason=$(verify_root "$_parts") || {
+		log "staged images no longer match: $_reason"
+		return 1
+	}
+
+	_setenv=$(command -v fw_setenv 2>/dev/null)
+	_printenv=$(command -v fw_printenv 2>/dev/null)
+	if [ -z "$_setenv" ] || [ -z "$_printenv" ]; then
+		log "fw_setenv/fw_printenv are missing"
+		return 1
+	fi
+	if ! "$_setenv" oko_update 1 >>"$LOG" 2>&1; then
+		log "fw_setenv oko_update failed"
+		return 1
+	fi
+	if [ "$("$_printenv" -n oko_update 2>/dev/null)" != "1" ]; then
+		log "the U-Boot env does not read back oko_update=1"
+		return 1
+	fi
+
+	_tmp="$PENDING.tmp.$$"
+	{
+		echo "version=$_version"
+		echo "parts=$_parts"
+		echo "timestamp=$(date +%s)"
+	} > "$_tmp" || {
+		log "cannot write $PENDING"
+		return 1
+	}
+	mv -f "$_tmp" "$PENDING"
+	sync
+	log "apply armed: $_version, reboot required"
+	echo "armed $_version"
+	return 0
+}
+
+do_postcheck() {
+	[ -f "$PENDING" ] || return 0
+
+	_expected=$(sed -n 's/^version=//p' "$PENDING" | head -n 1)
+	_parts=$(sed -n 's/^parts=//p' "$PENDING" | head -n 1)
+	_current=$(release_version)
+	_flag=""
+	if command -v fw_printenv >/dev/null 2>&1; then
+		_flag=$(fw_printenv -n oko_update 2>/dev/null)
+	fi
+
+	_ok=0
+	_error=""
+	if [ -n "$_expected" ] && [ "$_expected" = "$_current" ]; then
+		_ok=1
+	else
+		if [ "$_flag" = "1" ]; then
+			_error="uboot-did-not-run"
+		else
+			_error="version-mismatch"
+		fi
+	fi
+
+	_tmp="$RESULT.tmp.$$"
+	{
+		echo "ok=$_ok"
+		echo "version=${_current:-unknown}"
+		echo "expected=${_expected:-unknown}"
+		echo "parts=${_parts:-}"
+		echo "error=$_error"
+		echo "timestamp=$(date +%s)"
+	} > "$_tmp"
+	mv -f "$_tmp" "$RESULT" 2>/dev/null
+	rm -f "$PENDING"
+
+	# Linux booted, so the card must not reflash the board on the next start.
+	# When the flash is interrupted and Linux does not boot, this code never
+	# runs and the card keeps sd_update.txt for the automatic retry.
+	remove_staging_files
+	clear_state
+
+	# A stale flag would make the next staged package flash on an ordinary
+	# reboot without apply, so clear it on success and on failure alike.
+	if [ "$_flag" = "1" ]; then
+		fw_setenv oko_update >/dev/null 2>&1 || true
+	fi
+
+	if [ "$_ok" = "1" ]; then
+		log "postcheck ok: $_expected"
+	else
+		log "postcheck failed: $_error (expected $_expected, running $_current)"
+	fi
+	return 0
+}
+
+do_clear() {
+	if pending_exists; then
+		log "refusing to clear: an apply is pending"
+		return 1
+	fi
+	remove_staging_files
+	clear_state
+	log "staging cleared"
+	echo "cleared"
+	return 0
+}
+
+case "$1" in
+	status)
+		do_status
+		exit $?
+		;;
+	token)
+		lock_acquire || exit 1
+		do_token
+		_rc=$?
+		lock_release
+		exit $_rc
+		;;
+	stage)
+		lock_acquire || exit 1
+		do_stage "$2"
+		_rc=$?
+		lock_release
+		exit $_rc
+		;;
+	apply)
+		lock_acquire || exit 1
+		do_apply "$2"
+		_rc=$?
+		lock_release
+		exit $_rc
+		;;
+	postcheck)
+		lock_acquire || exit 1
+		do_postcheck
+		_rc=$?
+		lock_release
+		exit $_rc
+		;;
+	clear)
+		lock_acquire || exit 1
+		do_clear
+		_rc=$?
+		lock_release
+		exit $_rc
+		;;
+	*)
+		echo "usage: $0 {status|token|stage <package.okp>|apply <token>|postcheck|clear}" >&2
+		exit 1
+		;;
+esac
+
+exit 0

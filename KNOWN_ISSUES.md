@@ -1,6 +1,6 @@
 # Известные ошибки и ограничения OKO
 
-Обновлено: `2026-11-08`. В файле — открытые проблемы, подтверждённые
+Обновлено: `2026-11-09`. В файле — открытые проблемы, подтверждённые
 ограничения и недавно закрытые записи (KI-036). Проверенные функции и доказательства — в `VERIFIED_FUNCTIONS.md`,
 состав и статус функционала — в `FEATURES_VERIFIED.md` / `FEATURES_UNVERIFIED.md`,
 процедуры стенда — в `TESTBENCH.md`.
@@ -223,6 +223,16 @@
   затем rollback `app-1.0.0.bin` → `1.0.0`; телеметрия и `flags=0`; после
   power-cycle — app 1.0.0. Негативные проверки — 9/9. Осталось непроверенным
   только полное отключение питания в момент стирания. Статус: **закрыто**.
+
+- **KI-049. Обновление ПО через WebUI (OTA) не проверено на стенде.**
+  Реализованы упаковка `.okp` (`tools/native/make_oko_update.sh`), подготовка
+  microSD (`/usr/bin/oko-update`), потоковый приём пакета и API `/api/update*`,
+  WebUI-карточка и пост-проверка `S20oko-update`. Однако гейтовые эксперименты
+  плана не выполнены, потому что DUT был отключён: видимость
+  `fw_setenv oko_update` в U-Boot, соответствие `mmc 1` слоту карты,
+  перемонтирование `/oem` после `mtd erase` всего раздела и HTTPS-загрузка.
+  До закрытия гейтов механизм считается непроверенным; штатная прошивка —
+  покомпонентная по `TESTBENCH.md` §7B. Статус: **открыто (P3)**.
 
 ### VPN
 
@@ -537,6 +547,16 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   then rollback `app-1.0.0.bin` → `1.0.0`; telemetry and `flags=0`; after a
   power cycle the app runs 1.0.0. Negative checks 9/9. Only a full power cut
   during erase remains untested. Status: **closed**.
+
+- **KI-049. Software update from the WebUI (OTA) is not verified on the bench.**
+  The `.okp` packaging (`tools/native/make_oko_update.sh`), microSD staging
+  (`/usr/bin/oko-update`), streamed package upload and `/api/update*`, the WebUI
+  card and the `S20oko-update` postcheck are implemented. The plan's gating
+  experiments were not run because the DUT was disconnected: visibility of
+  `fw_setenv oko_update` in U-Boot, whether `mmc 1` is the card slot, the `/oem`
+  remount after erasing the whole partition, and HTTPS download. Until the gates
+  are closed the mechanism is unverified; the supported flashing path remains
+  the per-partition procedure in `TESTBENCH.md` §7B. Status: **open (P3)**.
 
 ### VPN
 

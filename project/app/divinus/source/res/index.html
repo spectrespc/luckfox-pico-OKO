@@ -1068,6 +1068,33 @@
 			</div>
 
 			<div class="card">
+				<h3><span data-i18n="software_update">Software update</span>
+					<span class="badge-state off" id="upd-state">–</span></h3>
+				<div class="field"><label data-i18n="upd_current">Current version</label>
+					<div class="ctl"><span id="upd_current">–</span></div></div>
+				<div class="field"><label data-i18n="upd_sd">microSD staging</label>
+					<div class="ctl"><span id="upd_sd" class="hint">–</span></div></div>
+				<div class="field"><label data-i18n="upd_file">Package file (.okp)</label>
+					<div class="ctl"><input type="file" id="upd_file" accept=".okp,application/octet-stream"></div></div>
+				<div class="field"><label data-i18n="upd_url">Or download from URL</label>
+					<div class="ctl"><input type="text" id="upd_url" placeholder="http://server/oko-update-0.3.0.okp"></div></div>
+				<div class="actions">
+					<button type="button" class="btn primary" id="upd_upload_btn" onclick="updateUpload()" data-i18n="upd_upload">Upload package</button>
+					<button type="button" class="btn" id="upd_fetch_btn" onclick="updateFetch()" data-i18n="upd_fetch">Download and stage</button>
+					<button type="button" class="btn" onclick="updateLoad()" data-i18n="refresh">Refresh</button>
+				</div>
+				<div class="bar"><div id="upd-bar"></div></div>
+				<div class="hint" id="upd_status">–</div>
+				<div class="log" id="upd_info"></div>
+				<input type="hidden" id="upd_token">
+				<div class="actions">
+					<button type="button" class="btn danger" id="upd_apply_btn" onclick="updateApply()" data-i18n="upd_apply">Flash and reboot</button>
+					<button type="button" class="btn" id="upd_clear_btn" onclick="updateClear()" data-i18n="upd_clear">Cancel staging</button>
+				</div>
+				<p class="note" data-i18n="upd_note">The package is staged on the microSD card; after the reboot U-Boot writes boot, oem and rootfs. Do not power off the device while it flashes. /userdata is not touched.</p>
+			</div>
+
+			<div class="card">
 				<h3><span data-i18n="maintenance">Maintenance</span></h3>
 				<div class="actions">
 					<button type="button" class="btn" onclick="restartApp()" data-i18n="restart">Restart streamer</button>
@@ -1186,6 +1213,31 @@ var I18N = {
 		flash_file: "Firmware file",
 		flash_confirm: "Type FLASH", flash_start: "Flash controller",
 		flash_note: "The daemon is stopped while the controller is flashed. Do not power off the device. The version comes from the file name: app-1.0.1.bin, app-2.0.2.ihx.",
+		software_update: "Software update", upd_current: "Current version",
+		upd_sd: "microSD staging", upd_sd_ok: "Card ready",
+		upd_sd_absent: "No card mounted",
+		upd_file: "Package file (.okp)", upd_url: "Or download from URL",
+		upd_upload: "Upload package", upd_fetch: "Download and stage",
+		upd_apply: "Flash and reboot", upd_clear: "Cancel staging",
+		upd_note: "The package is staged on the microSD card; after the reboot U-Boot writes boot, oem and rootfs. Do not power off the device while it flashes. /userdata is not touched.",
+		upd_choose_file: "Choose a .okp package file first.",
+		upd_bad_file: "The package must have the .okp extension.",
+		upd_staged_started: "Package received; verification started.",
+		upd_download_started: "Download started.",
+		upd_apply_prompt: "Type APPLY to stage the update and reboot.",
+		upd_apply_word: "The confirmation word is APPLY.",
+		upd_confirm_clear: "Remove the staged package and sd_update.txt from the card?",
+		upd_rebooting: "Update armed; the device reboots and U-Boot flashes the SPI NAND.",
+		upd_reboot_wait: "Waiting for the device to flash and come back (up to 5 minutes).",
+		upd_ok: "Update completed", upd_failed: "Update failed",
+		upd_staged: "Staged package", upd_not_staged: "No package staged",
+		upd_state_uploading: "Receiving the package",
+		upd_state_fetching: "Downloading the package",
+		upd_state_staging: "Verifying and unpacking",
+		upd_state_applying: "Arming the update",
+		upd_state_reboot: "Rebooting into U-Boot",
+		upd_state_done: "Ready", upd_state_error: "Error",
+		upd_state_idle: "Idle",
 		fw_app: "application", fw_boot: "bootloader", fw_absent: "no response",
 		flash_running: "Flashing the controller", flash_done: "Firmware flashed",
 		flash_failed: "Firmware flash failed",
@@ -1380,6 +1432,31 @@ var I18N = {
 		flash_file: "Файл прошивки",
 		flash_confirm: "Введите FLASH", flash_start: "Прошить контроллер",
 		flash_note: "На время прошивки демон останавливается. Не выключайте питание. Версия берётся из имени файла: app-1.0.1.bin, app-2.0.2.ihx.",
+		software_update: "Обновление ПО", upd_current: "Текущая версия",
+		upd_sd: "Подготовка на microSD", upd_sd_ok: "Карта готова",
+		upd_sd_absent: "Карта не смонтирована",
+		upd_file: "Файл пакета (.okp)", upd_url: "Или скачать по URL",
+		upd_upload: "Загрузить пакет", upd_fetch: "Скачать и подготовить",
+		upd_apply: "Прошить и перезагрузить", upd_clear: "Отменить подготовку",
+		upd_note: "Пакет раскладывается на microSD; после перезагрузки U-Boot запишет boot, oem и rootfs. Не выключайте питание во время прошивки. Раздел /userdata не затрагивается.",
+		upd_choose_file: "Сначала выберите файл пакета .okp.",
+		upd_bad_file: "Файл пакета должен иметь расширение .okp.",
+		upd_staged_started: "Пакет получен; начата проверка.",
+		upd_download_started: "Скачивание начато.",
+		upd_apply_prompt: "Введите APPLY, чтобы подготовить обновление и перезагрузиться.",
+		upd_apply_word: "Подтверждающее слово — APPLY.",
+		upd_confirm_clear: "Удалить подготовленный пакет и sd_update.txt с карты?",
+		upd_rebooting: "Обновление подготовлено; устройство перезагрузится и U-Boot прошьёт SPI NAND.",
+		upd_reboot_wait: "Ожидание прошивки и возврата устройства (до 5 минут).",
+		upd_ok: "Обновление выполнено", upd_failed: "Обновление не выполнено",
+		upd_staged: "Подготовленный пакет", upd_not_staged: "Пакет не подготовлен",
+		upd_state_uploading: "Приём пакета",
+		upd_state_fetching: "Скачивание пакета",
+		upd_state_staging: "Проверка и распаковка",
+		upd_state_applying: "Подготовка обновления",
+		upd_state_reboot: "Перезагрузка в U-Boot",
+		upd_state_done: "Готово", upd_state_error: "Ошибка",
+		upd_state_idle: "Простой",
 		fw_app: "приложение", fw_boot: "загрузчик", fw_absent: "нет ответа",
 		flash_running: "Идёт прошивка контроллера", flash_done: "Прошивка завершена",
 		flash_failed: "Ошибка прошивки",
@@ -2156,6 +2233,187 @@ function storageAction(action) {
 		toast('ok', t('storage_' + action));
 		refreshRecordingsLater();
 	});
+}
+
+
+/* ============================ software update ============================ */
+var updReconnectTimer = null;
+var updLastTimestamp = 0;
+var updStagedVersion = '';
+
+function updateStateText(job) {
+	var key = 'upd_state_' + (job.state || 'idle');
+	var label = t(key);
+	if (label === key) label = job.message || (job.state || '');
+	return label;
+}
+
+function updateLoad() {
+	getJson('/api/update', function (dec) {
+		if (!dec || dec.error) return;
+		updateRender(dec);
+	});
+}
+
+function updateRender(dec) {
+	var job = dec.job || {};
+	var staged = dec.staged || {};
+	var last = dec.last || {};
+	var running = ['uploading', 'fetching', 'staging', 'applying', 'reboot'].indexOf(job.state) >= 0;
+	var blocked = dec.blocked === true || dec.sd_mounted !== true || running;
+
+	setText('upd_current', dec.current_version || '–');
+	var tokenInput = $('upd_token');
+	if (tokenInput) tokenInput.value = dec.apply_token || '';
+	setText('upd_sd', dec.sd_mounted ?
+		t('upd_sd_ok') + ' · ' + fmtMiB(dec.free_mb) : t('upd_sd_absent'));
+
+	var badge = $('upd-state');
+	if (badge) {
+		badge.className = 'badge-state ' + ((staged.staged && staged.ok) || running ? 'on' : 'off');
+		badge.textContent = running ? updateStateText(job) :
+			(staged.staged && staged.ok ? t('upd_staged') : t('upd_not_staged'));
+	}
+	var bar = $('upd-bar');
+	if (bar) bar.style.width = Math.max(0, Math.min(100, job.progress || 0)) + '%';
+	setText('upd_status', (dec.blocked && dec.reason) ? dec.reason : updateStateText(job));
+
+	if (last.timestamp && last.timestamp > updLastTimestamp)
+		updLastTimestamp = last.timestamp;
+	if (staged.version) updStagedVersion = staged.version;
+
+	var info = $('upd_info');
+	if (info) {
+		info.innerHTML = '';
+		var line = document.createElement('div');
+		line.textContent = staged.staged ?
+			t('upd_staged') + ': ' + (staged.version || '?') + ' — ' +
+			(staged.parts || '?') + (staged.ok ? '' : ' (' + (staged.error || 'FAIL') + ')') :
+			t('upd_not_staged');
+		info.appendChild(line);
+		if (last.timestamp) {
+			var res = document.createElement('div');
+			res.textContent = (last.ok ? t('upd_ok') : t('upd_failed')) + ' · ' +
+				fmtTime(last.timestamp) + ' · ' + (last.version || '') +
+				(last.error ? ' (' + last.error + ')' : '');
+			info.appendChild(res);
+		}
+	}
+
+	['upd_upload_btn', 'upd_fetch_btn'].forEach(function (id) {
+		var b = $(id);
+		if (b) b.disabled = blocked;
+	});
+	var apply = $('upd_apply_btn');
+	if (apply) apply.disabled = blocked || !(staged.staged && staged.ok) || dec.pending === true;
+	var clear = $('upd_clear_btn');
+	if (clear) clear.disabled = running || dec.pending === true || !staged.staged;
+}
+
+function updateUpload() {
+	var input = $('upd_file');
+	var file = input && input.files && input.files[0];
+	if (!file) return toast('err', t('upd_choose_file'));
+	if (!/\.okp$/i.test(file.name)) return toast('err', t('upd_bad_file'));
+	var req = new XMLHttpRequest();
+	req.open('POST', '/api/update/upload');
+	req.setRequestHeader('Content-Type', 'application/octet-stream');
+	req.upload.onprogress = function (e) {
+		if (!e.lengthComputable) return;
+		var bar = $('upd-bar');
+		if (bar) bar.style.width = Math.min(90, e.loaded / e.total * 90).toFixed(1) + '%';
+	};
+	req.onreadystatechange = function () {
+		if (req.readyState !== 4) return;
+		var dec = null;
+		try { dec = JSON.parse(req.responseText); } catch (e) {}
+		if (!dec || dec.error) return toastError(dec);
+		if (input) input.value = '';
+		toast('ok', t('upd_staged_started'));
+		updateLoad();
+	};
+	req.send(file);
+}
+
+function updateFetch() {
+	var input = $('upd_url');
+	var url = input ? input.value.replace(/^\s+|\s+$/g, '') : '';
+	if (!url) return toast('err', t('upd_url_required'));
+	request('POST', '/api/update/fetch?url=' + encodeURIComponent(url), '',
+		'application/x-www-form-urlencoded', function (dec) {
+			if (!dec || dec.error) return toastError(dec);
+			toast('info', t('upd_download_started'));
+			updateLoad();
+		});
+}
+
+function updateApply() {
+	var word = prompt(t('upd_apply_prompt'));
+	if (word === null) return;
+	if (word.replace(/^\s+|\s+$/g, '') !== 'APPLY') return toast('err', t('upd_apply_word'));
+	var token = $('upd_token') ? $('upd_token').value : '';
+	var prevLast = updLastTimestamp;
+	var expected = updStagedVersion;
+	request('POST', '/api/update/apply', 'confirm=APPLY&token=' + esc(token),
+		'application/x-www-form-urlencoded', function (dec) {
+			if (!dec || dec.error) return toastError(dec);
+			toast('info', t('upd_rebooting'));
+			updateReconnect(prevLast, expected);
+		});
+}
+
+function updateClear() {
+	if (!confirm(t('upd_confirm_clear'))) return;
+	request('POST', '/api/update?clear=1', '', 'application/x-www-form-urlencoded',
+		function (dec) {
+			if (!dec || dec.error) return toastError(dec);
+			toast('ok', t('upd_not_staged'));
+			updateLoad();
+		});
+}
+
+/* The flash takes a couple of minutes; poll until the device answers and the
+   postcheck result appears, instead of reloading the page blindly. */
+function updateReconnect(prevLast, expected) {
+	if (updReconnectTimer) clearInterval(updReconnectTimer);
+	var tries = 0;
+	updateLoad();
+	updReconnectTimer = setInterval(function () {
+		tries++;
+		getJson('/api/update', function (dec) {
+			if (dec && !dec.error) {
+				var state = dec.job ? dec.job.state : '';
+				/* Before the reboot the old result is still on the device:
+				   never accept it while the apply worker is running. */
+				var settled = state !== 'applying' && state !== 'reboot';
+				var changed = dec.last && dec.last.timestamp !== prevLast;
+				if (!changed && expected && dec.current_version === expected)
+					changed = true;
+				var fresh = settled && dec.last && dec.pending === false &&
+					changed && (!expected || dec.last.expected === expected);
+				if (state === 'error') {
+					clearInterval(updReconnectTimer);
+					updReconnectTimer = null;
+					updateRender(dec);
+					toast('err', t('upd_failed'), dec.job.message || '');
+					return;
+				}
+				if (fresh) {
+					clearInterval(updReconnectTimer);
+					updReconnectTimer = null;
+					updateRender(dec);
+					toast(dec.last.ok ? 'ok' : 'err',
+						dec.last.ok ? t('upd_ok') : t('upd_failed'),
+						dec.last.error || '');
+					return;
+				}
+			}
+			if (tries >= 60) {
+				clearInterval(updReconnectTimer);
+				updReconnectTimer = null;
+			}
+		});
+	}, 5000);
 }
 
 function formatSize(bytes) {
@@ -3170,6 +3428,7 @@ function loadSection(name) {
 	if (name === 'streams') loadStreams();
 	if (name === 'events') loadModels();
 	if (name === 'network') vpnLoad();
+	if (name === 'system') updateLoad();
 	if (name === 'live') focusPoll();
 }
 
@@ -3220,6 +3479,7 @@ function poll() {
 	} else if (activeSec === 'system') {
 		firmwarePoll();
 		flashPoll();
+		updateLoad();
 	}
 }
 

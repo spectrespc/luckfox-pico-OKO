@@ -118,28 +118,29 @@ SPI NAND, если `sys_bootargs` не сохранён в env.
 | 5 | `S10udev` | eudev, создание узлов устройств; правило `60-oko-sdcard.rules` вызывает `oko-sdcard add/remove` и монтирует карту в `/mnt/sdcard` (состояние — `/run/oko-sd.state`) | должен пройти до монтирования по `by-name`; `&sdmmc` в DTS — съёмная карта с `sdmmc0_det` |
 | 6 | `S20linkmount` | симлинки `/dev/block/by-name`, монтирование `oem`/`userdata` | ключевой этап, см. ниже |
 | 7 | `S20oko-osd` | divinus по умолчанию (`/userdata/divinus.enable`, opt-out — `/userdata/rkipc.enable`), бутстрап OSD-конфига, запуск `oko-osd`; `/tmp/osd-sys.txt` — `CPU …\nMEM FREE … SD FREE …\nT …C` | оверлей OKO; после `S20linkmount`, до `S21appinit` |
-| 8 | `S20okotz` | применение `[system] tz` из `/userdata/divinus.yaml` к `/etc/TZ`: относительный симлинк на `usr/share/zoneinfo/uclibc/<зона>` | оверлей OKO; после `S20linkmount`/`S20oko-osd`, до `S21appinit`; нет ключа или зона невалидна — остаётся зона образа (`Europe/Moscow`) |
-| 9 | `S20urandom` | сохранение/восстановление seed urandom | — |
-| 10 | `S21appinit` | `sh /oem/usr/bin/RkLunch.sh` | **требует смонтированных `/oem` и `/userdata`** |
-| 11 | `S21oko-ec` | запуск `oko-ec daemon` (телеметрия EC/INA/SHT21 в `/tmp/oko-ec.json` и `/tmp/oko-ec.osd`) | оверлей OKO; после `S20linkmount` и `S21appinit` (лексикографический порядок), требует `/dev/i2c-3` и `/oem/usr/bin/oko-ec`; opt-out — `/userdata/oko-ec.disable` |
-| 12 | `S35iptables` | правила firewall | сеть ещё не обязательна |
-| 13 | `S40network` | базовая настройка сети | — |
-| 14 | `S41dhcpcd` | заглушка OKO; DHCP управляется `/usr/bin/oko-net` | после `S40network` |
-| 15 | `S45oko-vpn` | autostart профилей VPN с `auto=1` и watchdog | оверлей OKO; после `S41dhcpcd` (ждёт default route до 60 с), требует `/oem/usr/bin/{wg,awg}` или `/usr/sbin/openvpn`, `/usr/bin/oko-vpn` и `/userdata/vpn`; профили `wg0`/`awg0`/`tun0`; opt-out — нет профилей с `auto=1` |
-| 16 | `S49ntp` | синхронизация времени | требует рабочей сети; `divinus` (запущен раньше, из `S21appinit`) через 10 с учитывает `ntp_enable`/`ntp_server` и может остановить этот демон |
-| 17 | `S50sshd` | SSH-сервер | сеть |
-| 18 | `S50telnet` | telnet-сервер | сеть |
-| 19 | `S50usbdevice` | настройка USB-режима (gadget) | — |
-| 20 | `S60micinit` | настройка микрофонного тракта через `amixer` | аудио-модули ядра |
-| 21 | `S60openvpn` | штатный init-скрипт пакета buildroot | **неактивен**: читает `/etc/openvpn/*.conf` (каталога нет), профилями OKO управляет `S45oko-vpn`; не удалять, чтобы пакет оставался целостным |
-| 22 | `S99_auto_reboot` | скрипты rockchip_test (auto-reboot / power-lost) | `/oem/rockchip_test`, `/data/cfg` |
-| 23 | `S99hciinit` | `hciattach` для AIC8800 и поднятие `wlan0` | зависит от `aic8800_fdrv` |
-| 24 | `S99luckfoxconfigload` | `luckfox-config load` — восстановление настроек | `/userdata` |
-| 25 | `S99luckfoxcustomoverlay` | применение пользовательского DT-overlay из `/mnt/cfg` | `dtc`, `configfs` |
-| 26 | `S99oko-test` | тестовый маркер OKO: пишет `/tmp/oko-test-ok` и строку в `/dev/kmsg` | оверлей OKO, `MARKER` в скрипте |
-| 27 | `S99python` | запуск `/root/main.py` или `/root/boot.py` | `/usr/bin/python` |
-| 28 | `S99rtcinit` | калибровка RTC при «нулевом» времени; RTC хранится в UTC (`hwclock -u`, `date -u`) | — |
-| 29 | `S99usb0config` | назначение IP `172.32.0.93` интерфейсу `usb0` | может перезапускать `S50usbdevice` |
+| 8 | `S20oko-update` | пост-проверка обновления ПО: сравнивает `/etc/oko-release` с `/userdata/oko-update.pending`, пишет `/userdata/oko-update.state`, удаляет `sd_update.txt` и образы с microSD | оверлей OKO; после `S20linkmount` (и `S20oko-osd`), до `S21appinit`; при отсутствии `.pending` завершается без работы |
+| 9 | `S20okotz` | применение `[system] tz` из `/userdata/divinus.yaml` к `/etc/TZ`: относительный симлинк на `usr/share/zoneinfo/uclibc/<зона>` | оверлей OKO; после `S20linkmount`/`S20oko-osd`, до `S21appinit`; нет ключа или зона невалидна — остаётся зона образа (`Europe/Moscow`) |
+| 10 | `S20urandom` | сохранение/восстановление seed urandom | — |
+| 11 | `S21appinit` | `sh /oem/usr/bin/RkLunch.sh` | **требует смонтированных `/oem` и `/userdata`** |
+| 12 | `S21oko-ec` | запуск `oko-ec daemon` (телеметрия EC/INA/SHT21 в `/tmp/oko-ec.json` и `/tmp/oko-ec.osd`) | оверлей OKO; после `S20linkmount` и `S21appinit` (лексикографический порядок), требует `/dev/i2c-3` и `/oem/usr/bin/oko-ec`; opt-out — `/userdata/oko-ec.disable` |
+| 13 | `S35iptables` | правила firewall | сеть ещё не обязательна |
+| 14 | `S40network` | базовая настройка сети | — |
+| 15 | `S41dhcpcd` | заглушка OKO; DHCP управляется `/usr/bin/oko-net` | после `S40network` |
+| 16 | `S45oko-vpn` | autostart профилей VPN с `auto=1` и watchdog | оверлей OKO; после `S41dhcpcd` (ждёт default route до 60 с), требует `/oem/usr/bin/{wg,awg}` или `/usr/sbin/openvpn`, `/usr/bin/oko-vpn` и `/userdata/vpn`; профили `wg0`/`awg0`/`tun0`; opt-out — нет профилей с `auto=1` |
+| 17 | `S49ntp` | синхронизация времени | требует рабочей сети; `divinus` (запущен раньше, из `S21appinit`) через 10 с учитывает `ntp_enable`/`ntp_server` и может остановить этот демон |
+| 18 | `S50sshd` | SSH-сервер | сеть |
+| 19 | `S50telnet` | telnet-сервер | сеть |
+| 20 | `S50usbdevice` | настройка USB-режима (gadget) | — |
+| 21 | `S60micinit` | настройка микрофонного тракта через `amixer` | аудио-модули ядра |
+| 22 | `S60openvpn` | штатный init-скрипт пакета buildroot | **неактивен**: читает `/etc/openvpn/*.conf` (каталога нет), профилями OKO управляет `S45oko-vpn`; не удалять, чтобы пакет оставался целостным |
+| 23 | `S99_auto_reboot` | скрипты rockchip_test (auto-reboot / power-lost) | `/oem/rockchip_test`, `/data/cfg` |
+| 24 | `S99hciinit` | `hciattach` для AIC8800 и поднятие `wlan0` | зависит от `aic8800_fdrv` |
+| 25 | `S99luckfoxconfigload` | `luckfox-config load` — восстановление настроек | `/userdata` |
+| 26 | `S99luckfoxcustomoverlay` | применение пользовательского DT-overlay из `/mnt/cfg` | `dtc`, `configfs` |
+| 27 | `S99oko-test` | тестовый маркер OKO: пишет `/tmp/oko-test-ok` и строку в `/dev/kmsg` | оверлей OKO, `MARKER` в скрипте |
+| 28 | `S99python` | запуск `/root/main.py` или `/root/boot.py` | `/usr/bin/python` |
+| 29 | `S99rtcinit` | калибровка RTC при «нулевом» времени; RTC хранится в UTC (`hwclock -u`, `date -u`) | — |
+| 30 | `S99usb0config` | назначение IP `172.32.0.93` интерфейсу `usb0` | может перезапускать `S50usbdevice` |
 
 `S20linkmount` генерируется в `project/build.sh` (при разборе таблицы разделов) в файл
 `$RK_PROJECT_OUTPUT/S20linkmount` с `bootmedium=$RK_BOOT_MEDIUM`. Для `spi_nand` он:
@@ -170,6 +171,22 @@ SPI NAND, если `sys_bootargs` не сохранён в env.
 SIGHUP после автосохранения конфигурации). `S99rtcinit` пишет RTC в UTC
 (`hwclock -u`, `date -u`), поэтому смена пояса не сдвигает системное время при
 перезагрузке.
+
+
+`S20oko-update` завершает обновление, подготовленное из WebUI. `apply` пишет
+`fw_setenv oko_update 1` и `/userdata/oko-update.pending`, плата перезагружается,
+U-Boot штатной командой `sd_update` читает `sd_update.txt` с microSD и пишет
+`boot`/`oem`/`rootfs` (полное стирание раздела, строка `reset` отсутствует).
+Каждая строка прошивки обёрнута в `if env exists oko_update; then … fi`, поэтому
+подготовленный, но не подтверждённый пакет перезагрузку не прошивает.
+Скрипт сравнивает `/etc/oko-release` с ожидаемой версией, сохраняет результат в
+`/userdata/oko-update.state` (его читает `GET /api/update`) и удаляет с карты
+`sd_update.txt` и образы, чтобы оставленная карта не перепрошивала плату при
+каждой загрузке. Если Linux не загрузился (обрыв питания во время прошивки),
+пост-проверка не выполняется, файлы остаются, и U-Boot повторяет прошивку при
+следующей подаче питания. `env delete oko_update; env save` в хвосте скрипта
+снимает флаг после успешной записи всех разделов; `postcheck` дополнительно
+очищает оставшийся флаг.
 
 ## 5. Запуск приложения (`S21appinit` → `RkLunch.sh`)
 
@@ -299,16 +316,16 @@ esac
 | 5 | захват/обработка видео | `video_rkcif.ko`, `video_rkisp.ko` |
 | 6 | MIPI CSI2 D-PHY | `phy-rockchip-csi2-dphy-hw.ko`, `phy-rockchip-csi2-dphy.ko` |
 | 7 | выгрузка неиспользуемых сенсоров | `__rmmod_camera_sensor`: `rmmod` для модулей с refcount 0 |
-| 8 | сброс «неготовых» устройств | `echo 1 > /sys/module/video_rkcif/parameters/clr_unready_dev` и аналогично для `video_rkisp` |
-| 9 | 2D-ускоритель | `rga3.ko` |
-| 10 | видео-кодек | `mpp_vcodec.ko` |
-| 11 | NPU | `rknpu.ko` |
-| 12 | аудио | `snd-soc-rv1106.ko` |
-| 13 | определение высоты сенсора | парсинг `Input Format` из `/proc/rkisp-vir0` или `/proc/rkisp0` в `sensor_height` |
-| 14 | медиа-сервер | `rockit.ko mcu_fw_path="./hpmcu_wrap.bin" mcu_fw_addr=0xff6fe000 isp_max_h=$sensor_height` |
-| 15 | видео-энкодер | `rve.ko` |
-| 16 | возобновление udev | `udevadm control --start-exec-queue` |
-| 18 | WiFi (фоном) | `$(pwd)/insmod_wifi.sh &` |
+| 9 | сброс «неготовых» устройств | `echo 1 > /sys/module/video_rkcif/parameters/clr_unready_dev` и аналогично для `video_rkisp` |
+| 10 | 2D-ускоритель | `rga3.ko` |
+| 11 | видео-кодек | `mpp_vcodec.ko` |
+| 12 | NPU | `rknpu.ko` |
+| 13 | аудио | `snd-soc-rv1106.ko` |
+| 14 | определение высоты сенсора | парсинг `Input Format` из `/proc/rkisp-vir0` или `/proc/rkisp0` в `sensor_height` |
+| 15 | медиа-сервер | `rockit.ko mcu_fw_path="./hpmcu_wrap.bin" mcu_fw_addr=0xff6fe000 isp_max_h=$sensor_height` |
+| 16 | видео-энкодер | `rve.ko` |
+| 17 | возобновление udev | `udevadm control --start-exec-queue` |
+| 19 | WiFi (фоном) | `$(pwd)/insmod_wifi.sh &` |
 
 `insmod_wifi.sh` определяет чип по `uevent` SDIO/USB и загружает соответствующий набор:
 AIC8800 (`aic_load_fw` → `aic8800_fdrv`), AP6XXX (`bcmdhd`), RTL8723BS
@@ -476,6 +493,22 @@ AIC8800 (`aic_load_fw` → `aic8800_fdrv`), AP6XXX (`bcmdhd`), RTL8723BS
   `0x8000–0x89FF`, заголовок `0x8A00`, приложение `0x8A10–0x9FFF`.
 - `firmware_status` (0.2 Гц) читает `/tmp/oko-ec.json` для STM32 и `0x60`
   для STM8; во время прошивки STM8 пропускается (`focus_motor_suspended`).
+
+### Обновление ПО (`oko-update`)
+
+- `/usr/bin/oko-update` (оверлей rootfs) готовит microSD: проверяет манифест
+  `oko-update.conf`, размеры (не больше полного раздела) и sha256 образов,
+  кладёт `boot.img`/`oem.img`/`rootfs.img` в корень FAT и пишет `sd_update.txt`
+  последним; состояние — `/run/oko-update.stage`, токен — `/run/oko-update.token`,
+  блокировка — `/run/oko-update.lock`.
+- `divinus` (`update.c`, `GET/POST /api/update*`) принимает пакет потоком на
+  карту (обходя общий буфер 4 МиБ), запускает `stage`, выдаёт одноразовый токен
+  и после `confirm=APPLY` вызывает `apply`; перезагрузка выполняется воркером
+  после ответа API.
+- `S20oko-update` требует смонтированный `/userdata` (как `S20oko-osd`) и
+  вызывается до `S21appinit`, чтобы `GET /api/update` уже отдавал результат.
+- `fw_setenv`/`fw_printenv` берут конфигурацию из `/etc/fw_env.config`
+  (`/dev/mtd0`, env 256 КиБ) — она должна совпадать с env-разделом U-Boot.
 
 ### Модули ядра
 

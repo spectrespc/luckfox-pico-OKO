@@ -399,6 +399,64 @@ STM8 отвечает на общую команду `0x08` как `[role][major
 STM8 и загрузчик — в `project/app/stm8-motor`; первая запись — `factory.ihx`
 через ST-Link, дальнейшие обновления — через `/api/flash`.
 
+## OKO: обновление ПО из WebUI (OTA)
+
+Карточка «Обновление ПО» в разделе «Система» готовит обновление на microSD и
+передаёт саму прошивку штатному механизму U-Boot `sd_update`; ядро SPI NAND не
+пишет. Локальный модуль — `source/src/update.c/.h`, оверлейный помощник —
+`/usr/bin/oko-update`, пост-проверка — `/etc/init.d/S20oko-update`.
+
+Пакет `.okp` — несжатый tar с `oko-update.conf` (манифест: версия, части,
+sha256, смещения и полные размеры разделов) и образами. Хост-утилита:
+`tools/native/make_oko_update.sh --version 0.3.0`. В v1 обновляются только
+`boot`, `oem` и `rootfs`; `env`/`idblock`/`uboot`/`userdata` не трогаются.
+
+API (все запросы требуют ту же авторизацию, что и остальной WebUI):
+
+- `GET /api/update` — снимок: `enabled`, `sd_mounted`, `free_mb`,
+  `max_package_mb`, `current_version` (из `/etc/oko-release`), `tool`,
+  `pending`, `blocked/reason/hint`, `staged{staged,version,parts,ok,error}`,
+  `last{timestamp,ok,version,expected,error}`, `job{state,progress,message,
+  received,total,started,finished}` и одноразовый `apply_token`;
+- `POST /api/update/upload` — тело запроса целиком является `.okp`
+  (`Content-Type: application/octet-stream`, обязателен `Content-Length`).
+  Это единственный эндпоинт, который обходит общий 4 МиБ буфер: `server.c`
+  распознаёт его по заголовкам и пишет тело потоком прямо на карту;
+- `POST /api/update/fetch?url=…` — `curl --proto =http,https` скачивает пакет
+  на карту и запускает проверку; `http://` разрешён только при
+  `update.allow_insecure_url: true`, адреса устройства (`localhost`, `127.*`,
+  `[::1]`) отклоняются;
+- `POST /api/update/apply` — требует `confirm=APPLY` и `token` из GET;
+  helper ещё раз сверяет sha256, пишет `fw_setenv oko_update 1` и
+  `/userdata/oko-update.pending`, после чего воркер отвечает и перезагружает
+  плату; токен одноразовый;
+- `POST /api/update?clear=1` — удаляет подготовленные файлы с карты;
+- `POST /api/update?cancel=1` — прерывает загрузку/скачивание/воркер.
+
+Помощник `oko-update` (`stage`) проверяет манифест, размеры (не больше полного
+раздела) и sha256 каждого образа, затем кладёт образы в корень FAT и пишет
+`sd_update.txt` последним. Строки скрипта повторяют проверенный в TESTBENCH §7B
+формат (`mw.b` → `fatload mmc 1` → `mtd erase spi-nand0 <offset> <full size>` →
+`mtd write`), но каждая обёрнута в `if env exists oko_update; then … fi`:
+U-Boot вызывает `sd_update` при каждой загрузке, поэтому подготовленные файлы
+сами по себе ничего не прошивают — только выставленный `apply` флаг. В хвосте
+той же обёртки — `env delete oko_update; env save`, строки `reset` нет.
+`S20oko-update` на следующей загрузке сравнивает `/etc/oko-release` с ожидаемой
+версией, пишет результат в `/userdata/oko-update.state` и удаляет файлы с карты,
+поэтому оставленная карта не перепрошивает плату повторно. Если Linux не
+загрузился (обрыв питания во время прошивки), пост-проверка не выполняется,
+`sd_update.txt` остаётся и U-Boot повторяет прошивку при следующей подаче
+питания.
+
+Настройки — секция `[update]` (`app_config.c`, закомментированный блок в
+`files/divinus.yaml`): `enable` (по умолчанию `true`), `max_package_mb` (`200`),
+`allow_insecure_url` (`true` для v1, где HTTPS-загрузка не проверена на стенде).
+
+Ограничения v1: подписи пакета нет (только sha256 из манифеста и проверка
+размера); A/B-разделов нет; `env`-флаг виден U-Boot только при совпадении
+`fw_env.config` и env-раздела (гейтовый эксперимент на стенде не выполнен);
+обновление возможно только при смонтированной FAT32 microSD.
+
 ## Правила обновления
 
 1. Клонировать upstream с `--depth 1`, заменить `source/src`, `source/res`, `source/doc`,

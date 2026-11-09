@@ -52,6 +52,7 @@ GET_JSON = [
     "/api/focus",
     "/api/flash",
     "/api/firmware",
+    "/api/update",
     "/api/streams",
     "/api/vpn",
 ] + ["/api/osd/%d" % i for i in range(10)]
@@ -79,6 +80,7 @@ POST_NOOP = [
     "/api/focus",
     "/api/network",
     "/api/storage",
+    "/api/update",
     "/api/time",
 ] + ["/api/osd/%d" % i for i in range(10)]
 

@@ -300,6 +300,12 @@ void app_config_dump(FILE *file) {
     fprintf(file, "  enable: %s\n", app_config.flash_enable ? "true" : "false");
     fprintf(file, "  max_bytes: %d\n", app_config.flash_max_bytes);
 
+    fprintf(file, "update:\n");
+    fprintf(file, "  enable: %s\n", app_config.update_enable ? "true" : "false");
+    fprintf(file, "  max_package_mb: %d\n", app_config.update_max_package_mb);
+    fprintf(file, "  allow_insecure_url: %s\n",
+        app_config.update_allow_insecure_url ? "true" : "false");
+
     fprintf(file, "iq:\n");
     fprintf(file, "  main_scene: %s\n", app_config.iq_main_scene);
     fprintf(file, "  sub_scene: %s\n", app_config.iq_sub_scene);
@@ -524,6 +530,10 @@ enum ConfigError app_config_parse(void) {
 
     app_config.flash_enable = true;
     app_config.flash_max_bytes = 262144;
+
+    app_config.update_enable = true;
+    app_config.update_max_package_mb = 200;
+    app_config.update_allow_insecure_url = true;
 
     app_config.iq_main_scene[0] = '\0';
     app_config.iq_sub_scene[0] = '\0';
@@ -1070,6 +1080,15 @@ enum ConfigError app_config_parse(void) {
         parse_int(&ini, "flash", "max_bytes", 1024, 1048576, &v);
         app_config.flash_max_bytes = (unsigned int)v;
     }
+
+    parse_bool(&ini, "update", "enable", &app_config.update_enable);
+    {
+        int v = (int)app_config.update_max_package_mb;
+        parse_int(&ini, "update", "max_package_mb", 16, 1024, &v);
+        app_config.update_max_package_mb = (unsigned int)v;
+    }
+    parse_bool(&ini, "update", "allow_insecure_url",
+        &app_config.update_allow_insecure_url);
 
     parse_param_value_n(&ini, "iq", "main_scene",
         app_config.iq_main_scene, sizeof(app_config.iq_main_scene));

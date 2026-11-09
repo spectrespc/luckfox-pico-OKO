@@ -361,9 +361,11 @@ def main():
         page.click('#sidebar button[data-sec="system"]')
         page.wait_for_timeout(1500)
         for selector in ("#fw-versions", "#flash_target",
-                         "#flash_file", "#flash_confirm", "#flash_start"):
+                         "#flash_file", "#flash_confirm", "#flash_start",
+                         "#upd_current", "#upd_file", "#upd_url",
+                         "#upd_upload_btn", "#upd_apply_btn", "#upd_clear_btn"):
             if page.locator(selector).count() == 0:
-                failures.append("firmware element %s is missing" % selector)
+                failures.append("system element %s is missing" % selector)
         page.screenshot(path=os.path.join(SHOTS, "system-firmware.png"), full_page=True)
 
         # Status card: the SD capacity and free rows sit next to Memory and are

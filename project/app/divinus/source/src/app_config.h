@@ -175,6 +175,11 @@ struct AppConfig {
     bool flash_enable;
     unsigned int flash_max_bytes;
 
+    // [update]
+    bool update_enable;
+    unsigned int update_max_package_mb;
+    bool update_allow_insecure_url;
+
     // [iq]
     char iq_main_scene[32];
     char iq_sub_scene[32];

@@ -194,6 +194,20 @@ gating_result gating_check(const char *feature)
         return allowed;
     }
 
+    if (!strcmp(feature, "update")) {
+        if (!app_config.update_enable)
+            return blocked("software update is disabled",
+                "set update.enable to true");
+        if (!gating_sd_mounted())
+            return blocked("software update requires a mounted microSD card",
+                "insert a FAT32 card and mount it in Storage");
+        if (access("/usr/bin/oko-update", X_OK) &&
+            access("/oem/usr/bin/oko-update", X_OK))
+            return blocked("the oko-update helper is missing from the image",
+                "reflash the rootfs partition");
+        return allowed;
+    }
+
     if (!strcmp(feature, "record")) {
         if (!gating_sd_mounted())
             return blocked("recording requires a mounted microSD card",

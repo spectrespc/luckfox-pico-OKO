@@ -26,6 +26,41 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Добавлено
 
+- **Обновление ПО через WebUI (OTA, OKO).** В разделе «Система» появилась
+  карточка «Обновление ПО»: загрузка `.okp` файлом (потоковый приём тела в
+  `server.c` в обход буфера 4 МиБ) или скачивание по `http(s)://`
+  (`curl`, адреса устройства отклоняются), проверка манифеста, размеров и
+  sha256, подготовка `sd_update.txt` и образов на microSD, одноразовый токен и
+  `confirm=APPLY`. Прошивку `boot`/`oem`/`rootfs` выполняет штатный U-Boot
+  `sd_update` после перезагрузки; каждая строка скрипта обёрнута в
+  `if env exists oko_update; then … fi`, поэтому подготовленный, но не
+  подтверждённый пакет при обычной перезагрузке не прошивается; `env`/`idblock`/`uboot`/`userdata` не
+  затрагиваются. Новые `update.c/.h`, `/usr/bin/oko-update`,
+  `/etc/init.d/S20oko-update`, `/etc/oko-release`, секция `[update]`
+  (`enable`, `max_package_mb`, `allow_insecure_url`), гейт `update` и хостовая
+  утилита `tools/native/make_oko_update.sh`. `S20oko-update` сохраняет
+  результат в `/userdata/oko-update.state` и очищает карту, поэтому оставленная
+  карта не перепрошивает плату повторно. Гейтовые эксперименты (env-флаг,
+  `mmc 1`, HTTPS, перемонтирование `/oem`) и полный цикл на стенде **не
+  выполнены** — DUT не подключён; статус в `FEATURES_UNVERIFIED.md` (KI-049).
+- **Software update from the WebUI (OTA, OKO).** The System section gained a
+  "Software update" card: upload an `.okp` file (the body is streamed in
+  `server.c`, bypassing the 4 MiB request buffer) or download it over
+  `http(s)://` (`curl`; URLs pointing at the device are refused), verify the
+  manifest, sizes and sha256, stage `sd_update.txt` and the images on the
+  microSD card, with a one-time token and `confirm=APPLY`. The stock U-Boot
+  `sd_update` flashes `boot`/`oem`/`rootfs` after the reboot; every script line
+  is wrapped in `if env exists oko_update; then … fi`, so a staged but
+  unconfirmed package is not flashed by an ordinary reboot; `env`/`idblock`/
+  `uboot`/`userdata` are untouched. New `update.c/.h`, `/usr/bin/oko-update`,
+  `/etc/init.d/S20oko-update`, `/etc/oko-release`, the `[update]` section
+  (`enable`, `max_package_mb`, `allow_insecure_url`), the `update` gate and the
+  host tool `tools/native/make_oko_update.sh`. `S20oko-update` stores the result
+  in `/userdata/oko-update.state` and clears the card, so a card left in the
+  slot cannot reflash the board. The gating experiments (env flag, `mmc 1`,
+  HTTPS, `/oem` remount) and a full bench cycle were **not run** — the DUT was
+  disconnected; status in `FEATURES_UNVERIFIED.md` (KI-049).
+
 - **Поддержка часовых поясов (OKO).** Образ buildroot ставит набор зон
   (`BR2_TARGET_TZ_INFO`, `BR2_TARGET_TZ_ZONELIST="default"`,
   `BR2_TARGET_LOCALTIME="Europe/Moscow"`) в `/usr/share/zoneinfo/uclibc`, а
