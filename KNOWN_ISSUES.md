@@ -139,6 +139,14 @@
   Для прошивки использовать `output/image/update.img`.
   Статус: **закрыто (2026-11-08)**.
 
+- **KI-048. Время ONVIF/ivs с суффиксом `Z` при поясе ≠ UTC.**
+  Строки `"%Y-%m-%dT%H:%M:%SZ"` формируются через `localtime` (`server.c`,
+  `ivs_events.c`), поэтому при не-UTC `/etc/TZ` они печатают локальное время с
+  суффиксом UTC (`Z`). Это ошибка метки, а не самих событий/записей. Обход: для
+  интеграций, где важна абсолютная метка, использовать `Etc/UTC` или добавлять
+  смещение на стороне потребителя. Переход на UTC-формат — отдельная задача.
+  Статус: **открыто (P4)**.
+
 ### Прошивка и конфигурация
 
 - **KI-024. Полный `update.img` затирает U-Boot env.**
@@ -454,6 +462,14 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   did not match RV1106 Pro Max + SC230AI; it was removed on 2026-11-08 and
   `IMAGE/` now holds only the release for the active board. Flash
   `output/image/update.img` instead. Status: **closed (2026-11-08)**.
+
+- **KI-048. ONVIF/ivs timestamps carry a `Z` suffix in a non-UTC zone.**
+  The `"%Y-%m-%dT%H:%M:%SZ"` strings are built with `localtime` (`server.c`,
+  `ivs_events.c`), so with a non-UTC `/etc/TZ` they print local time with a UTC
+  (`Z`) suffix. Only the label is wrong; the events and recordings are intact.
+  Workaround: use `Etc/UTC` where an absolute timestamp matters, or add the
+  offset on the consumer side. Switching to a real UTC format is a separate
+  task. Status: **open (P4)**.
 
 ### Flashing and configuration
 

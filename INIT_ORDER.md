@@ -118,27 +118,28 @@ SPI NAND, если `sys_bootargs` не сохранён в env.
 | 5 | `S10udev` | eudev, создание узлов устройств; правило `60-oko-sdcard.rules` вызывает `oko-sdcard add/remove` и монтирует карту в `/mnt/sdcard` (состояние — `/run/oko-sd.state`) | должен пройти до монтирования по `by-name`; `&sdmmc` в DTS — съёмная карта с `sdmmc0_det` |
 | 6 | `S20linkmount` | симлинки `/dev/block/by-name`, монтирование `oem`/`userdata` | ключевой этап, см. ниже |
 | 7 | `S20oko-osd` | divinus по умолчанию (`/userdata/divinus.enable`, opt-out — `/userdata/rkipc.enable`), бутстрап OSD-конфига, запуск `oko-osd`; `/tmp/osd-sys.txt` — `CPU …\nMEM FREE … SD FREE …\nT …C` | оверлей OKO; после `S20linkmount`, до `S21appinit` |
-| 8 | `S20urandom` | сохранение/восстановление seed urandom | — |
-| 9 | `S21appinit` | `sh /oem/usr/bin/RkLunch.sh` | **требует смонтированных `/oem` и `/userdata`** |
-| 10 | `S21oko-ec` | запуск `oko-ec daemon` (телеметрия EC/INA/SHT21 в `/tmp/oko-ec.json` и `/tmp/oko-ec.osd`) | оверлей OKO; после `S20linkmount` и `S21appinit` (лексикографический порядок), требует `/dev/i2c-3` и `/oem/usr/bin/oko-ec`; opt-out — `/userdata/oko-ec.disable` |
-| 11 | `S35iptables` | правила firewall | сеть ещё не обязательна |
-| 12 | `S40network` | базовая настройка сети | — |
-| 13 | `S41dhcpcd` | заглушка OKO; DHCP управляется `/usr/bin/oko-net` | после `S40network` |
-| 14 | `S45oko-vpn` | autostart профилей VPN с `auto=1` и watchdog | оверлей OKO; после `S41dhcpcd` (ждёт default route до 60 с), требует `/oem/usr/bin/{wg,awg}` или `/usr/sbin/openvpn`, `/usr/bin/oko-vpn` и `/userdata/vpn`; профили `wg0`/`awg0`/`tun0`; opt-out — нет профилей с `auto=1` |
-| 15 | `S49ntp` | синхронизация времени | требует рабочей сети; `divinus` (запущен раньше, из `S21appinit`) через 10 с учитывает `ntp_enable`/`ntp_server` и может остановить этот демон |
-| 16 | `S50sshd` | SSH-сервер | сеть |
-| 17 | `S50telnet` | telnet-сервер | сеть |
-| 18 | `S50usbdevice` | настройка USB-режима (gadget) | — |
-| 19 | `S60micinit` | настройка микрофонного тракта через `amixer` | аудио-модули ядра |
-| 20 | `S60openvpn` | штатный init-скрипт пакета buildroot | **неактивен**: читает `/etc/openvpn/*.conf` (каталога нет), профилями OKO управляет `S45oko-vpn`; не удалять, чтобы пакет оставался целостным |
-| 21 | `S99_auto_reboot` | скрипты rockchip_test (auto-reboot / power-lost) | `/oem/rockchip_test`, `/data/cfg` |
-| 22 | `S99hciinit` | `hciattach` для AIC8800 и поднятие `wlan0` | зависит от `aic8800_fdrv` |
-| 23 | `S99luckfoxconfigload` | `luckfox-config load` — восстановление настроек | `/userdata` |
-| 24 | `S99luckfoxcustomoverlay` | применение пользовательского DT-overlay из `/mnt/cfg` | `dtc`, `configfs` |
-| 25 | `S99oko-test` | тестовый маркер OKO: пишет `/tmp/oko-test-ok` и строку в `/dev/kmsg` | оверлей OKO, `MARKER` в скрипте |
-| 26 | `S99python` | запуск `/root/main.py` или `/root/boot.py` | `/usr/bin/python` |
-| 27 | `S99rtcinit` | калибровка RTC при «нулевом» времени | — |
-| 28 | `S99usb0config` | назначение IP `172.32.0.93` интерфейсу `usb0` | может перезапускать `S50usbdevice` |
+| 8 | `S20okotz` | применение `[system] tz` из `/userdata/divinus.yaml` к `/etc/TZ`: относительный симлинк на `usr/share/zoneinfo/uclibc/<зона>` | оверлей OKO; после `S20linkmount`/`S20oko-osd`, до `S21appinit`; нет ключа или зона невалидна — остаётся зона образа (`Europe/Moscow`) |
+| 9 | `S20urandom` | сохранение/восстановление seed urandom | — |
+| 10 | `S21appinit` | `sh /oem/usr/bin/RkLunch.sh` | **требует смонтированных `/oem` и `/userdata`** |
+| 11 | `S21oko-ec` | запуск `oko-ec daemon` (телеметрия EC/INA/SHT21 в `/tmp/oko-ec.json` и `/tmp/oko-ec.osd`) | оверлей OKO; после `S20linkmount` и `S21appinit` (лексикографический порядок), требует `/dev/i2c-3` и `/oem/usr/bin/oko-ec`; opt-out — `/userdata/oko-ec.disable` |
+| 12 | `S35iptables` | правила firewall | сеть ещё не обязательна |
+| 13 | `S40network` | базовая настройка сети | — |
+| 14 | `S41dhcpcd` | заглушка OKO; DHCP управляется `/usr/bin/oko-net` | после `S40network` |
+| 15 | `S45oko-vpn` | autostart профилей VPN с `auto=1` и watchdog | оверлей OKO; после `S41dhcpcd` (ждёт default route до 60 с), требует `/oem/usr/bin/{wg,awg}` или `/usr/sbin/openvpn`, `/usr/bin/oko-vpn` и `/userdata/vpn`; профили `wg0`/`awg0`/`tun0`; opt-out — нет профилей с `auto=1` |
+| 16 | `S49ntp` | синхронизация времени | требует рабочей сети; `divinus` (запущен раньше, из `S21appinit`) через 10 с учитывает `ntp_enable`/`ntp_server` и может остановить этот демон |
+| 17 | `S50sshd` | SSH-сервер | сеть |
+| 18 | `S50telnet` | telnet-сервер | сеть |
+| 19 | `S50usbdevice` | настройка USB-режима (gadget) | — |
+| 20 | `S60micinit` | настройка микрофонного тракта через `amixer` | аудио-модули ядра |
+| 21 | `S60openvpn` | штатный init-скрипт пакета buildroot | **неактивен**: читает `/etc/openvpn/*.conf` (каталога нет), профилями OKO управляет `S45oko-vpn`; не удалять, чтобы пакет оставался целостным |
+| 22 | `S99_auto_reboot` | скрипты rockchip_test (auto-reboot / power-lost) | `/oem/rockchip_test`, `/data/cfg` |
+| 23 | `S99hciinit` | `hciattach` для AIC8800 и поднятие `wlan0` | зависит от `aic8800_fdrv` |
+| 24 | `S99luckfoxconfigload` | `luckfox-config load` — восстановление настроек | `/userdata` |
+| 25 | `S99luckfoxcustomoverlay` | применение пользовательского DT-overlay из `/mnt/cfg` | `dtc`, `configfs` |
+| 26 | `S99oko-test` | тестовый маркер OKO: пишет `/tmp/oko-test-ok` и строку в `/dev/kmsg` | оверлей OKO, `MARKER` в скрипте |
+| 27 | `S99python` | запуск `/root/main.py` или `/root/boot.py` | `/usr/bin/python` |
+| 28 | `S99rtcinit` | калибровка RTC при «нулевом» времени; RTC хранится в UTC (`hwclock -u`, `date -u`) | — |
+| 29 | `S99usb0config` | назначение IP `172.32.0.93` интерфейсу `usb0` | может перезапускать `S50usbdevice` |
 
 `S20linkmount` генерируется в `project/build.sh` (при разборе таблицы разделов) в файл
 `$RK_PROJECT_OUTPUT/S20linkmount` с `bootmedium=$RK_BOOT_MEDIUM`. Для `spi_nand` он:
@@ -155,6 +156,20 @@ SPI NAND, если `sys_bootargs` не сохранён в env.
 > **Критическая зависимость:** `S20linkmount` обязан выполниться раньше `S21appinit`.
 > `RkLunch.sh` читает `/oem/usr/bin`, `/oem/usr/ko`, `/oem/usr/share`, пишет в
 > `/userdata`. Если монтирование не удалось, приложение не найдёт свои файлы.
+
+`S20okotz` управляет часовым поясом. Образ содержит набор зон
+`usr/share/zoneinfo/uclibc` (buildroot `BR2_TARGET_TZ_ZONELIST="default"`) и
+`etc/TZ` — относительный симлинк на `Europe/Moscow` (`BR2_TARGET_LOCALTIME`).
+Скрипт читает `tz:` из секции `[system]` файла `/userdata/divinus.yaml`
+(источник истины; при отсутствии ключа остаётся зона образа), проверяет имя
+(только `[A-Za-z0-9_/-]`, без `..` и ведущего `/`) и наличие файла зоны, затем
+пере-создаёт `/etc/TZ` относительным симлинком того же формата, что и пакет
+`tz` buildroot. uClibc читает `/etc/TZ` один раз на процесс
+(`__UCLIBC_HAS_TZ_CACHING__`): новые процессы (`date`, `oko-osd`) видят смену
+сразу, а долгоживущий `divinus` перезапускается из `/api/time` (graceful
+SIGHUP после автосохранения конфигурации). `S99rtcinit` пишет RTC в UTC
+(`hwclock -u`, `date -u`), поэтому смена пояса не сдвигает системное время при
+перезагрузке.
 
 ## 5. Запуск приложения (`S21appinit` → `RkLunch.sh`)
 

@@ -1,11 +1,17 @@
 #!/bin/sh
+#
+# RTC: the hardware clock is kept in UTC, independent of the configured time
+# zone. busybox hwclock defaults to local time, so all accesses pass -u;
+# otherwise a non-UTC /etc/TZ shifts the system clock by the zone offset on
+# every boot.  An unset RTC reads as the epoch: with -u that is 1970 (local
+# conversion may still print 1969), so both years mean "needs calibration".
 
 case $1 in
 start)
-	if [ "$(hwclock | grep "1969")" ]; then
+	if hwclock -u | grep -q -e " 1969" -e " 1970"; then
 		echo "RTC time calibration"
-		date -s 2024-01-01
-		hwclock -w
+		date -u -s 2024-01-01
+		hwclock -w -u
 	else
 		echo "RTC does not require time calibration"
 	fi

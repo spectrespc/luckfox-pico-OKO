@@ -165,6 +165,7 @@ Configures or reads the real-time clock.
 | GET/POST | `ts` | Unix timestamp to set (seconds; values below 1000000 are ignored) |
 | GET/POST | `ntp` | OKO: `on`/`off` (also `true`/`false`, `1`/`0`) — enables the NTP client |
 | GET/POST | `ntp_server` | OKO: host name or IP address; an empty value restores `/etc/ntp.conf` |
+| GET/POST | `tz` | OKO: IANA time zone from `/usr/share/zoneinfo/uclibc` (e.g. `Europe/Moscow`) |
 
 **Response**
 ```json
@@ -173,7 +174,10 @@ Configures or reads the real-time clock.
   "ts": 1716633815,
   "ntp_enabled": true,
   "ntp_server": "pool.ntp.org",
-  "ntp_running": true
+  "ntp_running": true,
+  "tz": "Europe/Moscow",
+  "tz_current": "Europe/Moscow",
+  "note": ""
 }
 ```
 
@@ -183,6 +187,22 @@ server the vendor daemon from `/etc/init.d/S49ntp` is restarted with
 `ntpd -c /tmp/divinus-ntp.conf`. The setting is only persisted by
 `/api/cmd?save`. An invalid host name returns
 `{"error":"blocked","reason":"the NTP server name is not valid"}`.
+
+`tz` (OKO) is validated before touching the filesystem: only
+`[A-Za-z0-9_/-]`, no `..`, no leading `/`, and
+`/usr/share/zoneinfo/uclibc/<tz>` must exist; otherwise the response is
+`{"error":"blocked","reason":"the time zone is not valid"}`. A changed zone
+re-creates `/etc/TZ` as a relative symlink, saves the configuration
+automatically (unlike `ntp`/`ntp_server`) and restarts the application with
+`SIGHUP`, because uClibc caches the zone per process; the response carries
+`"note":"time zone applied; configuration saved, restarting the application"`.
+`S20okotz` re-applies the saved `[system] tz` at boot.
+
+`tz_current` is the zone actually in effect, read from the target of
+`/etc/TZ`; it can differ from the saved `tz` after a hand edit until the next
+Apply or boot. The WebUI shows it as "Current time zone" next to the selector.
+The WebUI page itself is served with `Cache-Control: no-cache`, so a firmware
+update is picked up without a hard refresh.
 
 #### `/api/telemetry`
 

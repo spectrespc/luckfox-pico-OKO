@@ -342,10 +342,18 @@ media-ctl -p | grep -A6 'sc230ai 4-0032' | grep fmt
 # проверка потока (divinus должен быть остановлен): ожидается 30.0 fps
 v4l2-ctl -d /dev/video0 --stream-mmap --stream-count=60 --stream-poll
 
-# WebUI и API после прошивки: 80 проверок API и headless-проверка разделов
+# WebUI и API после прошивки: 103 проверки API и headless-проверка разделов
 bench/run.sh api_check.py
 LD_LIBRARY_PATH=/tmp/kilo/libasound/usr/lib/x86_64-linux-gnu \
   output/bench/venv/bin/python bench/ui_check.py   # Playwright, см. VERIFIED_FUNCTIONS.md §3
+
+# часовой пояс (только чтение): /etc/TZ — относительный симлинк на зону uclibc,
+# его ставит образ или S20okotz из system.tz в /userdata/divinus.yaml
+readlink /etc/TZ                     # ожидается ../usr/share/zoneinfo/uclibc/<зона>
+date                                 # локальное время выбранной зоны
+date -u                              # UTC: разница равна смещению зоны
+ls /usr/share/zoneinfo/uclibc        # установленный набор зон
+hwclock -u                           # RTC идёт в UTC; вывод локальный, совпадает с date
 
 # контроллеры: версии, роль STM8, загрузчик
 curl -s -u admin:oko-change-me http://192.168.52.97/api/firmware

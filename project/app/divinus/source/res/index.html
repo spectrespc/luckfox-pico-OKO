@@ -953,11 +953,39 @@
 						<option value="true">ON</option><option value="false">OFF</option></select></div></div>
 				<div class="field"><label data-i18n="ntp_server">Server</label>
 					<div class="ctl"><input type="text" id="time_ntp_server" data-group="time-ntp" data-k="ntp_server" placeholder="pool.ntp.org"></div></div>
+				<div class="field"><label data-i18n="tz_current">Current time zone</label>
+					<div class="ctl"><span id="time_tz_current">–</span></div></div>
+				<div class="field"><label data-i18n="tz">Time zone</label>
+					<div class="ctl"><select id="time_tz" data-group="time-ntp" data-k="tz">
+						<option value="Europe/Kaliningrad">Europe/Kaliningrad (UTC+2)</option>
+						<option value="Europe/Moscow">Europe/Moscow (UTC+3)</option>
+						<option value="Europe/Samara">Europe/Samara (UTC+4)</option>
+						<option value="Europe/Berlin">Europe/Berlin (UTC+1/+2)</option>
+						<option value="Europe/London">Europe/London (UTC+0/+1)</option>
+						<option value="Europe/Istanbul">Europe/Istanbul (UTC+3)</option>
+						<option value="Asia/Yekaterinburg">Asia/Yekaterinburg (UTC+5)</option>
+						<option value="Asia/Omsk">Asia/Omsk (UTC+6)</option>
+						<option value="Asia/Krasnoyarsk">Asia/Krasnoyarsk (UTC+7)</option>
+						<option value="Asia/Irkutsk">Asia/Irkutsk (UTC+8)</option>
+						<option value="Asia/Yakutsk">Asia/Yakutsk (UTC+9)</option>
+						<option value="Asia/Vladivostok">Asia/Vladivostok (UTC+10)</option>
+						<option value="Asia/Magadan">Asia/Magadan (UTC+11)</option>
+						<option value="Asia/Kamchatka">Asia/Kamchatka (UTC+12)</option>
+						<option value="Asia/Tashkent">Asia/Tashkent (UTC+5)</option>
+						<option value="Asia/Almaty">Asia/Almaty (UTC+5)</option>
+						<option value="Asia/Bishkek">Asia/Bishkek (UTC+6)</option>
+						<option value="Asia/Dubai">Asia/Dubai (UTC+4)</option>
+						<option value="America/New_York">America/New_York (UTC-5/-4)</option>
+						<option value="America/Los_Angeles">America/Los_Angeles (UTC-8/-7)</option>
+						<option value="Etc/UTC">Etc/UTC (UTC+0)</option>
+						<option value="Etc/GMT-3">Etc/GMT-3 (UTC+3)</option>
+					</select></div></div>
 				<div class="actions">
 					<button type="button" class="btn primary" data-apply="time-ntp" data-ep="time" disabled data-i18n="apply">Apply</button>
 					<button type="button" class="btn" onclick="apiRead('time')" data-i18n="refresh">Refresh</button>
 				</div>
 				<p class="note" data-i18n="ntp_note">An empty server keeps the system /etc/ntp.conf. Press Save in System to keep the setting after a restart.</p>
+				<p class="note" data-i18n="tz_note">The time zone is saved and the application restarts for 2-3 s when it is applied.</p>
 			</div>
 		</div>
 	</section>
@@ -1202,6 +1230,9 @@ var I18N = {
 		persistent_mac: "Persistent MAC", dhcp_client: "DHCP client",
 		ntp: "Time synchronization", ntp_enable: "NTP client", ntp_server: "Server",
 		ntp_note: "An empty server keeps the system /etc/ntp.conf. Press Save in System to keep the setting after a restart.",
+		tz: "Time zone",
+		tz_current: "Current time zone",
+		tz_note: "The time zone is saved and the application restarts for 2-3 s when it is applied.",
 		osd_regions: "Overlay regions",
 		osd_note: "Text is drawn with simsun_en.ttf: only ASCII/Latin is available, Cyrillic glyphs are missing. A region shows either text or an uploaded image.",
 		apply_all: "Apply all", save_config: "Save configuration",
@@ -1393,6 +1424,9 @@ var I18N = {
 		persistent_mac: "Постоянный MAC", dhcp_client: "DHCP-клиент",
 		ntp: "Синхронизация времени", ntp_enable: "Клиент NTP", ntp_server: "Сервер",
 		ntp_note: "Пустой сервер означает системный /etc/ntp.conf. Нажмите «Сохранить» в «Системе», чтобы настройка пережила перезапуск.",
+		tz: "Часовой пояс",
+		tz_current: "Текущий часовой пояс",
+		tz_note: "Пояс сохраняется в конфигурации, а при применении приложение перезапускается на 2–3 с.",
 		osd_regions: "Регионы наложения",
 		osd_note: "Текст рисуется шрифтом simsun_en.ttf: доступна только латиница, кириллицы в шрифте нет. Регион показывает либо текст, либо загруженную картинку.",
 		apply_all: "Применить все", save_config: "Сохранить конфигурацию",
@@ -2565,6 +2599,23 @@ function updateTimeFields(dec) {
 	if (badge) {
 		badge.className = 'badge-state ' + (dec.ntp_running ? 'on' : 'off');
 		badge.textContent = dec.ntp_running ? t('ntp_on') : t('ntp_off');
+	}
+	/* A zone set through the API or a hand-edited yaml may be outside the
+	   curated list; show it instead of leaving the select empty (an empty
+	   value would be rejected by the next Apply). */
+	var tzSel = $('time_tz');
+	if (tzSel && dec.tz) {
+		var found = false;
+		for (var i = 0; i < tzSel.options.length; i++) {
+			if (tzSel.options[i].value === dec.tz) { found = true; break; }
+		}
+		if (!found) {
+			var opt = document.createElement('option');
+			opt.value = dec.tz;
+			opt.textContent = dec.tz;
+			tzSel.appendChild(opt);
+		}
+		tzSel.value = dec.tz;
 	}
 }
 

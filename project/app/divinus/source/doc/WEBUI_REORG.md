@@ -111,7 +111,7 @@ System**. Ширина ≥ 60em даёт в Live две колонки (прев
 | Streams | `/api/mp4`, `/api/substream`, `/api/mjpeg`, `/api/jpeg`, `/api/audio`, `/api/venc`, `/api/rtsp`, `/api/onvif`, `/api/streams` |
 | Events | `/api/ivs` (настройки и журнал), `/api/yolo` (NPU-детекция), `/api/models` (список, загрузка, активация, удаление) |
 | Storage | `/api/storage`, `/api/record`, `/api/recordings`, `/api/recordings/file`, `/api/recordings/delete` |
-| Network | `/api/network`, `/api/time` (`ntp`, `ntp_server`), `/api/vpn`, `/api/vpn/import`, `/api/vpn/export` |
+| Network | `/api/network`, `/api/time` (`ntp`, `ntp_server`, `tz`), `/api/vpn`, `/api/vpn/import`, `/api/vpn/export` |
 | OSD | `/api/osd/{0..9}` (текст или картинка) |
 | System | `/api/status`, `/api/time`, `/api/web-auth`, `/api/cmd` (`save`, `restart`, `reboot`, `export`, `log`), `/api/cmd/import`, `/api/flash`, `/api/firmware` |
 

@@ -361,6 +361,77 @@ static bool valid_hostname(const char *value) {
     return true;
 }
 
+/* Time zone: an IANA name from the uClibc zoneinfo set.  The charset check
+ * runs before any filesystem access, so a traversal never reaches the link. */
+#define TZ_ZONEINFO_DIR "/usr/share/zoneinfo/uclibc/"
+
+static bool valid_tz(const char *value) {
+    size_t len = value ? strlen(value) : 0;
+    char path[128];
+
+    if (len == 0 || len >= 64) return false;
+    if (value[0] == '/' || strstr(value, "..")) return false;
+    for (size_t i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)value[i];
+        /* Same ctype workaround as valid_hostname(). */
+        bool alnum = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') ||
+            (c >= 'A' && c <= 'Z');
+        if (!alnum && c != '/' && c != '_' && c != '-') return false;
+    }
+
+    snprintf(path, sizeof(path), TZ_ZONEINFO_DIR "%s", value);
+    return !access(path, F_OK);
+}
+
+/* Point /etc/TZ at an installed zone.  Buildroot's tz package creates the same
+ * relative symlink, and /etc/TZ is a symlink in the image, so the rename
+ * replaces it atomically. */
+static bool set_tz_link(const char *value) {
+    char target[128], tmp[32];
+
+    snprintf(target, sizeof(target), "../usr/share/zoneinfo/uclibc/%s", value);
+    snprintf(tmp, sizeof(tmp), "/etc/TZ.tmp.%d", (int)getpid());
+    unlink(tmp);
+    if (symlink(target, tmp)) return false;
+    if (rename(tmp, "/etc/TZ")) {
+        unlink(tmp);
+        return false;
+    }
+    return true;
+}
+
+/* Effective zone: what libc actually reads, i.e. the target of /etc/TZ.  It
+ * can differ from the saved setting after a hand edit until the next Apply or
+ * boot, so the WebUI shows both. */
+static void current_tz(char *out, size_t size) {
+    char buf[128];
+    ssize_t len;
+
+    if (!out || !size) return;
+    out[0] = '\0';
+
+    len = readlink("/etc/TZ", buf, sizeof(buf) - 1);
+    if (len > 0) {
+        char *zone;
+        buf[len] = '\0';
+        zone = strstr(buf, "zoneinfo/uclibc/");
+        if (zone) zone += strlen("zoneinfo/uclibc/");
+        else zone = buf;
+        snprintf(out, size, "%s", zone);
+        return;
+    }
+
+    /* Some images use a plain file whose first line is the zone name. */
+    FILE *file = fopen("/etc/TZ", "r");
+    if (file) {
+        if (fgets(buf, sizeof(buf), file)) {
+            buf[strcspn(buf, "\r\n")] = '\0';
+            snprintf(out, size, "%s", buf);
+        }
+        fclose(file);
+    }
+}
+
 static void local_ipv4(char *out, size_t size) {
     int fd;
     struct ifreq ifr;
@@ -867,6 +938,7 @@ void send_html(const int fd, const char *data) {
         "HTTP/1.1 200 OK\r\n" \
         "Content-Type: text/html\r\n" \
         "Content-Length: %zu\r\n" \
+        "Cache-Control: no-cache\r\n" \
         "Connection: close\r\n" \
         "\r\n%s", strlen(data), data);
     buf[buf_len++] = 0;
@@ -4774,6 +4846,8 @@ if (EQUALS(req->uri, "/api/storage")) {
     if (EQUALS(req->uri, "/api/time")) {
         struct timespec t;
         int ntpChanged = 0, ntpFailed = 0, ntpInvalid = 0;
+        int tzChanged = 0, tzInvalid = 0;
+        char tzNew[sizeof(app_config.tz)] = "";
         if (req->query) {
             char *remain;
             while (req->query) {
@@ -4812,6 +4886,15 @@ if (EQUALS(req->uri, "/api/storage")) {
                     } else {
                         ntpInvalid = 1;
                     }
+                } else if (EQUALS(key, "tz")) {
+                    /* OKO: /etc/TZ is a link into the installed uClibc set;
+                     * an unknown or unsafe name is refused, not ignored. */
+                    if (!valid_tz(value)) {
+                        tzInvalid = 1;
+                    } else if (!EQUALS(value, app_config.tz)) {
+                        snprintf(tzNew, sizeof(tzNew), "%s", value);
+                        tzChanged = 1;
+                    }
                 }
             }
 
@@ -4822,11 +4905,31 @@ if (EQUALS(req->uri, "/api/storage")) {
                 return;
             }
 
+            if (tzInvalid) {
+                reply_error(req->clntFd, "blocked",
+                    "the time zone is not valid",
+                    "use an IANA name such as Europe/Moscow");
+                return;
+            }
+
             if (ntpChanged) {
                 if (!ntp_tool_available())
                     ntpFailed = 1;
                 else if (ntp_apply())
                     ntpFailed = 1;
+            }
+
+            if (tzChanged) {
+                if (!set_tz_link(tzNew)) {
+                    reply_error(req->clntFd, "unavailable",
+                        "the time zone could not be applied",
+                        "check that /etc is writable and zoneinfo is installed");
+                    return;
+                }
+                snprintf(app_config.tz, sizeof(app_config.tz), "%s", tzNew);
+                /* uClibc caches the zone per process; the restart below is
+                 * what actually makes the daemon use the new one. */
+                tzset();
             }
         }
 
@@ -4840,18 +4943,33 @@ if (EQUALS(req->uri, "/api/storage")) {
         clock_gettime(CLOCK_REALTIME, &t);
         {
             char esc_server[sizeof(app_config.ntp_server) * 6 + 1];
+            char esc_tz[sizeof(app_config.tz) * 6 + 1];
+            char cur_tz[128], esc_cur_tz[sizeof(cur_tz) * 6 + 1];
+            current_tz(cur_tz, sizeof(cur_tz));
             escape_json(esc_server, app_config.ntp_server, sizeof(esc_server));
+            escape_json(esc_tz, app_config.tz, sizeof(esc_tz));
+            escape_json(esc_cur_tz, cur_tz, sizeof(esc_cur_tz));
             respLen = sprintf(response,
                 "HTTP/1.1 200 OK\r\n"
                 "Content-Type: application/json;charset=UTF-8\r\n"
                 "Connection: close\r\n"
                 "\r\n"
                 "{\"fmt\":\"%s\",\"ts\":%ld,\"ntp_enabled\":%s,"
-                "\"ntp_server\":\"%s\",\"ntp_running\":%s}",
+                "\"ntp_server\":\"%s\",\"ntp_running\":%s,"
+                "\"tz\":\"%s\",\"tz_current\":\"%s\",\"note\":\"%s\"}",
                 timefmt, (long)t.tv_sec,
                 app_config.ntp_enable ? "true" : "false",
-                esc_server, ntp_running() ? "true" : "false");
+                esc_server, ntp_running() ? "true" : "false",
+                esc_tz, esc_cur_tz,
+                tzChanged ?
+                    "time zone applied; configuration saved, restarting the application" : "");
             send_and_close(req->clntFd, response, respLen);
+        }
+        if (tzChanged) {
+            /* Persist the zone before the graceful restart re-reads the yaml;
+             * the restart is also what makes uClibc pick up /etc/TZ. */
+            app_config_save();
+            kill(getpid(), SIGHUP);
         }
         return;
     }

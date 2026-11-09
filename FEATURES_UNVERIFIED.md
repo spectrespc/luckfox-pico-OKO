@@ -5,7 +5,7 @@
 в `FEATURES_VERIFIED.md`; паспорт платформы, общие примечания и команды
 проверки — в `FEATURES.md`; открытые дефекты и обходы — в `KNOWN_ISSUES.md`.
 
-Статус на 2026-11-07. Пометки: **ограничено** — работает с оговоркой;
+Статус на 2026-11-08. Пометки: **ограничено** — работает с оговоркой;
 **заблокировано** — отказ с причиной.
 
 ## Русский
@@ -91,7 +91,7 @@ reason (**blocked**) or not yet verified. Confirmed features are in
 commands are in `FEATURES.md`; open defects and workarounds are in
 `KNOWN_ISSUES.md`.
 
-Status as of 2026-11-07.
+Status as of 2026-11-08.
 
 | Group | Feature | Description | Control (API, YAML section) | What was added (OKO vs vendor V1.4) | Status |
 |---|---|---|---|---|---|

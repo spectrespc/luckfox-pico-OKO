@@ -581,6 +581,48 @@ def main():
         failures.append("ntp invalid server: %r" % (dec,))
     print("POST %-18s %s %s" % ("/api/time ntp", status, dec.get("error", "?")))
 
+    # Time zone: unsafe or unknown names are refused; a valid IANA name is
+    # echoed back and persisted by the application itself.
+    for name in ("../..", "Not/Zone", "/etc/passwd"):
+        checks += 1
+        status, _headers, body = request("/api/time", "POST",
+            ("tz=" + urllib.parse.quote(name)).encode())
+        dec = {}
+        try:
+            dec = json.loads(body.decode())
+        except Exception:                          # noqa: BLE001
+            pass
+        if dec.get("error") != "blocked":
+            failures.append("tz invalid %r: expected blocked, got %r" % (name, dec))
+        print("POST %-18s %s %s" % ("/api/time tz bad", status,
+            dec.get("error", "?")))
+
+    checks += 1
+    status, _headers, body = request("/api/time", "POST", b"tz=Europe%2FMoscow")
+    dec = {}
+    try:
+        dec = json.loads(body.decode())
+    except Exception:                              # noqa: BLE001
+        pass
+    if status != 200 or dec.get("tz") != "Europe/Moscow" or \
+            dec.get("tz_current") != "Europe/Moscow":
+        failures.append("tz valid zone: HTTP %s %r" % (status, dec))
+    print("POST %-18s %s %s/%s" % ("/api/time tz", status,
+        dec.get("tz", "?"), dec.get("tz_current", "?")))
+
+    checks += 1
+    status, _headers, body = request("/api/time")
+    dec = {}
+    try:
+        dec = json.loads(body.decode())
+    except Exception:                              # noqa: BLE001
+        pass
+    if not isinstance(dec.get("tz"), str) or not dec.get("tz") or \
+            dec.get("tz_current") != dec.get("tz"):
+        failures.append("tz GET field: HTTP %s %r" % (status, dec))
+    print("GET  %-18s %s %s/%s" % ("/api/time tz", status,
+        dec.get("tz", "?"), dec.get("tz_current", "?")))
+
     checks = focus_checks(failures, checks)
 
     print("\n%d checks, %d failures" % (checks, len(failures)))

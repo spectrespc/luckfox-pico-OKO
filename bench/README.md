@@ -63,7 +63,7 @@ bench/run.sh geometry_check.py --what zoom
 OKO_GEOMETRY_TESTS=1 bench/run.sh geometry_check.py --what boxes
 OKO_GEOMETRY_TESTS=1 bench/run.sh geometry_check.py --what osd
 
-# API: 97 проверок, код возврата 1 при ошибке
+# API: 103 проверки, код возврата 1 при ошибке
 bench/run.sh api_check.py
 # движение моторов и реальный автофокус — только по явному разрешению:
 # OKO_FOCUS_MOTOR_TESTS=1 (home/zero, шаги, скорости)

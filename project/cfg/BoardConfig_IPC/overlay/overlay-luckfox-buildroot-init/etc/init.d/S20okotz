@@ -1,0 +1,68 @@
+#!/bin/sh
+#
+# OKO time zone: apply system.tz from /userdata/divinus.yaml to /etc/TZ.
+#
+# uClibc reads /etc/TZ as a path to a tzdump-compiled zone. The image ships
+# Europe/Moscow (BR2_TARGET_LOCALTIME); the saved yaml is the runtime source
+# of truth. Fresh processes pick the zone up immediately, while long-running
+# daemons (divinus) cache it and are restarted by /api/time on change.
+#
+# Runs after S20linkmount (lexicographic order) and before S21appinit, so the
+# zone is in place before RkLunch.sh starts the application.
+
+# Paths are overridable so the parser can be exercised off-target.
+ZONEINFO=${OKO_TZ_ZONEINFO:-/usr/share/zoneinfo/uclibc}
+YAML=${OKO_TZ_YAML:-/userdata/divinus.yaml}
+TZFILE=${OKO_TZ_LINK:-/etc/TZ}
+
+wait_userdata() {
+	i=0
+	while [ "$i" -lt 30 ]; do
+		mount | grep -qw /userdata && return 0
+		i=$((i + 1))
+		sleep 0.1
+	done
+	return 1
+}
+
+case "$1" in
+	start)
+		if ! wait_userdata; then
+			echo "okotz: /userdata is not mounted, skipping"
+			exit 1
+		fi
+
+		[ -f "$YAML" ] || exit 0
+
+		# Missing key: keep the zone baked into the image.
+		tz=$(grep -m1 '^  tz:' "$YAML")
+		[ -n "$tz" ] || exit 0
+		tz=${tz#*:}
+		tz=${tz# }
+		tz=${tz% }
+		tz=${tz#\"}
+		tz=${tz%\"}
+		[ -n "$tz" ] || exit 0
+
+		# Accept only IANA names: no absolute paths, no parent references.
+		case "$tz" in
+			/* | *..* | *[!A-Za-z0-9_/-]*)
+				echo "okotz: invalid time zone '$tz', keeping image default"
+				exit 1
+				;;
+		esac
+
+		if [ ! -f "$ZONEINFO/$tz" ]; then
+			echo "okotz: unknown time zone '$tz', keeping image default"
+			exit 1
+		fi
+
+		ln -sfn "../usr/share/zoneinfo/uclibc/$tz" "$TZFILE" ||
+			exit 1
+		echo "okotz: time zone $tz applied"
+		;;
+	*)
+		echo "Usage: $0 {start}"
+		exit 1
+		;;
+esac

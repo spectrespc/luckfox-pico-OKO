@@ -143,6 +143,7 @@ void app_config_dump(FILE *file) {
     fprintf(file, "  watchdog: %d\n", app_config.watchdog);
     fprintf(file, "  ntp_enable: %s\n", app_config.ntp_enable ? "true" : "false");
     fprintf(file, "  ntp_server: %s\n", app_config.ntp_server);
+    fprintf(file, "  tz: %s\n", app_config.tz);
 
     fprintf(file, "night_mode:\n");
     fprintf(file, "  enable: %s\n", app_config.night_mode_enable ? "true" : "false");
@@ -400,6 +401,7 @@ enum ConfigError app_config_parse(void) {
     app_config.watchdog = 0;
     app_config.ntp_enable = true;
     app_config.ntp_server[0] = '\0';
+    strcpy(app_config.tz, "Europe/Moscow");
 
     app_config.mdns_enable = false;
 
@@ -629,6 +631,10 @@ enum ConfigError app_config_parse(void) {
     parse_bool(&ini, "system", "ntp_enable", &app_config.ntp_enable);
     parse_param_value_n(&ini, "system", "ntp_server",
         app_config.ntp_server, sizeof(app_config.ntp_server) - 1);
+    parse_param_value_n(&ini, "system", "tz",
+        app_config.tz, sizeof(app_config.tz) - 1);
+    if (EMPTY(app_config.tz))
+        strcpy(app_config.tz, "Europe/Moscow");
 
     err =
         parse_bool(&ini, "night_mode", "enable", &app_config.night_mode_enable);

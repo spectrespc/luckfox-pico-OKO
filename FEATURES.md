@@ -4,7 +4,7 @@
 (RV1106, SPI NAND, Buildroot) с сенсором SC230AI: паспорт платформы, индекс по
 файлам статусов проверки и краткие команды проверки.
 
-Статус на 2026-11-07. Пометки: **работает** — проверено на стенде;
+Статус на 2026-11-08. Пометки: **работает** — проверено на стенде;
 **ограничено** — работает с оговоркой; **заблокировано** — отказ с причиной.
 
 | Файл | Содержание |
@@ -92,6 +92,12 @@ curl -u admin:oko-change-me http://192.168.52.97/api/status
   `FEATURES_UNVERIFIED.md` (AWG).
 - Ограничения и непроверенные комбинации потоков, YOLO, датчиков и microSD
   собраны в `FEATURES_UNVERIFIED.md`.
+- Часовой пояс: набор зон buildroot в `/usr/share/zoneinfo/uclibc`, `/etc/TZ` —
+  относительный симлинк на выбранную зону; управление — `/api/time` (`tz=`),
+  ключ `[system] tz` и WebUI «Синхронизация времени» (рядом с NTP показан
+  текущий пояс `tz_current`), при загрузке применяет `S20okotz`; RTC хранится
+  в UTC (`S99rtcinit`), поэтому смена пояса не сдвигает время при перезагрузке.
+  Статус проверки — `FEATURES_VERIFIED.md`.
 - Помощь фокусировке, STM8/STM32, WebUI и прочие подтверждённые функции —
   в `FEATURES_VERIFIED.md`; ограничения — в `FEATURES_UNVERIFIED.md`; открытые
   дефекты и обходы — в `KNOWN_ISSUES.md`.
@@ -102,7 +108,7 @@ Entry point for OKO capabilities on the Luckfox Pico Pro Max (RV1106, SPI NAND,
 Buildroot) with the SC230AI sensor: platform passport, an index of the
 verification-status files and short verification commands.
 
-Status as of 2026-11-07. Markers: **works**, **limited**, **blocked**.
+Status as of 2026-11-08. Markers: **works**, **limited**, **blocked**.
 
 | File | Content |
 |---|---|

@@ -29,6 +29,9 @@ struct AppConfig {
      * the distribution configuration" (usually /etc/ntp.conf). */
     bool ntp_enable;
     char ntp_server[128];
+    /* OKO: IANA time zone installed under /usr/share/zoneinfo/uclibc.  S20okotz
+     * applies it to /etc/TZ at boot; /api/time updates it at runtime. */
+    char tz[64];
 
     // [night_mode]
     bool night_mode_enable;

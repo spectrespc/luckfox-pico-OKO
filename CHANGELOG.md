@@ -26,6 +26,37 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Добавлено
 
+- **Поддержка часовых поясов (OKO).** Образ buildroot ставит набор зон
+  (`BR2_TARGET_TZ_INFO`, `BR2_TARGET_TZ_ZONELIST="default"`,
+  `BR2_TARGET_LOCALTIME="Europe/Moscow"`) в `/usr/share/zoneinfo/uclibc`, а
+  `/etc/TZ` — относительный симлинк на выбранную зону. Новый ключ `[system] tz`
+  в `divinus.yaml` (дефолт `Europe/Moscow`) и параметр `tz=` в
+  `GET/POST /api/time`: имя валидируется (IANA, без `..` и ведущего `/`, зона
+  должна существовать), при смене пояс применяется к `/etc/TZ`, конфигурация
+  автосохраняется и приложение перезапускается graceful SIGHUP (uClibc кэширует
+  зону на процесс). Новый init-скрипт `S20okotz` применяет сохранённый `tz:` при
+  загрузке. WebUI «Синхронизация времени» получил список зон и подсказку о
+  рестарте; `bench/api_check.py` — проверки tz, `TESTBENCH.md` §8 — read-only
+  диагностику пояса. `GET /api/time` дополнительно отдаёт `tz_current` —
+  фактическую зону из `/etc/TZ`, WebUI показывает её в карточке NTP рядом с
+  выбором; страница WebUI отдаётся с `Cache-Control: no-cache`, чтобы новая
+  версия интерфейса подхватывалась без жёсткого обновления.
+- **Time zone support (OKO).** The buildroot image now installs the zone set
+  (`BR2_TARGET_TZ_INFO`, `BR2_TARGET_TZ_ZONELIST="default"`,
+  `BR2_TARGET_LOCALTIME="Europe/Moscow"`) under `/usr/share/zoneinfo/uclibc`
+  with `/etc/TZ` as a relative symlink. New `[system] tz` key in
+  `divinus.yaml` (default `Europe/Moscow`) and `tz=` parameter in
+  `GET/POST /api/time`: the name is validated (IANA, no `..`, no leading `/`,
+  the zone must exist); on change the zone is applied to `/etc/TZ`, the config
+  is auto-saved and the application restarts with a graceful SIGHUP (uClibc
+  caches the zone per process). New `S20okotz` init script applies the saved
+  `tz:` at boot. The WebUI "Time synchronization" card gained a zone list and a
+  restart hint; `bench/api_check.py` covers tz, and `TESTBENCH.md` §8 has
+  read-only zone diagnostics. `GET /api/time` also returns `tz_current`, the
+  effective zone read from `/etc/TZ`; the WebUI shows it in the NTP card next
+  to the selector, and the page is served with `Cache-Control: no-cache` so a
+  new UI version is picked up without a hard refresh.
+
 - **`bench/nfs_env.py` — переключение NAND ↔ NFS через env U-Boot (OKO).**
   Режимы `status` (текущий `sys_bootargs`, распознанный `nand`/`nfs` и
   сверка с `output/image/.env.txt`), `on` (`fw_setenv sys_bootargs` со
@@ -338,6 +369,17 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   export plus the `u:tftp` ACLs were cleaned up. See `services/README.md`.
 
 ### Изменено
+
+- **`S99rtcinit` пишет RTC в UTC (OKO).** busybox `hwclock` по умолчанию
+  работает с локальным временем: при не-UTC `/etc/TZ` калибровка при
+  «нулевом» RTC сдвигала системное время на смещение пояса после каждой
+  перезагрузки. Проверка и запись теперь идут с `-u`, а `date -s` заменён на
+  `date -u -s`; RTC хранит UTC независимо от выбранного пояса.
+- **`S99rtcinit` keeps the RTC in UTC (OKO).** busybox `hwclock` defaults to
+  local time, so with a non-UTC `/etc/TZ` the "empty RTC" calibration shifted
+  the system clock by the zone offset on every boot. The probe and the write
+  now pass `-u`, and `date -s` became `date -u -s`; the RTC holds UTC
+  regardless of the selected zone.
 
 - **Тест-матрикс `/oem` на BusyBox 1.38 при NFS-root пройден (OKO).**
   Группа 0: `nfs_env.py on` → `root=/dev/nfs`, `ip=192.168.52.150`,

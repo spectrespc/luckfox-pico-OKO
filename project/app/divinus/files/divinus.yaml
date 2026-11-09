@@ -19,6 +19,8 @@ system:
   # ntpd itself from /tmp/divinus-ntp.conf.
   ntp_enable: true
   ntp_server: ""
+  # IANA time zone: applied to /etc/TZ at boot (S20okotz) and at runtime by /api/time
+  tz: Europe/Moscow
   # 0 disables the software watchdog: a stopped test process must not reboot the board
   watchdog: 0
 
