@@ -960,6 +960,23 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Удалено
 
+- **Python 3.14 удалён из rootfs (OKO).** Из
+  `sysdrv/tools/board/buildroot/luckfox_pico_defconfig` и рабочей копии
+  `buildroot-2026.08.1/configs/luckfox_pico_defconfig` убраны `PYTHON3`,
+  `PYTHON3_SSL` и все Python-пакеты (aiohttp, click, itsdangerous, jinja2,
+  periphery, pillow, pyserial, setuptools, smbus-cffi, spidev, werkzeug).
+  В `oko-prune.list` добавлены `usr/lib/python3.14`,
+  `libpython3.14.so.1.0`, `python*`, `pyserial-*` и `S99python` — страховка
+  для инкрементальной сборки. Освобождается около 34 МБ в дереве rootfs.
+- **Python 3.14 is removed from the rootfs (OKO).**
+  `sysdrv/tools/board/buildroot/luckfox_pico_defconfig` and the working copy
+  `buildroot-2026.08.1/configs/luckfox_pico_defconfig` no longer select
+  `PYTHON3`, `PYTHON3_SSL` or any Python package (aiohttp, click,
+  itsdangerous, jinja2, periphery, pillow, pyserial, setuptools, smbus-cffi,
+  spidev, werkzeug). `oko-prune.list` gained `usr/lib/python3.14`,
+  `libpython3.14.so.1.0`, `python*`, `pyserial-*` and `S99python` as an
+  incremental-build safety net. The rootfs tree shrinks by about 34 MB.
+
 - **rkipc, серверы rkaiq и вендорские тесты вырезаны из образа (OKO).**
   `usr/bin/rkipc`, шесть `rkipc-*.ini`, `image.bmp`, `speaker_test.wav`,
   `rkaiq_3A_server`, `rkaiq_tool_server`, все `rk_mpi_*_test`/`mpi_enc_test`/

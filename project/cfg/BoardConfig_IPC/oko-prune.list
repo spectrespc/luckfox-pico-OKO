@@ -73,3 +73,14 @@ usr/bin/luckfox_i2c_test
 usr/bin/luckfox_pwm_test
 usr/bin/luckfox_spi_test
 usr/bin/luckfox_uart_test
+
+# Python 3.14: disabled in the Buildroot defconfig; these entries only make the
+# image correct when the incremental build still has the old rootfs.
+usr/lib/python3.14
+usr/lib/libpython3.14.so.1.0
+usr/bin/python
+usr/bin/python3
+usr/bin/python3.14
+usr/bin/pyserial-miniterm
+usr/bin/pyserial-ports
+etc/init.d/S99python
