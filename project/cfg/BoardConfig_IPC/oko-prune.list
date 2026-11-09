@@ -84,3 +84,13 @@ usr/bin/python3.14
 usr/bin/pyserial-miniterm
 usr/bin/pyserial-ports
 etc/init.d/S99python
+
+# Extra v4l utilities not used by OKO diagnostics: v4l2-ctl and media-ctl
+# stay because TESTBENCH.md references them.
+usr/bin/v4l2-compliance
+usr/bin/v4l2-sysfs-path
+usr/sbin/v4l2-dbg
+
+# Vendor test tree and its reboot helper; no OKO script references them.
+rockchip_test
+etc/init.d/S99_auto_reboot

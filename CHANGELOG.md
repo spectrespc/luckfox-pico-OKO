@@ -960,6 +960,16 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Удалено
 
+- **Лишние v4l-утилиты и `rockchip_test` (OKO).** Из rootfs вырезаны
+  `usr/bin/v4l2-compliance`, `usr/bin/v4l2-sysfs-path`, `usr/sbin/v4l2-dbg`,
+  каталог `rockchip_test` и `etc/init.d/S99_auto_reboot`; `v4l2-ctl` и
+  `media-ctl` оставлены для диагностики по `TESTBENCH.md`.
+- **Extra v4l utilities and `rockchip_test` (OKO).** The rootfs no longer
+  contains `usr/bin/v4l2-compliance`, `usr/bin/v4l2-sysfs-path`,
+  `usr/sbin/v4l2-dbg`, the `rockchip_test` tree or
+  `etc/init.d/S99_auto_reboot`; `v4l2-ctl` and `media-ctl` stay for the
+  `TESTBENCH.md` diagnostics.
+
 - **Python 3.14 удалён из rootfs (OKO).** Из
   `sysdrv/tools/board/buildroot/luckfox_pico_defconfig` и рабочей копии
   `buildroot-2026.08.1/configs/luckfox_pico_defconfig` убраны `PYTHON3`,
