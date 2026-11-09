@@ -345,7 +345,7 @@ do_stage() {
 	for _part in $(echo "$_parts" | tr ',' ' '); do
 		_bytes=$(conf_get "${_part}_BYTES")
 		_sha=$(conf_get "${_part}_SHA256")
-		_actual_bytes=$(stat -c %s "$_work/$_part.img" 2>/dev/null)
+		_actual_bytes=$(wc -c <"$_work/$_part.img" 2>/dev/null | tr -d " ")
 		if [ "$_actual_bytes" != "$_bytes" ]; then
 			_ok=0; _error="size-mismatch"; break
 		fi
@@ -431,7 +431,7 @@ verify_root() {
 		[ -f "$MNT/$_part.img" ] || { echo "part-missing"; return 1; }
 		_bytes=$(conf_get "${_part}_BYTES")
 		_sha=$(conf_get "${_part}_SHA256")
-		_actual_bytes=$(stat -c %s "$MNT/$_part.img" 2>/dev/null)
+		_actual_bytes=$(wc -c <"$MNT/$_part.img" 2>/dev/null | tr -d " ")
 		[ "$_actual_bytes" = "$_bytes" ] || { echo "size-mismatch"; return 1; }
 		_actual_sha=$(sha256sum "$MNT/$_part.img" | cut -d' ' -f1)
 		[ "$_actual_sha" = "$_sha" ] || { echo "sha256-failed"; return 1; }

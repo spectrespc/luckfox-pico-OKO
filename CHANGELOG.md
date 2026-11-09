@@ -805,6 +805,18 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Исправлено
 
+- **`oko-update`: проверка размеров без `stat` (OKO).** В образе нет
+  `stat`, поэтому staging на DUT падал с `size-mismatch` (пустой вывод
+  `stat -c %s`). Размеры частей теперь считаются `wc -c`; staging `.okp` на
+  стенде проходит. При этом OTA-применение остаётся заблокированным:
+  `fw_setenv oko_update` не виден U-Boot (`CONFIG_ENV_IS_NOWHERE`/`ENVF`),
+  подробности — `KNOWN_ISSUES.md` KI-049.
+- **`oko-update`: size checks without `stat` (OKO).** The image has no `stat`,
+  so staging on the DUT failed with `size-mismatch` (empty `stat -c %s`
+  output). Part sizes now use `wc -c`, and `.okp` staging passes on the bench.
+  OTA apply is still blocked: `fw_setenv oko_update` is invisible to U-Boot
+  (`CONFIG_ENV_IS_NOWHERE`/`ENVF`), see `KNOWN_ISSUES.md` KI-049.
+
 - **ONVIF: падение `divinus` при включении (OKO).** Поток ONVIF создавался
   со стеком 16 КиБ, но использует два 4-КиБ SOAP-буфера и кадры
   `snprintf`: при `onvif.enable=true` процесс падал с `SIGSEGV` ещё до старта
