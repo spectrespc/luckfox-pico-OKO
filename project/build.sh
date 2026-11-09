@@ -2535,6 +2535,36 @@ function __RUN_POST_CLEAN_FILES() {
 	esac
 	echo "================================================================================"
 
+	# OKO: declarative prune list, shared by the rootfs and the oem partition.
+	# Paths are relative to either package directory; globs and '#' comments
+	# are allowed.  A path that exists in neither directory only produces a
+	# warning, so another board config still packs.
+	local _oko_prune_list _oko_line _oko_rel _oko_base _oko_match _oko_hit
+	_oko_prune_list="$(dirname "$(realpath "$BOARD_CONFIG")")/oko-prune.list"
+	if [ -f "$_oko_prune_list" ]; then
+		echo "OKO prune list: $_oko_prune_list"
+		while IFS= read -r _oko_line || [ -n "$_oko_line" ]; do
+			_oko_rel=$(printf '%s\n' "$_oko_line" |
+				sed -e 's/[[:space:]]#.*$//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+			case "$_oko_rel" in
+			'' | '#'*) continue ;;
+			esac
+			_oko_hit=0
+			for _oko_base in "$RK_PROJECT_PACKAGE_ROOTFS_DIR" "$RK_PROJECT_PACKAGE_OEM_DIR"; do
+				[ -n "$_oko_base" ] && [ -d "$_oko_base" ] || continue
+				while IFS= read -r _oko_match; do
+					[ -n "$_oko_match" ] || continue
+					rm -rf "$_oko_match"
+					echo "Prune: ${_oko_match#"$_oko_base"/}"
+					_oko_hit=1
+				done < <(compgen -G "$_oko_base/$_oko_rel" || true)
+			done
+			[ "$_oko_hit" -eq 1 ] ||
+				msg_warn "Prune: $_oko_rel not found in rootfs/oem"
+		done <"$_oko_prune_list"
+	fi
+	echo "================================================================================"
+
 }
 
 function __RUN_POST_BUILD_SCRIPT() {

@@ -1,0 +1,19 @@
+# OKO: declarative list of paths removed from the packed firmware image.
+#
+# Every non-empty line is a path relative to either
+#   output/out/rootfs_uclibc_rv1106/  (rootfs)
+#   output/out/oem/                   (oem)
+# The same list is applied to both directories, so a path that exists only in
+# one of them is normal.  Blank lines and lines starting with '#' are ignored.
+# Shell globs are allowed; a missing path is reported as a warning, not an
+# error, so an incremental build or another board config still packs.
+#
+# project/build.sh:__RUN_POST_CLEAN_FILES applies the list, and
+# tools/native/check_image_contents.sh uses it as the forbidden set.
+#
+# Keep this file in sync with the "Что удаляется" section of the plan:
+# .kilo/plans/1794228198214-slim-image-unused-removal-plan.md
+
+# Safe, self-contained vendor test binaries (no OKO service references them).
+usr/bin/modetest
+usr/bin/dumpsys

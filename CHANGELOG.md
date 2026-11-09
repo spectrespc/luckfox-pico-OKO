@@ -947,6 +947,24 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Удалено
 
+- **Декларативное вырезание из образа, первые позиции (OKO).** Добавлен
+  `project/cfg/BoardConfig_IPC/oko-prune.list` — единый список путей
+  относительно rootfs и `oem` (комментарии и glob разрешены), который
+  применяет `__RUN_POST_CLEAN_FILES` в `project/build.sh` (`Prune: <путь>`,
+  отсутствие пути — предупреждение). Добавлен
+  `tools/native/check_image_contents.sh`: проверяет, что обязательные файлы
+  OKO на месте, а позиции из prune-списка в образе отсутствуют. Первыми
+  вырезаны неиспользуемые вендорские бинарники `usr/bin/modetest` и
+  `usr/bin/dumpsys`.
+- **Declarative image pruning, first entries (OKO).**
+  `project/cfg/BoardConfig_IPC/oko-prune.list` is a single list of paths
+  relative to both the rootfs and `oem` (comments and globs allowed), applied
+  by `__RUN_POST_CLEAN_FILES` in `project/build.sh` (`Prune: <path>`, a missing
+  path is only a warning). `tools/native/check_image_contents.sh` verifies that
+  the required OKO files are present and that no prune-list entry survives.
+  The first removed items are the unused vendor binaries `usr/bin/modetest`
+  and `usr/bin/dumpsys`.
+
 - **Docker-окружение сборки прошивки удалено (OKO).** Удалены `Dockerfile`,
   `docker-compose.yml`, `docker-entrypoint.sh`, `start.sh` и контейнер
   `luckfox_oko_build_env`; сборка, прошивка и сетевые сервисы стенда

@@ -132,7 +132,9 @@
   команды чтения, OTA STM32 и демон `oko-ec daemon`, который пишет
   `/tmp/oko-ec.json`, `/tmp/oko-ec.osd` и `/tmp/oko-ec.pid`.
 - `cfg/BoardConfig_IPC/` — конфигурации плат (`BoardConfig-*.mk`), папка `overlay/`
-  с оверлеями rootfs и pre/post-скрипты (`*-pre.sh`, `*-post.sh`). В оверлее OKO
+  с оверлеями rootfs и pre/post-скрипты (`*-pre.sh`, `*-post.sh`),
+  `oko-prune.list` (пути, вырезаемые из rootfs и `oem` при упаковке; применяет
+  `__RUN_POST_CLEAN_FILES`). В оверлее OKO
   `overlay-luckfox-buildroot-init/`: `etc/init.d/S20oko-osd` (divinus по
   умолчанию, бутстрап OSD-конфига, запуск демона), `etc/init.d/S21oko-ec`
   (запуск `oko-ec daemon`, opt-out `/userdata/oko-ec.disable`), `usr/bin/oko-osd`
@@ -188,7 +190,9 @@
   `smoke.sh` (отчёт `output/bench/native/smoke.log`), `setup_netboot.sh`
   (поднимает контейнер `services/` с TFTP и NFS-экспортом),
   `make_oko_update.sh` (пакет `.okp` для обновления из WebUI: манифест
-  `oko-update.conf` + `boot.img`/`oem.img`/`rootfs.img`, несжатый tar).
+  `oko-update.conf` + `boot.img`/`oem.img`/`rootfs.img`, несжатый tar),
+  `check_image_contents.sh` (статичная проверка `output/out/oem` и rootfs:
+  обязательные файлы OKO на месте, позиций из `oko-prune.list` нет).
 - `linux/toolchain/` — кросс-компилятор `arm-rockchip830-linux-uclibcgnueabihf`.
 - `linux/Linux_Pack_Firmware`, `linux/Linux_Upgrade_Tool` — упаковка образов и
   прошивка по USB.
