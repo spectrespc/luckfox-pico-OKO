@@ -2418,6 +2418,8 @@ function __RUN_POST_CLEAN_FILES() {
 	echo "================================================================================"
 	IFS=$RECORD_IFS
 
+	local _oko_warn=${1:-}
+
 	local dir_find todo_files
 	if [ -d "$RK_PROJECT_PACKAGE_ROOTFS_DIR" ]; then
 		dir_find="$RK_PROJECT_PACKAGE_ROOTFS_DIR"
@@ -2559,7 +2561,7 @@ function __RUN_POST_CLEAN_FILES() {
 					_oko_hit=1
 				done < <(compgen -G "$_oko_base/$_oko_rel" || true)
 			done
-			[ "$_oko_hit" -eq 1 ] ||
+			[ "$_oko_hit" -eq 1 ] || [ -z "$_oko_warn" ] ||
 				msg_warn "Prune: $_oko_rel not found in rootfs/oem"
 		done <"$_oko_prune_list"
 	fi
@@ -2597,7 +2599,7 @@ function __RUN_PRE_BUILD_OEM_SCRIPT() {
 	tmp_path=$(realpath $BOARD_CONFIG)
 	tmp_path=$(dirname $tmp_path)
 
-	__RUN_POST_CLEAN_FILES
+	__RUN_POST_CLEAN_FILES warn
 
 	if [ -f "$tmp_path/$RK_PRE_BUILD_OEM_SCRIPT" ]; then
 		bash -x $tmp_path/$RK_PRE_BUILD_OEM_SCRIPT

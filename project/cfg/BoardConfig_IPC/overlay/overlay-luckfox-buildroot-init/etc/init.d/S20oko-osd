@@ -2,8 +2,7 @@
 #
 # OKO OSD: divinus is the default streamer; OSD sidecar daemon startup.
 #
-# - no /userdata/rkipc.enable  -> create /userdata/divinus.enable (default)
-# - /userdata/rkipc.enable     -> remove /userdata/divinus.enable (opt-out)
+# - always create /userdata/divinus.enable (rkipc is not in the image)
 # - /userdata/divinus.yaml without reg0_text/reg0_size/reg0_color/reg3_text
 #   or without the osd-sys region (old config) -> factory config
 # - divinus active             -> create /tmp/osd.fifo and start /usr/bin/oko-osd
@@ -58,11 +57,8 @@ case "$1" in
 			exit 1
 		fi
 
-		if [ -f /userdata/rkipc.enable ]; then
-			rm -f /userdata/divinus.enable
-		else
-			touch /userdata/divinus.enable
-		fi
+		# divinus is the only streamer in the OKO image.
+		touch /userdata/divinus.enable
 
 		# Old or hand-edited configs without the current OSD layout are replaced by
 		# the factory one; reg0_text/size/color, reg3_text and the osd-sys region

@@ -86,110 +86,23 @@ post_chk() {
 	check_linker /media/usb0 /oem/usr/www/usb0
 	check_linker /mnt/sdcard /oem/usr/www/sdcard
 
-	# divinus (OpenIPC) as an alternative streamer: opt-in marker /userdata/divinus.enable
-	if [ -f /userdata/divinus.enable ] && [ -x /oem/usr/bin/divinus ]; then
-		if [ ! -f /userdata/divinus.yaml ]; then
-			cp -f /oem/usr/share/divinus/divinus.yaml /userdata/divinus.yaml
-		fi
-		# config is searched in the exe dir, then ./, then /etc; run from
-		# /userdata so WebUI saves rewrite /userdata/divinus.yaml itself
-		cd /userdata
-		/oem/usr/bin/divinus &
+	# divinus (OpenIPC) is the only streamer in the OKO image; rkipc and its
+	# resources are pruned at pack time, so there is no fallback path here.
+	if [ ! -f /userdata/divinus.enable ]; then
+		echo "divinus: /userdata/divinus.enable is missing; no streamer started"
 		return
 	fi
-	if [ -f /userdata/divinus.enable ]; then
-		echo "divinus: /oem/usr/bin/divinus not found, falling back to rkipc"
+	if [ ! -x /oem/usr/bin/divinus ]; then
+		echo "divinus: /oem/usr/bin/divinus not found; no streamer started"
+		return
 	fi
-
-	# if /data/rkipc not exist, cp /usr/share
-	rkipc_ini=/userdata/rkipc.ini
-	default_rkipc_ini=/tmp/rkipc-factory-config.ini
-
-	if [ ! -f "/oem/usr/share/rkipc.ini" ]; then
-		lsmod | grep mia1321
-		if [ $? -eq 0 ]; then
-			ln -s -f /oem/usr/share/rkipc-mia1321-100w.ini $default_rkipc_ini
-		fi
-		lsmod | grep mis5001
-		if [ $? -eq 0 ]; then
-			ln -s -f /oem/usr/share/rkipc-mis5001-500w.ini $default_rkipc_ini
-		fi
-		lsmod | grep sc530ai
-		if [ $? -eq 0 ]; then
-			ln -s -f /oem/usr/share/rkipc-500w.ini $default_rkipc_ini
-		fi
-		lsmod | grep sc4336
-		if [ $? -eq 0 ]; then
-			ln -s -f /oem/usr/share/rkipc-400w.ini $default_rkipc_ini
-		fi
-		lsmod | grep sc230ai
-		if [ $? -eq 0 ]; then
-			ln -s -f /oem/usr/share/rkipc-300w.ini $default_rkipc_ini
-		fi
-		lsmod | grep sc3336
-		if [ $? -eq 0 ]; then
-			ln -s -f /oem/usr/share/rkipc-300w.ini $default_rkipc_ini
-		fi
-		lsmod | grep imx415
-		if [ $? -eq 0 ]; then
-			ln -s -f /oem/usr/share/rkipc-800w.ini $default_rkipc_ini
-		fi
+	if [ ! -f /userdata/divinus.yaml ]; then
+		cp -f /oem/usr/share/divinus/divinus.yaml /userdata/divinus.yaml
 	fi
-
-	# check md5sum
-	# tmp_md5=/tmp/.rkipc-ini.md5sum
-	# data_md5=/userdata/.rkipc-default.md5sum
-	# md5sum $default_rkipc_ini > $tmp_md5
-	# chk_rkipc=`cat $tmp_md5|awk '{print $1}'`
-	# rm $tmp_md5
-	# if [ ! -f $data_md5 ];then
-	# 	md5sum $default_rkipc_ini > $data_md5
-	# fi
-	# grep -w $chk_rkipc $data_md5
-	# if [ $? -ne 0 ] ;then
-	# 	rm -f $rkipc_ini
-	# 	echo "$chk_rkipc" > $data_md5
-	# fi
-
-	if [ ! -f "$default_rkipc_ini" ]; then
-		echo "Error: not found rkipc.ini !!!"
-		exit -1
-	fi
-	#if [ ! -f "$rkipc_ini" ]; then
-		cp $default_rkipc_ini $rkipc_ini -f
-	#fi
-
-	if [ ! -f "/userdata/image.bmp" ]; then
-		cp -fa /oem/usr/share/image.bmp /userdata/
-	fi
-
-	if [ -f "/oem/usr/share/speaker_test.wav" ]; then
-		rk_mpi_ao_test -i /oem/usr/share/speaker_test.wav --sound_card_name=hw:0,0 --device_ch=2 --device_rate=8000 --input_rate=8000 --input_ch=2 --set_volume 50
-	fi
-
-	csi_unite=$(( $(luckfox-config get_csi_unite) ))
-	if [ -z csi_unite ]; then
-		csi_unite=0
-	fi
-	if lsmod | grep 'imx415' | awk '{print $3}' | grep -w 1; then
-		if [ $csi_unite == "0" ]; then
-			luckfox-config set_csi_unite 1
-			echo "[rkipc] Set rockchip,unite to 1; rkipc requires a reboot to function properly."
-			return
-		fi
-	else
-		if [ $csi_unite == "1" ]; then
-			luckfox-config set_csi_unite 0
-			echo "[rkipc] Set rockchip,unite to 0; rkipc requires a reboot to function properly."
-			return
-		fi
-	fi
-
-	if [ -d "/oem/usr/share/iqfiles" ]; then
-		rkipc -a /oem/usr/share/iqfiles &
-	else
-		rkipc &
-	fi
+	# config is searched in the exe dir, then ./, then /etc; run from
+	# /userdata so WebUI saves rewrite /userdata/divinus.yaml itself
+	cd /userdata
+	/oem/usr/bin/divinus &
 }
 
 rcS

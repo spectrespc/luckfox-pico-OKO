@@ -25,18 +25,18 @@ rcK()
 }
 
 echo "Stop Application ..."
-killall rkipc
+killall divinus
 killall udhcpc
 
 while [ 1 ];
 do
 	sleep 1
-	ps|grep rkipc|grep -v grep
+	ps|grep divinus|grep -v grep
 	if [ $? -ne 0 ]; then
-		echo "rkipc exit"
+		echo "divinus exit"
 		break
 	else
-		echo "rkipc active"
+		echo "divinus active"
 	fi
 done
 

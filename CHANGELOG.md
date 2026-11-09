@@ -405,6 +405,19 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Изменено
 
+- **Запуск OKO без rkipc-ветки (OKO).** `RkLunch.sh` больше не выбирает
+  `rkipc-*.ini`, не копирует `image.bmp`, не запускает `rk_mpi_ao_test` и не
+  переключает `csi_unite`; единственный стример — `divinus`, при отсутствии
+  маркера или бинарника в консоль выводится явное сообщение. `RkLunch-stop.sh`
+  останавливает `divinus`, а `S20oko-osd` всегда создаёт
+  `/userdata/divinus.enable` (opt-out через `/userdata/rkipc.enable` убран).
+- **OKO boot without the rkipc branch (OKO).** `RkLunch.sh` no longer selects
+  an `rkipc-*.ini`, copies `image.bmp`, runs `rk_mpi_ao_test` or flips
+  `csi_unite`; `divinus` is the only streamer, and a missing marker or binary
+  prints an explicit console message. `RkLunch-stop.sh` stops `divinus`, and
+  `S20oko-osd` always creates `/userdata/divinus.enable` (the
+  `/userdata/rkipc.enable` opt-out is gone).
+
 - **`S99rtcinit` пишет RTC в UTC (OKO).** busybox `hwclock` по умолчанию
   работает с локальным временем: при не-UTC `/etc/TZ` калибровка при
   «нулевом» RTC сдвигала системное время на смещение пояса после каждой
@@ -946,6 +959,22 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   read before treating the scale as corrupted.
 
 ### Удалено
+
+- **rkipc, серверы rkaiq и вендорские тесты вырезаны из образа (OKO).**
+  `usr/bin/rkipc`, шесть `rkipc-*.ini`, `image.bmp`, `speaker_test.wav`,
+  `rkaiq_3A_server`, `rkaiq_tool_server`, все `rk_mpi_*_test`/`mpi_enc_test`/
+  `mpp_info_test`/`vpu_api_test` и `rk_*_test`/`luckfox_*_test` добавлены в
+  `oko-prune.list` и не попадают в `oem.img`. Пакет rkipc по-прежнему
+  собирается: он устанавливает `RkLunch.sh`/`RkLunch-stop.sh`. Divinus грузит
+  `librkaiq.so` в процессе, поэтому библиотеки и `iqfiles` сохранены.
+- **rkipc, rkaiq servers and vendor tests are pruned (OKO).**
+  `usr/bin/rkipc`, the six `rkipc-*.ini` files, `image.bmp`,
+  `speaker_test.wav`, `rkaiq_3A_server`, `rkaiq_tool_server`, every
+  `rk_mpi_*_test`/`mpi_enc_test`/`mpp_info_test`/`vpu_api_test` and
+  `rk_*_test`/`luckfox_*_test` entry joined `oko-prune.list` and no longer
+  reach `oem.img`. The rkipc package is still built because it installs
+  `RkLunch.sh`/`RkLunch-stop.sh`. Divinus loads `librkaiq.so` in-process, so
+  the libraries and `iqfiles` are kept.
 
 - **Декларативное вырезание из образа, первые позиции (OKO).** Добавлен
   `project/cfg/BoardConfig_IPC/oko-prune.list` — единый список путей

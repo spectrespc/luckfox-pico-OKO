@@ -17,3 +17,59 @@
 # Safe, self-contained vendor test binaries (no OKO service references them).
 usr/bin/modetest
 usr/bin/dumpsys
+
+# rkipc: the package must still build (it installs RkLunch.sh and
+# RkLunch-stop.sh), but the streamer binary and its runtime resources are not
+# part of the OKO image; divinus is the only streamer.
+usr/bin/rkipc
+usr/share/rkipc-300w.ini
+usr/share/rkipc-400w.ini
+usr/share/rkipc-500w.ini
+usr/share/rkipc-800w.ini
+usr/share/rkipc-mia1321-100w.ini
+usr/share/rkipc-mis5001-500w.ini
+usr/share/image.bmp
+usr/share/speaker_test.wav
+
+# rkaiq standalone servers: divinus loads librkaiq.so in-process.
+usr/bin/rkaiq_3A_server
+usr/bin/rkaiq_tool_server
+
+# Vendor MPI/media tests.
+usr/bin/rk_mpi_adec_test
+usr/bin/rk_mpi_aenc_test
+usr/bin/rk_mpi_af_test
+usr/bin/rk_mpi_ai_test
+usr/bin/rk_mpi_amix_test
+usr/bin/rk_mpi_ao_test
+usr/bin/rk_mpi_avio_test
+usr/bin/rk_mpi_dup_venc_test
+usr/bin/rk_mpi_mb_test
+usr/bin/rk_mpi_mmz_test
+usr/bin/rk_mpi_rgn_test
+usr/bin/rk_mpi_sys_test
+usr/bin/rk_mpi_tde_test
+usr/bin/rk_mpi_venc_test
+usr/bin/rk_mpi_vi_dup_test
+usr/bin/rk_mpi_vi_test
+usr/bin/rk_mpi_vpss_test
+usr/bin/mpi_enc_test
+usr/bin/mpp_info_test
+usr/bin/vpu_api_test
+
+# Other vendor test binaries.
+usr/bin/rk_adc_test
+usr/bin/rk_event_test
+usr/bin/rk_gpio_test
+usr/bin/rk_led_test
+usr/bin/rk_pwm_test
+usr/bin/rk_system_test
+usr/bin/rk_time_test
+usr/bin/rk_watchdog_test
+usr/bin/rk_rve_sample_test
+usr/bin/luckfox_adc_test
+usr/bin/luckfox_gpio_test
+usr/bin/luckfox_i2c_test
+usr/bin/luckfox_pwm_test
+usr/bin/luckfox_spi_test
+usr/bin/luckfox_uart_test
