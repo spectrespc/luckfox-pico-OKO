@@ -1000,6 +1000,21 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Удалено
 
+- **Итоговый размер slim-образа (OKO, 2026-11-10).** До ветки: `oem`
+  26 574 КиБ, rootfs 99 461 КиБ, `oem.img` 19 136 512 Б, `rootfs.img`
+  63 307 776 Б, `update.img` 89 408 074 Б. После: `oem` 24 442 КиБ,
+  rootfs 59 304 КиБ, `oem.img` 17 956 864 Б, `rootfs.img` 40 108 032 Б,
+  `update.img` 65 028 682 Б. Экономия: 2 132 КиБ в `oem`, 40 157 КиБ в
+  rootfs, 1,1 МиБ в `oem.img`, 22,1 МиБ в `rootfs.img` и 23,3 МиБ в
+  `update.img`.
+- **Final slim image size (OKO, 2026-11-10).** Before: `oem` 26,574 KiB,
+  rootfs 99,461 KiB, `oem.img` 19,136,512 B, `rootfs.img` 63,307,776 B,
+  `update.img` 89,408,074 B. After: `oem` 24,442 KiB, rootfs 59,304 KiB,
+  `oem.img` 17,956,864 B, `rootfs.img` 40,108,032 B, `update.img`
+  65,028,682 B. Saved: 2,132 KiB in `oem`, 40,157 KiB in the rootfs tree,
+  1.1 MiB in `oem.img`, 22.1 MiB in `rootfs.img` and 23.3 MiB in
+  `update.img`.
+
 - **Лишние v4l-утилиты и `rockchip_test` (OKO).** Из rootfs вырезаны
   `usr/bin/v4l2-compliance`, `usr/bin/v4l2-sysfs-path`, `usr/sbin/v4l2-dbg`,
   каталог `rockchip_test` и `etc/init.d/S99_auto_reboot`; `v4l2-ctl` и
