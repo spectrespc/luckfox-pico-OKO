@@ -937,15 +937,17 @@ int update_apply_start(const char *confirm, const char *token, char *err,
     read_kv(UPDATE_STAGE, "version", current, sizeof(current));
 
     pthread_mutex_lock(&update_lock);
-    snprintf(pending_token, sizeof(pending_token), "%s", token);
     memset(&job, 0, sizeof(job));
     snprintf(job.state, sizeof(job.state), "applying");
     snprintf(job.message, sizeof(job.message), "arming the update");
     job.started = (long)time(NULL);
     job.progress = 20;
     busy = 1;
-    /* A token works once: the next GET hands out a fresh one. */
+    /* A token works once: the next GET hands out a fresh one.  The helper
+     * compares against the token file, so the worker must receive the new
+     * token, not the one the client just used. */
     token_generate_locked();
+    snprintf(pending_token, sizeof(pending_token), "%s", apply_token);
     pthread_mutex_unlock(&update_lock);
 
     if (spawn_worker(WORKER_APPLY) != 0)

@@ -163,7 +163,9 @@
 
 ### `sysdrv/`
 
-- `source/uboot` — исходники загрузчика U-Boot.
+- `source/uboot` — исходники загрузчика U-Boot; в `configs/luckfox_rv1106_uboot_defconfig`
+  `CONFIG_ENVF_LIST` дополнен ключами `oko_update`/`oko_mac`/`oko_net_*`, чтобы
+  OTA-флаг и сетевые настройки из Linux были видны U-Boot и переживали `env save`.
 - `source/kernel` — исходники ядра Linux; активный DTS
   `arch/arm/boot/dts/rv1106g-luckfox-pico-pro-max-sc230ai.dts` (Pro Max +
   выключенные `&sc3336`/`&mis5001`), фрагмент `rv1106-sc230ai.config` собирает

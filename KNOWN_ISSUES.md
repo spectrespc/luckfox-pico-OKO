@@ -224,27 +224,26 @@
   power-cycle — app 1.0.0. Негативные проверки — 9/9. Осталось непроверенным
   только полное отключение питания в момент стирания. Статус: **закрыто**.
 
-- **KI-049. Обновление ПО через WebUI (OTA): env-флаг не виден U-Boot.**
-  На стенде 2026-11-09 проверено: упаковка `.okp`, потоковая загрузка через
-  `/api/update/upload` и подготовка microSD работают (после замены
-  `stat -c %s` на `wc -c` в `oko-update`: в образе нет `stat`). Однако
-  `fw_setenv oko_update 1` из Linux записывается в `/dev/mtd0` и читается
-  `fw_printenv`, а U-Boot его **не видит**: в `.config` U-Boot
-  `CONFIG_ENV_IS_NOWHERE=y` и Rockchip `ENVF`, поэтому `printenv` после
-  перезагрузки не содержит ни `oko_update`, ни `oko_mac` из Linux-env.
-  `sd_update` запускается, но условие `if env exists oko_update` всегда ложно —
-  механизм применения не взводится. `mmc 1`, перемонтирование `/oem` и
-  HTTPS-загрузка не проверялись, пока не решён обмен env. Обход до
-  исправления: покомпонентная прошивка по `TESTBENCH.md` §7B; staging
-  очищать `oko-update clear`. Статус: **открыто (P2), блокер OTA**.
+- **KI-049. Обновление ПО через WebUI (OTA) проверено на стенде (закрыто).**
+  На стенде 2026-11-10 пройден полный цикл: `.okp` собран из
+  `boot`/`oem`/`rootfs`, загружен через `/api/update/upload`, подготовлен на
+  microSD (`oko-update stage`, размеры через `wc -c`), применён с токеном.
+  U-Boot увидел `oko_update` (ключ добавлен в `CONFIG_ENVF_LIST`, вместе с
+  `oko_mac`/`oko_net_*`), `sd_update` прочитал `sd_update.txt` с `mmc 1`,
+  стёр и записал `boot`/`oem`/`rootfs`, снял флаг и сохранил env.
+  `S20oko-update` записал `ok=1`, версия и ожидаемая 0.3.0 совпали, карта
+  очищена; `/oem` после полного стирания смонтировался, divinus стартовал.
+  HTTPS (`curl https://example.com`) работает. Найденные и исправленные по
+  пути дефекты: отсутствие `stat`, неверный порядок выдачи apply-токена,
+  белый список `ENVF`. Статус: **закрыто (2026-11-10)**.
 
-- **KI-050. Ветка `feature/slim-image`: гейт мержа.**
+- **KI-050. Ветка `feature/slim-image`: гейт мержа пройден.**
   Пройдено на DUT 2026-11-09–10: полная прошивка `update.img`, старт
   `divinus`, OSD, RTSP, ONVIF, `api_check` 105/105, `ui_check`, `osd_check`,
-  `check_image_contents.sh` (22 обязательных / 61 запрещённый путь). Не
-  пройден OTA-гейт KI-049 (env-флаг не виден U-Boot), поэтому ветка в `main`
-  не мержится до исправления обмена env и повторного стендового прогона.
-  Статус: **мерж заблокирован (KI-049)**.
+  `check_image_contents.sh` (22 обязательных / 61 запрещённый путь) и полный
+  OTA-цикл с прошивкой из U-Boot (KI-049). Блокеров мержа нет; слияние в
+  `main` не выполнялось и остаётся отдельным действием.
+  Статус: **гейт пройден, мерж не выполнен**.
 
 ### VPN
 
@@ -561,27 +560,26 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   power cycle the app runs 1.0.0. Negative checks 9/9. Only a full power cut
   during erase remains untested. Status: **closed**.
 
-- **KI-049. Software update from the WebUI (OTA): the env flag is invisible to U-Boot.**
-  Verified on the bench on 2026-11-09: `.okp` packaging, the streamed
-  `/api/update/upload` and microSD staging work (after replacing
-  `stat -c %s` with `wc -c` in `oko-update`, because the image has no `stat`).
-  However, `fw_setenv oko_update 1` from Linux is written to `/dev/mtd0` and
-  read back by `fw_printenv`, while U-Boot does **not** see it: `.config` has
-  `CONFIG_ENV_IS_NOWHERE=y` plus the Rockchip `ENVF`, so after a reboot
-  `printenv` contains neither `oko_update` nor the Linux-written `oko_mac`.
-  `sd_update` runs, but `if env exists oko_update` is always false, so the
-  update is never armed. `mmc 1`, the `/oem` remount and HTTPS download remain
-  untested until the env handoff is redesigned. Workaround: per-partition
-  flashing per `TESTBENCH.md` §7B; clear staging with `oko-update clear`.
-  Status: **open (P2), OTA blocker**.
+- **KI-049. Software update from the WebUI (OTA) verified on the bench (closed).**
+  The full cycle passed on 2026-11-10: the `.okp` package built from
+  `boot`/`oem`/`rootfs` was uploaded through `/api/update/upload`, staged on
+  the microSD card (`oko-update stage`, sizes via `wc -c`) and applied with a
+  token. U-Boot saw `oko_update` (the key was added to `CONFIG_ENVF_LIST`
+  together with `oko_mac`/`oko_net_*`), `sd_update` read `sd_update.txt` from
+  `mmc 1`, erased and wrote `boot`/`oem`/`rootfs`, cleared the flag and saved
+  the env. `S20oko-update` recorded `ok=1` with version and expected 0.3.0
+  matching, and the card was cleaned; `/oem` mounted after the full erase and
+  divinus started. HTTPS (`curl https://example.com`) works. Defects found and
+  fixed on the way: missing `stat`, wrong apply-token issuance order, and the
+  `ENVF` allowlist. Status: **closed (2026-11-10)**.
 
-- **KI-050. `feature/slim-image` branch: merge gate.**
+- **KI-050. `feature/slim-image` branch: merge gate passed.**
   Passed on the DUT on 2026-11-09–10: full `update.img` flash, `divinus`
-  start, OSD, RTSP, ONVIF, `api_check` 105/105, `ui_check`, `osd_check`, and
-  `check_image_contents.sh` (22 required / 61 forbidden paths). The KI-049 OTA
-  gate did not pass (the env flag is invisible to U-Boot), so the branch is not
-  merged into `main` until the env handoff is fixed and the bench cycle is
-  repeated. Status: **merge blocked (KI-049)**.
+  start, OSD, RTSP, ONVIF, `api_check` 105/105, `ui_check`, `osd_check`,
+  `check_image_contents.sh` (22 required / 61 forbidden paths) and the full
+  OTA cycle with a U-Boot flash (KI-049). There are no merge blockers; the
+  merge into `main` was not performed and remains a separate action.
+  Status: **gate passed, not merged**.
 
 ### VPN
 

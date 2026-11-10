@@ -805,17 +805,41 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Исправлено
 
+- **OTA: токен применения после `token_generate` (OKO).** `update_apply_start`
+  генерировал новый одноразовый токен до запуска worker, но worker получал
+  старый: `oko-update apply` сравнивал его с уже перезаписанным
+  `/run/oko-update.token` и отвечал `invalid apply token`. Теперь worker
+  получает новый токен. Стенд 2026-11-10: apply → прошивка `boot`/`oem`/
+  `rootfs` из U-Boot `sd_update` → postcheck `ok=1`, версия 0.3.0.
+- **OTA: apply token after `token_generate` (OKO).** `update_apply_start`
+  generated a fresh one-time token before starting the worker, but the worker
+  received the old one: `oko-update apply` compared it with the already
+  rewritten `/run/oko-update.token` and answered `invalid apply token`. The
+  worker now receives the new token. Bench 2026-11-10: apply → `boot`/`oem`/
+  `rootfs` flashed by U-Boot `sd_update` → postcheck `ok=1`, version 0.3.0.
+
+- **U-Boot: env-флаг OTA виден загрузчику (OKO).** `CONFIG_ENVF_LIST` не
+  содержал `oko_update`, поэтому Rockchip `ENVF` импортировал из env только
+  белый список и `fw_setenv` из Linux был невидим U-Boot. В список добавлены
+  `oko_update` и ключи `oko_mac`/`oko_net_*`, чтобы `env save` не терял
+  сетевые настройки. Стенд 2026-11-10: `printenv oko_update` в U-Boot
+  показывает 1, `sd_update` прошивает разделы, флаг удаляется.
+- **U-Boot: the OTA env flag is visible to the bootloader (OKO).**
+  `CONFIG_ENVF_LIST` did not contain `oko_update`, so Rockchip `ENVF` imported
+  only its allowlist from the env and the Linux-written `fw_setenv` stayed
+  invisible to U-Boot. The list now includes `oko_update` plus the
+  `oko_mac`/`oko_net_*` keys so `env save` does not drop the network settings.
+  Bench 2026-11-10: `printenv oko_update` in U-Boot shows 1, `sd_update`
+  flashes the partitions and the flag is deleted.
+
 - **`oko-update`: проверка размеров без `stat` (OKO).** В образе нет
   `stat`, поэтому staging на DUT падал с `size-mismatch` (пустой вывод
   `stat -c %s`). Размеры частей теперь считаются `wc -c`; staging `.okp` на
-  стенде проходит. При этом OTA-применение остаётся заблокированным:
-  `fw_setenv oko_update` не виден U-Boot (`CONFIG_ENV_IS_NOWHERE`/`ENVF`),
-  подробности — `KNOWN_ISSUES.md` KI-049.
+  стенде проходит, полный цикл OTA проверен (KI-049 закрыт).
 - **`oko-update`: size checks without `stat` (OKO).** The image has no `stat`,
   so staging on the DUT failed with `size-mismatch` (empty `stat -c %s`
-  output). Part sizes now use `wc -c`, and `.okp` staging passes on the bench.
-  OTA apply is still blocked: `fw_setenv oko_update` is invisible to U-Boot
-  (`CONFIG_ENV_IS_NOWHERE`/`ENVF`), see `KNOWN_ISSUES.md` KI-049.
+  output). Part sizes now use `wc -c`, `.okp` staging passes on the bench and
+  the full OTA cycle is verified (KI-049 closed).
 
 - **ONVIF: падение `divinus` при включении (OKO).** Поток ONVIF создавался
   со стеком 16 КиБ, но использует два 4-КиБ SOAP-буфера и кадры

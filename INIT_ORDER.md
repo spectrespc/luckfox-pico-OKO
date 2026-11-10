@@ -186,6 +186,14 @@ U-Boot штатной командой `sd_update` читает `sd_update.txt` 
 снимает флаг после успешной записи всех разделов; `postcheck` дополнительно
 очищает оставшийся флаг.
 
+U-Boot подхватывает из env только ключи из `CONFIG_ENVF_LIST`, поэтому
+`oko_update` (вместе с `oko_mac`/`oko_net_mode`/`oko_ipaddr`/`oko_netmask`/
+`oko_gateway`/`oko_dns`, чтобы `env save` не терял настройки сети) добавлен в
+`sysdrv/source/uboot/u-boot/configs/luckfox_rv1106_uboot_defconfig`. Без этого
+`fw_setenv oko_update 1` из Linux не виден загрузчику. Полный цикл
+upload → stage → apply → `sd_update` → postcheck проверен на стенде
+2026-11-10.
+
 ## 5. Запуск приложения (`S21appinit` → `RkLunch.sh`)
 
 `S21appinit` генерируется в `project/build.sh` (функция `__PACKAGE_OEM`) и копируется в
