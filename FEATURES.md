@@ -4,7 +4,7 @@
 (RV1106, SPI NAND, Buildroot) с сенсором SC230AI: паспорт платформы, индекс по
 файлам статусов проверки и краткие команды проверки.
 
-Статус на 2026-11-09. Пометки: **работает** — проверено на стенде;
+Статус на 2026-11-10. Пометки: **работает** — проверено на стенде;
 **ограничено** — работает с оговоркой; **заблокировано** — отказ с причиной.
 
 | Файл | Содержание |
@@ -26,6 +26,7 @@
 | Корневая ФС | Buildroot |
 | Разделы | `env` 256K, `idblock` 256K, `uboot` 512K, `boot` 6M, `oem` 40M, `userdata` 40M, `rootfs` 168M |
 | Активный DTS | `rv1106g-luckfox-pico-pro-max-sc230ai.dts` |
+| USB | dual-role (`dr_mode = "otg"`): host с OTG-переходником и хабом, gadget при подключении к ПК; встроенные HID, USB-сеть (RNDIS/CDC/ASIX/Realtek), Bluetooth (`btusb` + bluez `bluetoothctl`) |
 | Медиастек | `divinus` (OpenIPC), H.265/H.264, JPEG, RTSP, WebUI |
 | NPU-стек | драйвер `rknpu` 0.9.8 (`20240828`, non-IOMMU), мини-рантайм `librknnmrt.so` 1.6.0; опционально второй `librknnmrt2.so` 2.3.2 (`yolo.runtime: 2`), RGA-конверсия NV12→RGB888 по fd (`yolo.convert: rga`) и рамки детекции на видеопотоке (`yolo.boxes`, 2BPP RGN, два цвета) |
 | Сборка | нативная на Debian 13 (`tools/native/setup_host.sh`, `./build.sh firmware`), результат — `output/image/update.img` |
@@ -46,6 +47,9 @@ bench/run.sh firmware_check.py --negative
 
 # статус платы
 curl -u admin:oko-change-me http://192.168.52.97/api/status
+
+# USB: роль порта, хаб и устройства за ним (нужен OTG-переходник + питание 5 В)
+bench/run.sh dut.py --host 192.168.52.97 'cat /proc/device-tree/usbdrd/usb@ffb00000/dr_mode; lsusb'
 ```
 
 Полный набор команд — `TESTBENCH.md` §8 и `VERIFIED_FUNCTIONS.md` §3; процедура
@@ -95,6 +99,16 @@ curl -u admin:oko-change-me http://192.168.52.97/api/status
   `FEATURES_UNVERIFIED.md` (AWG).
 - Ограничения и непроверенные комбинации потоков, YOLO, датчиков и microSD
   собраны в `FEATURES_UNVERIFIED.md`.
+- USB-порт переведён в dual-role (`dr_mode = "otg"`): с OTG-переходником и
+  хабом порт работает как host (хаб, HID, USB-сеть, BT-донглы), при
+  подключении к ПК остаётся gadget (`usb0`, adb). VBUS 5 В SoC не управляет —
+  хаб и устройства питаются от платы или внешнего источника. Стенд
+  2026-11-10: device-роль и gadget (UDC `configured`, `usb0` `172.32.0.93`,
+  перечисление на ПК), принудительный host через
+  `/sys/devices/platform/ff3e0000.usb2-phy/otg_mode` (xHCI и корневые хабы) и
+  автоматический возврат gadget после host-режима проверены; хаб/HID/
+  USB-сеть/BT физически не подключались. Статусы — `FEATURES_UNVERIFIED.md`,
+  ограничения — `KNOWN_ISSUES.md` (KI-054), команды — `TESTBENCH.md` §8.
 - Часовой пояс: набор зон buildroot в `/usr/share/zoneinfo/uclibc`, `/etc/TZ` —
   относительный симлинк на выбранную зону; управление — `/api/time` (`tz=`),
   ключ `[system] tz` и WebUI «Синхронизация времени» (рядом с NTP показан
@@ -116,7 +130,7 @@ Entry point for OKO capabilities on the Luckfox Pico Pro Max (RV1106, SPI NAND,
 Buildroot) with the SC230AI sensor: platform passport, an index of the
 verification-status files and short verification commands.
 
-Status as of 2026-11-09. Markers: **works**, **limited**, **blocked**.
+Status as of 2026-11-10. Markers: **works**, **limited**, **blocked**.
 
 | File | Content |
 |---|---|
@@ -146,3 +160,15 @@ microSD limits are in `FEATURES_UNVERIFIED.md`. A real STM32 update (CBT6,
 WebUI `app-1.0.1.bin` → rollback `app-1.0.0.bin`, dotted `1.0.0` in
 `/api/firmware`) is verified. Flashing procedure and bench addresses are in
 `TESTBENCH.md`; evidence is in `VERIFIED_FUNCTIONS.md`.
+
+The USB port is dual-role (`dr_mode = "otg"`): with an OTG adapter and a hub it
+acts as a host (hub, HID, USB net, Bluetooth dongles), and it stays a gadget
+(`usb0`, adb) when plugged into a PC. The SoC does not control VBUS 5 V, so a
+hub and its devices are powered by the board or an external supply. Bench
+2026-11-10: the device role and gadget (UDC `configured`, `usb0`
+`172.32.0.93`, enumeration on a PC), forced host through
+`/sys/devices/platform/ff3e0000.usb2-phy/otg_mode` (xHCI with root hubs) and
+the automatic gadget re-bind after a host excursion were verified; a hub, HID,
+USB networking and Bluetooth were not attached. Status —
+`FEATURES_UNVERIFIED.md`, limits — `KNOWN_ISSUES.md` (KI-054), commands —
+`TESTBENCH.md` §8.

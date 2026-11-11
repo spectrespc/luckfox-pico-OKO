@@ -20,13 +20,14 @@
 | Параметр | Значение | Смысл |
 |---|---|---|
 | `RK_CHIP` | `rv1106` | SoC RV1106 |
-| `RK_APP_TYPE` | `RKIPC_RV1106` | пакет приложения (устанавливает `RkLunch.sh`); `rkipc` вырезан из образа |
+| `RK_APP_TYPE` | `RKIPC_RV1106` | тип приложения SDK; сборка `rkipc` отключена, лаунчер — `oko-lunch.sh` |
 | `RK_BOOT_MEDIUM` | `spi_nand` | загрузка с SPI NAND |
 | `RK_PARTITION_CMD_IN_ENV` | `256K(env),256K@256K(idblock),512K(uboot),6M(boot),40M(oem),40M(userdata),168M(rootfs)` | разметка 256 МБ NAND: `boot` 6 МБ, `oem` 40 МБ, `userdata` 40 МБ, `rootfs` 168 МБ |
 | `LF_TARGET_ROOTFS` | `buildroot` | корневая ФС Buildroot (busybox init) |
 | Режим | **SPI NAND** | автономная загрузка с flash (`root=ubi0:rootfs`) |
 | Сенсор | **SC230AI** | драйвер `sc230ai` + `rv1106-sc230ai.config`; 1080p30 и 480p120, `HDR_X2` экспериментально |
 | `RK_KERNEL_DTS` | `rv1106g-luckfox-pico-pro-max-sc230ai.dts` | device tree платы; `&sc3336`/`&mis5001` выключены |
+| USB | **dual-role (`otg`)** | фрагмент `rv1106-usb-host.config` включает HID/USB-сеть/Bluetooth; host — с OTG-переходником и хабом, gadget — при подключении к ПК |
 | I2C3-M1 | **включён, 100 кГц** | `pinctrl-0 = <&i2c3m1_xfer>` (`GPIO1_D2`/`GPIO1_D3`), устройство `/dev/i2c-3` |
 | `RK_BOOTARGS_CMA_SIZE` | `66M` | CMA для медиастека |
 | `RK_ENABLE_WIFI` | `y` | WiFi-модули в `/oem/usr/ko` |

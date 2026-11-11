@@ -26,6 +26,127 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Добавлено
 
+- **USB host за хабом: HID, USB-сеть и Bluetooth (OKO).**
+  Порт RV1106 переведён в dual-role: с OTG-переходником и внешним питанием он
+  работает как host (хаб и устройства за ним), с кабелем к ПК остаётся device
+  (gadget, `usb0`/adb). Новый фрагмент ядра `rv1106-usb-host.config` включает
+  встроенными HID (`CONFIG_HID`, `CONFIG_USB_HID`), USB-сеть
+  (`USB_NET_DRIVERS`, `USB_USBNET`, CDC ECM/NCM, RNDIS host, ASIX
+  AX8817x/88179, RTL8150/8152) и Bluetooth (`BT`, `BT_LE`, `BT_HCIBTUSB` +
+  RTL); в вендорском defconfig эти классы выключены, а драйвер хаба входит в
+  usbcore и отдельного символа Kconfig не имеет. В rootfs добавлены `dbus`,
+  `libglib2`, `bluez5_utils 5.86` (`bluetoothctl`, `S40bluetoothd`,
+  `S30dbus-daemon`) и `linux-firmware` (RTL87xx/88xx BT, AR3012); `lsusb`
+  уже даёт busybox. Для uclibc-ng без `wordexp` добавлен патч
+  `patches-2026.08/bluez5_utils/0001-build-provide-wordexp-fallback-...`,
+  неприменимые вендорские патчи bluez удалены из дерева. VBUS 5 В SoC не
+  управляет (KI-054). Стенд 2026-11-10: device-роль и gadget (`usb0`
+  `172.32.0.93`, перечисление на ПК), принудительный host и автоматический
+  возврат gadget после host-режима проверены; хаб/HID/USB-сеть/BT физически
+  не подключались, `bluetoothd`+`dbus-daemon`+`bluetoothctl 5.86` работают.
+- **USB host behind a hub: HID, USB networking and Bluetooth (OKO).**
+  The RV1106 port now runs in dual-role: with an OTG adapter and external power
+  it is a host (a hub and the devices behind it), and with a cable to a PC it
+  stays a device (gadget, `usb0`/adb). The new kernel fragment
+  `rv1106-usb-host.config` builds in HID (`CONFIG_HID`, `CONFIG_USB_HID`), USB
+  networking (`USB_NET_DRIVERS`, `USB_USBNET`, CDC ECM/NCM, RNDIS host, ASIX
+  AX8817x/88179, RTL8150/8152) and Bluetooth (`BT`, `BT_LE`, `BT_HCIBTUSB` +
+  RTL); the vendor defconfig disables these classes, and hub support lives in
+  usbcore with no separate Kconfig symbol. The rootfs gains `dbus`,
+  `libglib2`, `bluez5_utils 5.86` (`bluetoothctl`, `S40bluetoothd`,
+  `S30dbus-daemon`) and `linux-firmware` (RTL87xx/88xx BT, AR3012); `lsusb`
+  already comes from busybox. For uclibc-ng without `wordexp`, a
+  `patches-2026.08/bluez5_utils/0001-build-provide-wordexp-fallback-...` patch
+  was added and the inapplicable vendor bluez patches were dropped from the
+  tree. The SoC does not control VBUS 5 V (KI-054). Bench 2026-11-10: the device
+  role and gadget (`usb0` `172.32.0.93`, enumeration on a PC), forced host and
+  the automatic gadget re-bind after a host excursion were verified; a hub,
+  HID, USB networking and BT were not attached, while `bluetoothd` +
+  `dbus-daemon` + `bluetoothctl 5.86` run.
+
+- **Стенд: приёмник UDP/RTP MediaMTX и сквозная проверка раздачи (OKO).**
+  `services/stream/` — отдельный профиль compose с закреплённым образом
+  `bluenviron/mediamtx:1.21.3-ffmpeg` (host-сеть): путь `cam` слушает «сырой»
+  RTP камеры на `5600/udp` (`rtpSDP` с `H265/90000`) и переиздаёт поток по
+  RTSP `8554`, HLS `8888` и WebRTC `8889`; control API — только
+  `127.0.0.1:9997`. Аутентификация стоковая (анонимные `publish/read/playback`),
+  поэтому RTSP играется без пароля — только для лабораторного стенда.
+  Новый `bench/stream_check.py` читает `stream`/`mp4` из
+  `/userdata/divinus.yaml` по SSH, опрашивает API приёмника, декодирует
+  `rtsp://<хост>:8554/cam` через PyAV, сверяет fps с `mp4.fps`, а с
+  `--compare-dut` — с собственным RTSP камеры и оценивает задержку
+  ретрансляции по совпадению кадров (единицы миллисекунд); артефакты — в
+  `output/bench/stream`, учётные данные в них не попадают.
+  Браузерный просмотр: с H.264 (`mp4.codec: H.264` + `rtpSDP H264/90000`)
+  WebRTC-страница играет 1080p30 в Chromium, с H.265 (фабричный) — нет:
+  WebRTC закрывается с `codecs not supported by client`, HLS отдаётся как
+  `hvc1` и в MSE не воспроизводится (KI-053).
+- **Bench: MediaMTX UDP/RTP receiver and end-to-end push check (OKO).**
+  `services/stream/` is a separate compose profile with the pinned
+  `bluenviron/mediamtx:1.21.3-ffmpeg` image (host networking): the `cam` path
+  listens for the camera's raw RTP on `5600/udp` (`rtpSDP` with `H265/90000`)
+  and re-publishes it over RTSP `8554`, HLS `8888` and WebRTC `8889`; the
+  control API stays on `127.0.0.1:9997`. Authorization is the stock policy
+  (anonymous `publish/read/playback`), so RTSP plays without credentials — a
+  test-stand-only setting. The new `bench/stream_check.py` reads `stream`/`mp4`
+  from `/userdata/divinus.yaml` over SSH, polls the receiver API, decodes
+  `rtsp://<host>:8554/cam` with PyAV, compares fps with `mp4.fps` and, with
+  `--compare-dut`, with the camera's own RTSP while estimating the relay delay
+  by frame matching (a few milliseconds); artifacts go to
+  `output/bench/stream` and never contain credentials. Browser playback:
+  with H.264 (`mp4.codec: H.264` + `rtpSDP H264/90000`) the WebRTC page plays
+  1080p30 in Chromium, with H.265 (factory default) it does not — WebRTC closes
+  with `codecs not supported by client` and HLS is served as `hvc1`, which MSE
+  rejects (KI-053).
+
+### Изменено
+
+- **`S99usb0config` определяет USB-роль по extcon (OKO).**
+  Скрипт больше не проверяет строку `dr_mode` в DTS: роль читается из
+  `/sys/class/extcon/*/state`, в device-роли назначается `172.32.0.93`, а при
+  возврате из host-режима заново биндится configfs-gadget (DWC3 снимает UDC и
+  сам его не возвращает). Прежние повторы установки IP сохранены, watchdog
+  опрашивает роль раз в 5 с, а при устойчивой ошибке биндинга пауза между
+  перезапусками растёт 5→60 с. Проверено на стенде: два цикла host→device —
+  UDC `configured`, gadget снова виден на ПК.
+- **`S99usb0config` derives the USB role from extcon (OKO).**
+  The script no longer reads `dr_mode` from the DTS: the role comes from
+  `/sys/class/extcon/*/state`, the device role gets `172.32.0.93`, and after a
+  host excursion the configfs gadget is bound again (DWC3 drops its UDC and
+  does not restore it). The previous IP retries are kept, the watchdog polls the
+  role every 5 s, and a persistent bind failure backs off from 5 to 60 s.
+  Bench: two host→device cycles — UDC `configured` and the gadget visible on
+  the PC again.
+
+- **Активный DTS и BoardConfig: USB-порт в `otg` (OKO).**
+  В `rv1106g-luckfox-pico-pro-max-sc230ai.dts` у `&usbdrd_dwc3` значение
+  `dr_mode` изменено с `"peripheral"` на `"otg"` с комментарием OKO;
+  `&u2phy`, `&u2phy_otg` и `&usbdrd` не менялись. Список
+  `RK_KERNEL_DEFCONFIG_FRAGMENT` активного BoardConfig дополнен
+  `rv1106-usb-host.config` (после sensor-фрагмента); прочие DTS и BoardConfig
+  не затронуты. Роль в `S99usb0config` определяется по extcon (см. запись
+  выше), `S50usbdevice` продолжает биндить gadget.
+- **Active DTS and BoardConfig: USB port in `otg` mode (OKO).**
+  In `rv1106g-luckfox-pico-pro-max-sc230ai.dts` the `&usbdrd_dwc3` node now
+  has `dr_mode = "otg"` instead of `"peripheral"`, with an OKO comment;
+  `&u2phy`, `&u2phy_otg` and `&usbdrd` are unchanged. The active BoardConfig
+  `RK_KERNEL_DEFCONFIG_FRAGMENT` list gains `rv1106-usb-host.config` (after the
+  sensor fragment); other DTS files and BoardConfig profiles are untouched.
+  `S99usb0config` now derives the role from extcon (see the entry above), and
+  `S50usbdevice` keeps binding the gadget.
+
+- **Собственный лаунчер `oko-lunch` (OKO).** Новый пакет `project/app/oko-lunch`
+  ставит в `/oem/usr/bin` скрипты `oko-lunch.sh` и `oko-lunch-stop.sh`; тело
+  перенесено из вендорского `RkLunch.sh` с OKO-правками (`divinus` как
+  единственный стример, `oko-net apply`, пропуск DHCP в netboot, запуск из
+  `/userdata`). Пакет собирается общим циклом `project/app/Makefile`.
+- **Standalone `oko-lunch` launcher (OKO).** The new `project/app/oko-lunch`
+  package installs `oko-lunch.sh` and `oko-lunch-stop.sh` into
+  `/oem/usr/bin`; the body is carried over from the vendor `RkLunch.sh` with
+  the OKO changes (`divinus` as the only streamer, `oko-net apply`, DHCP skip
+  in netboot, start from `/userdata`). The package is built by the shared
+  `project/app/Makefile` loop.
+
 - **Обновление ПО через WebUI (OTA, OKO).** В разделе «Система» появилась
   карточка «Обновление ПО»: загрузка `.okp` файлом (потоковый приём тела в
   `server.c` в обход буфера 4 МиБ) или скачивание по `http(s)://`
@@ -404,6 +525,54 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   export plus the `u:tftp` ACLs were cleaned up. See `services/README.md`.
 
 ### Изменено
+
+- **Документация: `stream.enable` больше не выдаётся за условие RTSP (OKO).**
+  В `TESTBENCH.md` (§8 и §9) и `bench/README.md` было записано, что RTSP отдаёт
+  кадры только при `stream.enable=true`. Код это опровергает: RTSP управляется
+  `rtsp.enable`, кадры приходят с VENC-канала (`mp4.enable`/`substream.enable`),
+  а `stream.enable` включает отдельный UDP/RTP-пуш. Формулировки исправлены,
+  в `TESTBENCH.md` §5 добавлен приёмник MediaMTX с портами и §8 — подраздел
+  диагностики «UDP/RTP-раздача камеры», `services/README.md` и `STRUCTURE.md`
+  описывают `services/stream/`.
+- **Docs: `stream.enable` is no longer presented as an RTSP prerequisite
+  (OKO).** `TESTBENCH.md` (§8 and §9) and `bench/README.md` claimed that RTSP
+  emits frames only with `stream.enable=true`. The code says otherwise: RTSP is
+  controlled by `rtsp.enable`, frames come from the VENC channel
+  (`mp4.enable`/`substream.enable`), and `stream.enable` turns on the separate
+  UDP/RTP push. The wording is fixed, `TESTBENCH.md` §5 gained the MediaMTX
+  receiver with its ports, §8 gained the "camera UDP/RTP push" diagnostic
+  subsection, and `services/README.md` plus `STRUCTURE.md` describe
+  `services/stream/`.
+
+- **`S21appinit` переключён на `oko-lunch`, сборка `rkipc` отключена (OKO).**
+  Heredoc `S21appinit` в `project/build.sh` вызывает
+  `/oem/usr/bin/oko-lunch.sh`/`oko-lunch-stop.sh`; `rkipc` исключён из
+  `app_src` в `project/app/Makefile` (исходники остаются в дереве как
+  справочные). `oko-prune.list` и `tools/native/check_image_contents.sh`
+  обновлены: `RkLunch*.sh` — запрещённые пути, `oko-lunch*.sh` — обязательные.
+  Останов больше не висит в `while [ 1 ]`: ожидание выхода `divinus` ограничено
+  10 с, затем `killall -9 divinus`; после ожидания `udhcpc`/`dhcpcd` снимаются
+  повторно, чтобы поздний `oko-net apply` не вернул сеть. Документация (`INIT_ORDER.md` §4/§5/§7/§8,
+  `README_RU.md`, `STRUCTURE.md`, `TESTBENCH.md`, `VERIFIED_FUNCTIONS.md`,
+  `FEATURES_VERIFIED.md`)
+  приведена к новым именам. Проверено на DUT 2026-11-10: прошиты `oem` и
+  `rootfs`, `S21appinit start/stop` работает, `api_check` — 105 проверок без
+  ошибок, RTSP/OSD живы; netboot-прогон не выполнялся (NFS-экспорт содержит
+  прошлую сборку).
+- **`S21appinit` switched to `oko-lunch`, the `rkipc` build is disabled (OKO).**
+  The `S21appinit` heredoc in `project/build.sh` calls
+  `/oem/usr/bin/oko-lunch.sh`/`oko-lunch-stop.sh`; `rkipc` is filtered out of
+  `app_src` in `project/app/Makefile` (its sources stay in the tree for
+  reference). `oko-prune.list` and `tools/native/check_image_contents.sh` were
+  updated: `RkLunch*.sh` are forbidden paths and `oko-lunch*.sh` are required.
+  Stop no longer loops in `while [ 1 ]`: the `divinus` exit wait is capped at
+  10 s, then `killall -9 divinus` runs; `udhcpc`/`dhcpcd` are stopped again
+  after the wait so a late `oko-net apply` cannot bring the network back. The documentation (`INIT_ORDER.md`
+  §4/§5/§7/§8, `README_RU.md`, `STRUCTURE.md`, `TESTBENCH.md`,
+  `VERIFIED_FUNCTIONS.md`, `FEATURES_VERIFIED.md`) follows the new names. Verified on the DUT
+  2026-11-10: `oem` and `rootfs` were flashed, `S21appinit start/stop` works,
+  `api_check` passed 105 checks and RTSP/OSD stayed alive; the netboot run was
+  not repeated (the NFS export still holds the previous build).
 
 - **Документация приведена к составу slim-образа (OKO).** `INIT_ORDER.md`
   описывает `RkLunch.sh` без rkipc-ветки и обновлённую таблицу init-скриптов
@@ -805,6 +974,66 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Исправлено
 
+- **Legacy `g_mass_storage` срывал инициализацию USB-gadget (OKO).**
+  В вендорском defconfig был `CONFIG_USB_MASS_STORAGE=y`: legacy-драйвер
+  захватывал UDC при старте, падал с `-EINVAL` (нет backing-файла) и обрывал
+  инициализацию peripheral у DWC3 (`failed to add gadget`,
+  `failed to initialize peripheral`), поэтому `/sys/class/udc` оставался
+  пустым и adb/RNDIS не поднимались. Символ выключен во фрагменте
+  `rv1106-usb-host.config`; функции gadget управляются через configfs.
+  Стенд 2026-11-10: UDC `ffb00000.usb` в состоянии `configured`, gadget
+  перечисляется на ПК, `usb0` получает `172.32.0.93` (KI-056).
+- **Legacy `g_mass_storage` aborted the USB gadget init (OKO).**
+  The vendor defconfig had `CONFIG_USB_MASS_STORAGE=y`: the legacy driver
+  grabbed the UDC at boot, failed with `-EINVAL` (no backing file) and aborted
+  the DWC3 peripheral init (`failed to add gadget`,
+  `failed to initialize peripheral`), leaving `/sys/class/udc` empty so
+  adb/RNDIS never started. The symbol is disabled in
+  `rv1106-usb-host.config`; gadget functions are managed through configfs.
+  Bench 2026-11-10: UDC `ffb00000.usb` reports `configured`, the gadget
+  enumerates on the PC and `usb0` gets `172.32.0.93` (KI-056).
+
+- **divinus: UDP/RTP-раздача (`[stream]`) не работала (OKO).** Шесть дефектов
+  вендорского кода, каждый из которых по отдельности делал функцию мёртвой:
+  (1) `media_start()` возвращал `EXIT_FAILURE` при успешной инициализации
+  (инвертированная проверка `udp_stream_init`) и не имел `return` вовсе;
+  (2) `strrchr()` даёт `NULL`, если в `dest` нет порта, — `strtol` по `NULL`;
+  (3) ранний `return` после инициализации не давал зарегистрировать второй и
+  последующие адреса; (4) клиенты из конфига удалялись через 60 с простоя, хотя
+  RTP-приёмник ничего не отправляет; (5) `hal/config.c: parse_list()` собирал
+  шаблоны с `\n` и `\s`, а POSIX ERE в uClibc-ng трактует их буквально —
+  `stream.dest` не разбирался никогда (`[config] Parameter 'dest' not found`);
+  (6) в один RTP-пакет уходил весь pack с Annex-B старткодами и несколькими
+  NAL, а H.265-фрагментация использовала двухбайтовый FU-заголовок и
+  `nal_type = b0 & 0x3F` — такие пакеты не разбирает ни один приёмник.
+  Теперь: один NAL на пакет, FU по RFC 6184/7798, `udp_stream_frame_end()`
+  двигает RTP-метку времени на кадр (не на NAL), marker — на последнем пакете
+  access unit, `stream_dests` увеличен до 5 слотов (запись терминатора при
+  четырёх адресах была за границей массива), у `udp_stream_init` появились
+  проверки `calloc`/`mutex`. Стенд 2026-11-10: камера шлёт 1080p30 H.265 на
+  `192.168.52.200:5600`, MediaMTX отдаёт `hevc Main 1920x1080 30/1` без
+  пароля, поток совпадает с RTSP камеры кадр-в-кадр.
+- **divinus: the UDP/RTP push (`[stream]`) never worked (OKO).** Six defects in
+  vendor code, each of which alone made the feature dead: (1) `media_start()`
+  returned `EXIT_FAILURE` on success (inverted `udp_stream_init` check) and had
+  no `return` at all; (2) `strrchr()` yields `NULL` when `dest` has no port, so
+  `strtol` ran on `NULL`; (3) an early `return` skipped registration of the
+  second and later destinations; (4) configured clients were expired after 60 s
+  of silence although a plain RTP receiver never sends anything back;
+  (5) `hal/config.c: parse_list()` built its patterns with `\n` and `\s`, which
+  uClibc-ng's POSIX ERE takes literally, so `stream.dest` never parsed
+  (`[config] Parameter 'dest' not found`); (6) a whole pack with Annex-B start
+  codes and several NAL units went into one RTP packet, and H.265 fragmentation
+  used a two-byte FU header and `nal_type = b0 & 0x3F`, which no receiver can
+  depacketize. Now: one NAL per packet, RFC 6184/7798 fragmentation,
+  `udp_stream_frame_end()` advances the RTP timestamp per frame (not per NAL),
+  the marker sits on the last packet of the access unit, `stream_dests` grew to
+  five slots (the terminator write at four destinations was out of bounds), and
+  `udp_stream_init` checks `calloc`/`mutex`. Bench 2026-11-10: the camera pushes
+  1080p30 H.265 to `192.168.52.200:5600`, MediaMTX serves `hevc Main 1920x1080
+  30/1` without credentials, and the stream matches the camera RTSP frame for
+  frame.
+
 - **OTA: токен применения после `token_generate` (OKO).** `update_apply_start`
   генерировал новый одноразовый токен до запуска worker, но worker получал
   старый: `oko-update apply` сравнивал его с уже перезаписанным
@@ -1023,6 +1252,23 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   read before treating the scale as corrupted.
 
 ### Удалено
+
+- **Вендорские ветки из лаунчера и `RkLunch*.sh` из образа (OKO).** Из нового
+  лаунчера убраны циклы `rcS`/`rcK` по отсутствующему `/oem/usr/etc/init.d`,
+  fallback `/data/ethaddr.txt` + `udhcpc` (без `/usr/bin/oko-net` сеть не
+  поднимается, в консоль выводится явное сообщение) и настройка core dump
+  (`ulimit -c unlimited`, `/data/core-%p-%e`): её владелец —
+  `/etc/profile.d/enable_coredump.sh` из `project/build.sh`, ядро падает в
+  `/mnt/sdcard/core-<pid>-<exe>`. `RkLunch.sh`/`RkLunch-stop.sh` больше не
+  попадают в образ.
+- **Vendor branches dropped from the launcher and `RkLunch*.sh` removed from
+  the image (OKO).** The new launcher no longer walks `rcS`/`rcK` over the
+  absent `/oem/usr/etc/init.d`, has no `/data/ethaddr.txt` + `udhcpc` fallback
+  (without `/usr/bin/oko-net` the network stays down and an explicit message
+  is printed) and sets up no core dumps (`ulimit -c unlimited`,
+  `/data/core-%p-%e`): that belongs to `/etc/profile.d/enable_coredump.sh`
+  from `project/build.sh`, and kernels land in `/mnt/sdcard/core-<pid>-<exe>`.
+  `RkLunch.sh`/`RkLunch-stop.sh` are no longer part of the image.
 
 - **Итоговый размер slim-образа (OKO, 2026-11-10).** До ветки: `oem`
   26 574 КиБ, rootfs 99 461 КиБ, `oem.img` 19 136 512 Б, `rootfs.img`

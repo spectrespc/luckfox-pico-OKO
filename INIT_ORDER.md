@@ -23,14 +23,14 @@ BootROM → U-Boot → ядро Linux → busybox init → init-скрипты �
 | Параметр | Значение | Комментарий |
 |---|---|---|
 | `RK_CHIP` | `rv1106` | RV1106 (Cortex-A7 + NPU + ISP) |
-| `RK_APP_TYPE` | `RKIPC_RV1106` | пакет app (устанавливает `RkLunch.sh`; сам `rkipc` вырезан из образа) |
+| `RK_APP_TYPE` | `RKIPC_RV1106` | тип приложения SDK; сборка `rkipc` отключена, лаунчер — `oko-lunch.sh` |
 | `RK_BOOT_MEDIUM` | `spi_nand` | загрузка с SPI NAND |
 | `RK_KERNEL_DTS` | `rv1106g-luckfox-pico-pro-max-sc230ai.dts` | device tree активной платы; `&sc3336`/`&mis5001` выключены |
 | I2C3-M1 | `okay`, `100000` Гц, `pinctrl-0 = <&i2c3m1_xfer>` | включён в `rv1106g-luckfox-pico-pro-max-sc230ai.dts`; выводы `GPIO1_D2`/`GPIO1_D3`, узел `/dev/i2c-3` |
 | `RK_UBOOT_DEFCONFIG` | `luckfox_rv1106_uboot_defconfig` | конфигурация U-Boot |
 | `RK_UBOOT_DEFCONFIG_FRAGMENT` | `rk-sfc.config` | поддержка SPI flash controller |
 | `RK_KERNEL_DEFCONFIG` | `luckfox_rv1106_linux_defconfig` | базовая конфигурация ядра |
-| `RK_KERNEL_DEFCONFIG_FRAGMENT` | `rv1106-netboot.config rv1106-sc230ai.config` | netboot (IP_PNP/ROOT_NFS) + `CONFIG_VIDEO_SC230AI=m`; SC3336/IMX415/MIS5001/MIA1321 явно выключены |
+| `RK_KERNEL_DEFCONFIG_FRAGMENT` | `rv1106-netboot.config rv1106-sc230ai.config rv1106-usb-host.config` | netboot (IP_PNP/ROOT_NFS) + `CONFIG_VIDEO_SC230AI=m`; SC3336/IMX415/MIS5001/MIA1321 явно выключены; usb-host — встроенные HID/USB-net/Bluetooth для dual-role порта |
 | `RK_BOOTARGS_CMA_SIZE` | `66M` | в cmdline попадает как `rk_dma_heap_cma=66M` |
 | `RK_CAMERA_SENSOR_IQFILES` | `sc230ai_CMK-OT2115-PC1_30IRC-F16.json` | IQ-файл сенсора |
 | `RK_ENABLE_WIFI` | `y` | WiFi-модули собираются и копируются в `/oem/usr/ko` |
@@ -70,7 +70,7 @@ BootROM → U-Boot → ядро Linux → busybox init → init-скрипты �
   rk_dma_heap_cma=66M`.
 
 В NFS-режиме `S20linkmount` монтирует `oem`/`userdata` из
-`<nfsroot>/.nfsroot/`, а `RkLunch.sh` пропускает DHCP (см. раздел 5).
+`<nfsroot>/.nfsroot/`, а `oko-lunch.sh` пропускает DHCP (см. раздел 5).
 Переключение и проверка — `bench/nfs_env.py on|off`; итерации ядра без
 прошивки — `bench/netboot.py` (TFTP `boot.img`, `sys_bootargs` только в RAM
 U-Boot). После перезагрузки без остановки U-Boot плата снова грузится из
@@ -121,7 +121,7 @@ SPI NAND, если `sys_bootargs` не сохранён в env.
 | 8 | `S20oko-update` | пост-проверка обновления ПО: сравнивает `/etc/oko-release` с `/userdata/oko-update.pending`, пишет `/userdata/oko-update.state`, удаляет `sd_update.txt` и образы с microSD | оверлей OKO; после `S20linkmount` (и `S20oko-osd`), до `S21appinit`; при отсутствии `.pending` завершается без работы |
 | 9 | `S20okotz` | применение `[system] tz` из `/userdata/divinus.yaml` к `/etc/TZ`: относительный симлинк на `usr/share/zoneinfo/uclibc/<зона>` | оверлей OKO; после `S20linkmount`/`S20oko-osd`, до `S21appinit`; нет ключа или зона невалидна — остаётся зона образа (`Europe/Moscow`) |
 | 10 | `S20urandom` | сохранение/восстановление seed urandom | — |
-| 11 | `S21appinit` | `sh /oem/usr/bin/RkLunch.sh` | **требует смонтированных `/oem` и `/userdata`** |
+| 11 | `S21appinit` | `sh /oem/usr/bin/oko-lunch.sh` | **требует смонтированных `/oem` и `/userdata`** |
 | 12 | `S21oko-ec` | запуск `oko-ec daemon` (телеметрия EC/INA/SHT21 в `/tmp/oko-ec.json` и `/tmp/oko-ec.osd`) | оверлей OKO; после `S20linkmount` и `S21appinit` (лексикографический порядок), требует `/dev/i2c-3` и `/oem/usr/bin/oko-ec`; opt-out — `/userdata/oko-ec.disable` |
 | 13 | `S35iptables` | правила firewall | сеть ещё не обязательна |
 | 14 | `S40network` | базовая настройка сети | — |
@@ -130,7 +130,7 @@ SPI NAND, если `sys_bootargs` не сохранён в env.
 | 17 | `S49ntp` | синхронизация времени | требует рабочей сети; `divinus` (запущен раньше, из `S21appinit`) через 10 с учитывает `ntp_enable`/`ntp_server` и может остановить этот демон |
 | 18 | `S50sshd` | SSH-сервер | сеть |
 | 19 | `S50telnet` | telnet-сервер | сеть |
-| 20 | `S50usbdevice` | настройка USB-режима (gadget) | — |
+| 20 | `S50usbdevice` | настройка USB-режима (gadget) | выполняется всегда; при `dr_mode = "otg"` UDC существует в device-роли, биндинг configfs-gadget не меняется; legacy `g_mass_storage` выключен (KI-056) |
 | 21 | `S60micinit` | настройка микрофонного тракта через `amixer` | аудио-модули ядра |
 | 22 | `S60openvpn` | штатный init-скрипт пакета buildroot | **неактивен**: читает `/etc/openvpn/*.conf` (каталога нет), профилями OKO управляет `S45oko-vpn`; не удалять, чтобы пакет оставался целостным |
 | 23 | `S99hciinit` | `hciattach` для AIC8800 и поднятие `wlan0` | зависит от `aic8800_fdrv` |
@@ -138,7 +138,7 @@ SPI NAND, если `sys_bootargs` не сохранён в env.
 | 25 | `S99luckfoxcustomoverlay` | применение пользовательского DT-overlay из `/mnt/cfg` | `dtc`, `configfs` |
 | 26 | `S99oko-test` | тестовый маркер OKO: пишет `/tmp/oko-test-ok` и строку в `/dev/kmsg` | оверлей OKO, `MARKER` в скрипте |
 | 27 | `S99rtcinit` | калибровка RTC при «нулевом» времени; RTC хранится в UTC (`hwclock -u`, `date -u`) | — |
-| 28 | `S99usb0config` | назначение IP `172.32.0.93` интерфейсу `usb0` | может перезапускать `S50usbdevice` |
+| 28 | `S99usb0config` | роль-aware настройка `usb0` и watchdog роли | определяет роль по `/sys/class/extcon/*/state`: в device-роли ставит `172.32.0.93` и, если UDC пуст после host-режима, перезапускает `S50usbdevice`; в host-роли ничего не делает |
 
 `S20linkmount` генерируется в `project/build.sh` (при разборе таблицы разделов) в файл
 `$RK_PROJECT_OUTPUT/S20linkmount` с `bootmedium=$RK_BOOT_MEDIUM`. Для `spi_nand` он:
@@ -153,7 +153,7 @@ SPI NAND, если `sys_bootargs` не сохранён в env.
 из UBI-раздела. `oem` и `userdata` всегда монтируются из SPI NAND (ubifs).
 
 > **Критическая зависимость:** `S20linkmount` обязан выполниться раньше `S21appinit`.
-> `RkLunch.sh` читает `/oem/usr/bin`, `/oem/usr/ko`, `/oem/usr/share`, пишет в
+> `oko-lunch.sh` читает `/oem/usr/bin`, `/oem/usr/ko`, `/oem/usr/share`, пишет в
 > `/userdata`. Если монтирование не удалось, приложение не найдёт свои файлы.
 
 `S20okotz` управляет часовым поясом. Образ содержит набор зон
@@ -194,7 +194,7 @@ U-Boot подхватывает из env только ключи из `CONFIG_EN
 upload → stage → apply → `sd_update` → postcheck проверен на стенде
 2026-11-10.
 
-## 5. Запуск приложения (`S21appinit` → `RkLunch.sh`)
+## 5. Запуск приложения (`S21appinit` → `oko-lunch.sh`)
 
 `S21appinit` генерируется в `project/build.sh` (функция `__PACKAGE_OEM`) и копируется в
 `/etc/init.d`:
@@ -203,21 +203,22 @@ upload → stage → apply → `sd_update` → postcheck проверен на �
 #!/bin/sh
 [ -f /etc/profile.d/RkEnv.sh ] && source /etc/profile.d/RkEnv.sh
 case $1 in
-	start) sh /oem/usr/bin/RkLunch.sh ;;
-	stop)  sh /oem/usr/bin/RkLunch-stop.sh ;;
+	start) sh /oem/usr/bin/oko-lunch.sh ;;
+	stop)  sh /oem/usr/bin/oko-lunch-stop.sh ;;
 	*)     exit 1 ;;
 esac
 ```
 
-`/oem/usr/bin/RkLunch.sh` (исходник:
-`project/app/rkipc/rkipc/src/rv1106_ipc/RkLunch.sh`):
+`/oem/usr/bin/oko-lunch.sh` (исходник:
+`project/app/oko-lunch/files/oko-lunch.sh`, пакет `project/app/oko-lunch`):
 
-1. Выполняет `rcS` по `/oem/usr/etc/init.d/S??*`. В текущей прошивке каталог
-   `/oem/usr/etc/init.d/` пуст/отсутствует, поэтому цикл ничего не делает.
-2. Настраивает окружение: `ulimit -c unlimited`, core-паттерн
-   `/data/core-%p-%e`, `vm.overcommit_memory=1`.
-3. Запускает `post_chk &` и сразу завершается — `rcS` продолжает работу, не дожидаясь
-   инициализации приложения.
+1. Ставит `vm.overcommit_memory=1`. Kernel core dump настраивает не он, а
+   `/etc/profile.d/enable_coredump.sh` (генерируется `project/build.sh`):
+   `ulimit -c unlimited` и `core_pattern = | /usr/bin/coredump2sdcard.sh %p %e`,
+   ядро падает в `/mnt/sdcard/core-<pid>-<exe>`.
+2. Запускает `post_chk &` и сразу завершается — `rcS` продолжает работу, не дожидаясь
+   инициализации приложения. Цикла `rcS` по `/oem/usr/etc/init.d/S??*` больше нет:
+   каталога в образе нет.
 
 `post_chk` (в фоне):
 
@@ -234,8 +235,10 @@ esac
    `/proc/device-tree/serial-number` и сохраняется в env. В режиме `dhcp`
    запускается `dhcpcd -b eth0` (client ID = MAC, без DUID), в режиме
    `static` — статический адрес/маршрут/DNS и DHCP-клиент не запускается.
-   Старый vendor-путь с `/data/ethaddr.txt` и `udhcpc` остаётся только
-   fallback-ом при отсутствии `oko-net`.
+   `oko-net` — жёсткая зависимость: если `/usr/bin/oko-net` нет (сборка без
+   оверлея `overlay-luckfox-buildroot-init`), в консоль выводится явное
+   сообщение, и сеть не поднимается. Vendor-fallback с `/data/ethaddr.txt` и
+   `udhcpc` удалён.
 4. Создаёт симлинки для веб-интерфейса: `/userdata → /oem/usr/www/userdata`,
    `/media/usb0 → /oem/usr/www/usb0`, `/oem/usr/www/sdcard → /mnt/sdcard`.
    Сам `/mnt/sdcard` — точка монтирования microSD: udev-правило
@@ -267,7 +270,7 @@ esac
 5. Проверяет маркер `/userdata/divinus.enable` — `divinus` (MIT, вендорен в
    `project/app/divinus/`) единственный стример: `rkipc` и его ресурсы
    вырезаны из образа при упаковке (`oko-prune.list`), поэтому fallback на
-   `rkipc` в `RkLunch.sh` отсутствует. Маркер всегда создаётся скриптом
+   `rkipc` в `oko-lunch.sh` отсутствует. Маркер всегда создаётся скриптом
    `S20oko-osd` (оверлей OKO, выполняется до `S21appinit`).
    - `S20oko-osd` заранее бутстрапит `/userdata/divinus.yaml`: при отсутствии
      файла или отсутствии в нём `reg0_text`/`reg0_size`/`reg0_color`/`reg3_text`
@@ -283,6 +286,14 @@ esac
    - если маркера или `/oem/usr/bin/divinus` нет, в консоль выводится явное
      сообщение и стример не запускается; иначе выполняется
      `/oem/usr/bin/divinus &`.
+
+`S21appinit stop` вызывает `/oem/usr/bin/oko-lunch-stop.sh` (исходник
+`project/app/oko-lunch/files/oko-lunch-stop.sh`): снимает зависший фоновый
+`post_chk` по pid-файлу `/var/run/oko-lunch.pid` (в busybox образа нет
+`pgrep`/`pkill`), завершает `divinus`, `udhcpc` и `dhcpcd`, ждёт выхода
+`divinus` до 10 с, при необходимости отправляет `SIGKILL` и повторно снимает
+`udhcpc`/`dhcpcd` (поздний `oko-net apply` не должен вернуть сеть). Цикла `rcK`
+по `/oem/usr/etc/init.d` нет.
 
 ## 6. Порядок загрузки модулей ядра (`insmod_ko.sh`)
 
@@ -326,19 +337,22 @@ AIC8800 (`aic_load_fw` → `aic8800_fdrv`), AP6XXX (`bcmdhd`), RTL8723BS
 
 ### Разделы и файловая система
 
-- `S20linkmount` → `S21appinit`: без смонтированных `/oem` и `/userdata` `RkLunch.sh`
-  не найдёт `/oem/usr/bin/RkLunch.sh`, модули и IQ-файлы. Источник этих разделов —
-  ubifs из SPI NAND.
+- `S20linkmount` → `S21appinit`: без смонтированных `/oem` и `/userdata`
+  `oko-lunch.sh` не найдёт `/oem/usr/bin/oko-lunch.sh`, модули и IQ-файлы.
+  Источник этих разделов — ubifs из SPI NAND.
 - `/etc/iqfiles` — симлинк на `../oem/usr/share/iqfiles`, создаётся при упаковке
   (`build.sh`); IQ-файлы сенсора использует медиастек `divinus`/`librkaiq`.
 
-### Пакет rkipc (в образ не входит)
+### Пакет oko-lunch (лаунчер)
 
-Пакет `project/app/rkipc` по-прежнему собирается, потому что устанавливает
-`RkLunch.sh`/`RkLunch-stop.sh`, но сам стример и его ресурсы перечислены в
-`oko-prune.list` и вырезаются при упаковке. Выбор `rkipc-*.ini`,
-`/userdata/rkipc.ini`, `image.bmp`, `speaker_test.wav` и переключение
-`csi_unite` из `RkLunch.sh` удалены.
+`project/app/oko-lunch` ставит `/oem/usr/bin/oko-lunch.sh` и
+`/oem/usr/bin/oko-lunch-stop.sh`; `S21appinit` вызывает их по `start`/`stop`.
+Пакет `project/app/rkipc` не собирается (исключён из `app_src` в
+`project/app/Makefile`), его исходники остаются в дереве как справочные.
+Стример и его ресурсы (`usr/bin/rkipc`, `rkipc-*.ini`, `image.bmp`,
+`speaker_test.wav`) и старые `RkLunch*.sh` перечислены в `oko-prune.list` и
+вырезаются при упаковке; выбор `rkipc-*.ini`, `/userdata/rkipc.ini` и
+переключение `csi_unite` удалены ещё в первой OKO-правке лаунчера.
 
 ### Приложение divinus (единственный стример)
 
@@ -510,7 +524,7 @@ AIC8800 (`aic_load_fw` → `aic8800_fdrv`), AP6XXX (`bcmdhd`), RTL8723BS
 
 ### Сеть
 
-- `RkLunch.sh` вызывает `oko-net apply`; `S41dhcpcd` заменён заглушкой.
+- `oko-lunch.sh` вызывает `oko-net apply`; `S41dhcpcd` заменён заглушкой.
 - `S45oko-vpn` выполняется после `S41dhcpcd`, ждёт default route до 60 с,
   запускает `oko-vpn autostart` (профили с `auto=1`) и `oko-vpn watchdog 30`.
   Watchdog считает профиль `ovpn` живым по pid-файлу
@@ -537,7 +551,7 @@ AIC8800 (`aic_load_fw` → `aic8800_fdrv`), AP6XXX (`bcmdhd`), RTL8723BS
 | Init-скрипты (оверлей) | `project/cfg/BoardConfig_IPC/overlay/overlay-luckfox-buildroot-init/etc/init.d/` |
 | Загрузка модулей | `sysdrv/drv_ko/insmod_ko.sh` |
 | WiFi | `sysdrv/drv_ko/wifi/insmod_wifi.sh` |
-| Приложение | `project/app/rkipc/rkipc/src/rv1106_ipc/RkLunch.sh` |
+| Приложение | `project/app/oko-lunch/files/oko-lunch.sh` |
 | Вырезание из образа | `project/cfg/BoardConfig_IPC/oko-prune.list`, `project/build.sh` (`__RUN_POST_CLEAN_FILES`) |
 | Сверка артефакта | `output/out/rootfs_uclibc_rv1106/etc/init.d/`, `output/out/oem/usr/ko/` |
 
@@ -555,7 +569,7 @@ ls output/out/oem/usr/ko/ | grep -E "motor|hpmcu"
 
 # зависимости приложения
 grep -n "insmod_ko\|iqfiles\|divinus" \
-  project/app/rkipc/rkipc/src/rv1106_ipc/RkLunch.sh
+  project/app/oko-lunch/files/oko-lunch.sh
 
 # вырезанные из образа пути
 tools/native/check_image_contents.sh

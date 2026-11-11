@@ -1,6 +1,6 @@
 # Известные ошибки и ограничения OKO
 
-Обновлено: `2026-11-09`. В файле — открытые проблемы, подтверждённые
+Обновлено: `2026-11-10`. В файле — открытые проблемы, подтверждённые
 ограничения и недавно закрытые записи (KI-036). Проверенные функции и доказательства — в `VERIFIED_FUNCTIONS.md`,
 состав и статус функционала — в `FEATURES_VERIFIED.md` / `FEATURES_UNVERIFIED.md`,
 процедуры стенда — в `TESTBENCH.md`.
@@ -146,6 +146,74 @@
   интеграций, где важна абсолютная метка, использовать `Etc/UTC` или добавлять
   смещение на стороне потребителя. Переход на UTC-формат — отдельная задача.
   Статус: **открыто (P4)**.
+
+- **KI-051. UDP/RTP-раздача без FEC: потеря пакета портит кадр.**
+  `[stream]` отправляет «сырой» RTP без ретрансляции и без FEC, поэтому любой
+  потерянный пакет обрезает кадр (приёмник пишет `RTP packet lost`, затем
+  `invalid fragmentation unit`), а при `keyint` до 50 артефакт держится до
+  следующего IDR. На стенде 2026-11-10 потерь почти нет: за 60 с — 1 пакет из
+  ~22 000. Отдельно: сам H.265-поток камеры уже содержит ошибки RPS/POC —
+  `ffmpeg` пишет `Could not find ref with POC N` и на прямом
+  `rtsp://<DUT>/live/0` (24 ошибки за 30 с), и на переизданном потоке
+  (37 за 30 с), т.е. это свойство кодировщика, а не раздачи. Обход: TCP-транспорт
+  RTSP `8554` у приёмника (`ffmpeg -rtsp_transport tcp`) и меньший `gop`.
+  Статус: **принятое ограничение (P4)**.
+
+- **KI-052. Multicast первым `dest` даёт невалидный RTP.**
+  Флаг multicast берётся из первого адреса `dest`. При `is_mcast=1` вендорская
+  ветка отправки пишет `seq=0`, `ssrc=0`, `tstamp=0` во все пакеты, поэтому
+  стандартный приёмник поток не соберёт. Стенд 2026-11-10: 2674 пакета,
+  60 уникальных `seq`, `ssrc=0`. Если multicast-адрес стоит вторым после
+  unicast, отправка идёт по unicast-ветке и поток валиден (2889 пакетов,
+  `seq` 59648→62536 без разрывов). Обход: unicast первым, multicast вторым.
+  Статус: **принятое ограничение (P4)**.
+
+- **KI-053. H.265 не играет в браузере.**
+  Chromium не декодирует HEVC: страница `http://<хост>:8889/cam/` открывается,
+  но WebRTC-сессия закрывается с `codecs not supported by client`, а HLS идёт
+  как `hvc1` и в MSE не воспроизводится. H.265 смотрится в Safari (macOS) или
+  нативном плеере (VLC/ffplay). Для браузера переключить камеру на H.264 и
+  `rtpSDP` на `H264/90000` — проверено 2026-11-10: WebRTC играет 1080p30.
+  Статус: **принятое ограничение (P4)**.
+
+- **KI-054. USB-host за хабом: питание шины и физический OTG-переходник не проверены.**
+  Порт переведён в dual-role (`dr_mode = "otg"`), классы HID/USB-net/BT включены
+  в ядро. VBUS 5 В SoC не управляет: PHY запрашивает регулятор `vbus` из
+  `vbus-supply` otg-port, в RV1106 DTS его нет, записи разрешения VBUS в
+  `rv1106_phy_cfgs` тоже нет. Поэтому устройства за хабом питаются только от
+  схемы платы/внешнего 5 В, а bus-powered хаб без внешнего питания может не
+  подняться. На стенде 2026-11-10 проверено: роль device определяется по
+  `bvalid` (extcon `USB=1`, UDC `configured`, gadget перечисляется на ПК), а
+  принудительный host через
+  `/sys/devices/platform/ff3e0000.usb2-phy/otg_mode` (`echo host`, обратно
+  `otg`) поднимает xHCI с корневыми хабами. Сам OTG-переходник с хабом,
+  HID-устройством, USB-сетью и BT-донглом на железе не подключался. Обход
+  (только после подтверждения проблемы): тот же `otg_mode` или возврат к
+  `dr_mode = "host"`; молча не включается.
+  Статус: **частично проверено, хаб/HID/сеть/BT — untested**.
+
+- **KI-055. `usb0` в режиме `otg` — закрыто (2026-11-10).**
+  Раньше `S99usb0config` смотрел строку `dr_mode` в DTS и при `"otg"` не
+  назначал `172.32.0.93`. Скрипт переписан на определение роли через
+  `/sys/class/extcon/*/state`; в device-роли он ставит адрес и следит за
+  сменой роли, а при возврате в device заново биндит configfs-gadget
+  (после host-режима DWC3 снимает UDC и сам его не возвращает). Проверено на
+  стенде 2026-11-10: два цикла host→device — UDC `configured`, `usb0`
+  `172.32.0.93`, gadget снова виден на ПК. RNDIS-обмен данными не измерялся
+  (на хосте нет прав на настройку `usb0`).
+  Статус: **закрыто**.
+
+- **KI-056. Legacy `g_mass_storage` ломал gadget — закрыто (2026-11-10).**
+  Вендорский defconfig собирал `CONFIG_USB_MASS_STORAGE=y` (legacy
+  `g_mass_storage`). Драйвер захватывал UDC при старте, падал с `-EINVAL`
+  (нет backing-файла) и обрывал инициализацию peripheral у DWC3:
+  `failed to add gadget` / `failed to initialize peripheral`,
+  `/sys/class/udc` оставался пустым, adb/RNDIS не поднимались. Символ выключен
+  во фрагменте `rv1106-usb-host.config`; gadget управляется через configfs
+  (`USB_CONFIGFS_MASS_STORAGE` при необходимости включается в `S50usbdevice`).
+  Проверено: UDC `ffb00000.usb` присутствует, state `configured`, gadget
+  перечисляется.
+  Статус: **закрыто**.
 
 ### Прошивка и конфигурация
 
@@ -332,11 +400,16 @@
 - **KI-046. `luckfox_pico_w_defconfig` не мигрирован.**
   Wi-Fi/audio-вариант (`bluez5_utils`, `mpv`) остался на старых патчах
   `hcitool_patch`/`mpv_patch`; на Buildroot 2026.08.1 их применение к новым
-  версиям пакетов не проверялось. Активный `luckfox_pico_defconfig` эти
-  пакеты не использует — сборка образа OKO не затронута. Обход: не
-  переключать `.BoardConfig.mk` на w-вариант до ребейса патчей; при
-  необходимости — отключить пакеты или обновить патчи.
-  Статус: **открыто, untested**.
+  версиям пакетов не проверялось. В базовом `luckfox_pico_defconfig` bluez
+  теперь есть: пакет `bluez5_utils 5.86` собирается с uclibc-ng через
+  `patches-2026.08/bluez5_utils/0001-build-provide-wordexp-fallback-...`
+  (в uclibc выключен `wordexp`), устаревшие вендорские патчи
+  `0001-fixed-header-file-errors`/`0002-fixed-wordexp`/
+  `0003-fixed-compat-wordexp` из дерева удалены — они не входят в tarball
+  2026.08.1 и не применялись к 5.86. w-вариант по-прежнему не проверен.
+  Обход: не переключать `.BoardConfig.mk` на w-вариант до ребейса патчей;
+  при необходимости — отключить пакеты или обновить патчи.
+  Статус: **открыто для w-варианта, untested**.
 
 ### Безопасность
 
@@ -492,6 +565,73 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   Workaround: use `Etc/UTC` where an absolute timestamp matters, or add the
   offset on the consumer side. Switching to a real UTC format is a separate
   task. Status: **open (P4)**.
+
+- **KI-051. The UDP/RTP push has no FEC, so a lost packet damages a frame.**
+  `[stream]` sends raw RTP without retransmission or FEC, so any lost packet
+  truncates a frame (the receiver logs `RTP packet lost`, then `invalid
+  fragmentation unit`), and with `keyint` up to 50 the artifact lasts until the
+  next IDR. On the 2026-11-10 bench losses are negligible: one packet out of
+  ~22,000 in 60 s. Separately, the camera's own H.265 stream already carries
+  RPS/POC errors — `ffmpeg` prints `Could not find ref with POC N` both on the
+  direct `rtsp://<DUT>/live/0` (24 errors in 30 s) and on the re-published
+  stream (37 in 30 s), so it is an encoder property, not a push problem.
+  Workarounds: read the receiver over RTSP/TCP (`ffmpeg -rtsp_transport tcp`)
+  and use a smaller `gop`. Status: **accepted limitation (P4)**.
+
+- **KI-052. Multicast as the first `dest` produces invalid RTP.**
+  The multicast flag comes from the first `dest` entry. With `is_mcast=1` the
+  vendor send branch writes `seq=0`, `ssrc=0` and `tstamp=0` into every packet,
+  so a standard receiver cannot assemble the stream. Bench 2026-11-10: 2674
+  packets, 60 unique `seq` values, `ssrc=0`. With the multicast address second
+  after a unicast one the unicast branch is used and the stream is valid (2889
+  packets, `seq` 59648→62536 without gaps). Workaround: unicast first,
+  multicast second. Status: **accepted limitation (P4)**.
+
+- **KI-053. H.265 does not play in a browser.**
+  Chromium has no HEVC decoder: `http://<host>:8889/cam/` opens, but the WebRTC
+  session closes with `codecs not supported by client`, and HLS is offered as
+  `hvc1`, which MSE rejects. H.265 plays in Safari (macOS) or a native player
+  (VLC/ffplay). For browser playback switch the camera to H.264 and `rtpSDP` to
+  `H264/90000` — verified 2026-11-10: WebRTC plays 1080p30.
+  Status: **accepted limitation (P4)**.
+
+- **KI-054. USB host behind a hub: bus power and a physical OTG adapter are unverified.**
+  The port runs in dual-role mode (`dr_mode = "otg"`) with the HID/USB-net/BT
+  classes built in. The SoC does not control VBUS 5 V: the PHY requests a `vbus`
+  regulator from `vbus-supply` on the otg-port (absent from the RV1106 DTS), and
+  `rv1106_phy_cfgs` has no VBUS enable register. Devices behind a hub are
+  therefore powered only by the board supply or an external 5 V, and a
+  bus-powered hub may not come up. Bench 2026-11-10: the device role is detected
+  via `bvalid` (extcon `USB=1`, UDC `configured`, the gadget enumerates on a
+  PC), and forcing host through
+  `/sys/devices/platform/ff3e0000.usb2-phy/otg_mode` (`echo host`, back with
+  `otg`) brings up xHCI with its root hubs. An OTG adapter with a hub, a HID
+  device, USB networking and a BT dongle were not attached to the hardware.
+  Workaround (only after the problem is confirmed): the same `otg_mode`, or go
+  back to `dr_mode = "host"`; it is not enabled silently.
+  Status: **partially verified, hub/HID/net/BT untested**.
+
+- **KI-055. `usb0` in `otg` mode — closed (2026-11-10).**
+  `S99usb0config` used to read `dr_mode` from the DTS and skipped
+  `172.32.0.93` when it was `"otg"`. The script now derives the role from
+  `/sys/class/extcon/*/state`; in the device role it assigns the address and
+  watches for role changes, re-binding the configfs gadget when the port
+  becomes a device again (after a host excursion DWC3 drops its UDC and does
+  not restore it by itself). Bench 2026-11-10: two host→device cycles — UDC
+  `configured`, `usb0` `172.32.0.93`, the gadget visible on the PC again. RNDIS
+  data throughput was not measured (no host permission to configure `usb0`).
+  Status: **closed**.
+
+- **KI-056. The legacy `g_mass_storage` driver broke the gadget — closed (2026-11-10).**
+  The vendor defconfig built `CONFIG_USB_MASS_STORAGE=y` (legacy
+  `g_mass_storage`). The driver grabbed the UDC at boot, failed with `-EINVAL`
+  (no backing file) and aborted the DWC3 peripheral init:
+  `failed to add gadget` / `failed to initialize peripheral`, leaving
+  `/sys/class/udc` empty so adb/RNDIS could not start. The symbol is disabled in
+  `rv1106-usb-host.config`; gadget functions are managed through configfs
+  (`USB_CONFIGFS_MASS_STORAGE` can be enabled in `S50usbdevice` when needed).
+  Verified: UDC `ffb00000.usb` present, state `configured`, gadget enumerated.
+  Status: **closed**.
 
 ### Flashing and configuration
 
@@ -666,11 +806,17 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
 - **KI-046. `luckfox_pico_w_defconfig` is not migrated.**
   The Wi-Fi/audio variant (`bluez5_utils`, `mpv`) still relies on the old
   `hcitool_patch`/`mpv_patch`; whether they apply to the newer package
-  versions on Buildroot 2026.08.1 is untested. The active
-  `luckfox_pico_defconfig` does not use these packages, so the OKO image
-  build is unaffected. Workaround: do not switch `.BoardConfig.mk` to the
-  w variant before rebasing the patches; otherwise disable the packages or
-  update the patches. Status: **open, untested**.
+  versions on Buildroot 2026.08.1 is untested. The base
+  `luckfox_pico_defconfig` now includes BlueZ: `bluez5_utils 5.86` builds
+  against uclibc-ng through
+  `patches-2026.08/bluez5_utils/0001-build-provide-wordexp-fallback-...`
+  (uClibc is built without `wordexp`), and the stale vendor patches
+  `0001-fixed-header-file-errors`/`0002-fixed-wordexp`/
+  `0003-fixed-compat-wordexp` were dropped from the tree — they are not part
+  of the 2026.08.1 tarball and do not apply to 5.86. The w variant remains
+  unverified. Workaround: do not switch `.BoardConfig.mk` to the w variant
+  before rebasing the patches; otherwise disable the packages or update the
+  patches. Status: **open for the w variant, untested**.
 
 ### Security
 

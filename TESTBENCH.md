@@ -48,7 +48,7 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
 | UART | последний `/dev/ttyACM*` | `bench/serial_exec.py` берёт последний найденный; сейчас это `/dev/ttyACM1` (CH340), `/dev/ttyACM0` — CMSIS-DAP |
 | Скорость UART | `115200 8N1` | задана в скриптах `bench/` |
 | Ethernet | лабораторная сеть `192.168.52.0/24` | через порт устройства |
-| USB | `<порт / хаб>` | используется для Maskrom-прошивки |
+| USB | `<порт / хаб>` | используется для Maskrom-прошивки; порт DUT — dual-role (`dr_mode = "otg"`), для проверки host нужны OTG-переходник, хаб и отдельное питание 5 В (не от того же USB-порта) |
 | I2C3-M1 | `/dev/i2c-3`, 100 кГц, `GPIO1_D2`/`GPIO1_D3` | SHT21 `0x40`, INA3221 `0x41` (`A0` = VS; die ID `0x3220`; силовые входы пока не подключены), STM32 ACPI-EC `0x42`; нужны внешние pull-up 2.2–4.7 кОм к 3.3 В (в DTS `pcfg_pull_none_smt`) |
 
 Требования к хосту: Python 3 и зависимости из `bench/requirements.txt`;
@@ -58,14 +58,15 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
 
 | Узел | Адрес |
 |---|---|
-| Устройство (DUT), NAND | `192.168.52.97` (DHCP, факт на `2026-11-04`) |
+| Устройство (DUT), NAND | `192.168.52.97` (DHCP; на `2026-11-10` выдан `192.168.52.15` — сверяйте `ifconfig eth0`) |
 | Устройство (DUT), NFS | `192.168.52.150` (статический из `ip=` в `sys_bootargs`) |
 | Хост TFTP/NFS | `192.168.52.200` |
+| Хост, приёмник UDP/RTP (MediaMTX) | `192.168.52.200`: `5600/udp` (вход от камеры), `8554/tcp` (RTSP), `8000–8001/udp` (RTP/RTCP для RTSP-читателей), `8888/tcp` (HLS), `8889/tcp` (WebRTC), `8189/udp` (WebRTC ICE), `9997/tcp` — control API только на `127.0.0.1` |
 | Маска | `255.255.255.0` |
 | Шлюз | `192.168.52.254` |
 
-В автономном режиме адрес `eth0` выдаётся по DHCP (`RkLunch.sh` → `oko-net apply`).
-В NFS-режиме адрес задаётся в cmdline (`ip=192.168.52.150::…:off`), а `RkLunch.sh`
+В автономном режиме адрес `eth0` выдаётся по DHCP (`oko-lunch.sh` → `oko-net apply`).
+В NFS-режиме адрес задаётся в cmdline (`ip=192.168.52.150::…:off`), а `oko-lunch.sh`
 пропускает DHCP. Фактический адрес смотрите на DUT (`ifconfig eth0`) или в
 serial-консоли. Для стабильных проверок зарезервируйте адрес `192.168.52.150`
 в DHCP-сервере лабораторной сети.
@@ -237,7 +238,7 @@ docker run --rm --privileged \
 (`CONFIG_IP_PNP`, `IP_PNP_DHCP`, `IP_PNP_BOOTP`, `CONFIG_ROOT_NFS`), поэтому
 режим корня переключается только переменной U-Boot `sys_bootargs` — без
 перепрошивки ядра и без отдельного BoardConfig. В NFS-режиме `oem`/`userdata`
-монтируются из `<nfsroot>/.nfsroot/`, DHCP в `RkLunch.sh` пропускается.
+монтируются из `<nfsroot>/.nfsroot/`, DHCP в `oko-lunch.sh` пропускается.
 
 1. Поднять сервисы (Sudo не нужен; нужны Docker и членство в группе `docker`):
    ```sh
@@ -443,8 +444,11 @@ bench/run.sh osd_check.py --ip 192.168.52.97 --frames 3 --interval 1 --seconds 4
 curl -s -u admin:oko-change-me -X POST 'http://192.168.52.97/api/yolo?boxes=0'
 # восстановить: conf_threshold=0.35, boxes=1, /api/cmd?save=1
 
-# RTSP отдаёт кадры только при stream.enable=true в /userdata/divinus.yaml
+# RTSP отдаёт кадры при rtsp.enable=true и работающем VENC-канале
+# (mp4.enable или substream.enable). stream.enable к RTSP отношения не имеет:
+# он включает только UDP/RTP-раздачу.
 grep -A2 '^stream:' /userdata/divinus.yaml
+grep -A2 '^rtsp:' /userdata/divinus.yaml
 
 # новая разметка: boot 0x600000, oem 0x2800000, userdata 0x2800000, rootfs 0xA800000
 cat /proc/cmdline
@@ -571,7 +575,7 @@ ip route
 mount | grep -E ' /oem | /userdata '
 
 # логи
-ls -l /tmp/*.log /data/core-* 2>/dev/null
+ls -l /tmp/*.log /mnt/sdcard/core-* 2>/dev/null
 dmesg | tail -50
 ```
 
@@ -595,8 +599,96 @@ dmesg | tail -50
 | `oko-ec battery` пишет, что устройство в загрузчике | STM32 в режиме загрузчика (`device_type = 1`); выполнить `oko-ec reset` и повторить |
 | `/tmp/oko-ec.osd` не появляется | не запущен `S21oko-ec` (нет `/dev/i2c-3` или `/oem/usr/bin/oko-ec`), есть `/userdata/oko-ec.disable`, либо демон уже работает (см. `/tmp/oko-ec.log`) |
 
+### USB host (dual-role) и устройства за хабом
+
+```sh
+# режим из DTB, текущая роль PHY и роль по extcon
+cat /proc/device-tree/usbdrd/usb@ffb00000/dr_mode       # otg
+cat /sys/devices/platform/ff3e0000.usb2-phy/otg_mode    # otg | host | peripheral
+cat /sys/class/extcon/extcon0/state                     # USB=1 (device) / USB-HOST=1 (host)
+# принудительный host, если автоопределение не сработало:
+#   echo host > /sys/devices/platform/ff3e0000.usb2-phy/otg_mode
+#   echo otg  > /sys/devices/platform/ff3e0000.usb2-phy/otg_mode
+
+# в device-роли: gadget поднят и usb0 получил адрес
+cat /sys/class/udc/ffb00000.usb/state                   # configured
+ifconfig usb0                                           # 172.32.0.93
+
+# хаб и устройства за ним (host-роль)
+lsusb
+dmesg | grep -iE 'usb|dwc3|xhci' | tail -30
+
+# HID (клавиатура/мышь) за хабом
+ls /dev/input/event*
+evtest /dev/input/event0
+
+# USB-сеть (RNDIS-телефон, CDC ECM/NCM, ASIX/Realtek)
+ip -br link
+udhcpc -i usb0
+
+# Bluetooth-донгл
+pidof dbus-daemon bluetoothd            # оба должны быть живы
+bluetoothctl --version                  # 5.86
+bluetoothctl list                       # адаптер после подключения донгла
+```
+
+Гаджет-регресс проверяется от ПК: при подключении кабеля `lsusb` на хосте
+видит rockusb/RNDIS DUT, `adb devices` показывает устройство; `reboot loader`
+и Maskrom-прошивка от `dr_mode` не зависят.
+
+### UDP/RTP-раздача камеры (divinus → MediaMTX → RTSP)
+
+Камера шлёт «сырой» RTP (PT 96, H.265) на `192.168.52.200:5600` со своего
+порта `stream.udp_srcport`; приёмник — контейнер `oko-mediamtx`
+(`services/stream/`). Учётные данные RTSP не нужны: путь `cam` доступен
+анонимно (стенд).
+
+```sh
+# 1. конфигурация и живой процесс на DUT
+grep -A5 '^stream:' /userdata/divinus.yaml     # enable: true, dest: - udp://192.168.52.200:5600
+grep -A2 '^mp4:' /userdata/divinus.yaml        # enable: true, codec: H.265
+pidof divinus
+# в консоли UART после kill -HUP $(pidof divinus) ожидается:
+#   [stream] UDP streaming initialized on port 5600
+#   [stream] Added UDP client 192.168.52.200:5600 (ID 0)
+#   [media]  Starting streaming to udp://192.168.52.200:5600...
+
+# 2. приёмник на хосте
+docker compose -f services/stream/docker-compose.yml ps
+docker logs --tail 20 oko-mediamtx              # INF [path cam] stream is available ... (H265)
+curl -s http://127.0.0.1:9997/v3/paths/list     # ready/online true, tracks ["H265"]
+ss -lun 'sport = :5600'
+
+# 3. поток целиком: fps, сверка с RTSP камеры, задержка ретрансляции
+bench/run.sh stream_check.py --seconds 60 --latency --compare-dut
+docker exec oko-mediamtx ffprobe -v error -show_streams rtsp://127.0.0.1:8554/cam
+```
+
+Типовые проблемы:
+
+| Симптом | Вероятная причина |
+|---|---|
+| Камера не отправляет пакеты (`INIT` в логе есть, `Added UDP client` нет) | `stream.dest` не разобран: список читается только при `stream.enable: true`, ошибка видна как `[config] Parameter 'dest' not found in section 'stream'`; проверить отступы (`- udp://...` внутри `dest:`) |
+| `Added UDP client` есть, приёмника нет | другой адрес в `dest` (сверьте `--server-host`), занят `5600/udp` на хосте (`ss -lun`), либо пакеты режет ufw |
+| MediaMTX: `invalid fragmentation unit` | повреждённая H.265-фрагментация в отправителе (FU-заголовок) или потерян один RTP-пакет: `. 1 RTP packet lost` рядом в логе означает второе |
+| `codecProps.width/height` = 0, `ffprobe` не даёт разрешение | параметры VPS/SPS/PPS идут не отдельными NAL-юнитами (склеены в один RTP-пакет) — проверить сборку `divinus` |
+| Поток рвётся раз в несколько минут | перезапуск `divinus` (`kill -HUP`) рвёт последовательность RTP: приёмник пересобирает путь за 1–2 с |
+
 ## 9. Известные особенности
 
+- **USB-порт работает в dual-role (`otg`).** Роль переключает
+  `phy-rockchip-inno-usb2` по `bvalid`/`iddig` через extcon, читает её
+  `dwc3/drd.c`: при подключении к ПК порт остаётся device (gadget, `usb0`/adb),
+  с OTG-переходником и хабом — становится host. VBUS 5 В SoC не управляет,
+  поэтому хаб и устройства должны питаться от платы/внешнего источника;
+  bus-powered хаб без питания может не определиться. Принудительно:
+  `echo host > /sys/devices/platform/ff3e0000.usb2-phy/otg_mode` (обратно —
+  `otg`). `S99usb0config` определяет роль по extcon, выдаёт `usb0`
+  `172.32.0.93` и после host-режима заново биндит configfs-gadget (DWC3 сам
+  UDC не возвращает); при устойчивой ошибке биндинга пауза между попытками
+  растёт 5→60 с — проверено 2026-11-10. Legacy `g_mass_storage` в ядре
+  выключен: он захватывал UDC и срывал инициализацию gadget (KI-056).
+  Ограничения — KI-054.
 - **CMA накапливается после тяжёлых медиа-прогонов.** После двух и более
   подряд прогонов `ui_check.py`/`geometry_check.py` или ручной отладки
   ePTZ/поворота перезагружайте DUT. Решающие признаки: `cma_alloc ... ret:
@@ -612,14 +704,14 @@ dmesg | tail -50
   устаревший артефакт `RV1103 Pico Mini` удалён 2026-11-08.
 - Драйвер `motor_24byj48` (`motor.ko`, шаговик 28BYJ-48) удалён из форка
   2026-11-07: в истории прошивок его не было, привод фокуса — STM8 по I2C.
-- `insmod_ko.sh` вызывается из `RkLunch.sh`, который запускает `S21appinit`;
-  каталог `/oem/usr/etc/init.d/` пуст, вся логика приложения зашита в `post_chk`.
-  Подробнее — `INIT_ORDER.md`.
+- `insmod_ko.sh` вызывается из `oko-lunch.sh`, который запускает `S21appinit`;
+  лаунчер (`project/app/oko-lunch`) сразу уходит в фон (`post_chk`), вся логика
+  приложения зашита в этой функции. Подробнее — `INIT_ORDER.md`.
 - `post_chk` больше не выбирает `rkipc-*.ini` и не переключает `csi_unite`:
-  `rkipc` вырезан из образа вместе с ini, `image.bmp` и `speaker_test.wav`
-  (`oko-prune.list`). Диагностика через `rkipc`, `rk_mpi_*_test`,
-  `rkaiq_3A_server` и `rkaiq_tool_server` недоступна; остаются `v4l2-ctl`,
-  `media-ctl` и `rgaImDemo`.
+  `rkipc` не собирается, его исходники и старые `RkLunch*.sh` вырезаны из образа
+  вместе с ini, `image.bmp` и `speaker_test.wav` (`oko-prune.list`). Диагностика
+  через `rkipc`, `rk_mpi_*_test`, `rkaiq_3A_server` и `rkaiq_tool_server`
+  недоступна; остаются `v4l2-ctl`, `media-ctl` и `rgaImDemo`.
 - В автономном режиме `oem` и `userdata` монтируются из SPI NAND (ubifs).
   Изменения, сделанные на устройстве в `/userdata`, сохраняются в NAND.
 - Сборка идёт на хосте; сетевые сервисы стенда (`tftpd-hpa`,
@@ -668,8 +760,10 @@ dmesg | tail -50
   в IQ (оба блока). Метрика в `/api/focus` — по 225 ячейкам; ROI применяется
   выбором ячеек, AFM-карта полнокадровая. Малые ходы мотора метрику не
   меняют: оптическая связь объектива на стенде не подтверждена.
-- RTSP молчит (OPTIONS без ответа), если `stream.enable=false` в
-  `/userdata/divinus.yaml`; для проверки OSD/потока включить и перезагрузить.
+- RTSP молчит (OPTIONS без ответа), если `rtsp.enable=false` в
+  `/userdata/divinus.yaml`; кадров не будет и без активного VENC-канала
+  (`mp4.enable`/`substream.enable`). `stream.enable` к RTSP отношения не имеет:
+  это отдельный UDP/RTP-пуш.
 - Обновление ПО из WebUI: пакет готовится на microSD, прошивку выполняет
   U-Boot `sd_update` при следующей загрузке, но только при выставленном
   `oko_update` в U-Boot env (`apply`), поэтому перезагрузка до подтверждения

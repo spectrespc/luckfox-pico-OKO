@@ -5,7 +5,7 @@
 в `FEATURES_VERIFIED.md`; паспорт платформы, общие примечания и команды
 проверки — в `FEATURES.md`; открытые дефекты и обходы — в `KNOWN_ISSUES.md`.
 
-Статус на 2026-11-09. Пометки: **ограничено** — работает с оговоркой;
+Статус на 2026-11-10. Пометки: **ограничено** — работает с оговоркой;
 **заблокировано** — отказ с причиной.
 
 ## Русский
@@ -19,11 +19,17 @@
 | Видео и стриминг | Runtime IQ | `switch_scene`, `updateIq` | `/api/iq`, `[iq]` | runtime IQ stage `divinus` | **ограничено** — сцена принята; `updateIq` не проверялся |
 | Видео и стриминг | HDR2/HDR3 | HDR на SC230AI | `/api/hdr` | HDR API + `gating.c`; экспериментальный HDR_X2 выключен | **заблокировано** — `librkaiq` не поддерживает SC230AI |
 | Видео и стриминг | OSD на всех потоках | `osd.scope=all` (main+sub+JPEG) | конфиг `[osd]`, гейт G4 | `gating.c` | **заблокировано** — multi-attach RGN не прошёл проверку |
+| Видео и стриминг | Multicast как первый `dest` | `dest: - udp://239.255.255.0:5600` первым адресом | `[stream] dest` | вендорская multicast-ветка отправки | **ограничено** — пакеты уходят в группу, но `seq`/`ssrc`/`tstamp` всегда 0 (стенд 2026-11-10: 2674 пакета, 60 уникальных `seq`, `ssrc=0`), стандартный приёмник такой поток не соберёт; если multicast-адрес стоит **вторым** после unicast, пакеты валидны (2889 пакетов, `seq` 59648→62536 без разрывов) |
+| Видео и стриминг | Поток H.265 в браузере | `http://<хост>:8889/cam/`, HLS `8888` | `services/stream/` | MediaMTX 1.21.3 | **ограничено** — Chromium (Playwright 1248) WebRTC закрывает с `codecs not supported by client`, HLS отдаётся как `hvc1` и в MSE не играет; H.265 смотрится в Safari или нативном плеере. С H.264 (`mp4.codec: H.264` + `rtpSDP H264/90000`) WebRTC играет 1080p30 в Chromium — проверено 2026-11-10 |
 | Видео и стриминг | YOLO `source: vi1` | VI selfpath (chn1) как источник кадров | `/api/yolo`, `[yolo]` | `gating.c`, API и WebUI отклоняют значение | **заблокировано** — включение `vi1` привело к зависанию платы; значение отклоняется с причиной |
 | Видео и стриминг | Второй рантайм RKNN 2.x | Модели toolkit 2.x, `yolo.runtime: 2` | `/api/yolo` (`runtime`), `/api/models` (`runtime`) | `librknnmrt2.so` с отдельным SONAME, два handle в HAL, проверка SDK-версии | **ограничено** — AIISP на 1.6.0 + YOLO на 2.x в одном процессе, переключение runtime без рестарта и 2-часовой soak проверены; mAP 2.x-модели на размеченном наборе не измерен |
 | Сеть | WiFi AIC8800 | Модули собираются и копируются в `/oem/usr/ko` | `RK_ENABLE_WIFI=y` | вендорские модули без правок OKO | **ограничено** — WiFi-стек не проверялся; сеть проверена по Ethernet |
 | Телеметрия (oko-ec) | Датчики | SHT21 `0x40` — T/RH; INA3221 или INA226 `0x41` — U/I/P; STM32 EC `0x42` — U/I/T, SOC, ячейки, OTA | `/dev/i2c-3`, `i2cdetect -y 3` | `i2c-dev` без драйверов (`CONFIG_HWMON` выключен), автоопределение INA | **ограничено** — адреса видны; у INA3221 силовые входы не подключены |
 | microSD | Hotplug | Извлечение и установка карты | udev, `/api/storage` | определение по `device/type=SD` | **ограничено** — проверено unbind/bind; физическое извлечение не проверялось |
+| USB | Dual-role host + хаб | Порт работает host'ом с OTG-переходником и внешним питанием, device — при подключении к ПК; хаб и устройства за ним | `dr_mode = "otg"` в активном DTS, `/sys/devices/platform/ff3e0000.usb2-phy/otg_mode` (`otg`/`host`/`peripheral`), `lsusb`, `dmesg` | OKO: `dr_mode` «peripheral» → «otg», фрагмент `rv1106-usb-host.config`, роль-зависимый `S99usb0config` | **ограничено** — стенд 2026-11-10: device-роль (extcon `USB=1`, UDC `configured`, gadget виден на ПК), принудительный host (`echo host` → xHCI + корневые хабы) и два цикла host→device с автоматическим возвратом gadget проверены; физический OTG-переходник с хабом/HID/USB-сетью/BT не подключался, VBUS — KI-054 |
+| USB | HID за хабом | Клавиатура/мышь | `/dev/input/event*`, `evtest` | `CONFIG_HID=y`, `CONFIG_USB_HID=y`, `CONFIG_INPUT_MOUSE=y` | **не проверено** — стенд 2026-11-10: `usbhid` и `psmouse` зарегистрированы, HID-устройство не подключалось |
+| USB | USB-сеть (host) | RNDIS/CDC ECM/NCM, ASIX AX8817x/88179, RTL8150/8152 | `ip link`, `udhcpc -i usb0` | `CONFIG_USB_NET_*`, `CONFIG_USB_RTL815x` | **не проверено** — зарегистрированы `asix`, `ax88179_178a`, `cdc_ether`, `cdc_ncm`, `cdc_subset`, `rndis_host`, `r8152`, `rtl8150`; адаптер не подключался. Для RTL8153 нужна прошивка `rtl_nic`, в образ не входит |
+| USB | Bluetooth | USB-BT-донгл, `bluetoothd` + `bluetoothctl` | `/etc/init.d/S30dbus-daemon`, `S40bluetoothd`, `bluetoothctl list` | `CONFIG_BT*`, bluez5_utils 5.86, dbus, libglib2, linux-firmware (RTL87xx/88xx BT, AR3012) | **ограничено** — стенд 2026-11-10: `dbus-daemon` 1.16.2 и `bluetoothd` запущены, `bluetoothctl` 5.86 работает (uclibc-патч `wordexp`), `btusb` зарегистрирован; BT-адаптер не подключался, `bluetoothctl list` без контроллера |
 | Сеть | VPN — AmneziaWG | Профиль `awg0`, параметры AWG v3.1, модуль загружается по требованию | `/api/vpn`, WebUI Network → VPN, `/usr/bin/oko-vpn` | out-of-tree `amneziawg.ko` (`v3.1.20260906`), `awg` (`v3.1.20260812`), `RK_ENABLE_AWG=y` | **ограничено** — модуль загружается (`dmesg`: `AmneziaWG 3.1.20260906`), handshake v3.1 с loopback-пиром прошёл со всеми параметрами (`I1/I5`, `HeaderProtectionKey`, `S3/S4`, `AdvancedSecurity`), guard positive/negative проверен; 2026-11-08 loopback-регрессия `bench/vpn_check.py --type awg` — 19/19 (handshake 3 с, split-маршрут, `down`); внешний пир не прогонялся |
 | Прошивка | Обрыв питания при обновлении | Восстановление после потери питания STM32/STM8 | `flash.c`, загрузчики | `oko-flash`, I2C-загрузчик STM8 | **ограничено** — обрыв хостового `oko-motor flash` проверен (загрузчик жив, повторная загрузка успешна); полный обрыв питания не имитировался |
 
@@ -35,6 +41,16 @@
   отсутствуют в прошивке; диагностика через них недоступна. Сохранены
   `v4l2-ctl`, `media-ctl` и `rgaImDemo`. Стендовый цикл этой ветки —
   отложенный гейт, см. `KNOWN_ISSUES.md`.
+
+- **USB host/BT: проверена роль и gadget, классы за хабом — нет.** Для порта в
+  режиме `otg` собраны ядро с HID/USB-net/Bluetooth (`rv1106-usb-host.config`,
+  все символы `=y` в итоговом `.config`), DTB содержит `dr_mode = "otg"`, в
+  rootfs вошли `bluetoothctl`, `dbus-daemon`, `lsusb` (busybox) и BT-прошивки
+  `linux-firmware`. Стенд 2026-11-10: device-роль и gadget (UDC `configured`,
+  `usb0` `172.32.0.93`, перечисление на ПК), принудительный host (xHCI и
+  корневые хабы) и автоматический возврат gadget после host-режима проверены.
+  Хаб, HID, USB-сеть и BT-донгл физически не подключались; обходы для
+  VBUS/автоопределения роли включаются только по факту (KI-054).
 
 - **Бюджет каналов VPSS — 4.** Без IVS доступны main + sub + MJPEG + JPEG; с
   включённым IVS свободных каналов меньше. Проверено 2026-11-05: IVS + MJPEG
@@ -98,7 +114,7 @@ reason (**blocked**) or not yet verified. Confirmed features are in
 commands are in `FEATURES.md`; open defects and workarounds are in
 `KNOWN_ISSUES.md`.
 
-Status as of 2026-11-09.
+Status as of 2026-11-10.
 
 | Group | Feature | Description | Control (API, YAML section) | What was added (OKO vs vendor V1.4) | Status |
 |---|---|---|---|---|---|
@@ -107,11 +123,17 @@ Status as of 2026-11-09.
 | Video and streaming | Runtime IQ | `switch_scene`, `updateIq` | `/api/iq`, `[iq]` | runtime IQ stage in `divinus` | **limited** — scene switch accepted, `updateIq` untested |
 | Video and streaming | HDR2/HDR3 | HDR on SC230AI | `/api/hdr` | HDR API + `gating.c`; experimental HDR_X2 disabled | **blocked** — `librkaiq` does not support SC230AI |
 | Video and streaming | OSD on all streams | `osd.scope=all` (main+sub+JPEG) | `[osd]` config, gate G4 | `gating.c` | **blocked** — multi-attach RGN failed verification |
+| Video and streaming | Multicast as the first `dest` | `dest: - udp://239.255.255.0:5600` as the first entry | `[stream] dest` | vendor multicast send branch | **limited** — packets reach the group but `seq`/`ssrc`/`tstamp` stay 0 (bench 2026-11-10: 2674 packets, 60 unique `seq` values, `ssrc=0`), so a standard receiver cannot assemble the stream; with the multicast address **second** after a unicast one the packets are valid (2889 packets, `seq` 59648→62536 without gaps) |
+| Video and streaming | H.265 stream in a browser | `http://<host>:8889/cam/`, HLS `8888` | `services/stream/` | MediaMTX 1.21.3 | **limited** — Chromium (Playwright 1248) closes WebRTC with `codecs not supported by client` and HLS is served as `hvc1`, which MSE rejects; H.265 needs Safari or a native player. With H.264 (`mp4.codec: H.264` + `rtpSDP H264/90000`) WebRTC plays 1080p30 in Chromium — verified 2026-11-10 |
 | Video and streaming | YOLO `source: vi1` | VI selfpath (chn1) as the frame source | `/api/yolo`, `[yolo]` | `gating.c`, API and WebUI reject the value | **blocked** — enabling `vi1` hung the board; the value is refused with a reason |
 | Video and streaming | Second RKNN 2.x runtime | Models built by toolkit 2.x, `yolo.runtime: 2` | `/api/yolo` (`runtime`), `/api/models` (`runtime`) | `librknnmrt2.so` with a distinct SONAME, two HAL handles, SDK-version check | **limited** — AIISP on 1.6.0 plus YOLO on 2.x in one process, runtime switching without a restart and a 2-hour soak were verified; the 2.x model mAP on a labelled set is not measured |
 | Network | WiFi AIC8800 | Modules are built and copied to `/oem/usr/ko` | `RK_ENABLE_WIFI=y` | vendor modules without OKO changes | **limited** — WiFi stack unverified; networking verified over Ethernet |
 | Telemetry (`oko-ec`) | Sensors | SHT21 `0x40` — T/RH; INA3221 or INA226 `0x41` — U/I/P; STM32 EC `0x42` — U/I/T, SOC, cells, OTA | `/dev/i2c-3`, `i2cdetect -y 3` | `i2c-dev` without drivers (`CONFIG_HWMON` off), INA autodetection | **limited** — addresses respond; INA3221 power inputs are not wired |
 | microSD | Hotplug | Card removal and insertion | udev, `/api/storage` | detection via `device/type=SD` | **limited** — verified with unbind/bind only; physical removal untested |
+| USB | Dual-role host + hub | The port acts as a host with an OTG adapter and external power, and as a device when connected to a PC; hub and devices behind it | `dr_mode = "otg"` in the active DTS, `/sys/devices/platform/ff3e0000.usb2-phy/otg_mode` (`otg`/`host`/`peripheral`), `lsusb`, `dmesg` | OKO: `dr_mode` "peripheral" → "otg", `rv1106-usb-host.config` fragment, role-aware `S99usb0config` | **limited** — bench 2026-11-10: the device role (extcon `USB=1`, UDC `configured`, gadget visible on a PC), forced host (`echo host` → xHCI plus root hubs) and two host→device cycles with automatic gadget re-bind were verified; a physical OTG adapter with a hub/HID/USB net/BT was not attached, VBUS — KI-054 |
+| USB | HID behind a hub | Keyboard/mouse | `/dev/input/event*`, `evtest` | `CONFIG_HID=y`, `CONFIG_USB_HID=y`, `CONFIG_INPUT_MOUSE=y` | **unverified** — bench 2026-11-10: `usbhid` and `psmouse` are registered, no HID device was attached |
+| USB | USB networking (host) | RNDIS/CDC ECM/NCM, ASIX AX8817x/88179, RTL8150/8152 | `ip link`, `udhcpc -i usb0` | `CONFIG_USB_NET_*`, `CONFIG_USB_RTL815x` | **unverified** — `asix`, `ax88179_178a`, `cdc_ether`, `cdc_ncm`, `cdc_subset`, `rndis_host`, `r8152` and `rtl8150` are registered; no adapter was attached. RTL8153 needs the `rtl_nic` firmware, which is not shipped |
+| USB | Bluetooth | USB BT dongle, `bluetoothd` + `bluetoothctl` | `/etc/init.d/S30dbus-daemon`, `S40bluetoothd`, `bluetoothctl list` | `CONFIG_BT*`, bluez5_utils 5.86, dbus, libglib2, linux-firmware (RTL87xx/88xx BT, AR3012) | **limited** — bench 2026-11-10: `dbus-daemon` 1.16.2 and `bluetoothd` are running, `bluetoothctl` 5.86 works (uclibc `wordexp` patch), `btusb` is registered; no BT adapter was attached, `bluetoothctl list` shows no controller |
 | Network | VPN — AmneziaWG | `awg0` profile, AWG v3.1 parameters, module loaded on demand | `/api/vpn`, WebUI Network → VPN, `/usr/bin/oko-vpn` | out-of-tree `amneziawg.ko` (`v3.1.20260906`), `awg` (`v3.1.20260812`), `RK_ENABLE_AWG=y` | **limited** — the module loads (`dmesg`: `AmneziaWG 3.1.20260906`), the v3.1 handshake with a loopback peer passed with all parameters (`I1/I5`, `HeaderProtectionKey`, `S3/S4`, `AdvancedSecurity`), and the guard positive/negative path was verified; the 2026-11-08 loopback regression `bench/vpn_check.py --type awg` passed 19/19 (3 s handshake, split route, `down`); an external peer was not run |
 | Firmware | Power loss during an update | Recovery of STM32/STM8 | `flash.c`, bootloaders | `oko-flash`, STM8 I2C bootloader | **limited** — killing the host `oko-motor flash` was tested (bootloader stays usable, the next upload recovers); a full power cut was not emulated |
 
@@ -123,6 +145,17 @@ Status as of 2026-11-09.
   and are absent from the firmware, so diagnostics through them are
   unavailable. `v4l2-ctl`, `media-ctl` and `rgaImDemo` are kept. The bench
   cycle for this branch is a deferred gate, see `KNOWN_ISSUES.md`.
+
+- **USB host/BT: the role and the gadget are verified, the classes behind a hub are not.**
+  For the `otg` port the kernel is built with HID/USB net/Bluetooth
+  (`rv1106-usb-host.config`, every symbol `=y` in the final `.config`), the DTB
+  carries `dr_mode = "otg"`, and the rootfs ships `bluetoothctl`,
+  `dbus-daemon`, `lsusb` (busybox) and the `linux-firmware` BT blobs. Bench
+  2026-11-10: the device role and gadget (UDC `configured`, `usb0`
+  `172.32.0.93`, enumeration on a PC), forced host (xHCI with root hubs) and
+  the automatic gadget re-bind after a host excursion were verified. A hub,
+  HID, USB networking and a BT dongle were not attached; the VBUS/role
+  workarounds are only enabled once a problem is confirmed (KI-054).
 
 - **VPSS channel budget is 4.** Without IVS, main + sub + MJPEG + JPEG are
   available; with IVS there are fewer free channels. On 2026-11-05, IVS + MJPEG

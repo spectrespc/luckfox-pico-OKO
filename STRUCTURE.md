@@ -18,8 +18,8 @@
 | Папка | Назначение |
 |---|---|
 | `config/` | Извлечённые дефконфиги для быстрой настройки: `buildroot_defconfig`, `kernel_defconfig`, `dts_config`. |
-| `bench/` | Утилиты тестового стенда: UART/SSH-команды, netboot через TFTP/NFS (`netboot.py`), переключение NAND/NFS через env U-Boot (`nfs_env.py`), проверка OSD по RTSP (`osd_check.py`), матрица HTTP API (`api_check.py`), WebUI в headless Chromium (`ui_check.py`), AF-метрика и CSV (`focus_check.py`), версии/прошивка контроллеров (`firmware_check.py`), выкатка бинарника в `/oem` (`deploy_divinus.py`), venv. В сборке прошивки не участвует. |
-| `services/` | Docker-контейнер сервисов стенда: TFTP (`output/image`), NFS-экспорт `output/srv/nfs/rootfs`, неактивные шаблоны WireGuard/AmneziaWG/OpenVPN (`conf/`). Запуск — `tools/native/setup_netboot.sh`. В сборке прошивки не участвует. |
+| `bench/` | Утилиты тестового стенда: UART/SSH-команды, netboot через TFTP/NFS (`netboot.py`), переключение NAND/NFS через env U-Boot (`nfs_env.py`), проверка OSD по RTSP (`osd_check.py`), сквозная проверка UDP/RTP-раздачи через MediaMTX (`stream_check.py`), матрица HTTP API (`api_check.py`), WebUI в headless Chromium (`ui_check.py`), AF-метрика и CSV (`focus_check.py`), версии/прошивка контроллеров (`firmware_check.py`), выкатка бинарника в `/oem` (`deploy_divinus.py`), venv. В сборке прошивки не участвует. |
+| `services/` | Docker-сервисы стенда. `services/docker-compose.yml` — контейнер `oko-services`: TFTP (`output/image`), NFS-экспорт `output/srv/nfs/rootfs`, неактивные шаблоны WireGuard/AmneziaWG/OpenVPN (`conf/`), запуск — `tools/native/setup_netboot.sh`. `services/stream/` — отдельный профиль `oko-mediamtx` (MediaMTX, host-сеть): принимает RTP камеры на `5600/udp` и отдаёт RTSP/HLS/WebRTC. В сборке прошивки не участвует. |
 | `research/` | Архив внешних исследований: заметки о переносимости upstream-кода и минимальные read-only снимки upstream-файлов с провенансом. В сборке прошивки не участвует. |
 | `media/` | Медиастек Rockchip: кодеки, 2D-ускорение, ISP, NPU, медиафреймворк и примеры. |
 | `project/` | Скрипты сборки, конфигурации плат и прикладные приложения. Основная точка входа сборки. |
@@ -59,8 +59,9 @@
 
 - `build.sh` — основной скрипт сборки SDK.
 - `rkflash.sh` — прошивка собранного образа на плату.
-- `app/` — прикладные приложения: `rkipc` (пакет собирается ради
-  `RkLunch.sh`; сам `rkipc` вырезан из образа), `divinus`
+- `app/` — прикладные приложения: `oko-lunch` (OKO-лаунчер
+  `oko-lunch.sh`/`oko-lunch-stop.sh`, вызывается `S21appinit`), `rkipc`
+  (исходники остаются в дереве как справочные, пакет не собирается), `divinus`
   (вендоренный OpenIPC-стример, единственный стример в образе), `uvc_app_tiny`,
   `ipcweb` (веб-интерфейс), `rk_smart_door`, `wifi_app`, `fastboot_client`,
   `component` (общие компоненты).
@@ -132,6 +133,12 @@
   `/dev/i2c-3`:
   команды чтения, OTA STM32 и демон `oko-ec daemon`, который пишет
   `/tmp/oko-ec.json`, `/tmp/oko-ec.osd` и `/tmp/oko-ec.pid`.
+- `app/oko-lunch/` — пакет лаунчера: `files/oko-lunch.sh` (ожидание
+  `/userdata`, `insmod_ko.sh`, сеть через `oko-net` или netboot-ветка, симлинки
+  WebUI, запуск `divinus` из `/userdata`) и `files/oko-lunch-stop.sh`
+  (останов `divinus`/сетевого клиента с ожиданием до 10 с); `Makefile`
+  стейджит оба скрипта в `/oem/usr/bin`. Перенос тела из вендорского
+  `RkLunch.sh` и список удалённых веток — в `README.md` пакета.
 - `cfg/BoardConfig_IPC/` — конфигурации плат (`BoardConfig-*.mk`), папка `overlay/`
   с оверлеями rootfs и pre/post-скрипты (`*-pre.sh`, `*-post.sh`),
   `oko-prune.list` (пути, вырезаемые из rootfs и `oem` при упаковке; применяет
@@ -169,14 +176,15 @@
 - `source/kernel` — исходники ядра Linux; активный DTS
   `arch/arm/boot/dts/rv1106g-luckfox-pico-pro-max-sc230ai.dts` (Pro Max +
   выключенные `&sc3336`/`&mis5001`), фрагмент `rv1106-sc230ai.config` собирает
-  только `sc230ai`.
+  только `sc230ai`, фрагмент `rv1106-usb-host.config` — встроенные HID,
+  USB-сеть и Bluetooth для dual-role USB-порта.
 - `source/buildroot` — распакованное дерево Buildroot (корневая файловая
   система); в git не хранится.
 - `tools/board/buildroot` — вендорская обвязка Buildroot: tarball
   `buildroot-2026.08.1.tar.gz` (sha256 в `make_tarball.sh`),
   `luckfox_pico_defconfig`, `luckfox_pico_w_defconfig`, `busybox.config`,
-  `busybox_patch/` и патч-серия `patches-2026.08/` (gnutls, libv4l),
-  подключаемая через `BR2_GLOBAL_PATCH_DIR`.
+  `busybox_patch/` и патч-серия `patches-2026.08/` (gnutls, libv4l, dbus,
+  bluez5_utils), подключаемая через `BR2_GLOBAL_PATCH_DIR`.
 - `source/mcu` — прошивка сопроцессора MCU на RT-Thread (вендорская часть SDK).
 - `source/objs_kernel` — промежуточные объекты сборки ядра.
 - `drv_ko/kmpp`, `drv_ko/rockit`, `drv_ko/wifi` — модули ядра для медиастека и Wi-Fi.
