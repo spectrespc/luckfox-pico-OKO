@@ -89,7 +89,13 @@
 
 &usbdrd_dwc3 {
 	status = "okay";
-	dr_mode = "peripheral";
+	/*
+	 * OKO: dual-role.  With an OTG cable and a separate 5V supply the port
+	 * acts as a host (hub, HID, USB net, BT dongles); with a cable to a PC
+	 * it stays a peripheral (usb0/gadget), so rndis/adb keep working.
+	 * Maskrom/U-Boot download does not depend on dr_mode.
+	 */
+	dr_mode = "otg";
 };
 
 /**********SPI**********/

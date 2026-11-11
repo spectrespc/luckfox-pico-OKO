@@ -2,66 +2,92 @@
 
 TARGET_IP="172.32.0.93"
 
-USB_KEYWORD="android_work: sent uevent USB_STATE="
-USB_MODE_PATH="/proc/device-tree/usbdrd/usb@ffb00000/dr_mode"
-
 MAX_RETRIES=10
-retries=0
+
+# OKO: the USB port runs in dual-role mode (dr_mode = "otg"), so the DTS string
+# no longer tells the current role.  Read it from the extcon registered by
+# phy-rockchip-inno-usb2 (USB=1 -> device, USB-HOST=1 -> host).
+usb_role() {
+	for f in /sys/class/extcon/*/state; do
+		[ -r "$f" ] || continue
+		grep -q '^USB=1$' "$f" && { echo peripheral; return; }
+		grep -q '^USB-HOST=1$' "$f" && { echo host; return; }
+	done
+	echo unknown
+}
+
+gadget_udc() {
+	cat /sys/kernel/config/usb_gadget/rockchip/UDC 2>/dev/null
+}
 
 usb0_config() {
-	if [ "$(cat /proc/device-tree/usbdrd/usb@ffb00000/dr_mode)" == "peripheral" ]; then
-		current_ip=$(ifconfig usb0 | grep -o 'inet addr:[^ ]*' | awk -F ':' '{print $2}')
-		echo "current_ip = $current_ip"
-		echo "TARGET_IP = $TARGET_IP"
+	[ "$(usb_role)" = "peripheral" ] || return 0
 
-		while [[ "$current_ip" != "$TARGET_IP" && $retries -lt $MAX_RETRIES ]]; do
-			sleep .5
-			echo "luckfox : set usb0 ip"
-			ifconfig usb0 "$TARGET_IP"
-			current_ip=$(ifconfig usb0 | grep -o 'inet addr:[^ ]*' | awk -F ':' '{print $2}')
-			echo $current_ip
-			retries=$((retries + 1))
-		done
+	local retries=0 current_ip
+	current_ip=$(ifconfig usb0 2>/dev/null | grep -o 'inet addr:[^ ]*' | awk -F ':' '{print $2}')
+	[ "$current_ip" = "$TARGET_IP" ] && return 0
 
-		if [[ "$current_ip" != "$TARGET_IP" ]]; then
-			echo "usb0 config error"
-		else
-			echo "usb0 config success"
-		fi
+	echo "current_ip = $current_ip"
+	echo "TARGET_IP = $TARGET_IP"
+
+	while [ "$current_ip" != "$TARGET_IP" ] && [ $retries -lt $MAX_RETRIES ]; do
+		sleep .5
+		echo "oko : set usb0 ip"
+		ifconfig usb0 "$TARGET_IP" 2>/dev/null
+		current_ip=$(ifconfig usb0 2>/dev/null | grep -o 'inet addr:[^ ]*' | awk -F ':' '{print $2}')
+		retries=$((retries + 1))
+	done
+
+	if [ "$current_ip" != "$TARGET_IP" ]; then
+		echo "usb0 config error"
 	else
-		echo "usb0 is using host mode"
+		echo "usb0 config success"
 	fi
 }
 
-usb_reset() {
+# The DWC3 unregisters its UDC when the role turns to host, and the configfs
+# gadget is not re-bound when the port becomes a device again.  Watch the role
+# and re-bind S50usbdevice as soon as the port is a device without a gadget.
+# A failed re-bind backs off (5..60 s) instead of restarting the gadget and
+# adbd in a tight loop when the cause is persistent.
+usb_watch() {
+	local last role retry=0 delay=5
+	last=$(usb_role)
 	while true; do
-		last_line=$(dmesg | grep "$USB_KEYWORD" | tail -n 1)
-
-		if [[ "$last_line" == *"DISCONNECTED"* ]]; then
-			echo "Detected USB DISCONNECTED."
-			/etc/init.d/S50usbdevice restart
+		role=$(usb_role)
+		if [ "$role" = "peripheral" ]; then
+			if [ -z "$(gadget_udc)" ]; then
+				echo "usb gadget is not bound, restart S50usbdevice"
+				/etc/init.d/S50usbdevice restart
+				sleep 2
+				if [ -z "$(gadget_udc)" ]; then
+					retry=$((retry + 1))
+					delay=$((retry * 5))
+					[ "$delay" -gt 60 ] && delay=60
+					echo "usb gadget still not bound; retry in ${delay}s"
+				else
+					retry=0
+					delay=5
+				fi
+			else
+				retry=0
+				delay=5
+			fi
 			usb0_config
-		#elif [[ "$last_line" == *"CONFIGURED"* ]]; then
-		#    echo "Detected CONFIGURED. No action required."
-		#else
-		#    echo "No relevant USB_STATE found."
+		elif [ "$role" != "$last" ]; then
+			echo "usb role: $last -> $role"
 		fi
-
-		sleep 5
+		last="$role"
+		sleep "$delay"
 	done
 }
 
 case $1 in
 start)
-	# check peripheral
-	usb_mode="$(cat $USB_MODE_PATH)"
-	if [ "$usb_mode" = "peripheral" ]; then
-		usb0_config
-		usb_reset &
-	fi
+	usb0_config
+	usb_watch &
 	;;
 stop) ;;
 *)
 	exit 1
-	;;
 esac

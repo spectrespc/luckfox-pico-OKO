@@ -1,0 +1,39 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: OKO build <oko@localhost>
+Date: Tue, 10 Nov 2026 00:00:00 +0300
+Subject: [PATCH] build: fall back to /dev/urandom when sys/random.h is unusable
+
+The vendor uclibc-ng 1.0.31 toolchain ships a sys/random.h that does not
+compile on its own: the getrandom() prototype uses size_t without pulling
+in <stddef.h>, and GRND_NONBLOCK is only defined for _GNU_SOURCE builds.
+Meson reports the header as missing (cc.check_header) but still detects
+the libc symbol (cc.has_function), so DBus is built with HAVE_GETRANDOM
+and without HAVE_SYS_RANDOM_H:
+
+  dbus-sysdeps-unix.c: error: 'GRND_NONBLOCK' undeclared
+  warning: implicit declaration of function 'getrandom'
+
+Disable HAVE_GETRANDOM whenever the header check fails.  DBus then uses
+its portable /dev/urandom fallback, which is what the feature is for.
+
+diff --git a/meson.build b/meson.build
+index 1111111..2222222 100644
+--- a/meson.build
++++ b/meson.build
+@@ -736,6 +736,14 @@
+     config.set(macro, cc.check_header(header, args: compile_args_c) ? 1 : false)
+ endforeach
+ 
++# uclibc-ng ships a sys/random.h that does not compile standalone (it uses
++# size_t without including <stddef.h>), so check_header() fails while
++# has_function('getrandom') still succeeds.  Building the call without a
++# prototype and without GRND_* fails, so fall back to the /dev/urandom path.
++if not cc.check_header('sys/random.h', args: compile_args_c)
++    config.set('HAVE_GETRANDOM', false)
++endif
++
+ execinfo = cc.find_library('execinfo', required: false)
+ have_backtrace = (cc.has_header('execinfo.h', args: compile_args_c)
+     and cc.has_function('backtrace', dependencies: execinfo, args: compile_args_c)
+-- 
+2.39.5

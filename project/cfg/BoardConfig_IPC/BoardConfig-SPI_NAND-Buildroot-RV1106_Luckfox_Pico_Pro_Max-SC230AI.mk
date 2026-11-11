@@ -83,11 +83,14 @@ export RK_UBOOT_DEFCONFIG=luckfox_rv1106_uboot_defconfig
 # Kernel defconfig
 export RK_KERNEL_DEFCONFIG=luckfox_rv1106_linux_defconfig
 
-# Kernel config fragments: NFS/TFTP netboot + SC230AI sensor.
+# Kernel config fragments: NFS/TFTP netboot + SC230AI sensor + USB host classes.
 # The netboot fragment is deliberately part of the stock image so the NAND
 # boot can be switched to an NFS root with `fw_setenv sys_bootargs` alone,
 # without reflashing the kernel.
-export RK_KERNEL_DEFCONFIG_FRAGMENT="rv1106-netboot.config rv1106-sc230ai.config"
+# The usb-host fragment enables HID / USB-net / Bluetooth built-ins that the
+# shared vendor defconfig disables; the DTS runs the port in dual-role "otg"
+# mode, so these classes are only reachable through a hub in host role.
+export RK_KERNEL_DEFCONFIG_FRAGMENT="rv1106-netboot.config rv1106-sc230ai.config rv1106-usb-host.config"
 
 # Config sensor IQ files
 # RK_CAMERA_SENSOR_IQFILES format:

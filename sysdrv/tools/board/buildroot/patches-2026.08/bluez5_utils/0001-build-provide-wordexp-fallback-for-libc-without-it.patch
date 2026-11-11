@@ -1,0 +1,375 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: OKO build <oko@localhost>
+Date: Tue, 10 Nov 2026 00:00:00 +0300
+Subject: [PATCH] build: provide a wordexp() fallback for libc without it
+
+BlueZ parses its interactive console input with wordexp(3) in
+src/shared/shell.c (shared by bluetoothctl, btmgmt, obexctl and the mesh
+tools).  The arm-rockchip830 uClibc-ng toolchain used for the OKO rootfs
+is built with __UCLIBC_HAS_WORDEXP__ disabled and has no <wordexp.h>, so
+the client and tooling fail to build.
+
+Add src/shared/wordexp.h with the subset BlueZ uses (white-space
+splitting with quote grouping, WRDE_APPEND, wordfree) and point the
+existing includes at it.  No globbing, parameter expansion or command
+substitution is performed, which is what the BlueZ shell expects anyway
+(it always passes WRDE_NOCMD and feeds in its own command strings).
+WRDE_DOOFFS is rejected with WRDE_BADCHAR instead of silently returning
+an array without the reserved slots.
+
+diffdiff -ruN a/client/main.c b/client/main.c
+--- a/client/main.c	2026-02-09 00:26:40.000000000 +0300
++++ b/client/main.c	2026-11-10 22:11:10.470461215 +0300
+@@ -18,7 +18,7 @@
+ #include <unistd.h>
+ #include <stdlib.h>
+ #include <stdbool.h>
+-#include <wordexp.h>
++#include <src/shared/wordexp.h>
+ 
+ #include <glib.h>
+ 
+diff -ruN a/client/mgmt.c b/client/mgmt.c
+--- a/client/mgmt.c	2025-11-21 17:47:17.000000000 +0300
++++ b/client/mgmt.c	2026-11-10 22:11:10.466461318 +0300
+@@ -26,7 +26,7 @@
+ #include <poll.h>
+ #include <getopt.h>
+ #include <stdbool.h>
+-#include <wordexp.h>
++#include <src/shared/wordexp.h>
+ #include <ctype.h>
+ 
+ #include "bluetooth/bluetooth.h"
+diff -ruN a/client/player.c b/client/player.c
+--- a/client/player.c	2026-02-09 00:26:40.000000000 +0300
++++ b/client/player.c	2026-11-10 22:11:10.462461421 +0300
+@@ -24,7 +24,7 @@
+ #include <string.h>
+ #include <sys/ioctl.h>
+ #include <sys/uio.h>
+-#include <wordexp.h>
++#include <src/shared/wordexp.h>
+ #include <sys/timerfd.h>
+ #include <sys/stat.h>
+ 
+diff -ruN a/src/shared/shell.c b/src/shared/shell.c
+--- a/src/shared/shell.c	2026-02-09 00:26:40.000000000 +0300
++++ b/src/shared/shell.c	2026-11-10 22:11:10.470461215 +0300
+@@ -22,7 +22,7 @@
+ #include <stdbool.h>
+ #include <signal.h>
+ #include <sys/signalfd.h>
+-#include <wordexp.h>
++#include <src/shared/wordexp.h>
+ #include <getopt.h>
+ #include <fcntl.h>
+ 
+diff -ruN a/src/shared/wordexp.h b/src/shared/wordexp.h
+--- a/src/shared/wordexp.h	1970-01-01 03:00:00.000000000 +0300
++++ b/src/shared/wordexp.h	2026-11-10 23:28:37.957204170 +0300
+@@ -0,0 +1,207 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++/*
++ * Minimal <wordexp.h> replacement for libc implementations built without
++ * wordexp(3).  The arm-rockchip830 uClibc-ng toolchain used by OKO has
++ * __UCLIBC_HAS_WORDEXP__ disabled, so BlueZ does not build against it.
++ *
++ * Only the subset BlueZ needs is implemented: white-space separated words
++ * with single/double quote grouping and backslash escapes.  No parameter
++ * expansion, command substitution or pathname expansion is performed, which
++ * matches how the BlueZ shell parses its own interactive input.
++ */
++
++#ifndef BLUEZ_COMPAT_WORDEXP_H
++#define BLUEZ_COMPAT_WORDEXP_H
++
++#include <stdlib.h>
++#include <string.h>
++
++typedef struct {
++	size_t we_wordc;
++	char **we_wordv;
++	size_t we_offs;
++} wordexp_t;
++
++#define WRDE_APPEND	0x01
++#define WRDE_DOOFFS	0x02
++#define WRDE_NOCMD	0x04
++#define WRDE_REUSE	0x08
++#define WRDE_SHOWERR	0x10
++#define WRDE_UNDEF	0x20
++
++#define WRDE_NOSPACE	1
++#define WRDE_BADCHAR	2
++#define WRDE_BADVAL	3
++#define WRDE_CMDSUB	4
++#define WRDE_SYNTAX	5
++
++static inline int __we_push(char ***vec, size_t *count, size_t *cap,
++							const char *str, size_t len)
++{
++	char **nvec;
++	char *word;
++	size_t ncap;
++
++	if (*count + 2 > *cap) {
++		ncap = *cap ? *cap * 2 : 8;
++		nvec = realloc(*vec, ncap * sizeof(*nvec));
++		if (!nvec)
++			return -1;
++		*vec = nvec;
++		*cap = ncap;
++	}
++
++	word = malloc(len + 1);
++	if (!word)
++		return -1;
++
++	memcpy(word, str, len);
++	word[len] = '\0';
++	(*vec)[(*count)++] = word;
++
++	return 0;
++}
++
++static inline int wordexp(const char *words, wordexp_t *we, int flags)
++{
++	char **vec = NULL;
++	char *buf, *out;
++	const char *p;
++	char quote = '\0';
++	size_t count = 0, old_count = 0, cap = 0;
++	size_t len = 0;
++	int in_word = 0;
++	int err = WRDE_NOSPACE;
++
++	if (!we || !words)
++		return WRDE_BADCHAR;
++
++	/* The reserved-slot mode is not implemented: reject it instead of
++	 * returning an array without the slots and freeing them in wordfree(). */
++	if (flags & WRDE_DOOFFS)
++		return WRDE_BADCHAR;
++
++	if ((flags & WRDE_APPEND) && (flags & WRDE_REUSE))
++		return WRDE_BADCHAR;
++
++	if (flags & WRDE_APPEND) {
++		vec = we->we_wordv;
++		count = old_count = we->we_wordc;
++		/* the previous call allocated count + 1 slots */
++		cap = count + 1;
++	}
++
++	buf = malloc(strlen(words) + 1);
++	if (!buf)
++		return WRDE_NOSPACE;
++
++	out = buf;
++
++	for (p = words; ; p++) {
++		char c = *p;
++
++		if (quote) {
++			if (c == '\0') {
++				err = WRDE_SYNTAX;
++				goto fail;
++			}
++			if (c == quote) {
++				quote = '\0';
++				continue;
++			}
++			if (quote == '"' && c == '\\' &&
++					(p[1] == '"' || p[1] == '\\'))
++				c = *++p;
++			out[len++] = c;
++			continue;
++		}
++
++		if (c == '\0') {
++			if (in_word && __we_push(&vec, &count, &cap, out, len))
++				goto fail;
++			break;
++		}
++
++		if (c == '\'' || c == '"') {
++			quote = c;
++			in_word = 1;
++			continue;
++		}
++
++		if (c == '\\') {
++			if (p[1] == '\0') {
++				err = WRDE_SYNTAX;
++				goto fail;
++			}
++			out[len++] = *++p;
++			in_word = 1;
++			continue;
++		}
++
++		if (c == ' ' || c == '\t' || c == '\n' || c == '\r' ||
++							c == '\f' || c == '\v') {
++			if (in_word) {
++				if (__we_push(&vec, &count, &cap, out, len))
++					goto fail;
++				len = 0;
++				in_word = 0;
++			}
++			continue;
++		}
++
++		out[len++] = c;
++		in_word = 1;
++	}
++
++	if (vec == NULL || count + 1 >= cap) {
++		char **nvec = realloc(vec, (count + 2) * sizeof(*nvec));
++
++		if (!nvec)
++			goto fail;
++		vec = nvec;
++		cap = count + 2;
++	}
++	vec[count] = NULL;
++
++	free(buf);
++
++	we->we_wordc = count;
++	we->we_wordv = vec;
++
++	return 0;
++
++fail:
++	free(buf);
++
++	if (vec) {
++		size_t i;
++
++		for (i = old_count; i < count; i++)
++			free(vec[i]);
++
++		if (!(flags & WRDE_APPEND)) {
++			free(vec);
++			we->we_wordc = 0;
++			we->we_wordv = NULL;
++		}
++	}
++
++	return err;
++}
++
++static inline void wordfree(wordexp_t *we)
++{
++	size_t i;
++
++	if (!we || !we->we_wordv)
++		return;
++
++	for (i = 0; i < we->we_wordc; i++)
++		free(we->we_wordv[i]);
++
++	free(we->we_wordv);
++	we->we_wordv = NULL;
++	we->we_wordc = 0;
++}
++
++#endif /* BLUEZ_COMPAT_WORDEXP_H */
+\ В конце файла нет новой строки
+diff -ruN a/tools/meshctl.c b/tools/meshctl.c
+--- a/tools/meshctl.c	2025-09-18 21:08:44.000000000 +0300
++++ b/tools/meshctl.c	2026-11-10 22:11:10.450461737 +0300
+@@ -18,7 +18,7 @@
+ #include <unistd.h>
+ #include <stdlib.h>
+ #include <stdbool.h>
+-#include <wordexp.h>
++#include <src/shared/wordexp.h>
+ 
+ #include <inttypes.h>
+ #include <ctype.h>
+diff -ruN a/tools/mesh-gatt/config-client.c b/tools/mesh-gatt/config-client.c
+--- a/tools/mesh-gatt/config-client.c	2022-01-06 00:53:58.000000000 +0300
++++ b/tools/mesh-gatt/config-client.c	2026-11-10 22:11:10.458461527 +0300
+@@ -20,7 +20,7 @@
+ #include <inttypes.h>
+ #include <stdbool.h>
+ #include <sys/uio.h>
+-#include <wordexp.h>
++#include <src/shared/wordexp.h>
+ 
+ #include <glib.h>
+ 
+diff -ruN a/tools/mesh-gatt/config-server.c b/tools/mesh-gatt/config-server.c
+--- a/tools/mesh-gatt/config-server.c	2021-02-22 23:27:00.000000000 +0300
++++ b/tools/mesh-gatt/config-server.c	2026-11-10 22:11:10.458461527 +0300
+@@ -20,7 +20,7 @@
+ #include <inttypes.h>
+ #include <stdbool.h>
+ #include <sys/uio.h>
+-#include <wordexp.h>
++#include <src/shared/wordexp.h>
+ 
+ #include <glib.h>
+ #include "tools/mesh/config-model.h"
+diff -ruN a/tools/mesh-gatt/gatt.c b/tools/mesh-gatt/gatt.c
+--- a/tools/mesh-gatt/gatt.c	2025-09-18 21:08:44.000000000 +0300
++++ b/tools/mesh-gatt/gatt.c	2026-11-10 22:11:10.454461632 +0300
+@@ -18,7 +18,7 @@
+ #include <stdlib.h>
+ #include <stdbool.h>
+ #include <sys/uio.h>
+-#include <wordexp.h>
++#include <src/shared/wordexp.h>
+ 
+ #include <glib.h>
+ 
+diff -ruN a/tools/mesh-gatt/node.c b/tools/mesh-gatt/node.c
+--- a/tools/mesh-gatt/node.c	2025-09-18 21:08:44.000000000 +0300
++++ b/tools/mesh-gatt/node.c	2026-11-10 22:11:10.450461737 +0300
+@@ -18,7 +18,7 @@
+ #include <stdlib.h>
+ #include <stdbool.h>
+ #include <sys/uio.h>
+-#include <wordexp.h>
++#include <src/shared/wordexp.h>
+ #include <inttypes.h>
+ 
+ #include <glib.h>
+diff -ruN a/tools/mesh-gatt/onoff-model.c b/tools/mesh-gatt/onoff-model.c
+--- a/tools/mesh-gatt/onoff-model.c	2021-02-22 23:27:00.000000000 +0300
++++ b/tools/mesh-gatt/onoff-model.c	2026-11-10 22:11:10.454461632 +0300
+@@ -20,7 +20,7 @@
+ #include <inttypes.h>
+ #include <stdbool.h>
+ #include <sys/uio.h>
+-#include <wordexp.h>
++#include <src/shared/wordexp.h>
+ #include <readline/readline.h>
+ #include <readline/history.h>
+ #include <glib.h>
+diff -ruN a/tools/mesh-gatt/prov.c b/tools/mesh-gatt/prov.c
+--- a/tools/mesh-gatt/prov.c	2025-09-18 21:08:44.000000000 +0300
++++ b/tools/mesh-gatt/prov.c	2026-11-10 22:11:10.450461737 +0300
+@@ -17,7 +17,7 @@
+ #include <stdlib.h>
+ #include <stdbool.h>
+ #include <sys/uio.h>
+-#include <wordexp.h>
++#include <src/shared/wordexp.h>
+ 
+ #include <readline/readline.h>
+ #include <readline/history.h>
+diff -ruN a/tools/obexctl.c b/tools/obexctl.c
+--- a/tools/obexctl.c	2025-03-17 14:17:14.000000000 +0300
++++ b/tools/obexctl.c	2026-11-10 22:11:10.462461421 +0300
+@@ -20,7 +20,7 @@
+ #include <stdlib.h>
+ #include <string.h>
+ #include <inttypes.h>
+-#include <wordexp.h>
++#include <src/shared/wordexp.h>
+ #include <ctype.h>
+ 
+ #include <glib.h>
