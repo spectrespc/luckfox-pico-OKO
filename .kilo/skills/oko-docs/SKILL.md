@@ -17,7 +17,7 @@ Workflow для задач, где нужны `STRUCTURE.md`, `INIT_ORDER.md`, `
 | U-Boot, ядро, DTS, cmdline, оверлеи | `INIT_ORDER.md` §1–§2, §8 | `project/cfg/BoardConfig_IPC/overlay/...`, DTS в `sysdrv/source/kernel/arch/arm/boot/dts/` |
 | Init-скрипты, inittab, порядок S* | `INIT_ORDER.md` §3–§5 | `project/build.sh`, `sysdrv/source/buildroot/.../busybox/inittab` |
 | Модули ядра, `insmod_ko.sh` | `INIT_ORDER.md` §6–§7 | `sysdrv/drv_ko/insmod_ko.sh`, `sysdrv/cfg/package.mk`, `M_DIRS` |
-| `rkipc`, IQ-файлы, `rkipc.ini` | `INIT_ORDER.md` §5, §7 | `project/app/rkipc/.../RkLunch.sh`, `/oem`, `/userdata` |
+| `rkipc`, IQ-файлы, `rkipc.ini` | `INIT_ORDER.md` §5, §7 | `project/app/oko-lunch/files/oko-lunch.sh`, `/oem`, `/userdata` |
 | Железо, serial, сеть, прошивка | `TESTBENCH.md` §1–§8 | `bench/*.py`, `tools/native/*.sh` |
 | Диагностика после загрузки | `TESTBENCH.md` §8–§9 | `lsmod`, `/proc/rkisp-vir0`, логи |
 | Обновление доков | тот док, который затронут, + `CHANGELOG.md` | источник изменения |

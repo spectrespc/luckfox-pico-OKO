@@ -26,7 +26,8 @@ OEM_DIR=${OKO_OEM_DIR:-"$SDK_ROOT_DIR/output/out/oem"}
 # referenced by TESTBENCH.md.
 OEM_REQUIRED=(
 	usr/bin/divinus
-	usr/bin/RkLunch.sh
+	usr/bin/oko-lunch.sh
+	usr/bin/oko-lunch-stop.sh
 	usr/bin/oko-ec
 	usr/bin/oko-flash
 	usr/bin/oko-motor

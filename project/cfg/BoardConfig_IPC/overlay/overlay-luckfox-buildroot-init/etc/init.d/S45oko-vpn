@@ -2,7 +2,7 @@
 #
 # OKO VPN autostart.
 #
-# S21appinit (RkLunch.sh) has already applied the network settings by the
+# S21appinit (oko-lunch.sh) has already applied the network settings by the
 # time this script runs, but the DHCP lease may still be in flight, so the
 # start path waits for a default route for up to 60 seconds.
 

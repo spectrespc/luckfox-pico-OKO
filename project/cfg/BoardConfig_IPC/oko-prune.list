@@ -18,9 +18,11 @@
 usr/bin/modetest
 usr/bin/dumpsys
 
-# rkipc: the package must still build (it installs RkLunch.sh and
-# RkLunch-stop.sh), but the streamer binary and its runtime resources are not
-# part of the OKO image; divinus is the only streamer.
+# rkipc is not built any more: the OKO launcher lives in project/app/oko-lunch
+# (oko-lunch.sh / oko-lunch-stop.sh), and divinus is the only streamer.
+# These entries also remove leftovers of earlier builds from the staging trees.
+usr/bin/RkLunch.sh
+usr/bin/RkLunch-stop.sh
 usr/bin/rkipc
 usr/share/rkipc-300w.ini
 usr/share/rkipc-400w.ini

@@ -8,7 +8,7 @@
 # - divinus active             -> create /tmp/osd.fifo and start /usr/bin/oko-osd
 #
 # Runs after S20linkmount (lexicographic order) and before S21appinit, so the
-# markers and the config are ready before RkLunch.sh starts the application.
+# markers and the config are ready before oko-lunch.sh starts the application.
 
 DAEMON=/usr/bin/oko-osd
 FIFO=/tmp/osd.fifo

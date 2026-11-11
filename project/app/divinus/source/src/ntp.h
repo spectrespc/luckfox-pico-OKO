@@ -22,7 +22,7 @@ int ntp_apply(void);
  * leaves the distribution daemon alone. */
 void ntp_apply_startup(void);
 
-/* Schedules ntp_apply_startup() a few seconds after boot: RkLunch starts
+/* Schedules ntp_apply_startup() a few seconds after boot: oko-lunch.sh starts
  * divinus before /etc/init.d/S49ntp, so applying immediately would race the
  * vendor daemon.  No thread is started in the default configuration. */
 void ntp_startup_schedule(void);

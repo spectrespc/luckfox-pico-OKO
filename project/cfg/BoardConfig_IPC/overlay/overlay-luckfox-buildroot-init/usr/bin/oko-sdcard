@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# OKO microSD helper for the RkLunch/divinus image.
+# OKO microSD helper for the oko-lunch/divinus image.
 #
 # udev calls it for add/remove events of mmcblk devices:
 #   oko-sdcard add /dev/mmcblk0p1
@@ -14,7 +14,7 @@
 # Only removable mmcblk whole disks may be formatted; /dev/mtd*, /dev/ubi*,
 # eMMC boot partitions and the root device are rejected.  The mount point is
 # /mnt/sdcard and the state is written to /run/oko-sd.state so divinus and the
-# WebUI can report it without guessing.  RkLunch.sh only creates
+# WebUI can report it without guessing.  oko-lunch.sh only creates
 # /oem/usr/www/sdcard -> /mnt/sdcard, so replacing a /mnt/sdcard symlink (if an
 # old image has one) does not disturb it.
 

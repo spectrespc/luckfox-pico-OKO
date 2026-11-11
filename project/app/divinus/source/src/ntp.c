@@ -95,7 +95,7 @@ void ntp_apply_startup(void) {
 
 static void *ntp_startup_worker(void *arg) {
     (void)arg;
-    /* S21appinit (RkLunch) starts divinus before S49ntp starts the vendor
+    /* S21appinit (oko-lunch.sh) starts divinus before S49ntp starts the vendor
      * daemon; give the init script time to finish before taking over. */
     sleep(10);
     ntp_apply_startup();

@@ -1449,16 +1449,18 @@ function __PACKAGE_OEM() {
 		)
 	fi
 
+	# OKO: the launcher scripts come from project/app/oko-lunch; the vendor
+	# rkipc package is no longer built (see project/app/Makefile).
 	mkdir -p $(dirname $RK_PROJECT_FILE_OEM_SCRIPT)
 	cat >$RK_PROJECT_FILE_OEM_SCRIPT <<EOF
 #!/bin/sh
 [ -f /etc/profile.d/RkEnv.sh ] && source /etc/profile.d/RkEnv.sh
 case \$1 in
 	start)
-		sh /oem/usr/bin/RkLunch.sh
+		sh /oem/usr/bin/oko-lunch.sh
 		;;
 	stop)
-		sh /oem/usr/bin/RkLunch-stop.sh
+		sh /oem/usr/bin/oko-lunch-stop.sh
 		;;
 	*)
 		exit 1

@@ -16,6 +16,9 @@ include $(MAKEFILE_DIR)/Makefile.param
 
 app_src := $(wildcard ./*/Makefile ./component/fastboot_server/Makefile)
 app_src := $(dir $(app_src))
+# OKO: the vendor rkipc is not built any more; the application launcher moved
+# to project/app/oko-lunch.  The rkipc sources stay in the tree for reference.
+app_src := $(filter-out ./rkipc/,$(app_src))
 
 all: $(pkg-build)
 	$(foreach target,$(app_src),make -C $(target)||exit -1;)

@@ -1,6 +1,6 @@
 # Factory config for OpenIPC/divinus on Luckfox Pico Pro Max (RV1106 + SC230AI).
 # Installed to /oem/usr/share/divinus/divinus.yaml and copied to /userdata on
-# first start (see RkLunch.sh). WebUI saves land next to the running config.
+# first start (see oko-lunch.sh). WebUI saves land next to the running config.
 system:
   web_port: 80
   # Factory credentials for the testbench; change before connecting the camera

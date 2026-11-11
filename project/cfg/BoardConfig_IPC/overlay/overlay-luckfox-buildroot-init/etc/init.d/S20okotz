@@ -8,7 +8,7 @@
 # daemons (divinus) cache it and are restarted by /api/time on change.
 #
 # Runs after S20linkmount (lexicographic order) and before S21appinit, so the
-# zone is in place before RkLunch.sh starts the application.
+# zone is in place before oko-lunch.sh starts the application.
 
 # Paths are overridable so the parser can be exercised off-target.
 ZONEINFO=${OKO_TZ_ZONEINFO:-/usr/share/zoneinfo/uclibc}

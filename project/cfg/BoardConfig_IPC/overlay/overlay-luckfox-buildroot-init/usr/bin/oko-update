@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# OKO update staging helper for the RkLunch/divinus image.
+# OKO update staging helper for the oko-lunch/divinus image.
 #
 # The U-Boot on this board runs `sd_update` on every boot: when the microSD
 # card holds sd_update.txt and the referenced images, U-Boot flashes the SPI
