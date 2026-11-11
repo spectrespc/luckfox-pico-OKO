@@ -8,7 +8,7 @@
 
 | Поле | Значение |
 |---|---|
-| Дата | `2026-11-08` |
+| Дата | `2026-11-10` |
 | Плата | Luckfox Pico Pro Max (RV1106), сенсор SC230AI |
 | Прошивка | `output/image/update.img` (sha256 `b72ff200…`); полная прошивка SPI NAND 2026-11-08 с `CONFIG_TUN=y` и `openvpn 2.5.7`, после загрузки восстановлены модели через `/api/models` |
 | Стенд | `192.168.52.97` (DHCP, SSH), UART `/dev/ttyACM0` 115200 |
@@ -83,6 +83,7 @@
 | Прошивка: реальная прошивка STM32 | работает | 2026-11-06, CBT6: CLI `app-1.0.1.bin` (`0x00010001`) → `Application started`; WebUI `/api/flash` `app-1.0.1.bin` (версия из имени, без поля version) → job `done`, `/api/firmware` = `1.0.1`; rollback `app-1.0.0.bin` → `1.0.0` (progress 0→100); `oko-ec info` `img_size=2324`, `flags=0`; `battery/cells/temp` живы; после reboot — app 1.0.0; oversize 130 КиБ → `ERR_PARAM`, автоматический `RESET`, app 1.0.0 | Установленный MCU — CBT6 (128 КиБ, слот 120 КиБ); C8T6-сборка даёт `img_size=0`, использовать `-DMCU=CBT6`. Обрыв питания в момент стирания не имитировался |
 | Прошивка: версии контроллеров | работает | `GET /api/firmware` → STM32 `1.0.0`, STM8 `2.1.1` (точечно, без `0x`); сырой hex STM32 остаётся в `oko-ec info`; после flash и power-cycle значения сохраняются; карточка System в `ui_check.py` | STM32 `state` берётся из `/tmp/oko-ec.json` и считается устаревшим через 15 с |
 | OSD: NPU в строке CPU | работает | `/tmp/osd-sys.txt` — literal `\n` (backslash + n) и реальный перевод строки в конце: `CPU 20% NPU 0%\nMEM FREE 81%\nT 61.8C` (`od -c`); три текст-полосы в вырезке sys-региона `output/bench/osd-fix2/`; `GET /api/yolo?enable=1` → `NPU 17%`, после disable — 0%; регион 4 `text=@/tmp/osd-sys.txt` | Текст в кадре не распознавался OCR; проверка по байтам файла и полосам яркости |
+| UDP/RTP-раздача `[stream]` | работает | 2026-11-10, стенд `192.168.52.15` → `192.168.52.200:5600`, MediaMTX 1.21.3 (`services/stream/`): в консоли `UDP streaming initialized on port 5600`, `Added UDP client 192.168.52.200:5600 (ID 0)`, `Starting streaming to udp://192.168.52.200:5600...`; `ffprobe` без пароля: `hevc Main 1920x1080 30/1`; 10 мин (`output/bench/stream/20261110-193242/`): 17 922 кадра 29.87 fps против 29.85 fps у RTSP камеры, задержка ретрансляции 1–7 мс (медиана; 6.5 мс на 10-минутном прогоне, 15 699 совпадений, 1 мс после перехода на монотонное сопоставление кадров), 82 кадра в ошибке (0.46 %); `reboot` — поток поднялся сам; два `dest` (unicast + multicast) — `ID 0`/`ID 1`, multicast вторым адресом `seq` 59648→62536 без разрывов (`/tmp`-проба, 2889 пакетов) | Multicast первым адресом — `seq/ssrc=0` (KI-052); H.265 не играет в Chromium (KI-053); потери без FEC (KI-051) |
 
 ### Причина смены DHCP-адреса
 
@@ -90,11 +91,11 @@
 `dhcpcd` использовал DUID из `/var/db/dhcpcd`. Полная прошивка пересоздаёт и
 `/userdata`, и rootfs, поэтому после каждой прошивки менялись и MAC, и DUID, и
 DHCP-сервер выдавал новый адрес. Дополнительно на `eth0` работали два клиента:
-`S41dhcpcd` и `udhcpc` из `RkLunch.sh`.
+`S41dhcpcd` и `udhcpc` из вендорского `RkLunch.sh` (сейчас `oko-lunch.sh`).
 
 Исправление: MAC выводится из `/proc/device-tree/serial-number` и хранится в
 env (`oko_mac`); DHCP-клиент один — `dhcpcd` с `clientid` по MAC (без `duid`);
-`S41dhcpcd` заменён заглушкой; `RkLunch.sh` вызывает `oko-net apply`.
+`S41dhcpcd` заменён заглушкой; `oko-lunch.sh` вызывает `oko-net apply`.
 
 ## 3. Как проверить
 

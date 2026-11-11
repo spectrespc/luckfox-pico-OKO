@@ -217,13 +217,50 @@ int save_video_stream(char index, hal_vidstream *stream) {
                 record_ingest_stream(stream, isH265);
 
             if (app_config.stream_enable) {
+                /* One NAL unit per RTP packet.  A pack holds Annex-B data that
+                 * may contain several NAL units (AUD/SPS/PPS/slices); sending
+                 * the pack as a single payload, start codes included, is not
+                 * depacketizable by any standard receiver. */
+                int nal_total = 0;
                 for (int i = 0; i < stream->count; i++) {
-                    udp_stream_send_nal(stream->pack[i].data + stream->pack[i].offset,
-                        stream->pack[i].length - stream->pack[i].offset,
-                        stream->pack[i].nalu[0].type == NalUnitType_CodedSliceIdr, isH265);
+                    hal_vidpack *pack = &stream->pack[i];
+                    unsigned char *pack_data;
+                    size_t pack_len, nal_len = 0;
+                    unsigned char *nalptr;
 
-                    rtmp_ingest_video(&stream->pack[i], isH265);
+                    if (pack->length <= pack->offset) continue;
+                    pack_data = pack->data + pack->offset;
+                    pack_len = pack->length - pack->offset;
+                    nalptr = pack_data;
+                    while (nal_split(pack_data, &nalptr, &nal_len, pack_len) == 0)
+                        if (nal_len) nal_total++;
                 }
+
+                int nal_index = 0;
+                for (int i = 0; i < stream->count; i++) {
+                    hal_vidpack *pack = &stream->pack[i];
+                    unsigned char *pack_data;
+                    size_t pack_len, nal_len = 0;
+                    unsigned char *nalptr;
+
+                    if (pack->length > pack->offset) {
+                        pack_data = pack->data + pack->offset;
+                        pack_len = pack->length - pack->offset;
+                        nalptr = pack_data;
+                        while (nal_split(pack_data, &nalptr, &nal_len, pack_len) == 0) {
+                            if (!nal_len) continue;
+                            /* The RTP marker belongs on the last packet of the
+                             * access unit, not on keyframe slices. */
+                            udp_stream_send_nal((const char *)nalptr, (int)nal_len,
+                                ++nal_index == nal_total, isH265);
+                        }
+                    }
+                    rtmp_ingest_video(pack, isH265);
+                }
+
+                if (nal_total)
+                    udp_stream_frame_end(90000 /
+                        (app_config.mp4_fps ? app_config.mp4_fps : 30));
             }
             break;
         }
@@ -307,23 +344,41 @@ int media_start(void) {
                 dst[sizeof(dst) - 1] = '\0';
             }
 
+            /* "udp://host" without a port must not be sent to port 0: the
+             * configured source port is also the default destination port. */
+            if (!port)
+                port = app_config.stream_udp_srcport ?
+                    app_config.stream_udp_srcport : UDP_DEFAULT_PORT;
+
             if (!udpOn) {
+                /* The multicast flag is the first octet of the host part:
+                 * 224..239 is IPv4 multicast, everything else is unicast. */
                 val = strtol(hostptr, &endptr, 10);
-                if (endptr != hostptr && val >= 224 && val <= 239) {
-                    if (udp_stream_init(app_config.stream_udp_srcport, dst))
-                        udpOn = 1;
-                    else return EXIT_FAILURE;
-                } else {
-                    if (udp_stream_init(app_config.stream_udp_srcport, NULL))
-                        udpOn = 1;
-                    else return EXIT_FAILURE;
+                const char *mcast =
+                    (endptr != hostptr && val >= 224 && val <= 239) ? dst : NULL;
+
+                /* udp_stream_init() returns EXIT_SUCCESS (0) on success. */
+                if (udp_stream_init(app_config.stream_udp_srcport, mcast) != EXIT_SUCCESS) {
+                    HAL_ERROR("media", "Failed to initialize UDP streaming for %s\n",
+                        app_config.stream_dests[i]);
+                    ret = EXIT_FAILURE;
+                    continue;
                 }
+                udpOn = 1;
             }
 
+            /* Every configured dest must be registered, not just the first
+             * one that initializes the socket. */
             if (udp_stream_add_client(dst, port) != -1)
                 HAL_INFO("media", "Starting streaming to %s...\n", app_config.stream_dests[i]);
+            else {
+                HAL_ERROR("media", "Failed to add UDP client %s:%u\n", dst, port);
+                ret = EXIT_FAILURE;
+            }
         }
     }
+
+    return ret;
 }
 
 void media_stop(void) {

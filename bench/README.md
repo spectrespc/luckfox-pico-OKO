@@ -24,6 +24,7 @@ bench/run.sh netboot.py catch           # затем сбросить питан
 | `netboot.py` | управление U-Boot: `catch` (спам Ctrl-C до `=>`, затем netboot-команды), `reboot` (перезагрузка DUT с перехватом U-Boot), `cmd '<команда>'` (одна команда в U-Boot); ядро берётся по TFTP из `output/image/boot.img`, rootfs — по NFS |
 | `nfs_env.py` | переключение штатной загрузки через env U-Boot: `status` (текущий `sys_bootargs` и режим `nand`/`nfs`), `on` (NFS-root, проверка `/`, `/oem`, `/userdata`), `off` (возврат на `ubi0:rootfs`); `--no-reboot` пишет переменную без перезагрузки |
 | `osd_check.py` | захват кадров RTSP (`--path`, по умолчанию `/live/0`), попарный диф боксов OSD-регионов, сохранение полных кадров и кропов |
+| `stream_check.py` | сквозная проверка UDP/RTP-раздачи камеры и приёмника MediaMTX: чтение `stream`/`mp4` из `/userdata/divinus.yaml` по SSH, опрос `/v3/paths/list`, декодирование `rtsp://<host>:8554/cam` через PyAV, fps и отклонение от `mp4.fps`, `--compare-dut` — сверка с собственным RTSP камеры, `--latency` — задержка ретрансляции по совпадению кадров; при `--compare-dut` эталоном fps служит сама камера, иначе `mp4.fps`; JSON и CSV в `output/bench/stream` (учётные данные в артефакты не пишутся), код 1 — отклонение, код 2 — метрика не снята |
 | `geometry_check.py` | геометрия оверлеев и ePTZ: `--what zoom` — кроп на main/sub, `/mjpeg`/`/image.jpg`, критерий — нормированная корреляция с ожидаемым центром (mean\|diff\| печатается для справки); рестарт MP4 — отдельный opt-in `OKO_GEOMETRY_MP4_TESTS=1` (после смены кропа он ненадёжен); `--what boxes`/`--what osd` (opt-in `OKO_GEOMETRY_TESTS=1`) — совмещение NN-рамок и OSD-текста на 0/90/180/270; артефакты — `output/bench/geometry` |
 | `api_check.py` | матрица HTTP API: GET всех эндпоинтов, POST no-op, экспорт конфига и журнала, негативные проверки (статика, имена файлов, NTP); opt-in `OKO_FOCUS_MOTOR_TESTS=1`/`OKO_FOCUS_AF_TESTS=1` — движение моторов и автофокус (`af=1` full/ROI и micro-fine `af=fine`) с записью AF-кривых |
 | `ui_check.py` | WebUI в headless Chromium: восемь разделов, EN/RU, Apply/dirty-state, автозапуск предпросмотра, двухшаговый выбор ROI и строка автофокуса в «Видео», несохранённый выбор «Включить» переживает опрос, кнопка «Автофокус» (`af=fine`), сводка SD-карты в «Система → Статус» (сверка с `window.lastStatus`, работает и без карты), раскладка под окно на 1440×900 и мобильная 390×844 (нижний навбар 4×2), скриншоты (нужен Playwright) |
@@ -88,8 +89,15 @@ bench/run.sh firmware_check.py --flash --target stm8 \
 bench/run.sh firmware_check.py --flash --target stm32 \
   --file output/bench/stm32/app-1.0.0.bin --confirm FLASH
 
-# RTSP/OSD: если OPTIONS молчит, включите stream.enable=true и перезагрузите DUT
+# RTSP/OSD: RTSP включается `rtsp.enable` (нужен работающий VENC-канал,
+# т.е. `mp4.enable` или `substream.enable`); `stream.enable` к RTSP отношения
+# не имеет — он только добавляет UDP/RTP-раздачу
 bench/run.sh osd_check.py --path /live/0 --seconds 5 --frames 2
+
+# UDP/RTP → MediaMTX → RTSP: 20 с, сверка с RTSP самой камеры и задержка
+bench/run.sh stream_check.py --seconds 20 --latency --compare-dut
+# 10-минутный прогон на стабильность (артефакты — output/bench/stream)
+bench/run.sh stream_check.py --seconds 600 --latency --compare-dut --interval 5
 # прошивка STM8 (после сборки app-2.1.1.ihx); требует --confirm FLASH
 bench/run.sh firmware_check.py --flash --target stm8 \
   --file project/app/stm8-motor/build/app-2.1.1.ihx --confirm FLASH

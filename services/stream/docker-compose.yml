@@ -1,0 +1,17 @@
+name: oko-stream
+
+services:
+  mediamtx:
+    # Pinned on purpose: the receiver is part of the documented test chain, so
+    # a moving "latest" tag would make results irreproducible.  The -ffmpeg
+    # variant is used because the bench host has no ffmpeg/ffprobe; the same
+    # container then serves as the analysis tool (docker exec ... ffprobe).
+    image: bluenviron/mediamtx:1.21.3-ffmpeg
+    container_name: oko-mediamtx
+    # Host networking matches the rest of the stand: the camera pushes to
+    # 192.168.52.200:5600 and readers connect to 192.168.52.200:8554/8888/8889
+    # without any port mapping.
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml:ro

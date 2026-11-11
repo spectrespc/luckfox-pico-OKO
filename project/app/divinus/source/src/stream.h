@@ -27,7 +27,14 @@ typedef struct {
     unsigned short seq;
     unsigned int tstamp;
     time_t last_act;
+    /* 1 for a destination taken from the configuration: such a client is
+     * never expired for inactivity, because a pure RTP receiver has no
+     * reason to send anything back.  Auto-registered senders keep 0 and are
+     * dropped after UDP_CLIENT_TIMEOUT seconds of silence. */
+    int permanent;
 } udp_client_t;
+
+#define UDP_CLIENT_TIMEOUT 60
 
 struct udp_stream_ctx {
     int socket_fd;
@@ -45,4 +52,8 @@ int udp_stream_init(unsigned short port, const char *mcast_addr);
 void udp_stream_close(void);
 int udp_stream_add_client(const char *host, unsigned short port);
 void udp_stream_remove_client(int client_id);
-int udp_stream_send_nal(const char *nal_data, int nal_size, int is_keyframe, int is_h265);
+int udp_stream_send_nal(const char *nal_data, int nal_size, int marker, int is_h265);
+/* Advance the RTP timestamp of every client by one frame (90 kHz units) and
+ * refresh the configured destinations.  Call once per captured frame, after
+ * all of its NAL units have been sent. */
+void udp_stream_frame_end(unsigned int tstamp_step);

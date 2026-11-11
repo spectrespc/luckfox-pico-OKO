@@ -17,8 +17,10 @@ int udp_stream_init(unsigned short port, const char *mcast_addr) {
     struct sockaddr_in addr;
     int enable = 1;
 
-    if (!(g_udp_ctx = (struct udp_stream_ctx *)calloc(1, sizeof(struct udp_stream_ctx))))
+    if (!(g_udp_ctx = (struct udp_stream_ctx *)calloc(1, sizeof(struct udp_stream_ctx)))) {
         HAL_ERROR("stream", "Failed to allocate UDP stream context!\n");
+        return EXIT_FAILURE;
+    }
 
     g_udp_ctx->port = port ? port : UDP_DEFAULT_PORT;
     g_udp_ctx->running = 0;
@@ -29,6 +31,7 @@ int udp_stream_init(unsigned short port, const char *mcast_addr) {
         free(g_udp_ctx);
         g_udp_ctx = NULL;
         HAL_ERROR("stream", "Failed to initialize mutex!\n");
+        return EXIT_FAILURE;
     }
 
     if ((g_udp_ctx->socket_fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
@@ -139,6 +142,9 @@ int udp_stream_add_client(const char *host, unsigned short port) {
         if (g_udp_ctx->clients[i].addr.sin_addr.s_addr == addr.sin_addr.s_addr &&
             g_udp_ctx->clients[i].addr.sin_port == addr.sin_port) {
             g_udp_ctx->clients[i].last_act = time(NULL);
+            /* A configured dest wins over an auto-registered sender: the
+             * entry must survive even if the receiver never talks back. */
+            g_udp_ctx->clients[i].permanent = 1;
             pthread_mutex_unlock(&g_udp_ctx->mutex);
             return i;
         }
@@ -153,7 +159,8 @@ int udp_stream_add_client(const char *host, unsigned short port) {
             .ssrc = rand(),
             .seq = rand() & 0xFFFF,
             .tstamp = rand(),
-            .last_act = time(NULL)
+            .last_act = time(NULL),
+            .permanent = 1
         };
 
         g_udp_ctx->client_count++;
@@ -198,14 +205,14 @@ void udp_stream_remove_client(int client_id) {
 
 /**
  * Send a RTP-encapsulated NAL unit to all clients
- * @param nal_data NAL unit data
+ * @param nal_data NAL unit data (without the Annex-B start code)
  * @param nal_size Size of the NAL unit
- * @param is_keyframe Indicates if the NAL unit is a keyframe
+ * @param marker Sets the RTP marker bit (last packet of an access unit)
  * @param is_h265 Indicates if the NAL unit is using the H.265 codec
  * @return EXIT_SUCCESS or EXIT_FAILURE
  */
 int udp_stream_send_nal(const char *nal_data, int nal_size,
-    int is_keyframe, int is_h265) {
+    int marker, int is_h265) {
     if (!g_udp_ctx || !nal_data || nal_size <= 0) return EXIT_FAILURE;
 
     static unsigned char packet[MAX_UDP_PACKET_SIZE + RTP_HEADER_SIZE];
@@ -218,7 +225,12 @@ int udp_stream_send_nal(const char *nal_data, int nal_size,
 
     if (total_clients == 0 && !g_udp_ctx->is_mcast) return EXIT_SUCCESS;
 
-    if (nal_size + RTP_HEADER_SIZE <= MAX_UDP_PACKET_SIZE) {
+    /* A NAL unit that fits the packet buffer goes out as a single NAL unit
+     * packet.  The previous limit (nal_size + RTP_HEADER_SIZE) left a window
+     * of 1389..1400 bytes that was routed through the fragmentation path but
+     * produced a single fragment, i.e. an FU with both the start and the end
+     * bit set, which receivers reject. */
+    if (nal_size <= MAX_UDP_PACKET_SIZE) {
         pthread_mutex_lock(&g_udp_ctx->mutex);
 
         if (g_udp_ctx->is_mcast) {
@@ -229,7 +241,7 @@ int udp_stream_send_nal(const char *nal_data, int nal_size,
             mcast_addr.sin_port = htons(g_udp_ctx->port);
 
             int packet_size = add_rtp_header(packet, nal_size, 0, 0, 0,
-                                          is_keyframe, payload_type);
+                                          marker, payload_type);
 
             memcpy(packet + RTP_HEADER_SIZE, nal_data, nal_size);
             packet_size += nal_size;
@@ -242,7 +254,7 @@ int udp_stream_send_nal(const char *nal_data, int nal_size,
 
                 int packet_size = add_rtp_header(packet, nal_size,
                     g_udp_ctx->clients[i].seq++, g_udp_ctx->clients[i].tstamp,
-                    g_udp_ctx->clients[i].ssrc, is_keyframe, payload_type);
+                    g_udp_ctx->clients[i].ssrc, marker, payload_type);
 
                 memcpy(packet + RTP_HEADER_SIZE, nal_data, nal_size);
                 packet_size += nal_size;
@@ -256,16 +268,24 @@ int udp_stream_send_nal(const char *nal_data, int nal_size,
         pthread_mutex_unlock(&g_udp_ctx->mutex);
     } else {
         int nal_header_size = is_h265 ? 2 : 1;
+        /* RFC 7798: an H.265 fragmentation unit has a three-byte header
+         * (two-byte PayloadHdr with type 49 plus the FU header), while an
+         * H.264 FU-A has two (indicator plus FU header). */
+        int fu_header_size = is_h265 ? 3 : 2;
         unsigned char nal_type;
 
         if (is_h265) {
-            nal_type = nal_data[0] & 0x3F;
+            /* NAL unit type is bits 6..1 of the first header byte; masking
+             * with 0x3F kept the layer-id bit and shifted the type into the
+             * S/E bits of the FU header. */
+            nal_type = (nal_data[0] >> 1) & 0x3F;
         } else {
             nal_type = nal_data[0] & 0x1F;
         }
 
-        int fragments = (nal_size - nal_header_size + MAX_UDP_PACKET_SIZE - 1) /
-                        (MAX_UDP_PACKET_SIZE - 2);
+        int fragments = (nal_size - nal_header_size + MAX_UDP_PACKET_SIZE -
+                         fu_header_size - 1) /
+                        (MAX_UDP_PACKET_SIZE - fu_header_size);
         int bytes_left = nal_size - nal_header_size;
         const char *data_ptr = nal_data + nal_header_size;
 
@@ -283,7 +303,8 @@ int udp_stream_send_nal(const char *nal_data, int nal_size,
 
                 for (int frag = 0; frag < fragments; frag++) {
                     int is_last = (frag == fragments - 1);
-                    int payload_size = (is_last) ? remaining : (MAX_UDP_PACKET_SIZE - 2);
+                    int payload_size = (is_last) ? remaining :
+                        (MAX_UDP_PACKET_SIZE - fu_header_size);
 
                     if (is_h265) {
                         fu_indicator = (nal_data[0] & 0x81) | (49 << 1); // FU type=49
@@ -293,15 +314,23 @@ int udp_stream_send_nal(const char *nal_data, int nal_size,
                         fu_header = (is_first ? 0x80 : 0) | (is_last ? 0x40 : 0) | nal_type;
                     }
 
-                    int packet_size = add_rtp_header(packet, payload_size + 2, seq++,
+                    int packet_size = add_rtp_header(packet, payload_size + fu_header_size, seq++,
                                                   tstamp, ssrc,
-                                                  is_keyframe && is_last, payload_type);
+                                                  marker && is_last, payload_type);
 
-                    packet[RTP_HEADER_SIZE] = fu_indicator;
-                    packet[RTP_HEADER_SIZE + 1] = fu_header;
+                    if (is_h265) {
+                        /* PayloadHdr[0] (type 49), PayloadHdr[1] (layer id and
+                         * temporal id from the original header), FU header. */
+                        packet[RTP_HEADER_SIZE] = fu_indicator;
+                        packet[RTP_HEADER_SIZE + 1] = nal_data[1];
+                        packet[RTP_HEADER_SIZE + 2] = fu_header;
+                    } else {
+                        packet[RTP_HEADER_SIZE] = fu_indicator;
+                        packet[RTP_HEADER_SIZE + 1] = fu_header;
+                    }
 
-                    memcpy(packet + RTP_HEADER_SIZE + 2, frag_ptr, payload_size);
-                    packet_size += payload_size + 2;
+                    memcpy(packet + RTP_HEADER_SIZE + fu_header_size, frag_ptr, payload_size);
+                    packet_size += payload_size + fu_header_size;
 
                     frag_ptr += payload_size;
                     remaining -= payload_size;
@@ -336,14 +365,31 @@ int udp_stream_send_nal(const char *nal_data, int nal_size,
         pthread_mutex_unlock(&g_udp_ctx->mutex);
     }
 
+    return EXIT_SUCCESS;
+}
+
+/**
+ * Advances every client by one frame.
+ *
+ * The RTP timestamp must follow captured frames, not the number of NAL units:
+ * a frame is often split into AUD/SPS/PPS/slices, and one step per NAL would
+ * make the receiver treat each of them as a separate, ever-faster frame.
+ * @param tstamp_step Timestamp increment in 90 kHz units
+ */
+void udp_stream_frame_end(unsigned int tstamp_step) {
+    if (!g_udp_ctx) return;
+    if (!tstamp_step) tstamp_step = 3000;
+
     pthread_mutex_lock(&g_udp_ctx->mutex);
     for (int i = 0; i < UDP_MAX_CLIENTS; i++) {
         if (!g_udp_ctx->clients[i].active) continue;
-        g_udp_ctx->clients[i].tstamp += 3000;
+        g_udp_ctx->clients[i].tstamp += tstamp_step;
+        /* Keep configured destinations fresh: they are never expired, but a
+         * stale last_act would confuse diagnostics and any future policy. */
+        if (g_udp_ctx->clients[i].permanent)
+            g_udp_ctx->clients[i].last_act = time(NULL);
     }
     pthread_mutex_unlock(&g_udp_ctx->mutex);
-
-    return EXIT_SUCCESS;
 }
 
 /**
@@ -363,7 +409,10 @@ static void *udp_client_manager_thread(void *data) {
         pthread_mutex_lock(&ctx->mutex);
         for (int i = 0; i < UDP_MAX_CLIENTS; i++) {
             if (ctx->clients[i].active) {
-                if (difftime(now, ctx->clients[i].last_act) > 60) {
+                /* A configured destination has no traffic to send back, so
+                 * inactivity must not evict it (defect B). */
+                if (!ctx->clients[i].permanent &&
+                    difftime(now, ctx->clients[i].last_act) > UDP_CLIENT_TIMEOUT) {
                     ctx->clients[i].active = 0;
                     ctx->client_count--;
 
@@ -405,6 +454,7 @@ static void *udp_client_manager_thread(void *data) {
                     ctx->clients[i].seq = rand() & 0xFFFF;
                     ctx->clients[i].tstamp = rand();
                     ctx->clients[i].last_act = now;
+                    ctx->clients[i].permanent = 0;
 
                     ctx->client_count++;
 

@@ -6,6 +6,10 @@
 - **NFS** — экспортирует `output/srv/nfs/rootfs` для netboot-цикла;
 - **опционально** — WireGuard, AmneziaWG, OpenVPN по готовому паттерну.
 
+Отдельно, в `services/stream/`, живёт приёмник UDP/RTP (MediaMTX) для проверки
+раздачи камеры — он не входит в этот контейнер и поднимается своим профилем
+compose (см. раздел «Приёмник UDP/RTP»).
+
 Контейнер работает с `network_mode: host` и `privileged: true`: он использует
 общий с хостом модуль ядра `nfsd` и устройство `/dev/net/tun`. Путь экспорта
 внутри контейнера — `/srv/nfs/rootfs`, поэтому строки `nfsroot=` на DUT и
@@ -71,6 +75,41 @@ Rootfs, `oem` и `userdata` в NFS-экспорте раскладываются
 Секреты (ключи, сертификаты, CRL) в git не хранятся: только
 `output/srv/vpn/` (gitignore), в контейнере — `/etc/oko-secrets/`.
 Публичные вендорские дефолты стенда допустимы.
+
+## Приёмник UDP/RTP: `services/stream/`
+
+Отдельный профиль, а не программа внутри `oko-services`: это сторонний образ
+MediaMTX с host-сетью, которому не нужны ни TFTP, ни NFS, ни privileged-режим.
+Так `oko-services` остаётся одним самодостаточным контейнером, а приёмник
+поднимается и гасится независимо от netboot-цикла.
+
+```sh
+docker compose -f services/stream/docker-compose.yml up -d
+docker compose -f services/stream/docker-compose.yml logs -f
+docker compose -f services/stream/docker-compose.yml down
+```
+
+- Образ закреплён: `bluenviron/mediamtx:1.21.3-ffmpeg`. Вариант `-ffmpeg` нужен,
+  потому что на хосте нет `ffprobe`/`ffmpeg`, а контейнер используется и как
+  инструмент анализа (`docker exec oko-mediamtx ffprobe ...`).
+- Сеть `host`: камера шлёт RTP на `192.168.52.200:5600`, читатели идут на
+  `8554` (RTSP), `8888` (HLS), `8889` (WebRTC). Control API — только
+  `127.0.0.1:9997`.
+- Путь `cam` описан в `services/stream/mediamtx.yml`: `source: udp+rtp://:5600`
+  и `rtpSDP` с `H265/90000`, потому что divinus отправляет «сырой» RTP без SDP.
+- Аутентификация — стоковая: пользователь `any` имеет `publish/read/playback`,
+  `api/metrics/pprof` ограничены localhost. Это допустимо только для
+  лабораторного стенда: RTSP отдаётся без пароля.
+- Проверка цепочки: `bench/run.sh stream_check.py --latency --compare-dut`
+  (см. `bench/README.md`).
+- **Браузер и H.265.** Chromium не декодирует HEVC: WebRTC-сессия закрывается
+  с `codecs not supported by client`, а HLS приходит как `hvc1` и в MSE не
+  играет. H.265 играется в Safari или нативном плеере. Для браузерного
+  просмотра переключите камеру на H.264 (`mp4.codec: H.264` в
+  `/userdata/divinus.yaml`, затем `kill -HUP $(pidof divinus)`) и замените
+  `a=rtpmap:96 H265/90000` на `H264/90000` в `services/stream/mediamtx.yml`
+  (`docker compose -f services/stream/docker-compose.yml restart`). Проверено
+  2026-11-10: WebRTC играет 1080p30 в Chromium, HLS — H.264.
 
 ## Оговорки
 

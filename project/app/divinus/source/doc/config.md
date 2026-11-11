@@ -144,9 +144,26 @@ IVS uses the last VPSS channel (index 3). It cannot run together with MJPEG.
 
 ## Stream section
 
+Pushes the main channel as raw RTP over UDP, independently of `rtsp.enable` and
+of the built-in RTSP server. Each NAL unit is sent in its own RTP packet
+(payload type 96); NAL units larger than 1400 bytes are fragmented as RFC 6184
+FU-A (H.264) or RFC 7798 FU (H.265). H.265 fragmentation is only correct as of
+the OKO fix, older builds sent a two-byte FU header and no receiver could
+depacketize them.
+
 - **enable**: Boolean to turn on special streaming methods (default: `false`).
-- **udp_srcport**: Source port for UDP streaming (default: `5600`).
+  The whole `dest` list is only parsed when this is `true`.
+- **udp_srcport**: Source port for UDP streaming (default: `5600`). The socket
+  binds this port, packets are sent from it, and it is also the destination
+  port when a `udp://host` entry has no explicit port.
 - **dest**: List of destination URLs for streaming (e.g., `- udp://239.255.255.0:5600 or - rtmp://myserver/path/mykey`).
+  Up to four entries. The multicast flag for `udp://` comes from the first
+  octet of the host part: `224..239` is IPv4 multicast, everything else is
+  unicast. An automatically registered sender (for example MediaMTX playing the
+  built-in RTSP stream, which creates no RTP traffic in this direction) expires
+  after 60 s of silence; destinations from this list never expire.
+  This section is independent of `rtsp.enable`: the built-in RTSP server
+  publishes the same main channel on its own.
 
 ## Audio section
 

@@ -1,0 +1,57 @@
+# OKO testbench receiver: UDP/RTP from the divinus camera, republished as
+# RTSP/HLS/WebRTC.  Only the keys that differ from the upstream defaults are
+# listed; MediaMTX fills the rest.
+#
+# The camera pushes bare RTP (payload type 96, H.265, no SDP), so the path
+# listens on UDP 5600 and the payload is described inline with rtpSDP.
+#
+# Authorization is left at the stock policy: the "any" user has
+# publish/read/playback and the api/metrics/pprof actions stay restricted to
+# 127.0.0.1, so RTSP plays without credentials (test stand only, see
+# services/README.md).
+
+logLevel: info
+logDestinations: [stdout]
+
+# Control API for the bench scripts; loopback only.
+api: true
+apiAddress: 127.0.0.1:9997
+
+metrics: false
+pprof: false
+playback: false
+
+# Not used by the test chain: fewer listeners, less surface.
+rtmp: false
+srt: false
+moq: false
+
+# The stock policy lets the "any" user read, so every host on the lab subnet
+# (192.168.52.0/24) can watch the stream.  That is accepted for a stand that is
+# not reachable from an untrusted network; before sharing it, add an explicit
+# authInternalUsers entry that grants read only to the bench addresses instead
+# of "any".
+rtsp: true
+rtspAddress: :8554
+hls: true
+hlsAddress: :8888
+webrtc: true
+webrtcAddress: :8889
+webrtcLocalUDPAddress: :8189
+
+paths:
+  cam:
+    source: udp+rtp://:5600
+    # Chromium cannot decode H.265: WebRTC closes with "codecs not supported
+    # by client" and HLS is offered as hvc1, which MSE rejects.  To watch the
+    # stream in a browser, switch the camera to H.264 (`mp4.codec: H.264` in
+    # /userdata/divinus.yaml) and change the rtpmap below to H264/90000; the
+    # rest of the chain stays as is (tested 2026-11-10: WebRTC plays 1080p).
+    rtpSDP: |
+      v=0
+      o=- 0 0 IN IP4 0.0.0.0
+      s=OKO
+      c=IN IP4 0.0.0.0
+      t=0 0
+      m=video 0 RTP/AVP 96
+      a=rtpmap:96 H265/90000

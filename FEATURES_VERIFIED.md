@@ -5,7 +5,7 @@
 `FEATURES_UNVERIFIED.md`; паспорт платформы, общие примечания и команды проверки —
 в `FEATURES.md`; доказательства — в `VERIFIED_FUNCTIONS.md`.
 
-Статус на 2026-11-09.
+Статус на 2026-11-10.
 
 ## Русский
 
@@ -15,7 +15,7 @@
 |---|---|---|---|---|---|
 | Платформа и образ | Разметка SPI NAND | `boot` 6M, `oem` 40M, `userdata` 40M, `rootfs` 168M; нужна полная прошивка `update.img` | `update.img`, BoardConfig | `boot` 4→6M, `oem` 30→40M, `userdata` 10→40M, `rootfs` 198→168M | **работает** — `/proc/mtd`: `00600000`, `02800000`, `02800000`, `0a800000`; `df -h /userdata` — 29.1 МиБ; загрузка `.rknn` 3 МиБ проходит |
 | Платформа и образ | Сенсоры SC230AI-only | В образе только `sc230ai.ko` и IQ SC230AI; DTS выключает `sc3336`/`mis5001` | BoardConfig, `rv1106-sc230ai.config`, активный DTS | DTS `rv1106g-...-sc230ai.dts`, фрагмент ядра, `insmod_ko.sh` | **работает** — в `/oem/usr/ko` только `sc230ai.ko` |
-| Платформа и образ | Состав `oem`/rootfs | Вендорские `sample_*`/`simple_*`, `rkipc`, серверы rkaiq, `rk_*_test`/`rk_mpi_*_test`, лишние v4l-утилиты и Python вырезаны; диагностика `v4l2-ctl`/`media-ctl`/`rgaImDemo` сохранена | `project/cfg/BoardConfig_IPC/oko-prune.list`, `tools/native/check_image_contents.sh` | единый prune-список и хук `__RUN_POST_CLEAN_FILES` | **вырезано (2026-11-09)** — `check_image_contents.sh`: 61 запрещённый путь отсутствует, 22 обязательных на месте |
+| Платформа и образ | Состав `oem`/rootfs | Вендорские `sample_*`/`simple_*`, `rkipc`, серверы rkaiq, `rk_*_test`/`rk_mpi_*_test`, лишние v4l-утилиты и Python вырезаны; диагностика `v4l2-ctl`/`media-ctl`/`rgaImDemo` сохранена | `project/cfg/BoardConfig_IPC/oko-prune.list`, `tools/native/check_image_contents.sh` | единый prune-список и хук `__RUN_POST_CLEAN_FILES` | **вырезано (2026-11-10)** — `check_image_contents.sh`: 63 запрещённых пути отсутствуют, 23 обязательных на месте |
 | Платформа и образ | AIISP-модель | В `/oem/usr/lib` только модель из `RK_AIISP_MODEL` | `RK_AIISP_MODEL=rkmodel_1080_1920.aiisp` | копирование модели до `build_mkimg oem` | **работает** — модель и `librkpostisp.so` в образе |
 | Платформа и образ | Buildroot-утилиты | `fw_printenv`/`fw_setenv`, `mount`/`fdisk`/`sfdisk`/`wipefs` | `fw_printenv`, `/etc/fw_env.config` | `BR2_PACKAGE_UBOOT_TOOLS*`, `UTIL_LINUX_WIPEFS` | **работает** — env читается, карта форматируется |
 | Платформа и образ | Сборка образа | нативная сборка на Debian 13, результат `output/image/update.img` | `tools/native/setup_host.sh`, `source tools/native/env.sh`, `./build.sh firmware`, `.BoardConfig.mk` | `tools/native/`: setup_host, env, smoke; Buildroot 2026.08.1 | **работает** — образ собран и прошит в SPI NAND |
@@ -23,6 +23,7 @@
 | Платформа и образ | Содержимое `/oem` на BusyBox 1.38 при NFS-root | вендорские блобы медиастека, утилиты OKO и ko-модули из NFS-экспорта | BusyBox 1.38.0, `rv1106-netboot.config`, `bench/nfs_env.py` | **работает (2026-11-08)** — `api_check` 98/98 (NFS и NAND), `osd_check` 1080p30 с UTF-8 OSD, `ui_check` зелёный, `lsmod` sc230ai/rockit/rknpu/rve/rk_dvbm/mpp_vcodec/rga3, сообщение `oko-osd` через fifo в кадре, dry-cycle `wg`/`awg`, microSD + `/api/storage`, `passwd` → `$5$`, init-скрипты без ошибок |
 | Видео и стриминг | RTSP основной поток | `/live/0`, H.265 1920x1080 30 fps, ~4.7 Мбит/с | RTSP 554, `[mp4]` | `divinus` вместо `rkipc`; 1080p30, битрейт 4096 кбит/с | **работает** — PyAV: hevc 1920x1080 |
 | Видео и стриминг | RTSP второй поток | `/live/1`, H.265 640x360; выключение отдаёт 404 | `/api/substream`, `[substream]` | второй поток, soft-stop, рестарт `main → sub → JPEG` | **работает** — 30 кадров; 404 после disable |
+| Видео и стриминг | UDP/RTP-раздача на сервер (`stream`) | Главный канал как «сырой» RTP (PT 96, H.265) на до 4 адресов, unicast и multicast | `[stream]` (`enable`, `udp_srcport`, `dest`), `kill -HUP` | исправления OKO: разбор `dest` (uClibc-regex), регистрация всех адресов, «постоянные» клиенты без 60-с простоя, один NAL на RTP-пакет, FU H.265 по RFC 7798, шаг метки времени на кадр | **работает** — 2026-11-10, камера → `192.168.52.200:5600` → MediaMTX 1.21.3: `ffprobe` без пароля отдаёт `hevc Main 1920x1080 30/1`; 10 мин: 17 922 кадра, 29.87 fps против 29.85 fps у RTSP камеры (0.1 %), задержка ретрансляции 1–7 мс (медиана), 82 кадра с ошибкой (0.46 %); после `reboot` поток поднялся сам; два `dest` (unicast + multicast) регистрируются оба |
 | Видео и стриминг | MJPEG | Поток для браузеров без HEVC | `/api/mjpeg` | 30 fps в `divinus` | **работает** — `multipart`, 1.3 МБ за 4 с |
 | Видео и стриминг | MP4-превью | `/video.mp4`; браузер должен поддерживать HEVC | `/api/mp4` | исправлен пустой chunk, подсказка HEVC | **работает** — 30 кадров hevc 1920x1080 |
 | Видео и стриминг | JPEG-снимок | Кадр по запросу, без OSD | `/api/jpeg` | `divinus` вместо `rkipc` | **работает** — endpoint отвечает |
@@ -100,13 +101,13 @@ and partially verified capabilities are in `FEATURES_UNVERIFIED.md`; the
 platform passport, shared notes and verification commands are in `FEATURES.md`;
 evidence is in `VERIFIED_FUNCTIONS.md`.
 
-Status as of 2026-11-09.
+Status as of 2026-11-10.
 
 | Group | Feature | Control (API, YAML section) | What was added (OKO vs vendor V1.4) | Verified & works |
 |---|---|---|---|---|
 | Platform and image | SPI NAND layout: `boot` 6M, `oem` 40M, `userdata` 40M, `rootfs` 168M; full `update.img` required | `update.img`, BoardConfig | `boot` 4→6M, `oem` 30→40M, `userdata` 10→40M, `rootfs` 198→168M | **works** — `/proc/mtd` shows `00600000`, `02800000`, `02800000`, `0a800000`; `/userdata` is 29.1 MiB and a 3 MiB `.rknn` upload succeeds |
 | Platform and image | SC230AI-only sensors: only `sc230ai.ko` and SC230AI IQ, `sc3336`/`mis5001` disabled in the DTS | BoardConfig, `rv1106-sc230ai.config`, active DTS | DTS `rv1106g-...-sc230ai.dts`, kernel fragment, `insmod_ko.sh` | **works** — only `sc230ai.ko` in `/oem/usr/ko` |
-| Platform and image | `oem`/rootfs contents: vendor `sample_*`/`simple_*`, `rkipc`, rkaiq servers, `rk_*_test`/`rk_mpi_*_test`, extra v4l utilities and Python are pruned; `v4l2-ctl`/`media-ctl`/`rgaImDemo` diagnostics are kept | `project/cfg/BoardConfig_IPC/oko-prune.list`, `tools/native/check_image_contents.sh` | one prune list and the `__RUN_POST_CLEAN_FILES` hook | **pruned (2026-11-09)** — `check_image_contents.sh`: 61 forbidden paths absent, 22 required paths present |
+| Platform and image | `oem`/rootfs contents: vendor `sample_*`/`simple_*`, `rkipc`, rkaiq servers, `rk_*_test`/`rk_mpi_*_test`, extra v4l utilities and Python are pruned; `v4l2-ctl`/`media-ctl`/`rgaImDemo` diagnostics are kept | `project/cfg/BoardConfig_IPC/oko-prune.list`, `tools/native/check_image_contents.sh` | one prune list and the `__RUN_POST_CLEAN_FILES` hook | **pruned (2026-11-10)** — `check_image_contents.sh`: 63 forbidden paths absent, 23 required paths present |
 | Platform and image | AIISP model: only `RK_AIISP_MODEL` is placed in `/oem/usr/lib` | `RK_AIISP_MODEL=rkmodel_1080_1920.aiisp` | model copied before `build_mkimg oem` | **works** — model and `librkpostisp.so` present |
 | Platform and image | Buildroot utilities: `fw_printenv`/`fw_setenv`, `mount`/`fdisk`/`sfdisk`/`wipefs` | `fw_printenv`, `/etc/fw_env.config` | `BR2_PACKAGE_UBOOT_TOOLS*`, `UTIL_LINUX_WIPEFS` | **works** — env readable, card formattable |
 | Platform and image | Native Debian 13 build producing `output/image/update.img` | `tools/native/setup_host.sh`, `source tools/native/env.sh`, `./build.sh firmware`, `.BoardConfig.mk` | `tools/native/`: setup_host, env, smoke; Buildroot 2026.08.1 | **works** — image built and flashed to SPI NAND |
@@ -114,6 +115,7 @@ Status as of 2026-11-09.
 | Platform and image | `/oem` contents on BusyBox 1.38 over NFS root | vendor media blobs, OKO utilities and ko modules from the NFS export | BusyBox 1.38.0, `rv1106-netboot.config`, `bench/nfs_env.py` | **works (2026-11-08)** — `api_check` 98/98 (NFS and NAND), `osd_check` 1080p30 with UTF-8 OSD, `ui_check` passed, `lsmod` sc230ai/rockit/rknpu/rve/rk_dvbm/mpp_vcodec/rga3, `oko-osd` fifo message rendered in the frame, `wg`/`awg` dry cycle, microSD + `/api/storage`, `passwd` → `$5$`, init scripts without errors |
 | Video and streaming | RTSP main `/live/0`: H.265 1920x1080 30 fps, ~4.7 Mbit/s | RTSP 554, `[mp4]` | `divinus` instead of `rkipc`; 1080p30, 4096 kbit/s | **works** — PyAV: hevc 1920x1080 |
 | Video and streaming | RTSP sub `/live/1`: H.265 640x360; disabling returns 404 | `/api/substream`, `[substream]` | second stream, soft-stop, `main → sub → JPEG` restart | **works** — 30 frames; 404 after disable |
+| Video and streaming | UDP/RTP push to a server (`stream`): main channel as raw RTP (PT 96, H.265) to up to four destinations, unicast and multicast | `[stream]` (`enable`, `udp_srcport`, `dest`), `kill -HUP` | OKO fixes: `dest` parsing (uClibc regex), all destinations registered, permanent clients without the 60 s expiry, one NAL per RTP packet, RFC 7798 H.265 FU, timestamp step per frame | **works** — 2026-11-10, camera → `192.168.52.200:5600` → MediaMTX 1.21.3: `ffprobe` without credentials returns `hevc Main 1920x1080 30/1`; 10 minutes: 17,922 frames, 29.87 fps versus 29.85 fps on the camera RTSP (0.1%), relay delay 1–7 ms median, 82 frames in error (0.46%); after `reboot` the stream came back on its own; two `dest` entries (unicast + multicast) are both registered |
 | Video and streaming | MJPEG stream for browsers without HEVC | `/api/mjpeg` | 30 fps in `divinus` | **works** — `multipart`, 1.3 MB in 4 s |
 | Video and streaming | MP4 preview `/video.mp4`; the browser must support HEVC | `/api/mp4` | empty chunk fixed, HEVC hint | **works** — 30 hevc 1920x1080 frames |
 | Video and streaming | JPEG snapshot on demand, no OSD | `/api/jpeg` | `divinus` instead of `rkipc` | **works** — endpoint responds |

@@ -195,7 +195,9 @@ struct AppConfig {
     // [stream]
     bool stream_enable;
     unsigned short stream_udp_srcport;
-    char stream_dests[4][256];
+    /* One slot more than the parse limit: parse_list() terminates the list by
+     * writing stream_dests[count], so count may be 4. */
+    char stream_dests[5][256];
 
     // [audio]
     bool audio_enable;
