@@ -917,9 +917,12 @@ The WebUI calls it from **Network → Ethernet**. `mode` is `dhcp` or `static`;
 
 | Method | Parameters | Description |
 |--------|------------|-------------|
-| GET | none | Current env settings plus live IP/MAC and DHCP state |
-| GET | `mode=dhcp` | Store DHCP mode; `oko-net apply` restarts `dhcpcd` |
-| GET | `mode=static&ipaddr=...&netmask=...&gateway=...&dns=...` | Store static settings, stop the DHCP client and apply them |
+| GET | none | Current env settings plus live IP/MAC, DHCP state and the active default route |
+| GET | `mode=dhcp&metric=100` | Store DHCP mode and the route priority; `oko-net apply` restarts `dhcpcd` |
+| GET | `mode=static&ipaddr=...&netmask=...&gateway=...&dns=...&metric=100` | Store static settings, stop the DHCP client and apply them |
+| GET | `metric=100` | Store only `oko_net_metric`; `oko-route once` re-aligns the route |
+
+`metric` is 1..99999 (lower wins); an empty value keeps the stored priority.
 
 **Response**
 
@@ -933,9 +936,29 @@ The WebUI calls it from **Network → Ethernet**. `mode` is `dhcp` or `static`;
   "mac": "02:47:8d:05:67:56",
   "current_ip": "192.168.52.97",
   "current_mac": "02:47:8d:05:67:56",
-  "dhcp_running": true
+  "dhcp_running": true,
+  "metric": "100",
+  "active_default": {"dev": "eth0", "gw": "192.168.52.254", "metric": 100},
+  "wlan_active": true,
+  "demoted": "",
+  "netboot": false,
+  "multihome": true,
+  "arp_tuning": true,
+  "policy_tables": true,
+  "eth_addr": "192.168.52.97/24",
+  "wlan_addr": "192.168.52.28/24"
 }
 ```
+
+`active_default` is the route the kernel uses (lowest metric), `demoted` is
+`eth0`, `wlan0` or `eth0,wlan0` while a gateway is considered dead, and
+`netboot` is true under `root=/dev/nfs`. See "Default routes and failover".
+
+`multihome` is true when both interfaces have an IPv4 address in overlapping
+subnets, `arp_tuning` reports `arp_ignore`/`arp_announce` (and loose
+`rp_filter`), and `policy_tables` reports the per-interface routing tables
+and rules of the weak-host protection. `eth_addr`/`wlan_addr` are the live
+`address/prefix` values (empty when the interface has no IPv4 address).
 
 `mac` and the settings are persisted as `oko_*` variables in `/dev/mtd0`
 through `fw_printenv`/`fw_setenv`, so they survive a `/userdata` or rootfs
@@ -943,6 +966,119 @@ reset. The MAC is derived once from `/proc/device-tree/serial-number`; DHCP
 uses the MAC as client ID (no DUID), which keeps the lease stable across
 firmware updates. Static mode returns after the response has been sent; the
 browser may need to reconnect to the new address.
+
+#### `/api/wifi`
+
+Reads and writes the USB Wi-Fi configuration stored in the U-Boot env
+partition. The helper is `/usr/bin/oko-wifi`; it owns `wlan0` and keeps one
+state machine (STA, SoftAP or off). The WebUI calls this endpoint from
+**Network → Wi-Fi**.
+
+| Method | Parameters | Description |
+|--------|------------|-------------|
+| GET | none | Stored settings plus live state, adapter and hotspot details |
+| POST | `mode=sta\|ap\|both\|off&ssid=...&psk=...&dhcp=on\|off&ipaddr=...&netmask=...&gateway=...&dns=...&ap_ssid=...&ap_psk=...&metric=600` | Validate and store the settings; apply runs after the response |
+| POST | `metric=600` | Store only `oko_wlan_metric`; the routing daemon picks it up |
+| POST | `scan=1` | Start a background scan; returns `{"state":"scanning"}` |
+
+`psk` is write-only: an empty value keeps the stored station passphrase.
+`ap_psk` is not secret from the operator: GET returns it in the `ap_psk`
+field and `/api/wifi/apinfo` exposes the effective one. An empty `ap_psk`
+stores no override, and the effective SoftAP passphrase falls back to the
+factory `ybrjveytljdthzq`; the hotspot is therefore always WPA2-PSK, never
+open. `both` is refused with `error":"ap_st_unsupported"` unless the
+driver exposes concurrent AP+STA interface combinations (the current
+RTL8821CU build does not). A station without a usable uplink falls back to a
+SoftAP: SSID `OKO-XXXX` (last four MAC digits) on `192.168.43.1/24` with
+`dnsmasq` DHCP and WPA2-PSK (`wpa=2`, `rsn_pairwise=CCMP`).
+
+**Response**
+
+```json
+{
+  "mode": "sta",
+  "ssid": "wifi24.example",
+  "psk_set": true,
+  "dhcp": "on",
+  "ipaddr": "",
+  "netmask": "",
+  "gateway": "",
+  "dns": "",
+  "metric": 600,
+  "ap_ssid": "",
+  "ap_psk": "ybrjveytljdthzq",
+  "ap_ssid_effective": "OKO-E80E",
+  "ap_addr": "192.168.43.1",
+  "wlan0_present": true,
+  "wpa_state": "COMPLETED",
+  "current_ip": "192.168.52.28",
+  "driver": "rtl8821cu",
+  "usb_id": "0xbda:0xc811",
+  "ap_active": false,
+  "stations": 0,
+  "chip_supports_ap_st": false
+}
+```
+
+Settings live in `oko_wlan_*` variables in `/dev/mtd0` (plain-text PSK, like
+the Ethernet helper); they survive `/userdata` and rootfs updates. The station
+default route uses `oko_wlan_metric` (600 by default), so Ethernet keeps
+priority when both links are up; `/etc/resolv.conf` and the final metrics are
+owned by `/usr/bin/oko-route`.
+
+#### `/api/wifi/scan`
+
+Returns the cached scan result. The cache is written by `oko-wifi scan json`
+to `/tmp/wifi_scan.json`; without a completed scan the response is
+`{"state":"idle","timestamp":0,"results":[]}`. A scan is refused while the
+SoftAP is active (`error":"busy"`), because the single interface cannot scan
+and serve clients at the same time.
+
+```json
+{"state":"done","timestamp":1794483169,"results":[
+  {"ssid":"wifi24.example","bssid":"18:fd:74:c3:8e:7e","signal":-64,
+   "freq":2422,"channel":3,"flags":"[WPA2-PSK-CCMP][ESS]"}]}
+```
+
+#### `/api/wifi/apinfo`
+
+Returns the effective hotspot name, passphrase, management address, state and
+the number of associated clients (ARP entries in `192.168.43.0/24`). The
+passphrase is shown so the operator can connect a phone to the fallback
+hotspot; while `oko_wlan_ap_psk` is unset it is the factory
+`ybrjveytljdthzq` (public default, change it before deployment — KI-030).
+The hotspot is always WPA2-PSK.
+
+#### Default routes and failover
+
+`/usr/bin/oko-route` (started by `S97okoroute`) owns the IPv4 default routes
+and `/etc/resolv.conf`. Both `eth0` and `wlan0` (STA, `wpa_state=COMPLETED`)
+may be uplinks at once; the lower metric wins:
+
+| Env key | Default | Uplink |
+|---------|---------|--------|
+| `oko_net_metric` | 100 | Ethernet |
+| `oko_wlan_metric` | 600 | Wi-Fi station |
+
+The daemon re-applies the metrics every 5 s (a DHCP renewal that installs its
+own default is corrected within one pass), probes the gateway with
+`ping -I` and moves a route to metric+10000 after three failures; two
+successes restore it, with a 30 s cooldown. The kernel keeps one default per
+prefix/metric, so equal values are separated automatically (Wi-Fi = +1).
+`/etc/resolv.conf` is written only here: dhcpcd runs with
+`nohook resolv.conf`, its resolvers are saved by
+`/lib/dhcpcd/dhcpcd-hooks/20-oko-route`, the Wi-Fi resolvers come from
+`/tmp/wlan.dns`, and up to three unique servers are ordered by the effective
+metric. Under `root=/dev/nfs` the Ethernet route and resolv.conf are left
+untouched (KI-060).
+
+Inspect the live state without HTTP:
+
+```sh
+/usr/bin/oko-route show      # net_metric, wlan_metric, active_default_*, demoted, netboot
+/usr/bin/oko-route once      # reconcile now (both apply paths do this)
+/usr/bin/oko-route monitor   # foreground daemon (S97okoroute starts it)
+```
 
 #### `/api/storage`
 

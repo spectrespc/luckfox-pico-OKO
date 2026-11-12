@@ -1,0 +1,29 @@
+#!/bin/sh
+#
+# OKO uplink routing: keep one default route per uplink with the configured
+# metrics (oko_net_metric / oko_wlan_metric), fail over when a gateway stops
+# answering and own /etc/resolv.conf.  Runs before S98okowifi so a station that
+# appears later joins the table with its metric already known.
+
+case "$1" in
+	start)
+		if [ -x /usr/bin/oko-route ]; then
+			/usr/bin/oko-route once >/dev/null 2>&1
+			/usr/bin/oko-route monitor >/dev/null 2>&1 &
+		fi
+		;;
+	stop)
+		[ -x /usr/bin/oko-route ] && /usr/bin/oko-route stop >/dev/null 2>&1
+		;;
+	restart)
+		[ -x /usr/bin/oko-route ] && /usr/bin/oko-route stop >/dev/null 2>&1
+		if [ -x /usr/bin/oko-route ]; then
+			/usr/bin/oko-route once >/dev/null 2>&1
+			/usr/bin/oko-route monitor >/dev/null 2>&1 &
+		fi
+		;;
+	*)
+		echo "usage: $0 {start|stop|restart}" >&2
+		exit 1
+		;;
+esac

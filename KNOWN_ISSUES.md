@@ -1,6 +1,6 @@
 # Известные ошибки и ограничения OKO
 
-Обновлено: `2026-11-10`. В файле — открытые проблемы, подтверждённые
+Обновлено: `2026-11-12`. В файле — открытые проблемы, подтверждённые
 ограничения и недавно закрытые записи (KI-036). Проверенные функции и доказательства — в `VERIFIED_FUNCTIONS.md`,
 состав и статус функционала — в `FEATURES_VERIFIED.md` / `FEATURES_UNVERIFIED.md`,
 процедуры стенда — в `TESTBENCH.md`.
@@ -113,10 +113,12 @@
   Проверены unbind/bind и API `mount`/`unmount`/`format`; извлечение и установка
   карты руками — нет. Статус: **ограничено**.
 
-- **KI-019. WiFi AIC8800 не проверялся.**
-  Модули собираются и копируются в `/oem/usr/ko`, но стек WiFi на стенде не
-  тестировался; сетевые проверки выполнены по Ethernet.
-  Статус: **ограничено**.
+- **KI-019. Wi-Fi: USB RTL8821CU проверен, AIC8800 SDIO — нет.**
+  Вендорские модули собираются в `/oem/usr/ko`; USB-адаптер `0bda:c811`
+  (RTL8821CU) проверен на стенде 2026-11-12: скан, STA WPA2 с DHCP,
+  ping/HTTP/RTSP через wlan0, AP-фолбэк и SD-импорт. SDIO-сборка
+  (`aic8800dc`/`aic8800_fdrv`) и одновременный AP+STA не тестировались.
+  Статус: **ограничено** (SDIO и AP+STA).
 
 - **KI-020. У INA3221 не подключены силовые входы.**
   Обмен по I2C работает, но `VIN+`/`VIN-`/`VBUS` не подключены к нагрузке,
@@ -214,6 +216,24 @@
   Проверено: UDC `ffb00000.usb` присутствует, state `configured`, gadget
   перечисляется.
   Статус: **закрыто**.
+- **KI-059. Два аплинка: ограничения failover и приоритетов.**
+  Активен всегда один default-маршрут (меньшая метрика), балансировки и
+  агрегации нет. Равные `oko_net_metric`/`oko_wlan_metric` ядро не хранит в
+  одной таблице, поэтому `oko-route` автоматически даёт Wi-Fi метрику +1
+  (Ethernet выигрывает); для предсказуемости задавайте разные значения.
+  wlan0 считается аплинком только при `mode=sta` и `wpa_state=COMPLETED` —
+  SoftAP `192.168.43.1/24` управляющая сеть, не аплинк. VPN-туннель при
+  failover рвётся и переподнимается на новом default; per-VPN pin по
+  интерфейсу не поддерживается (`FEATURES.md`).
+  Статус: **принятое ограничение (by design)**.
+
+- **KI-060. При netboot (`root=/dev/nfs`) `oko-route` не управляет eth и resolv.**
+  Демон намеренно не подменяет Ethernet-default и не переписывает
+  `/etc/resolv.conf`, чтобы не сломать NFS-загрузку стенда; Wi-Fi-метрики при
+  этом выравниваются. Следствие: в NFS-режиме DNS Wi-Fi-аплинка в
+  resolv.conf не попадает, а eth-метрика остаётся такой, какой её поставил
+  kernel/`ip=`. Это защита стенда, а не режим продукта.
+  Статус: **принятое ограничение (by design)**.
 
 ### Прошивка и конфигурация
 
@@ -419,8 +439,11 @@
   Статус: **принятое ограничение**.
 
 - **KI-030. Фабричный пароль нужно сменить.**
-  WebUI/RTSP: `admin` / `oko-change-me`. До подключения камеры к недоверенной
-  сети пароль сменить. Статус: **требование эксплуатации**.
+  WebUI/RTSP: `admin` / `oko-change-me`; SoftAP (`OKO-XXXX`): WPA2-PSK
+  `ybrjveytljdthzq`, пока `oko_wlan_ap_psk` не задан. До подключения камеры к
+  недоверенной сети сменить оба: SoftAP — `oko-wifi set` или `/api/wifi`,
+  возврат заводского — `fw_setenv oko_wlan_ap_psk`. Статус: **требование
+  эксплуатации**.
 
 ### Инструменты разработки
 
@@ -432,6 +455,13 @@
   используйте `git worktree` на коммите до миграции и вендорский
   rootfs из `IMAGE/`. Статус: **принятое ограничение**.
 
+- **KI-058. Wi-Fi PSK хранится открытым текстом в env U-Boot.**
+  `oko_wlan_psk` и `oko_wlan_ap_psk` лежат в `/dev/mtd0` без шифрования,
+  как и настройки Ethernet. API не возвращает пароль станции (`psk_set`),
+  но пароль точки доступа доступен в `/api/wifi/apinfo` для подключения.
+  Перенос в защищённое хранилище — отдельное решение.
+  Статус: **принятое ограничение**.
+
 - **KI-031. Headless Chromium требует `libasound.so.2`.**
   В хостовом окружении библиотеки нет. Обход без root:
   `apt-get download libasound2t64`, распаковать `dpkg-deb -x` и задать
@@ -439,7 +469,7 @@
 
 ## English
 
-Updated: `2026-11-08`. This file lists open problems, confirmed limitations and
+Updated: `2026-11-12`. This file lists open problems, confirmed limitations and
 recently closed entries (KI-036).
 Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
 `FEATURES_VERIFIED.md` / `FEATURES_UNVERIFIED.md`, bench procedures in
@@ -536,9 +566,12 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   `mount`/`unmount`/`format` are verified; manual card removal/insertion is not.
   Status: **limited**.
 
-- **KI-019. WiFi AIC8800 is untested.** Modules are built and copied to
-  `/oem/usr/ko`, but the WiFi stack was not exercised; networking was verified
-  over Ethernet. Status: **limited**.
+- **KI-019. Wi-Fi: USB RTL8821CU is verified, AIC8800 SDIO is not.** The
+  vendor modules are built into `/oem/usr/ko`. The `0bda:c811` (RTL8821CU)
+  USB adapter was verified on the bench on 2026-11-12: scan, WPA2 STA with
+  DHCP, ping/HTTP/RTSP over wlan0, AP fallback and SD import. The SDIO build
+  (`aic8800dc`/`aic8800_fdrv`) and concurrent AP+STA were not tested. Status:
+  **limited** (SDIO and AP+STA).
 
 - **KI-020. INA3221 power inputs are not connected.** I2C works, but
   `VIN+`/`VIN-`/`VBUS` are not wired to a load, so current/power may read zero.
@@ -632,6 +665,24 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   (`USB_CONFIGFS_MASS_STORAGE` can be enabled in `S50usbdevice` when needed).
   Verified: UDC `ffb00000.usb` present, state `configured`, gadget enumerated.
   Status: **closed**.
+- **KI-059. Dual uplink: failover and priority limitations.**
+  Only one default route is active at a time (the lower metric); there is no
+  balancing or aggregation. The kernel cannot keep two equal
+  `oko_net_metric`/`oko_wlan_metric` values in one table, so `oko-route`
+  automatically adds +1 to Wi-Fi (Ethernet wins); use different values for
+  predictable behaviour. `wlan0` is an uplink only with `mode=sta` and
+  `wpa_state=COMPLETED` - the SoftAP `192.168.43.1/24` is a management
+  network, not an uplink. A VPN tunnel breaks on failover and is re-established
+  on the new default; per-VPN interface pinning is not supported
+  (`FEATURES.md`). Status: **accepted limitation (by design)**.
+
+- **KI-060. Under netboot (`root=/dev/nfs`) `oko-route` does not manage eth or resolv.**
+  The daemon deliberately leaves the Ethernet default route and
+  `/etc/resolv.conf` alone so the bench NFS boot is not broken; the Wi-Fi
+  metrics are still reconciled. Consequence: in NFS mode the Wi-Fi resolver is
+  not added to resolv.conf, and the eth metric stays whatever the kernel/`ip=`
+  installed. This is a bench safeguard, not a product mode.
+  Status: **accepted limitation (by design)**.
 
 ### Flashing and configuration
 
@@ -825,8 +876,11 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   in plaintext in `divinus.yaml`. Status: **accepted limitation**.
 
 - **KI-030. The factory password must be changed.** WebUI/RTSP use `admin` /
-  `oko-change-me`; change it before exposing the camera to an untrusted
-  network. Status: **operational requirement**.
+  `oko-change-me`; the SoftAP (`OKO-XXXX`) uses the WPA2-PSK
+  `ybrjveytljdthzq` while `oko_wlan_ap_psk` is unset. Change both before
+  exposing the camera to an untrusted network: the SoftAP one via
+  `oko-wifi set` or `/api/wifi`, and restore the factory one with
+  `fw_setenv oko_wlan_ap_psk`. Status: **operational requirement**.
 
 ### Development tools
 
@@ -837,6 +891,13 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   before `9718258b0`). To retest the old behavior, use a `git worktree` at a
   pre-migration commit and the vendor rootfs from `IMAGE/`. Status:
   **accepted limitation**.
+
+- **KI-058. The Wi-Fi PSK is stored in plain text in the U-Boot env.**
+  `oko_wlan_psk` and `oko_wlan_ap_psk` live in `/dev/mtd0` unencrypted, like
+  the Ethernet settings. The API does not return the station passphrase
+  (`psk_set`), but the hotspot passphrase is available in `/api/wifi/apinfo`
+  so a client can join it. Moving the secrets to protected storage is a
+  separate decision. Status: **accepted limitation**.
 
 - **KI-031. Headless Chromium needs `libasound.so.2`.** The host image lacks
   it. Without root: `apt-get download libasound2t64`, unpack with `dpkg-deb -x`

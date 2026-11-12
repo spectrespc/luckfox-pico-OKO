@@ -18,7 +18,7 @@
 | Папка | Назначение |
 |---|---|
 | `config/` | Извлечённые дефконфиги для быстрой настройки: `buildroot_defconfig`, `kernel_defconfig`, `dts_config`. |
-| `bench/` | Утилиты тестового стенда: UART/SSH-команды, netboot через TFTP/NFS (`netboot.py`), переключение NAND/NFS через env U-Boot (`nfs_env.py`), проверка OSD по RTSP (`osd_check.py`), сквозная проверка UDP/RTP-раздачи через MediaMTX (`stream_check.py`), матрица HTTP API (`api_check.py`), WebUI в headless Chromium (`ui_check.py`), AF-метрика и CSV (`focus_check.py`), версии/прошивка контроллеров (`firmware_check.py`), выкатка бинарника в `/oem` (`deploy_divinus.py`), venv. В сборке прошивки не участвует. |
+| `bench/` | Утилиты тестового стенда: UART/SSH-команды, netboot через TFTP/NFS (`netboot.py`), переключение NAND/NFS через env U-Boot (`nfs_env.py`), проверка OSD по RTSP (`osd_check.py`), сквозная проверка UDP/RTP-раздачи через MediaMTX (`stream_check.py`), матрица HTTP API (`api_check.py`), WebUI в headless Chromium (`ui_check.py`), AF-метрика и CSV (`focus_check.py`), версии/прошивка контроллеров (`firmware_check.py`), выкатка бинарника в `/oem` (`deploy_divinus.py`), 20-минутный soak двух аплинков (`uplink_soak.py`), venv. В сборке прошивки не участвует. |
 | `services/` | Docker-сервисы стенда. `services/docker-compose.yml` — контейнер `oko-services`: TFTP (`output/image`), NFS-экспорт `output/srv/nfs/rootfs`, неактивные шаблоны WireGuard/AmneziaWG/OpenVPN (`conf/`), запуск — `tools/native/setup_netboot.sh`. `services/stream/` — отдельный профиль `oko-mediamtx` (MediaMTX, host-сеть): принимает RTP камеры на `5600/udp` и отдаёт RTSP/HLS/WebRTC. В сборке прошивки не участвует. |
 | `research/` | Архив внешних исследований: заметки о переносимости upstream-кода и минимальные read-only снимки upstream-файлов с провенансом. В сборке прошивки не участвует. |
 | `media/` | Медиастек Rockchip: кодеки, 2D-ускорение, ISP, NPU, медиафреймворк и примеры. |
@@ -67,7 +67,8 @@
   `component` (общие компоненты).
 - `app/divinus/` — пакет `divinus`: `source/` (вендорские `src/`, `res/`, `doc/`,
   лицензии, пин коммита и локальные патчи — `compat.c` (ABI `mmap`), `region.c`
-  (`@file`-провайдер текста OSD), `hal/plus/rk_hal.c`/`rk_rgn.h`/
+  (`@file`-провайдер текста OSD), `wifi.c` (`/api/wifi*`, обёртка
+  `/usr/bin/oko-wifi`), `hal/plus/rk_hal.c`/`rk_rgn.h`/
   `rk_rgn_pack.c`/`rk_rgn_pack.h` (RGN OSD на RV1106: canvas-обновление с
   fallback на `SetBitmap`, `SetDisplayAttr`, упаковка `ARGB1555 → BGRA5551`),
   OKO-модуль `ntp.c` (NTP-клиент WebUI) и NPU-аналитика:
@@ -158,11 +159,21 @@
   `etc/init.d/S20oko-update` (пост-проверка после прошивки и очистка карты),
   `etc/oko-release` (`OKO_VERSION`, синхронизируется с выпуском CHANGELOG),
   `usr/bin/oko-net` + `etc/fw_env.config` (MAC, DHCP/static в env-разделе
-  U-Boot), `usr/bin/oko-vpn` (применение профилей WireGuard/AmneziaWG,
+  U-Boot), `usr/bin/oko-wifi` + `etc/init.d/S98okowifi` (USB Wi-Fi:
+  STA/SoftAP-фолбэк, скан, SD-импорт `oko-wifi.conf`; настройки
+  `oko_wlan_*` в env; `S99hciinit` оставлен только для BT),
+  `usr/bin/oko-route` + `etc/init.d/S97okoroute` (единый владелец
+  default-маршрутов eth0/wlan0, `/etc/resolv.conf`, ARP-тюнинга и
+  policy-таблиц 100/101 (`arp_ignore`/`arp_announce`, weak-host защита
+  одной подсети): метрики `oko_net_metric`/`oko_wlan_metric`, failover по
+  шлюзу, netboot-guard),
+  `lib/dhcpcd/dhcpcd-hooks/20-oko-route` (сохраняет резолверы eth-lease для
+  `oko-route`), `usr/bin/oko-vpn` (применение профилей WireGuard/AmneziaWG,
   маршруты, guard полного туннеля, autostart/watchdog; профили и состояние —
   `/userdata/vpn`), `etc/init.d/S45oko-vpn` (autostart после появления
   default route и watchdog), `etc/init.d/S41dhcpcd` (заглушка, DHCP только
-  через `oko-net`) и `etc/dhcpcd.conf` (client ID по MAC, без DUID);
+  через `oko-net`) и `etc/dhcpcd.conf` (client ID по MAC, без DUID,
+  `nohook resolv.conf` — resolv пишет только `oko-route`);
   `etc/init.d/S99oko-test` (маркер тестовой сборки).
 - `cfg-all-items-introduction.txt` — описание всех параметров BoardConfig.
 - `scripts/`, `make_meta/`, `sfc_scripts/` — вспомогательные скрипты сборки и
@@ -188,6 +199,8 @@
 - `source/mcu` — прошивка сопроцессора MCU на RT-Thread (вендорская часть SDK).
 - `source/objs_kernel` — промежуточные объекты сборки ядра.
 - `drv_ko/kmpp`, `drv_ko/rockit`, `drv_ko/wifi` — модули ядра для медиастека и Wi-Fi.
+  В `drv_ko/wifi/rtl8821cu/` — USB-драйвер RTL8821CU/RTL8811CU
+  (morrownr `8821cu-20210916`, GPL-2.0), собирается в `8821cu.ko`.
 - `drv_ko/amneziawg` — out-of-tree модуль `amneziawg.ko` (вендорский слепок
   `amneziawg-linux-kernel-module` @ `v3.1.20260906`, без правок); собирается
   при `RK_ENABLE_AWG=y`, грузится по требованию из `oko-vpn`, встроенный

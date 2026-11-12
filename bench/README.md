@@ -29,6 +29,7 @@ bench/run.sh netboot.py catch           # затем сбросить питан
 | `api_check.py` | матрица HTTP API: GET всех эндпоинтов, POST no-op, экспорт конфига и журнала, негативные проверки (статика, имена файлов, NTP); opt-in `OKO_FOCUS_MOTOR_TESTS=1`/`OKO_FOCUS_AF_TESTS=1` — движение моторов и автофокус (`af=1` full/ROI и micro-fine `af=fine`) с записью AF-кривых |
 | `ui_check.py` | WebUI в headless Chromium: восемь разделов, EN/RU, Apply/dirty-state, автозапуск предпросмотра, двухшаговый выбор ROI и строка автофокуса в «Видео», несохранённый выбор «Включить» переживает опрос, кнопка «Автофокус» (`af=fine`), сводка SD-карты в «Система → Статус» (сверка с `window.lastStatus`, работает и без карты), раскладка под окно на 1440×900 и мобильная 390×844 (нижний навбар 4×2), скриншоты (нужен Playwright) |
 | `deploy_divinus.py` | копирование свежесобранного `divinus` в `/oem/usr/bin` по SSH и graceful restart (быстрая итерация, не замена прошивке) |
+| `uplink_soak.py` | 20-минутный soak двух аплинков: проверяет `active_default`, HTTP на eth/wlan-адресах и живой `divinus`, по фазам выдёргивает eth-линк и роняет шлюз временной Wi-Fi-точки (iptables в контейнере `oko-services`); `--seconds`, `--interval`, `--no-eth-toggle`, `--no-ap-toggle`; подготовка AP — `TESTBENCH.md` §9 |
 | `focus_check.py` | `/api/focus`: статус AF-метрики, ROI, мотор; `--enable`, `--roi x,y,w,h`, `--move`, `--seconds/--interval/--snapshot/--strict`, CSV в `--out` (по умолчанию `output/bench/focus`); код 2 — API жив, но снимок не снят, код 1 — метрика нулевая |
 | `firmware_check.py` | `/api/firmware` и `/api/flash`: версии STM32/STM8, состояние задачи; `--flash --confirm FLASH` запускает прошивку, `--negative` прогоняет проверки валидации (400) |
 | `vpn_check.py` | WireGuard/AmneziaWG/OpenVPN на DUT: модуль или `/dev/net/tun`, импорт профиля через API, `up`, handshake или адрес `tun0`, маршруты, ping, `down`, негатив (хуки/plugin, delete без токена, credentials required), опционально `--iperf-peer`, reboot + автозапуск; артефакты — `output/bench/vpn` |
@@ -273,6 +274,66 @@ TESTBENCH.md §7D.
 - VPN: `output/bench/vpn/report.json`, `ssh.log`, `profile.conf` (тестовый
   профиль; содержит ключи — не коммитить).
 - Каталог создаётся автоматически; `output/` в `.gitignore`.
+
+## Wi-Fi на стенде
+
+USB-адаптер RTL8821CU (`0bda:c811`) настраивается через WebUI **Сеть → Wi-Fi**
+или `/api/wifi`; на стенде удобны прямые запросы:
+
+```sh
+# состояние и скан
+curl -u admin:oko-change-me http://192.168.52.15/api/wifi
+curl -u admin:oko-change-me 'http://192.168.52.15/api/wifi?scan=1'
+sleep 14; curl -u admin:oko-change-me http://192.168.52.15/api/wifi/scan
+
+# STA (пароль не попадает в историю: читайте из переменной окружения)
+curl -u admin:oko-change-me -X POST \
+  --data-urlencode 'mode=sta' --data-urlencode "ssid=$OKO_WIFI_SSID" \
+  --data-urlencode "psk=$OKO_WIFI_PSK" --data-urlencode 'dhcp=on' \
+  http://192.168.52.15/api/wifi
+
+# SoftAP-фолбэк
+curl -u admin:oko-change-me -X POST \
+  --data-urlencode 'mode=ap' --data-urlencode 'ap_ssid=OKO-TEST' \
+  http://192.168.52.15/api/wifi
+```
+
+`/api/wifi/apinfo` отдаёт SSID/пароль/адрес точки доступа, в том числе
+заводский пароль `ybrjveytljdthzq`, пока `oko_wlan_ap_psk` не задан.
+Пароль станции в ответах не возвращается (`psk_set`). Настройки лежат в
+env U-Boot (`oko_wlan_*`), поэтому их можно посмотреть
+`fw_printenv | grep oko_wlan`.
+
+### SD-конфиг `oko-wifi.conf`
+
+Файл кладётся в корень первого раздела microSD. При монтировании карты
+(udev `add` или `oko-sdcard mount`) `oko-wifi sdimport` проверяет файл, пишет
+настройки в env, перезапускает Wi-Fi и переименовывает файл в
+`oko-wifi.conf.applied-<sha1-8>`. Повторный импорт того же содержимого
+пропускается.
+
+```ini
+# комментарии и пустые строки игнорируются
+# mode: sta | ap | both | off
+mode=sta
+ssid=lab-wifi
+# 8..63 символа; пусто — открытая сеть
+pass=change-me-123
+# ip: dhcp | static
+ip=dhcp
+# для static:
+ipaddr=192.168.52.60
+netmask=255.255.255.0
+gateway=192.168.52.254
+dns=192.168.52.254
+# пусто — OKO-XXXX из MAC
+ap_ssid=OKO-LAB
+# пусто — заводский ybrjveytljdthzq; точка всегда WPA2-PSK, не открытая
+ap_psk=hotspot-pass-1
+```
+
+Проверка без карты: создать файл в `/mnt/sdcard/oko-wifi.conf` на смонтированной
+карте и вызвать `/usr/bin/oko-wifi sdimport`.
 
 ## Порядок работы и CMA
 

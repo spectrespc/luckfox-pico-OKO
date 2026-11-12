@@ -1,0 +1,769 @@
+#!/bin/sh
+#
+# OKO Wi-Fi helper for USB adapters (RTL8188FU, RTL8821CU, SSV6115, SSV6X5X).
+#
+# Persistent settings live in the U-Boot environment (/dev/mtd0) as oko_wlan_*
+# variables, for the same reason as oko-net: /userdata is recreated by a full
+# firmware update.  The station passphrase is stored in plain text there; the
+# WebUI never reads it back.
+#
+#   oko-wifi apply                 bring the interface up according to the env
+#   oko-wifi env                   print current settings and state as key=value
+#   oko-wifi set <mode> <ssid> <psk> <dhcp> <ip> <mask> <gw> <dns> <ap_ssid> <ap_psk> <metric>
+#                                  validate and store settings (no apply);
+#                                  "-" keeps the existing passphrase or metric
+#   oko-wifi setmetric <metric>    validate and store only oko_wlan_metric
+#   oko-wifi scan [json]           scan and print/cache the result
+#   oko-wifi sdimport              import /mnt/sdcard/oko-wifi.conf once
+#   oko-wifi supports <mode>       exit 0 when the mode is supported
+#
+# mode is sta|ap|both|off.  STA without a usable uplink falls back to a SoftAP
+# (OKO-XXXX, 192.168.43.1/24) that is always WPA2-PSK: an empty
+# oko_wlan_ap_psk means the factory password DEFAULT_AP_PSK.  Change it with
+# "oko-wifi set" or /api/wifi; get the factory one back with
+# "fw_setenv oko_wlan_ap_psk" (see KNOWN_ISSUES KI-030).  "both" needs a driver
+# with interface combinations exposed through iw(8); without iw it is reported
+# unsupported.
+# The station default route uses oko_wlan_metric (default 600); routing and
+# /etc/resolv.conf are owned by /usr/bin/oko-route.
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+WLAN=wlan0
+RUN=/run
+CTRL=/var/run/wpa_supplicant
+WPA_CONF=/tmp/wpa_supplicant-wlan0.conf
+HOSTAPD_CONF=/tmp/hostapd-wlan0.conf
+DNSMASQ_CONF=/tmp/dnsmasq-wlan0.conf
+UDHCPC_SCRIPT=/tmp/udhcpc-wlan0.script
+SCAN_CACHE=/tmp/wifi_scan.json
+AP_IP=192.168.43.1
+AP_MASK=255.255.255.0
+SD_CONF=/mnt/sdcard/oko-wifi.conf
+WLAN_DNS=/tmp/wlan.dns
+WLAN_METRIC_FILE=/tmp/oko-wlan-metric
+DEFAULT_WLAN_METRIC=600
+# The factory SoftAP is never open: an empty oko_wlan_ap_psk resolves to this
+# public default.  Change it with "oko-wifi set" or /api/wifi; restore it with
+# "fw_setenv oko_wlan_ap_psk".  Must be changed before deployment (KI-030).
+DEFAULT_AP_PSK=ybrjveytljdthzq
+OKO_ROUTE=/usr/bin/oko-route
+
+find_tool() {
+	for _p in /usr/sbin /sbin /usr/bin /bin /oem/usr/bin; do
+		[ -x "$_p/$1" ] && { echo "$_p/$1"; return 0; }
+	done
+	command -v "$1" 2>/dev/null
+}
+
+FW_PRINTENV=$(find_tool fw_printenv)
+FW_SETENV=$(find_tool fw_setenv)
+
+log() {
+	logger -t oko-wifi -- "$*" 2>/dev/null || true
+	echo "oko-wifi: $*" > /dev/kmsg 2>/dev/null || true
+}
+
+env_get() {
+	[ -n "$FW_PRINTENV" ] || return 1
+	"$FW_PRINTENV" -n "$1" 2>/dev/null
+}
+
+env_set() {
+	[ -n "$FW_SETENV" ] || return 1
+	"$FW_SETENV" "$1" "$2" 2>/dev/null
+}
+
+is_ipv4() {
+	[ -n "$1" ] || return 1
+	echo "$1" | awk -F. '
+		NF != 4 { exit 1 }
+		{
+			for (i = 1; i <= 4; i++) {
+				if ($i !~ /^[0-9]+$/ || $i < 0 || $i > 255)
+					exit 1
+			}
+		}
+		{ exit 0 }' >/dev/null 2>&1
+}
+
+# Station SSIDs may contain spaces, but not shell quotes or control bytes.
+valid_ssid() {
+	[ -n "$1" ] || return 1
+	[ ${#1} -le 32 ] || return 1
+	case "$1" in
+		*"'"*|*'"'*|*\\*) return 1 ;;
+	esac
+	printf '%s' "$1" | grep -q '[[:cntrl:]]' && return 1
+	return 0
+}
+
+valid_psk() {
+	# Empty means an open station network; an empty AP PSK is accepted too and
+	# load_settings turns it into DEFAULT_AP_PSK.
+	[ -z "$1" ] && return 0
+	[ ${#1} -ge 8 ] && [ ${#1} -le 63 ] || return 1
+	case "$1" in
+		*"'"*|*'"'*|*\\*) return 1 ;;
+	esac
+	printf '%s' "$1" | grep -q '[[:cntrl:]]' && return 1
+	return 0
+}
+
+valid_metric() {
+	[ -n "$1" ] || return 1
+	case "$1" in
+		*[!0-9]*) return 1 ;;
+	esac
+	[ ${#1} -le 5 ] || return 1
+	[ "$1" -ge 1 ] || return 1
+	return 0
+}
+
+mask_to_prefix() {
+	echo "$1" | awk -F. '
+		NF != 4 { print 24; exit }
+		{
+			n = 0
+			for (i = 1; i <= 4; i++) {
+				v = $i + 0
+				while (v > 0) { n += v % 2; v = int(v / 2) }
+			}
+			print n
+		}'
+}
+
+load_settings() {
+	MODE=$(env_get oko_wlan_mode)
+	case "$MODE" in
+		sta|ap|both|off) ;;
+		*) MODE=sta ;;
+	esac
+	SSID=$(env_get oko_wlan_ssid)
+	PSK=$(env_get oko_wlan_psk)
+	DHCP=$(env_get oko_wlan_dhcp)
+	[ "$DHCP" = "off" ] || DHCP=on
+	IPADDR=$(env_get oko_wlan_ip)
+	NETMASK=$(env_get oko_wlan_netmask)
+	GATEWAY=$(env_get oko_wlan_gateway)
+	DNS=$(env_get oko_wlan_dns)
+	AP_SSID=$(env_get oko_wlan_ap_ssid)
+	AP_PSK=$(env_get oko_wlan_ap_psk)
+	[ -n "$AP_PSK" ] || AP_PSK=$DEFAULT_AP_PSK
+	WLAN_METRIC=$(env_get oko_wlan_metric)
+	valid_metric "$WLAN_METRIC" || WLAN_METRIC=$DEFAULT_WLAN_METRIC
+	PSK_SET=0
+	[ -n "$PSK" ] && PSK_SET=1
+}
+
+wlan_present() {
+	[ -e "/sys/class/net/$WLAN" ]
+}
+
+wait_wlan() {
+	_i=0
+	while [ "$_i" -lt 300 ]; do
+		wlan_present && return 0
+		_i=$((_i + 1))
+		sleep 0.1
+	done
+	return 1
+}
+
+current_ip() {
+	ip -4 addr show dev "$WLAN" 2>/dev/null | \
+		sed -n 's/.*inet \([0-9.]*\)\/.*/\1/p' | head -n 1
+}
+
+driver_name() {
+	_d=$(readlink -f "/sys/class/net/$WLAN/device/driver" 2>/dev/null)
+	[ -n "$_d" ] && { basename "$_d"; return 0; }
+	lsmod 2>/dev/null | awk '/^(8821cu|8188fu|ssv6115|ssv6x5x) / { print $1; exit }'
+}
+
+usb_id() {
+	_uevent=$(cat "/sys/class/net/$WLAN/device/../uevent" 2>/dev/null)
+	echo "$_uevent" | sed -n 's/^PRODUCT=\([0-9A-Fa-f]*\)\/\([0-9A-Fa-f]*\).*/0x\1:0x\2/p' | head -n 1
+}
+
+wpa_state() {
+	wpa_cli -i "$WLAN" status 2>/dev/null | sed -n 's/^wpa_state=//p' | head -n 1
+}
+
+ap_active() {
+	_pidfile="$RUN/hostapd-wlan0.pid"
+	[ -f "$_pidfile" ] || return 1
+	_pid=$(cat "$_pidfile" 2>/dev/null)
+	[ -n "$_pid" ] && kill -0 "$_pid" 2>/dev/null
+}
+
+ap_stations() {
+	awk '$1 ~ /^192\.168\.43\./ && $3 != "0x0" { n++ } END { print n + 0 }' \
+		/proc/net/arp 2>/dev/null
+}
+
+# The driver may expose concurrent AP+STA only when it publishes interface
+# combinations.  iw is not shipped in this image, so the answer is "no" until
+# the image grows iw; the check keeps the API honest on boards that have it.
+supports_ap_st() {
+	command -v iw >/dev/null 2>&1 || return 1
+	iw phy phy0 info 2>/dev/null | grep -q 'valid interface combinations' || return 1
+	iw phy phy0 info 2>/dev/null | tr ',' '\n' | grep -q '#{ AP }' || return 1
+	return 0
+}
+
+effective_ap_ssid() {
+	if [ -n "$AP_SSID" ]; then
+		echo "$AP_SSID"
+		return 0
+	fi
+	_mac=$(cat "/sys/class/net/$WLAN/address" 2>/dev/null | tr -d ':')
+	_suffix=$(echo "$_mac" | cut -c9-12 | tr 'a-f' 'A-F')
+	[ -n "$_suffix" ] || _suffix=0000
+	echo "OKO-$_suffix"
+}
+
+show_env() {
+	load_settings
+	_present=false
+	wlan_present && _present=true
+	_ap=false
+	ap_active && _ap=true
+	_supp=false
+	supports_ap_st && _supp=true
+	_ssid_ap=$(effective_ap_ssid)
+
+	echo "mode=$MODE"
+	echo "ssid=$SSID"
+	echo "psk_set=$PSK_SET"
+	echo "dhcp=$DHCP"
+	echo "ipaddr=$IPADDR"
+	echo "netmask=$NETMASK"
+	echo "gateway=$GATEWAY"
+	echo "dns=$DNS"
+	echo "metric=$WLAN_METRIC"
+	echo "ap_ssid=$AP_SSID"
+	echo "ap_psk=$AP_PSK"
+	echo "ap_ssid_effective=$_ssid_ap"
+	echo "ap_addr=$AP_IP"
+	echo "wlan0_present=$_present"
+	echo "wpa_state=$(wpa_state)"
+	echo "current_ip=$(current_ip)"
+	echo "driver=$(driver_name)"
+	echo "usb_id=$(usb_id)"
+	echo "ap_active=$_ap"
+	echo "stations=$(ap_stations)"
+	echo "chip_supports_ap_st=$_supp"
+}
+
+set_settings() {
+	_mode=$1
+	_ssid=$2
+	_psk=$3
+	_dhcp=$4
+	_ip=$5
+	_mask=$6
+	_gw=$7
+	_dns=$8
+	_ap_ssid=$9
+	_ap_psk=${10}
+	_metric=${11}
+
+	load_settings
+
+	case "$_mode" in
+		sta|ap|both|off) ;;
+		*) echo "invalid mode" >&2; return 1 ;;
+	esac
+	if [ "$_mode" = "both" ] && ! supports_ap_st; then
+		echo "ap_st_unsupported" >&2
+		return 2
+	fi
+	if [ -n "$_ssid" ] && ! valid_ssid "$_ssid"; then
+		echo "invalid SSID" >&2
+		return 1
+	fi
+	if [ "$_psk" = "-" ]; then
+		_psk=$PSK
+	elif ! valid_psk "$_psk"; then
+		echo "invalid PSK" >&2
+		return 1
+	fi
+	if [ "$_ap_psk" = "-" ]; then
+		_ap_psk=$AP_PSK
+	elif ! valid_psk "$_ap_psk"; then
+		echo "invalid AP PSK" >&2
+		return 1
+	fi
+	if [ -n "$_ap_ssid" ] && ! valid_ssid "$_ap_ssid"; then
+		echo "invalid AP SSID" >&2
+		return 1
+	fi
+	case "$_dhcp" in
+		on|off) ;;
+		*) echo "invalid DHCP mode" >&2; return 1 ;;
+	esac
+	if [ "$_dhcp" = "off" ]; then
+		is_ipv4 "$_ip" || { echo "invalid IP address" >&2; return 1; }
+		is_ipv4 "$_mask" || { echo "invalid netmask" >&2; return 1; }
+	fi
+	if [ -n "$_gw" ] && ! is_ipv4 "$_gw"; then
+		echo "invalid gateway" >&2
+		return 1
+	fi
+	if [ -n "$_dns" ] && ! is_ipv4 "$_dns"; then
+		echo "invalid DNS" >&2
+		return 1
+	fi
+	if [ "$_metric" = "-" ] || [ -z "$_metric" ]; then
+		_metric=$WLAN_METRIC
+	elif ! valid_metric "$_metric"; then
+		echo "invalid metric" >&2
+		return 1
+	fi
+
+	env_set oko_wlan_mode "$_mode" || return 3
+	env_set oko_wlan_ssid "$_ssid" || return 3
+	env_set oko_wlan_psk "$_psk" || return 3
+	env_set oko_wlan_dhcp "$_dhcp" || return 3
+	env_set oko_wlan_ip "$_ip" || return 3
+	env_set oko_wlan_netmask "$_mask" || return 3
+	env_set oko_wlan_gateway "$_gw" || return 3
+	env_set oko_wlan_dns "$_dns" || return 3
+	env_set oko_wlan_ap_ssid "$_ap_ssid" || return 3
+	env_set oko_wlan_ap_psk "$_ap_psk" || return 3
+	env_set oko_wlan_metric "$_metric" || return 3
+	return 0
+}
+
+# The routing daemon reads the metric from the env every cycle, so only the
+# value is written here; no apply is needed.
+set_metric() {
+	valid_metric "$1" || { echo "invalid metric" >&2; return 1; }
+	env_set oko_wlan_metric "$1" || {
+		echo "cannot write the U-Boot environment" >&2
+		return 3
+	}
+	return 0
+}
+
+write_udhcpc_script() {
+	printf '%s\n' "$WLAN_METRIC" > "$WLAN_METRIC_FILE"
+	cat > "$UDHCPC_SCRIPT" <<'EOF'
+#!/bin/sh
+# The metric and the resolvers are passed through files so that this script
+# never has to read the U-Boot env.  /etc/resolv.conf is written by
+# /usr/bin/oko-route, which merges both uplinks.
+metric=$(cat /tmp/oko-wlan-metric 2>/dev/null)
+case "$metric" in
+	''|*[!0-9]*) metric=600 ;;
+esac
+case "$1" in
+	deconfig)
+		ip addr flush dev "$interface" 2>/dev/null
+		ip link set "$interface" up 2>/dev/null
+		rm -f /tmp/wlan.dns
+		;;
+	bound|renew)
+		ip addr flush dev "$interface" 2>/dev/null
+		ifconfig "$interface" "$ip" netmask "${subnet:-255.255.255.0}" up 2>/dev/null
+		if [ -n "$router" ]; then
+			ip route replace default via "${router%% *}" dev "$interface" metric "$metric" 2>/dev/null
+		fi
+		rm -f /tmp/wlan.dns
+		if [ -n "$dns" ]; then
+			printf '%s\n' $dns > /tmp/wlan.dns
+		fi
+		[ -x /usr/bin/oko-route ] && /usr/bin/oko-route once >/dev/null 2>&1
+		;;
+esac
+exit 0
+EOF
+	chmod 755 "$UDHCPC_SCRIPT"
+}
+
+stop_all() {
+	[ -f "$RUN/udhcpc-wlan0.pid" ] && kill "$(cat "$RUN/udhcpc-wlan0.pid" 2>/dev/null)" 2>/dev/null
+	[ -f "$RUN/dnsmasq-wlan0.pid" ] && kill "$(cat "$RUN/dnsmasq-wlan0.pid" 2>/dev/null)" 2>/dev/null
+	killall hostapd 2>/dev/null
+	killall wpa_supplicant 2>/dev/null
+	# Give the driver time to leave AP mode before the next supplicant starts.
+	sleep 1
+	rm -f "$WLAN_DNS"
+	ip addr flush dev "$WLAN" 2>/dev/null
+	ip link set "$WLAN" down 2>/dev/null
+	sleep 1
+}
+
+start_sta() {
+	[ -n "$SSID" ] || return 1
+
+	mkdir -p "$CTRL" "$RUN"
+	{
+		echo "ctrl_interface=$CTRL"
+		echo "update_config=1"
+		echo "network={"
+		printf '  ssid="%s"\n' "$SSID"
+		if [ -n "$PSK" ]; then
+			printf '  psk="%s"\n' "$PSK"
+			echo "  key_mgmt=WPA-PSK"
+		else
+			echo "  key_mgmt=NONE"
+		fi
+		echo "  scan_ssid=1"
+		echo "}"
+	} > "$WPA_CONF"
+
+	ip link set "$WLAN" up 2>/dev/null
+	sleep 1
+
+	if ! wpa_supplicant -B -i "$WLAN" -c "$WPA_CONF" -D nl80211 \
+			-P "$RUN/wpa_supplicant-wlan0.pid" >/dev/null 2>&1; then
+		log "nl80211 driver failed, trying wext"
+		if ! wpa_supplicant -B -i "$WLAN" -c "$WPA_CONF" -D wext \
+				-P "$RUN/wpa_supplicant-wlan0.pid" >/dev/null 2>&1; then
+			log "wpa_supplicant failed to start"
+			return 1
+		fi
+	fi
+
+	_i=0
+	_st=
+	while [ "$_i" -lt 40 ]; do
+		_st=$(wpa_state)
+		[ "$_st" = "COMPLETED" ] && break
+		_i=$((_i + 1))
+		sleep 0.5
+	done
+	if [ "$_st" != "COMPLETED" ]; then
+		log "station did not associate (state=$_st)"
+		return 1
+	fi
+
+	ip link set "$WLAN" up 2>/dev/null
+
+	if [ "$DHCP" = "on" ]; then
+		write_udhcpc_script
+		udhcpc -b -i "$WLAN" -p "$RUN/udhcpc-wlan0.pid" \
+			-s "$UDHCPC_SCRIPT" >/dev/null 2>&1
+		_i=0
+		while [ "$_i" -lt 30 ]; do
+			[ -n "$(current_ip)" ] && return 0
+			_i=$((_i + 1))
+			sleep 0.5
+		done
+		log "no DHCP lease on wlan0"
+		return 1
+	fi
+
+	ifconfig "$WLAN" "$IPADDR" netmask "$NETMASK" up 2>/dev/null
+	if [ -n "$GATEWAY" ]; then
+		ip route replace default via "$GATEWAY" dev "$WLAN" metric "$WLAN_METRIC" 2>/dev/null
+	fi
+	# /etc/resolv.conf belongs to oko-route: publish the configured resolver.
+	rm -f "$WLAN_DNS"
+	if [ -n "$DNS" ]; then
+		echo "$DNS" > "$WLAN_DNS" 2>/dev/null
+	fi
+	return 0
+}
+
+start_ap() {
+	_ssid=$(effective_ap_ssid)
+	_prefix=$(mask_to_prefix "$AP_MASK")
+
+	{
+		echo "interface=$WLAN"
+		echo "driver=nl80211"
+		echo "ctrl_interface=$RUN/hostapd"
+		printf 'ssid=%s\n' "$_ssid"
+		echo "hw_mode=g"
+		echo "channel=1"
+		echo "auth_algs=1"
+		echo "ignore_broadcast_ssid=0"
+		# load_settings resolves an empty AP_PSK to DEFAULT_AP_PSK, so AP_PSK
+		# is never empty and the AP is never open.
+		echo "wpa=2"
+		printf 'wpa_passphrase=%s\n' "$AP_PSK"
+		echo "wpa_key_mgmt=WPA-PSK"
+		echo "rsn_pairwise=CCMP"
+	} > "$HOSTAPD_CONF"
+
+	ip link set "$WLAN" up 2>/dev/null
+	if ! hostapd -B -P "$RUN/hostapd-wlan0.pid" "$HOSTAPD_CONF" >/dev/null 2>&1; then
+		log "hostapd failed to start"
+		return 1
+	fi
+
+	ifconfig "$WLAN" "$AP_IP" netmask "$AP_MASK" up 2>/dev/null
+
+	cat > "$DNSMASQ_CONF" <<EOF
+interface=$WLAN
+bind-dynamic
+port=0
+dhcp-range=192.168.43.10,192.168.43.20,255.255.255.0,12h
+dhcp-option=3,$AP_IP
+no-resolv
+no-hosts
+log-dhcp
+pid-file=$RUN/dnsmasq-wlan0.pid
+EOF
+	dnsmasq -C "$DNSMASQ_CONF" >/dev/null 2>&1 || log "dnsmasq failed to start"
+	log "SoftAP $_ssid on $AP_IP/$_prefix"
+	return 0
+}
+
+apply_settings() {
+	load_settings
+
+	if [ "$MODE" = "off" ]; then
+		wait_wlan && stop_all
+		log "Wi-Fi disabled"
+		return 0
+	fi
+
+	if ! wait_wlan; then
+		log "wlan0 did not appear"
+		return 1
+	fi
+
+	stop_all
+
+	case "$MODE" in
+		ap)
+			start_ap
+			return $?
+			;;
+		both)
+			if ! supports_ap_st; then
+				log "AP+STA is not supported by this driver"
+				start_ap
+				return 1
+			fi
+			# A second vif would need iw; keep STA when it works.
+			start_sta && return 0
+			stop_all
+			start_ap
+			return $?
+			;;
+		sta|*)
+			if start_sta; then
+				log "station connected to $SSID"
+				return 0
+			fi
+			log "station failed, starting SoftAP fallback"
+			stop_all
+			start_ap
+			return $?
+			;;
+	esac
+}
+
+# Apply, then hand the resulting routes and resolvers to the routing daemon so
+# the metrics and /etc/resolv.conf converge without waiting for its next pass.
+apply_all() {
+	apply_settings
+	_rc=$?
+	if [ -x "$OKO_ROUTE" ]; then
+		"$OKO_ROUTE" once >/dev/null 2>&1
+	fi
+	return $_rc
+}
+
+do_scan() {
+	_want_json=$1
+
+	if ! wlan_present; then
+		echo "no wlan0" >&2
+		return 1
+	fi
+	if ap_active; then
+		echo "ap_active" >&2
+		return 1
+	fi
+	if [ -z "$(wpa_state)" ]; then
+		mkdir -p "$CTRL" "$RUN"
+		{
+			echo "ctrl_interface=$CTRL"
+			echo "update_config=1"
+		} > "$WPA_CONF"
+		wpa_supplicant -B -i "$WLAN" -c "$WPA_CONF" -D nl80211 \
+			-P "$RUN/wpa_supplicant-wlan0.pid" >/dev/null 2>&1 || {
+			echo "wpa_supplicant failed" >&2
+			return 1
+		}
+		sleep 1
+	fi
+
+	wpa_cli -i "$WLAN" scan >/dev/null 2>&1 || {
+		echo "scan failed" >&2
+		return 1
+	}
+	# The driver needs several seconds; wait until wpa_supplicant leaves the
+	# SCANNING state instead of guessing a fixed delay.
+	_i=0
+	while [ "$_i" -lt 24 ]; do
+		[ "$(wpa_state)" = "SCANNING" ] || break
+		_i=$((_i + 1))
+		sleep 0.5
+	done
+	_raw=$(wpa_cli -i "$WLAN" scan_results 2>/dev/null)
+
+	_ts=$(date +%s)
+	if [ "$_want_json" = "json" ]; then
+		_tmp="$SCAN_CACHE.tmp.$$"
+		{
+			printf '{"state":"done","timestamp":%s,"results":[' "$_ts"
+			echo "$_raw" | awk -F'\t' '
+			function esc(s) {
+				gsub(/\\/, "\\\\", s)
+				gsub(/"/, "\\\"", s)
+				return s
+			}
+			NR > 1 && NF >= 5 && $5 != "" {
+				# Keep the strongest entry per SSID.
+				if (!($5 in sig) || $3 + 0 > sig[$5]) {
+					sig[$5] = $3 + 0
+					bssid[$5] = $1
+					freq[$5] = $2 + 0
+					flags[$5] = $4
+				}
+			}
+			END {
+				n = 0
+				for (s in sig) {
+					# Keep the JSON cache bounded; the WebUI shows ten.
+					if (n >= 32) break
+					f = freq[s]
+					if (f < 3000) ch = int((f - 2407) / 5)
+					else ch = int((f - 5000) / 5)
+					if (n++) printf ","
+					printf "{\"ssid\":\"%s\",\"bssid\":\"%s\",\"signal\":%d,\"freq\":%d,\"channel\":%d,\"flags\":\"%s\"}", \
+						esc(s), bssid[s], sig[s], f, ch, esc(flags[s])
+				}
+			}'
+			printf ']}'
+		} > "$_tmp"
+		mv "$_tmp" "$SCAN_CACHE"
+		cat "$SCAN_CACHE"
+		return 0
+	fi
+
+	echo "$_raw"
+}
+
+do_sdimport() {
+	[ -f "$SD_CONF" ] || return 0
+
+	_hash=$(sha1sum "$SD_CONF" 2>/dev/null | cut -c1-8)
+	[ -n "$_hash" ] || return 1
+
+	load_settings
+	if [ "$(env_get oko_wlan_import_hash)" = "$_hash" ]; then
+		log "SD config $_hash already imported"
+		[ -f "$SD_CONF" ] && mv "$SD_CONF" "$SD_CONF.applied-$_hash" 2>/dev/null
+		return 0
+	fi
+
+	_mode=sta
+	_ssid=
+	_psk=
+	_dhcp=on
+	_ip=
+	_mask=
+	_gw=
+	_dns=
+	_ap_ssid=
+	_ap_psk=
+	_metric=-
+
+	while IFS= read -r line || [ -n "$line" ]; do
+		line=$(echo "$line" | tr -d '\r')
+		case "$line" in
+			''|'#'*) continue ;;
+		esac
+		key=${line%%=*}
+		value=${line#*=}
+		key=$(echo "$key" | tr -d ' ')
+		value=$(echo "$value" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+		case "$key" in
+			mode) _mode=$value ;;
+			ssid) _ssid=$value ;;
+			pass|psk) _psk=$value ;;
+			ip) case "$value" in
+					dhcp|DHCP) _dhcp=on ;;
+					static|STATIC) _dhcp=off ;;
+					*) ;;
+				esac ;;
+			ipaddr|address) _ip=$value ;;
+			netmask|mask) _mask=$value ;;
+			gateway|gw) _gw=$value ;;
+			dns) _dns=$value ;;
+			ap_ssid) _ap_ssid=$value ;;
+			ap_psk) _ap_psk=$value ;;
+			metric) _metric=$value ;;
+		esac
+	done < "$SD_CONF"
+
+	if [ "$_dhcp" = "off" ] && { [ -z "$_ip" ] || [ -z "$_mask" ]; }; then
+		log "SD config $_hash has static mode without address"
+		return 1
+	fi
+
+	set_settings "$_mode" "$_ssid" "$_psk" "$_dhcp" \
+		"$_ip" "$_mask" "$_gw" "$_dns" "$_ap_ssid" "$_ap_psk" "$_metric" || {
+		log "SD config $_hash is invalid"
+		return 1
+	}
+	env_set oko_wlan_import_hash "$_hash" || return 1
+
+	# Do not block the udev worker: association and DHCP take seconds.
+	apply_all >/dev/null 2>&1 &
+	mv "$SD_CONF" "$SD_CONF.applied-$_hash" 2>/dev/null
+	log "imported SD config $_hash"
+	return 0
+}
+
+case "$1" in
+	apply)
+		apply_all
+		;;
+	stop)
+		wait_wlan && stop_all
+		[ -x "$OKO_ROUTE" ] && "$OKO_ROUTE" once >/dev/null 2>&1
+		;;
+	env|show)
+		show_env
+		;;
+	set)
+		shift
+		set_settings "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" "${11}"
+		;;
+	setmetric)
+		set_metric "$2"
+		;;
+	scan)
+		do_scan "$2"
+		;;
+	sdimport)
+		do_sdimport
+		;;
+	supports)
+		case "$2" in
+			both)
+				supports_ap_st
+				;;
+			sta|ap|off)
+				exit 0
+				;;
+			*)
+				exit 1
+				;;
+		esac
+		;;
+	*)
+		echo "usage: $0 {apply|stop|env|set <mode> <ssid> <psk> <dhcp> <ip> <mask> <gw> <dns> <ap_ssid> <ap_psk> <metric>|setmetric <metric>|scan [json]|sdimport|supports <mode>}" >&2
+		exit 1
+		;;
+esac

@@ -8,7 +8,7 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
 
 | Поле | Значение |
 |---|---|
-| Дата обновления | `2026-11-10` |
+| Дата обновления | `2026-11-12` |
 | Ответственный | `<ФИО>` |
 | Статус | активен |
 | Назначение | сборка прошивки и прошивка SPI NAND для отладки IPC |
@@ -83,6 +83,7 @@ serial-консоли. Для стабильных проверок зарезе
 | Устройство (SSH / Samba / console) | `root` | `luckfox` — публичный вендорский дефолт (`BR2_TARGET_GENERIC_ROOT_PASSWD` в `luckfox_pico_defconfig`) |
 | WiFi (`LF_WIFI_SSID`) | — | `<SSID стенда>` |
 | WiFi (`LF_WIFI_PSK`) | — | `<пароль WiFi — заполнять только при необходимости>` |
+| SoftAP устройства (`OKO-XXXX`, SSID из MAC) | — | `ybrjveytljdthzq` — публичный фабричный дефолт WPA2-PSK, пока `oko_wlan_ap_psk` не задан; сменить до ввода в эксплуатацию (KI-030) |
 | divinus Web/RTSP (фабричный) | `admin` | `oko-change-me` — публичный фабричный дефолт, сменить до подключения к недоверенной сети |
 | Хост | `spectre` | sudo по паролю; в репозитории и скриптах не хранится |
 
@@ -425,6 +426,16 @@ bench/run.sh firmware_check.py --flash --target stm8 \
 # ожидаемый файл: CPU 20% NPU 17%\nMEM FREE 77% SD FREE 14.8/14.8GiB\nT 65.3C
 cat /tmp/osd-sys.txt; cat /proc/rknpu/load
 
+# Wi-Fi в OSD: реальный RSSI, wifi ap (SoftAP), wifi off или скрытое поле
+wpa_cli -i wlan0 status | grep wpa_state
+wpa_cli -i wlan0 signal_poll | grep RSSI
+ps w | grep "[h]ostapd"; ip -4 addr show dev wlan0 | grep inet
+cat /tmp/osd-dyn.txt; wc -c /tmp/osd-dyn.txt
+#   ожидается: WiFi <n>/5 <dBm>dBm при COMPLETED; wifi ap при работающем
+#   SoftAP (hostapd + IPv4); wifi off без ассоциации и без AP; после
+#   переподключения USB без re-apply — wifi off, не wifi ap; без
+#   /sys/class/net/wlan0 — три строки без Wi-Fi, <255 байт
+
 # RGA im2d fd-путь: копирование через CMA-буфер (rc=1 — нет /data/in0...bin,
 # это нормально; зависание/чёрный экран — откат на CPU и power cycle)
 LD_LIBRARY_PATH=/oem/usr/lib /oem/usr/bin/rgaImDemo --copy
@@ -689,6 +700,15 @@ docker exec oko-mediamtx ffprobe -v error -show_streams rtsp://127.0.0.1:8554/ca
   растёт 5→60 с — проверено 2026-11-10. Legacy `g_mass_storage` в ядре
   выключен: он захватывал UDC и срывал инициализацию gadget (KI-056).
   Ограничения — KI-054.
+- **SoftAP всегда WPA2-PSK.** В AP-фолбэке (`OKO-XXXX`, `192.168.43.1/24`)
+  точка защищена WPA2-PSK; если `oko_wlan_ap_psk` не задан, используется
+  заводский пароль `ybrjveytljdthzq` (публичный дефолт KI-030; смена —
+  `oko-wifi set` или `/api/wifi`, возврат — `fw_setenv oko_wlan_ap_psk`).
+  Открытой точки нет. `ap_psk` виден в `oko-wifi env`, `GET /api/wifi` и
+  `GET /api/wifi/apinfo`. Проверено 2026-11-12: клиент с хоста
+  (`wpa_supplicant` + `iw`) ассоциируется по WPA2-PSK/CCMP, получает DHCP
+  `192.168.43.1x`, ping и HTTP к `192.168.43.1` отвечают; неверный пароль —
+  без ассоциации, DUT остаётся в AP.
 - **CMA накапливается после тяжёлых медиа-прогонов.** После двух и более
   подряд прогонов `ui_check.py`/`geometry_check.py` или ручной отладки
   ePTZ/поворота перезагружайте DUT. Решающие признаки: `cma_alloc ... ret:
@@ -770,6 +790,70 @@ docker exec oko-mediamtx ffprobe -v error -show_streams rtsp://127.0.0.1:8554/ca
   `/userdata/divinus.yaml`; кадров не будет и без активного VENC-канала
   (`mp4.enable`/`substream.enable`). `stream.enable` к RTSP отношения не имеет:
   это отдельный UDP/RTP-пуш.
+- USB Wi-Fi собран на `0bda:c811` (RTL8821CU) за хабом `1a40:0101`. После
+  загрузки `insmod_wifi.sh` видит `0bda/c811`, грузит `cfg80211.ko` и
+  `8821cu.ko`; `wlan0` появляется через несколько секунд. Настройка — WebUI
+  **Сеть → Wi-Fi** или `/api/wifi`; настройки лежат в env U-Boot
+  (`oko_wlan_*`), поэтому переживают прошивку `oem`/`rootfs`. Без рабочего
+  STA поднимается SoftAP `OKO-XXXX` на `192.168.43.1/24` с DHCP; веб-интерфейс
+  доступен с телефона по этому адресу. AP+STA для этого драйвера не
+  поддерживается (только STA или AP по отдельности). Скан через
+  `/api/wifi?scan=1` + `/api/wifi/scan`; при активном SoftAP скан отклоняется.
+  SD-конфиг: файл `oko-wifi.conf` в корне первого раздела карты, импорт один
+  раз при монтировании, затем файл переименовывается в
+  `oko-wifi.conf.applied-<sha1-8>`.
+- Два аплинка: eth0 и wlan0 (STA) поднимаются одновременно, приоритет —
+  `oko_net_metric` (100) и `oko_wlan_metric` (600) в env. `S97okoroute`
+  держит по одному default-маршруту, переключает трафик при недоступности
+  шлюза (3 отказа `ping -I` → metric+10000, 2 успеха → возврат, cooldown
+  30 с) и единолично пишет `/etc/resolv.conf`. Проверка:
+  ```sh
+  curl -s -u admin:oko-change-me http://<DUT>/api/network | grep -o '"active_default":{[^}]*}'
+  bench/run.sh dut.py --host <DUT> '/usr/bin/oko-route show | grep -E "demoted|active_default"'
+  bench/run.sh dut.py --host <DUT> 'ip route get 8.8.8.8'
+  ```
+  Для стендовой проверки Wi-Fi-аплинка на хосте в контейнере `services`
+  поднимается временная открытая точка доступа (hostapd на host `wlan0`,
+  `192.168.44.1/24`), DUT подключается статикой `192.168.44.50/24`, шлюз
+  `192.168.44.1`; затем шлюз снимается/возвращается и проверяются demote и
+  возврат. AP — только тестовый инструмент, в образ не входит. Пакеты в
+  контейнере не предустановлены:
+  ```sh
+  docker exec oko-services sh -c 'apt-get install -y hostapd iptables'
+  docker exec -d oko-services hostapd -B -P /tmp/hostapd-bench.pid /tmp/hostapd-bench.conf
+  docker exec oko-services ip addr add 192.168.44.1/24 dev wlan0
+  # «уронить» только ping DUT к шлюзу, не трогая SSH:
+  docker exec oko-services iptables -I INPUT -i wlan0 -s 192.168.44.50 \
+      -d 192.168.44.1 -p icmp --icmp-type echo-request -j DROP
+  ```
+  Конфиг hostapd — open network `OKO-BENCH`, `hw_mode=g`, `channel=6`.
+  Автоматизация — `bench/run.sh uplink_soak.py`.
+- При `root=/dev/nfs` `oko-route` не подменяет eth-default и не пишет
+  resolv.conf (KI-060): это защищает NFS-загрузку стенда (`nfs_env.py on`).
+- **Weak-host защита eth0+wlan0 в одной подсети.** Ядро собрано с
+  `CONFIG_IP_ADVANCED_ROUTER=y` и `CONFIG_IP_MULTIPLE_TABLES=y`; busybox
+  1.38.0 в образе содержит `CONFIG_IPRULE=y` и `CONFIG_FEATURE_IP_RULE=y`,
+  поэтому `ip rule add from/iif ... lookup <num> priority <n>` и
+  `ip route ... table <n>` работают (проверено на DUT). Исходные значения:
+  `rp_filter` all/default/eth0 = 0, `arp_ignore`/`arp_announce` = 0;
+  после `oko-route once` — `arp_ignore=1`, `arp_announce=2` (all+default),
+  `rp_filter` остаётся 0, потому что строгий режим не включён.
+  Стендовый прогон 2026-11-12: eth0 DHCP `192.168.52.33/24` + wlan0
+  static `192.168.52.44/24` в одной подсети через тестовую AP
+  (`192.168.52.201`, `OKO-BENCH`). Параллельный ping 20/20 на каждый адрес —
+  0% потерь; `ip route get 192.168.52.200 from .33` → `eth0`,
+  `... .201 from .44` → `wlan0`; на PC `.33` привязан к MAC eth0,
+  `.44` — к MAC wlan0, flap нет; HTTP-снимок и RTSP DESCRIBE — 200 на
+  обоих адресах; dead-шлюз eth (iptables DROP ICMP) → `eth_demoted=1`,
+  default на wlan0, возврат после снятия DROP; AP-фолбэк `192.168.43.1`
+  с таблицей 101 без default; static eth + static wlan — 10/10 на каждый
+  адрес; 3 цикла `ip link set eth0 down/up` — оба адреса живы; netboot
+  (подмена `/proc/cmdline`) не меняет eth-default и resolv.
+  Состояние — `oko-route show` (`multihome`, `arp_tuning`, `rp_filter`,
+  `policy_tables`, `eth_addr`, `wlan_addr`). После прошивки по TFTP
+  настройки `oko_*` переживают reboot; если U-Boot при загрузке напечатал
+  `Using default environment`, `saveenv` в конце прошивки затрёт `oko_*` —
+  их нужно задать заново.
 - Обновление ПО из WebUI: пакет готовится на microSD, прошивку выполняет
   U-Boot `sd_update` при следующей загрузке, но только при выставленном
   `oko_update` в U-Boot env (`apply`), поэтому перезагрузка до подтверждения

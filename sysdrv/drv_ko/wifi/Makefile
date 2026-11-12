@@ -59,6 +59,10 @@ ifneq ($(findstring $(RK_ENABLE_WIFI_CHIP),"AIC8800DW_USB"),)
 	@make -C aic8800_usb/
 endif
 
+ifneq ($(findstring $(RK_ENABLE_WIFI_CHIP),"RTL8821CU"),)
+	@make -C rtl8821cu/
+endif
+
 ifneq ($(findstring $(RK_ENABLE_WIFI_CHIP),"AIC8800MC"),)
 	@make -C aic8800_netdrv/
 endif
@@ -94,6 +98,7 @@ else
 
 build-usb:
 	@make -C rtl8188ftv/
+	@make -C rtl8821cu/
 	@make -C ssv6x5x/
 	@make -C ssv6115/
 	@make -C aic8800_usb/
@@ -121,6 +126,7 @@ build-sdio-clean:
 
 build-usb-clean:
 	@make -C rtl8188ftv clean
+	@make -C rtl8821cu clean
 	@make -C ssv6x5x clean
 	@make -C ssv6115 clean
 	@make -C aic8800_usb clean

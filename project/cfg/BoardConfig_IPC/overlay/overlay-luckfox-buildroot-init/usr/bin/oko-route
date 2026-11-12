@@ -1,0 +1,789 @@
+#!/bin/sh
+#
+# OKO uplink routing helper: the single owner of the IPv4 default routes and
+# /etc/resolv.conf when Ethernet and a Wi-Fi station work together.
+#
+# The priorities live in the U-Boot env (/dev/mtd0), like the interface
+# settings, so they survive a /userdata or rootfs reset:
+#
+#   oko_net_metric    priority of the Ethernet default route    (default 100)
+#   oko_wlan_metric   priority of the Wi-Fi station default     (default 600)
+#
+# A lower metric wins.  Both uplinks may be up at once; the kernel keeps one
+# active default route per metric order.  The helper re-applies the configured
+# metrics on every pass, so a DHCP renewal that reinstalls its own default
+# route is corrected within one loop instead of flapping the uplink.
+#
+#   oko-route once      reconcile default routes and /etc/resolv.conf once
+#   oko-route monitor   run the reconciler and the gateway health daemon
+#   oko-route show      print settings, routes and link state as key=value
+#   oko-route stop      stop the daemon started by "monitor"
+#
+# Failover: when the gateway of an uplink does not answer three probes in a
+# row, its default route is moved to metric+10000, so the kernel switches to
+# the other uplink; two successful probes restore the configured metric.  A
+# transition is rate-limited to one per 30 s.  The Wi-Fi station is an uplink
+# only while wpa_supplicant reports COMPLETED (the SoftAP is a management
+# network, not an uplink).
+#
+# Netboot (root=/dev/nfs): the daemon never touches the Ethernet default route
+# or /etc/resolv.conf, because the NFS root and the bench use them; it only
+# observes and logs.  The Wi-Fi metrics are still reconciled.
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+ETH=eth0
+WLAN=wlan0
+RUN=/run
+STATE_DIR=$RUN/oko-route
+PIDFILE=/var/run/oko-route.pid
+RESOLV=/etc/resolv.conf
+ETH_DNS_FILE=$STATE_DIR/eth0.dns
+WLAN_DNS_FILE=/tmp/wlan.dns
+
+DEFAULT_NET_METRIC=100
+DEFAULT_WLAN_METRIC=600
+DEMOTE_OFFSET=10000
+FAIL_LIMIT=3
+OK_LIMIT=2
+COOLDOWN=30
+INTERVAL=5
+
+# Weak-host protection for eth0 and wlan0 living in the same subnet.
+TABLE_ETH=100
+TABLE_WLAN=101
+PRIO_ETH_FROM=100
+PRIO_ETH_IIF=110
+PRIO_WLAN_FROM=200
+PRIO_WLAN_IIF=210
+PRIO_MAX=299
+POLICY_STAMP=$STATE_DIR/policy.stamp
+POLICY_RULES=$STATE_DIR/policy.rules
+
+find_tool() {
+	for _p in /usr/sbin /sbin /usr/bin /bin; do
+		[ -x "$_p/$1" ] && { echo "$_p/$1"; return 0; }
+	done
+	command -v "$1" 2>/dev/null
+}
+
+FW_PRINTENV=$(find_tool fw_printenv)
+
+log() {
+	logger -t oko-route -- "$*" 2>/dev/null || true
+	echo "oko-route: $*" > /dev/kmsg 2>/dev/null || true
+}
+
+env_get() {
+	[ -n "$FW_PRINTENV" ] || return 1
+	"$FW_PRINTENV" -n "$1" 2>/dev/null
+}
+
+valid_metric() {
+	[ -n "$1" ] || return 1
+	case "$1" in
+		*[!0-9]*) return 1 ;;
+	esac
+	[ ${#1} -le 5 ] || return 1
+	[ "$1" -ge 1 ] || return 1
+	return 0
+}
+
+load_settings() {
+	NET_METRIC=$(env_get oko_net_metric)
+	valid_metric "$NET_METRIC" || NET_METRIC=$DEFAULT_NET_METRIC
+	WLAN_METRIC=$(env_get oko_wlan_metric)
+	valid_metric "$WLAN_METRIC" || WLAN_METRIC=$DEFAULT_WLAN_METRIC
+	WLAN_METRIC_ENV=$WLAN_METRIC
+	# The main table holds one default route per prefix/metric, so two uplinks
+	# with the same metric cannot coexist: "ip route replace" would move the
+	# default to the last device.  Break the tie in favour of Ethernet.
+	METRIC_TIE=0
+	if [ "$WLAN_METRIC" = "$NET_METRIC" ]; then
+		WLAN_METRIC=$((WLAN_METRIC + 1))
+		METRIC_TIE=1
+	fi
+
+	WLAN_MODE=$(env_get oko_wlan_mode)
+	# oko-wifi defaults an empty or unknown mode to "sta"; keep the same
+	# rule here, otherwise a valid station would never be treated as uplink.
+	case "$WLAN_MODE" in
+		sta|ap|both|off) ;;
+		*) WLAN_MODE=sta ;;
+	esac
+	WLAN_DHCP=$(env_get oko_wlan_dhcp)
+	[ "$WLAN_DHCP" = "off" ] || WLAN_DHCP=on
+	WLAN_DNS_ENV=$(env_get oko_wlan_dns)
+	NET_MODE=$(env_get oko_net_mode)
+	[ "$NET_MODE" = "static" ] || NET_MODE=dhcp
+	ETH_DNS_ENV=$(env_get oko_dns)
+
+	NETBOOT=0
+	grep -q 'root=/dev/nfs' /proc/cmdline 2>/dev/null && NETBOOT=1
+}
+
+carrier() {
+	cat "/sys/class/net/$1/carrier" 2>/dev/null
+}
+
+wpa_state() {
+	wpa_cli -i "$WLAN" status 2>/dev/null | sed -n 's/^wpa_state=//p' | head -n 1
+}
+
+eth_candidate() {
+	[ "$(carrier "$ETH")" = "1" ]
+}
+
+wlan_candidate() {
+	[ "$WLAN_MODE" = "sta" ] || return 1
+	[ "$(carrier "$WLAN")" = "1" ] || return 1
+	[ "$(wpa_state)" = "COMPLETED" ]
+}
+
+route_gw() {
+	ip route show 2>/dev/null | awk -v dev="$1" '
+		/^default/ {
+			d = ""; g = ""
+			for (i = 1; i <= NF; i++) {
+				if ($i == "dev") d = $(i + 1)
+				else if ($i == "via") g = $(i + 1)
+			}
+			if (d == dev && g != "") { print g; exit }
+		}'
+}
+
+route_metrics() {
+	ip route show 2>/dev/null | awk -v dev="$1" '
+		/^default/ {
+			d = ""; m = 0
+			for (i = 1; i <= NF; i++) {
+				if ($i == "dev") d = $(i + 1)
+				else if ($i == "metric") m = $(i + 1)
+			}
+			if (d == dev) print m
+		}'
+}
+
+default_metric() {
+	route_metrics "$1" | head -n 1
+}
+
+# All defaults in the main table; the lowest metric is the active one.
+active_default() {
+	ip route show 2>/dev/null | awk '
+		/^default/ {
+			d = ""; g = ""; m = 0
+			for (i = 1; i <= NF; i++) {
+				if ($i == "dev") d = $(i + 1)
+				else if ($i == "via") g = $(i + 1)
+				else if ($i == "metric") m = $(i + 1)
+			}
+			if (d == "") next
+			if (bd == "" || m + 0 < bm + 0) {
+				bd = d; bg = g; bm = m
+			}
+		}
+		END {
+			if (bd != "") printf "%s %s %d\n", bd, bg, bm
+		}'
+}
+
+state_get() {
+	cat "$STATE_DIR/$1.$2" 2>/dev/null || echo "$3"
+}
+
+state_set() {
+	mkdir -p "$STATE_DIR"
+	echo "$2" > "$STATE_DIR/$1.$3" 2>/dev/null
+}
+
+demoted_get() {
+	state_get "$1" demoted 0
+}
+
+demoted_set() {
+	state_set "$1" "$2" demoted
+}
+
+changed_get() {
+	state_get "$1" changed 0
+}
+
+changed_set() {
+	state_set "$1" "$2" changed
+}
+
+# Configured metric, plus the failover offset while the uplink is demoted.
+target_metric() {
+	_base=$NET_METRIC
+	_demoted=$ETH_DEMOTED
+	[ "$1" = "$WLAN" ] && { _base=$WLAN_METRIC; _demoted=$WLAN_DEMOTED; }
+	if [ "$_demoted" = "1" ]; then
+		echo $((_base + DEMOTE_OFFSET))
+	else
+		echo "$_base"
+	fi
+}
+
+# Keep exactly one default via the device at the requested metric.  The new
+# route is installed first, so no-default windows never appear; stale routes
+# installed by a DHCP client are removed afterwards.
+reconcile_dev() {
+	_dev=$1
+	_want=$2
+	_gw=$(route_gw "$_dev")
+	[ -n "$_gw" ] || return 0
+
+	ip route replace default via "$_gw" dev "$_dev" metric "$_want" 2>/dev/null
+	for _m in $(route_metrics "$_dev"); do
+		[ "$_m" = "$_want" ] && continue
+		ip route del default via "$_gw" dev "$_dev" metric "$_m" 2>/dev/null ||
+		ip route del default dev "$_dev" metric "$_m" 2>/dev/null
+	done
+	return 0
+}
+
+reconcile_all() {
+	if [ "$NETBOOT" = "1" ]; then
+		# NFS root: leave the Ethernet default route alone.
+		:
+	else
+		reconcile_dev "$ETH" "$(target_metric "$ETH")"
+	fi
+	reconcile_dev "$WLAN" "$(target_metric "$WLAN")"
+}
+
+# ---------------------------------------------------------------------------
+# Weak-host protection.  Two interfaces of one host in one subnet answer ARP
+# for each other's address and send replies out of the wrong interface.  The
+# Linux weak-host model allows that; arp_ignore=1/arp_announce=2 confine ARP
+# to the interface that owns the address, and per-interface policy tables
+# keep a reply on the path it arrived from.
+# ---------------------------------------------------------------------------
+
+sysctl_get() {
+	cat "/proc/sys/net/ipv4/conf/$1/$2" 2>/dev/null
+}
+
+sysctl_set() {
+	_sys_cur=$(sysctl_get "$1" "$2")
+	[ "$_sys_cur" = "$3" ] && return 0
+	echo "$3" > "/proc/sys/net/ipv4/conf/$1/$2" 2>/dev/null || return 1
+	log "sysctl net.ipv4.conf.$1.$2: ${_sys_cur:-?} -> $3"
+	return 0
+}
+
+arp_tuning() {
+	# Harmless with one interface, required when eth0 and wlan0 share a
+	# subnet.  Written only when the value differs, so the log does not
+	# repeat on every pass.
+	sysctl_set all arp_ignore 1
+	sysctl_set default arp_ignore 1
+	sysctl_set all arp_announce 2
+	sysctl_set default arp_announce 2
+	# Strict reverse-path filtering rejects replies that arrive on the other
+	# interface of the same subnet; switch to loose mode (2) if strict is on.
+	_rp_all=$(sysctl_get all rp_filter)
+	_rp_def=$(sysctl_get default rp_filter)
+	if [ "$_rp_all" = "1" ] || [ "$_rp_def" = "1" ]; then
+		sysctl_set all rp_filter 2
+		sysctl_set default rp_filter 2
+	fi
+	return 0
+}
+
+addr_of() {
+	ip addr show dev "$1" 2>/dev/null | awk '$1 == "inet" { print $2; exit }'
+}
+
+# The target busybox awk has no math library (no "^"), so build the powers of
+# two by doubling instead.
+AWK_POW2='BEGIN { b[0] = 1; for (i = 1; i <= 32; i++) b[i] = b[i - 1] * 2 }'
+
+net_of() {
+	echo "$1" | awk -F/ "$AWK_POW2"'
+	{
+		p = $2 + 0
+		if (p < 0) p = 0
+		if (p > 32) p = 32
+		split($1, o, ".")
+		v = o[1] * b[24] + o[2] * b[16] + o[3] * b[8] + o[4]
+		size = b[32 - p]
+		v = int(v / size) * size
+		printf "%d.%d.%d.%d/%d\n", int(v / b[24]) % 256, \
+			int(v / b[16]) % 256, int(v / b[8]) % 256, v % 256, p
+	}'
+}
+
+# 1 when the two IPv4 prefixes overlap (one contains the other).
+prefix_overlap() {
+	echo "$1 $2" | awk "$AWK_POW2"'
+	{
+		split($1, a, "/"); split($2, c, "/")
+		split(a[1], x, "."); split(c[1], y, ".")
+		va = x[1] * b[24] + x[2] * b[16] + x[3] * b[8] + x[4]
+		vb = y[1] * b[24] + y[2] * b[16] + y[3] * b[8] + y[4]
+		pa = a[2] + 0; pb = c[2] + 0
+		sa = b[32 - pa]; sb = b[32 - pb]
+		if (int(va / sb) == int(vb / sb) || int(va / sa) == int(vb / sa)) print 1
+		else print 0
+	}'
+}
+
+rule_priorities() {
+	ip rule show 2>/dev/null | awk -F: '/^[0-9]+:/ { print $1 }'
+}
+
+list_has() {
+	case " $2 " in
+		*" $1 "*) return 0 ;;
+	esac
+	return 1
+}
+
+prio_get() {
+	[ -f "$POLICY_RULES" ] || return 1
+	sed -n "s/^$1=//p" "$POLICY_RULES" 2>/dev/null | head -n 1
+}
+
+# Remembered priority first, otherwise the first free number from the
+# suggested one up; stores the choice in MH_PRIO/MH_ASSIGNED.
+prio_take() {
+	_pt_p=$(prio_get "$1")
+	if [ -z "$_pt_p" ] || list_has "$_pt_p" "$MH_USED" ||
+			list_has "$_pt_p" "$MH_ASSIGNED"; then
+		_pt_p=
+		_pt_scan=$2
+		while [ "$_pt_scan" -le "$PRIO_MAX" ]; do
+			if ! list_has "$_pt_scan" "$MH_USED" &&
+					! list_has "$_pt_scan" "$MH_ASSIGNED"; then
+				_pt_p=$_pt_scan
+				break
+			fi
+			_pt_scan=$((_pt_scan + 1))
+		done
+	fi
+	[ -n "$_pt_p" ] || return 1
+	MH_ASSIGNED="$MH_ASSIGNED $_pt_p"
+	MH_PRIO=$_pt_p
+	return 0
+}
+
+policy_fill() {
+	_pf_dev=$1
+	_pf_tbl=$2
+	_pf_addr=$3
+	_pf_gw=$4
+	_pf_ip=${_pf_addr%%/*}
+	_pf_net=$(net_of "$_pf_addr")
+	[ -n "$_pf_net" ] &&
+		ip route add "$_pf_net" dev "$_pf_dev" src "$_pf_ip" table "$_pf_tbl" 2>/dev/null
+	[ -n "$_pf_gw" ] &&
+		ip route add default via "$_pf_gw" dev "$_pf_dev" src "$_pf_ip" table "$_pf_tbl" 2>/dev/null
+	return 0
+}
+
+policy_reconcile() {
+	_mh_ea=$(addr_of "$ETH")
+	_mh_wa=$(addr_of "$WLAN")
+	_mh_egw=$(route_gw "$ETH")
+	_mh_wgw=$(route_gw "$WLAN")
+
+	# Rebuild only when an address or a gateway changed, otherwise a DHCP
+	# renewal or the 5 s loop would flush the tables again and again.
+	_mh_key="$_mh_ea $_mh_egw $_mh_wa $_mh_wgw"
+	_mh_stamp=$(printf '%s' "$_mh_key" | sha1sum 2>/dev/null | awk '{ print $1 }')
+	[ -n "$_mh_stamp" ] || _mh_stamp=$_mh_key
+	_mh_old=$(cat "$POLICY_STAMP" 2>/dev/null)
+
+	MH_USED=$(rule_priorities | tr '\n' ' ')
+	_mh_need=0
+	[ "$_mh_old" = "$_mh_stamp" ] || _mh_need=1
+	if [ "$_mh_need" = "0" ]; then
+		# Somebody flushed our rules: put them back.
+		for _mh_tag in eth_from eth_iif wlan_from wlan_iif; do
+			_mh_p=$(prio_get "$_mh_tag")
+			[ -n "$_mh_p" ] || continue
+			list_has "$_mh_p" "$MH_USED" || _mh_need=1
+		done
+	fi
+	# "ip addr flush dev <if>" (oko-net/oko-wifi apply) also wipes the
+	# routes of that device in our policy table, while the address itself
+	# may stay the same and the stamp does not change.  Rebuild then.
+	if [ "$_mh_need" = "0" ] && [ -n "$_mh_ea" ] &&
+			[ -z "$(ip route show table "$TABLE_ETH" 2>/dev/null)" ]; then
+		_mh_need=1
+	fi
+	if [ "$_mh_need" = "0" ] && [ -n "$_mh_wa" ] &&
+			[ -z "$(ip route show table "$TABLE_WLAN" 2>/dev/null)" ]; then
+		_mh_need=1
+	fi
+	[ "$_mh_need" = "1" ] || return 0
+
+	# Delete only our own rules (filtered by table, so a foreign rule that
+	# happened to take the priority is preserved and forces a new number).
+	for _mh_tag in eth_from eth_iif; do
+		_mh_p=$(prio_get "$_mh_tag")
+		[ -n "$_mh_p" ] || continue
+		ip rule del priority "$_mh_p" lookup "$TABLE_ETH" 2>/dev/null
+	done
+	for _mh_tag in wlan_from wlan_iif; do
+		_mh_p=$(prio_get "$_mh_tag")
+		[ -n "$_mh_p" ] || continue
+		ip rule del priority "$_mh_p" lookup "$TABLE_WLAN" 2>/dev/null
+	done
+	MH_USED=$(rule_priorities | tr '\n' ' ')
+	MH_ASSIGNED=
+
+	ip route flush table "$TABLE_ETH" 2>/dev/null
+	ip route flush table "$TABLE_WLAN" 2>/dev/null
+
+	_mh_ef=; _mh_ei=; _mh_wf=; _mh_wi=
+	if [ -n "$_mh_ea" ]; then
+		prio_take eth_from "$PRIO_ETH_FROM" && _mh_ef=$MH_PRIO
+		prio_take eth_iif "$PRIO_ETH_IIF" && _mh_ei=$MH_PRIO
+		policy_fill "$ETH" "$TABLE_ETH" "$_mh_ea" "$_mh_egw"
+	fi
+	if [ -n "$_mh_wa" ]; then
+		prio_take wlan_from "$PRIO_WLAN_FROM" && _mh_wf=$MH_PRIO
+		prio_take wlan_iif "$PRIO_WLAN_IIF" && _mh_wi=$MH_PRIO
+		policy_fill "$WLAN" "$TABLE_WLAN" "$_mh_wa" "$_mh_wgw"
+	fi
+
+	_mh_eip=${_mh_ea%%/*}
+	_mh_wip=${_mh_wa%%/*}
+	[ -n "$_mh_ef" ] &&
+		ip rule add from "$_mh_eip" lookup "$TABLE_ETH" priority "$_mh_ef" 2>/dev/null
+	[ -n "$_mh_ei" ] &&
+		ip rule add iif "$ETH" lookup "$TABLE_ETH" priority "$_mh_ei" 2>/dev/null
+	[ -n "$_mh_wf" ] &&
+		ip rule add from "$_mh_wip" lookup "$TABLE_WLAN" priority "$_mh_wf" 2>/dev/null
+	[ -n "$_mh_wi" ] &&
+		ip rule add iif "$WLAN" lookup "$TABLE_WLAN" priority "$_mh_wi" 2>/dev/null
+
+	mkdir -p "$STATE_DIR"
+	{
+		echo "eth_from=$_mh_ef"
+		echo "eth_iif=$_mh_ei"
+		echo "wlan_from=$_mh_wf"
+		echo "wlan_iif=$_mh_wi"
+	} > "$POLICY_RULES" 2>/dev/null
+	echo "$_mh_stamp" > "$POLICY_STAMP" 2>/dev/null
+
+	log "policy tables: $ETH=${_mh_ea:-none} (table $TABLE_ETH, rules $_mh_ef/$_mh_ei), $WLAN=${_mh_wa:-none} (table $TABLE_WLAN, rules $_mh_wf/$_mh_wi)"
+	return 0
+}
+
+multihome_guard() {
+	arp_tuning
+	policy_reconcile
+	return 0
+}
+
+ping_gw() {
+	ping -c 1 -W 2 -I "$2" "$1" >/dev/null 2>&1
+}
+
+add_ns() {
+	[ -n "$1" ] || return 0
+	[ "$NS_N" -ge 3 ] && return 0
+	for _x in $NS_LIST; do
+		[ "$_x" = "$1" ] && return 0
+	done
+	NS_LIST="$NS_LIST $1"
+	NS_N=$((NS_N + 1))
+}
+
+collect_ns_dev() {
+	_ns=
+	if [ "$1" = "$ETH" ]; then
+		if [ "$NET_MODE" = "static" ]; then
+			_ns=$ETH_DNS_ENV
+		else
+			_ns=$(cat "$ETH_DNS_FILE" 2>/dev/null)
+		fi
+		eth_candidate && add_ns "$_ns"
+	else
+		if [ "$WLAN_DHCP" = "off" ]; then
+			_ns=$WLAN_DNS_ENV
+		else
+			_ns=$(cat "$WLAN_DNS_FILE" 2>/dev/null)
+		fi
+		wlan_candidate && add_ns "$_ns"
+	fi
+	return 0
+}
+
+# Single writer of /etc/resolv.conf: the resolvers of both uplinks, ordered by
+# the effective metric, de-duplicated, at most three.
+write_resolv() {
+	[ "$NETBOOT" = "1" ] && return 0
+
+	NS_LIST=""
+	NS_N=0
+	_eth_m=$(target_metric "$ETH")
+	_wlan_m=$(target_metric "$WLAN")
+
+	if [ "$_eth_m" -le "$_wlan_m" ]; then
+		collect_ns_dev "$ETH"
+		collect_ns_dev "$WLAN"
+	else
+		collect_ns_dev "$WLAN"
+		collect_ns_dev "$ETH"
+	fi
+
+	mkdir -p "$STATE_DIR"
+	_tmp=$RESOLV.tmp.$$
+	: > "$_tmp" 2>/dev/null || return 1
+	for _x in $NS_LIST; do
+		echo "nameserver $_x" >> "$_tmp"
+	done
+	if cmp -s "$_tmp" "$RESOLV"; then
+		rm -f "$_tmp"
+		return 0
+	fi
+	mv "$_tmp" "$RESOLV" 2>/dev/null || return 1
+	return 0
+}
+
+set_var() {
+	eval "$1=\$2"
+}
+
+get_var() {
+	eval "echo \${$1}"
+}
+
+health_dev() {
+	_dev=$1
+	_tag=$2
+	_gw=$(route_gw "$_dev")
+
+	if [ -z "$_gw" ]; then
+		set_var "${_tag}_FAILS" 0
+		set_var "${_tag}_OKS" 0
+		if [ "$(demoted_get "$_dev")" = "1" ]; then
+			demoted_set "$_dev" 0
+			set_var "${_tag}_DEMOTED" 0
+			log "$_dev: default route is gone, failover state cleared"
+		fi
+		return 0
+	fi
+
+	_ok=0
+	if [ "$_dev" = "$WLAN" ]; then
+		wlan_candidate && _ok=1
+	else
+		eth_candidate && _ok=1
+	fi
+	if [ "$_ok" = "0" ]; then
+		set_var "${_tag}_FAILS" 0
+		set_var "${_tag}_OKS" 0
+		return 0
+	fi
+
+	_fails=$(get_var "${_tag}_FAILS")
+	_oks=$(get_var "${_tag}_OKS")
+	_demoted=$(get_var "${_tag}_DEMOTED")
+	_changed=$(changed_get "$_dev")
+	_now=$(date +%s)
+	_elapsed=$((_now - _changed))
+
+	if ping_gw "$_gw" "$_dev"; then
+		_oks=$((_oks + 1))
+		_fails=0
+		if [ "$_demoted" = "1" ] && [ "$_oks" -ge "$OK_LIMIT" ] &&
+				[ "$_elapsed" -ge "$COOLDOWN" ]; then
+			_demoted=0
+			demoted_set "$_dev" 0
+			set_var "${_tag}_DEMOTED" 0
+			changed_set "$_dev" "$_now"
+			reconcile_dev "$_dev" "$(target_metric "$_dev")"
+			log "$_dev: gateway $_gw answers again, metric restored"
+		fi
+	else
+		_fails=$((_fails + 1))
+		_oks=0
+		if [ "$_demoted" = "0" ] && [ "$_fails" -ge "$FAIL_LIMIT" ] &&
+				[ "$_elapsed" -ge "$COOLDOWN" ]; then
+			_demoted=1
+			demoted_set "$_dev" 1
+			set_var "${_tag}_DEMOTED" 1
+			changed_set "$_dev" "$_now"
+			reconcile_dev "$_dev" "$(target_metric "$_dev")"
+			log "$_dev: gateway $_gw does not answer, failover to the other uplink"
+		fi
+	fi
+
+	set_var "${_tag}_FAILS" "$_fails"
+	set_var "${_tag}_OKS" "$_oks"
+}
+
+monitor_loop() {
+	ETH_FAILS=0
+	ETH_OKS=0
+	WLAN_FAILS=0
+	WLAN_OKS=0
+	ETH_DEMOTED=$(demoted_get "$ETH")
+	WLAN_DEMOTED=$(demoted_get "$WLAN")
+	NETBOOT_LOGGED=0
+	TIE_LOGGED=0
+
+	while :; do
+		load_settings
+		if [ "$METRIC_TIE" = "1" ] && [ "$TIE_LOGGED" = "0" ]; then
+			log "equal uplink metrics ($WLAN_METRIC_ENV): using $WLAN_METRIC for $WLAN"
+			TIE_LOGGED=1
+		fi
+		if [ "$NETBOOT" = "1" ] && [ "$NETBOOT_LOGGED" = "0" ]; then
+			log "netboot (NFS root): Ethernet default route and resolv.conf are left untouched"
+			NETBOOT_LOGGED=1
+		fi
+		ETH_DEMOTED=$(demoted_get "$ETH")
+		WLAN_DEMOTED=$(demoted_get "$WLAN")
+		reconcile_all
+		multihome_guard
+		if [ "$NETBOOT" = "1" ]; then
+			# Observe only: NFS root depends on the Ethernet default route.
+			:
+		else
+			health_dev "$ETH" ETH
+		fi
+		health_dev "$WLAN" WLAN
+		write_resolv
+		sleep "$INTERVAL"
+	done
+}
+
+monitor_start() {
+	mkdir -p "$STATE_DIR" "$RUN"
+	if [ -f "$PIDFILE" ]; then
+		_pid=$(cat "$PIDFILE" 2>/dev/null)
+		if [ -n "$_pid" ] && kill -0 "$_pid" 2>/dev/null; then
+			log "monitor already running (pid $_pid)"
+			return 0
+		fi
+		rm -f "$PIDFILE"
+	fi
+
+	trap 'rm -f "$PIDFILE"; exit 0' TERM INT HUP
+	echo $$ > "$PIDFILE"
+	log "monitor started"
+	monitor_loop
+	rm -f "$PIDFILE"
+}
+
+stop_monitor() {
+	[ -f "$PIDFILE" ] || return 0
+	_pid=$(cat "$PIDFILE" 2>/dev/null)
+	if [ -n "$_pid" ] && kill -0 "$_pid" 2>/dev/null; then
+		kill "$_pid" 2>/dev/null
+		_i=0
+		while [ "$_i" -lt 20 ]; do
+			kill -0 "$_pid" 2>/dev/null || break
+			_i=$((_i + 1))
+			sleep 0.2
+		done
+	fi
+	rm -f "$PIDFILE"
+	log "monitor stopped"
+	return 0
+}
+
+show_env() {
+	load_settings
+	ETH_DEMOTED=$(demoted_get "$ETH")
+	WLAN_DEMOTED=$(demoted_get "$WLAN")
+
+	_ad=$(active_default)
+	_ad_dev=${_ad%% *}
+	_ad_rest=${_ad#* }
+	_ad_gw=${_ad_rest%% *}
+	_ad_metric=${_ad_rest##* }
+	[ -n "$_ad" ] || _ad_metric=
+
+	_demoted=
+	[ "$ETH_DEMOTED" = "1" ] && _demoted=$ETH
+	if [ "$WLAN_DEMOTED" = "1" ]; then
+		_demoted="${_demoted:+$_demoted,}$WLAN"
+	fi
+
+	_wlan_active=false
+	if wlan_candidate && [ -n "$(route_gw "$WLAN")" ]; then
+		_wlan_active=true
+	fi
+
+	echo "net_metric=$NET_METRIC"
+	echo "wlan_metric=$WLAN_METRIC_ENV"
+	echo "wlan_metric_effective=$WLAN_METRIC"
+	echo "metric_tie=$METRIC_TIE"
+	echo "netboot=$NETBOOT"
+	echo "eth_carrier=$(carrier "$ETH")"
+	echo "wlan_carrier=$(carrier "$WLAN")"
+	echo "wlan_mode=$WLAN_MODE"
+	echo "wlan_state=$(wpa_state)"
+	echo "wlan_active=$_wlan_active"
+	echo "eth_gw=$(route_gw "$ETH")"
+	echo "wlan_gw=$(route_gw "$WLAN")"
+	echo "eth_default_metric=$(default_metric "$ETH")"
+	echo "wlan_default_metric=$(default_metric "$WLAN")"
+	echo "eth_demoted=$ETH_DEMOTED"
+	echo "wlan_demoted=$WLAN_DEMOTED"
+	echo "demoted=$_demoted"
+	echo "active_default_dev=$_ad_dev"
+	echo "active_default_gw=$_ad_gw"
+	echo "active_default_metric=$_ad_metric"
+
+	_mh_ea=$(addr_of "$ETH")
+	_mh_wa=$(addr_of "$WLAN")
+	_mh_multi=0
+	if [ -n "$_mh_ea" ] && [ -n "$_mh_wa" ]; then
+		_mh_multi=$(prefix_overlap "$_mh_ea" "$_mh_wa")
+	fi
+	_mh_ai=$(sysctl_get all arp_ignore)
+	_mh_aa=$(sysctl_get all arp_announce)
+	_mh_arp=off
+	[ "$_mh_ai" = "1" ] && [ "$_mh_aa" = "2" ] && _mh_arp=on
+	_mh_policy=off
+	_mh_rps=$(rule_priorities | tr '\n' ' ')
+	for _mh_tag in eth_from eth_iif wlan_from wlan_iif; do
+		_mh_p=$(prio_get "$_mh_tag")
+		[ -n "$_mh_p" ] || continue
+		if list_has "$_mh_p" "$_mh_rps"; then
+			_mh_policy=on
+			break
+		fi
+	done
+
+	echo "eth_addr=$_mh_ea"
+	echo "wlan_addr=$_mh_wa"
+	echo "multihome=$_mh_multi"
+	echo "arp_tuning=$_mh_arp"
+	echo "rp_filter=$(sysctl_get all rp_filter)"
+	echo "policy_tables=$_mh_policy"
+}
+
+case "$1" in
+	once)
+		load_settings
+		ETH_DEMOTED=$(demoted_get "$ETH")
+		WLAN_DEMOTED=$(demoted_get "$WLAN")
+		reconcile_all
+		multihome_guard
+		write_resolv
+		;;
+	monitor)
+		monitor_start
+		;;
+	stop)
+		stop_monitor
+		;;
+	env|show)
+		show_env
+		;;
+	*)
+		echo "usage: $0 {once|monitor|stop|show}" >&2
+		exit 1
+		;;
+esac

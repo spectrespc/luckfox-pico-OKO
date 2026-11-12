@@ -133,12 +133,14 @@ SPI NAND, если `sys_bootargs` не сохранён в env.
 | 20 | `S50usbdevice` | настройка USB-режима (gadget) | выполняется всегда; при `dr_mode = "otg"` UDC существует в device-роли, биндинг configfs-gadget не меняется; legacy `g_mass_storage` выключен (KI-056) |
 | 21 | `S60micinit` | настройка микрофонного тракта через `amixer` | аудио-модули ядра |
 | 22 | `S60openvpn` | штатный init-скрипт пакета buildroot | **неактивен**: читает `/etc/openvpn/*.conf` (каталога нет), профилями OKO управляет `S45oko-vpn`; не удалять, чтобы пакет оставался целостным |
-| 23 | `S99hciinit` | `hciattach` для AIC8800 и поднятие `wlan0` | зависит от `aic8800_fdrv` |
-| 24 | `S99luckfoxconfigload` | `luckfox-config load` — восстановление настроек | `/userdata` |
-| 25 | `S99luckfoxcustomoverlay` | применение пользовательского DT-overlay из `/mnt/cfg` | `dtc`, `configfs` |
-| 26 | `S99oko-test` | тестовый маркер OKO: пишет `/tmp/oko-test-ok` и строку в `/dev/kmsg` | оверлей OKO, `MARKER` в скрипте |
-| 27 | `S99rtcinit` | калибровка RTC при «нулевом» времени; RTC хранится в UTC (`hwclock -u`, `date -u`) | — |
-| 28 | `S99usb0config` | роль-aware настройка `usb0` и watchdog роли | определяет роль по `/sys/class/extcon/*/state`: в device-роли ставит `172.32.0.93` и, если UDC пуст после host-режима, перезапускает `S50usbdevice`; в host-роли ничего не делает |
+| 23 | `S97okoroute` | `/usr/bin/oko-route monitor` фоном: единый владелец default-маршрутов, `/etc/resolv.conf`, ARP-тюнинга и policy-таблиц; метрики `oko_net_metric`/`oko_wlan_metric` из env, failover по недоступности шлюза (`ping -I`, 3 отказа → metric+10000, 2 успеха → возврат, cooldown 30 с), при `root=/dev/nfs` eth-маршрут и resolv не трогает | оверлей OKO; после `S21appinit` (eth уже настроен `oko-net apply`) и `S45oko-vpn`, до `S98okowifi`; `fw_printenv`/`fw_setenv`, `ip`, `ping`, `wpa_cli`; opt-out — отсутствие `/usr/bin/oko-route` |
+| 24 | `S98okowifi` | `/usr/bin/oko-wifi apply` фоном: ждёт `wlan0` до 30 с и поднимает STA или SoftAP по env `oko_wlan_*`; SoftAP всегда WPA2-PSK — пароль из `oko_wlan_ap_psk` или заводский `ybrjveytljdthzq` | оверлей OKO; после `S21appinit` (`insmod_ko.sh` → `insmod_wifi.sh` фоном) и `S45oko-vpn`; `wpa_supplicant`/`hostapd`/`dnsmasq` из rootfs, `/usr/bin/oko-wifi` |
+| 25 | `S99hciinit` | `hciattach` для AIC8800; ветка `wlan0`/`udhcpc` удалена | зависит от `aic8800_fdrv`; `wlan0` принадлежит `S98okowifi` |
+| 26 | `S99luckfoxconfigload` | `luckfox-config load` — восстановление настроек | `/userdata` |
+| 27 | `S99luckfoxcustomoverlay` | применение пользовательского DT-overlay из `/mnt/cfg` | `dtc`, `configfs` |
+| 28 | `S99oko-test` | тестовый маркер OKO: пишет `/tmp/oko-test-ok` и строку в `/dev/kmsg` | оверлей OKO, `MARKER` в скрипте |
+| 29 | `S99rtcinit` | калибровка RTC при «нулевом» времени; RTC хранится в UTC (`hwclock -u`, `date -u`) | — |
+| 30 | `S99usb0config` | роль-aware настройка `usb0` и watchdog роли | определяет роль по `/sys/class/extcon/*/state`: в device-роли ставит `172.32.0.93` и, если UDC пуст после host-режима, перезапускает `S50usbdevice`; в host-роли ничего не делает |
 
 `S20linkmount` генерируется в `project/build.sh` (при разборе таблицы разделов) в файл
 `$RK_PROJECT_OUTPUT/S20linkmount` с `bootmedium=$RK_BOOT_MEDIUM`. Для `spi_nand` он:
@@ -264,7 +266,10 @@ esac
    состоянием управляет только `oko-sdcard`; stale-remove для ещё существующего
    `mmcblkX` игнорируется. Все операции
    (`add`/`remove`/`mount`/`unmount`/`format`) сериализуются lock-каталогом
-   `/run/oko-sd.lock`, чтобы udev не вмешался в форматирование. При активной
+   `/run/oko-sd.lock`, чтобы udev не вмешался в форматирование. После успешного
+   `add`/`mount` скрипт фоном вызывает `oko-wifi sdimport`: файл
+   `/mnt/sdcard/oko-wifi.conf` импортируется один раз и переименовывается в
+   `oko-wifi.conf.applied-<sha1-8>`. При активной
    записи `/api/storage` блокирует `unmount`/`format`; при потере монтирования
    recorder закрывает текущий сегмент и не пишет в NAND.
 5. Проверяет маркер `/userdata/divinus.enable` — `divinus` (MIT, вендорен в
@@ -324,7 +329,8 @@ esac
 
 `insmod_wifi.sh` определяет чип по `uevent` SDIO/USB и загружает соответствующий набор:
 AIC8800 (`aic_load_fw` → `aic8800_fdrv`), AP6XXX (`bcmdhd`), RTL8723BS
-(`cfg80211` + `mac80211` + `r8723bs`), RTL8723DS, RTL8189FS, RTL8188FU, ATBM и др.
+(`cfg80211` + `mac80211` + `r8723bs`), RTL8723DS, RTL8189FS, RTL8188FU,
+RTL8821CU/RTL8811CU (`0bda:c811` и родственные ID, `cfg80211` + `8821cu`), ATBM и др.
 Загрузка WiFi не блокирует запуск `divinus`.
 
 `amneziawg.ko` в этот список **не входит**: модуль лежит в `/oem/usr/ko`, но
@@ -521,6 +527,11 @@ AIC8800 (`aic_load_fw` → `aic8800_fdrv`), AP6XXX (`bcmdhd`), RTL8723BS
   модулей. Вендорские исходники и DTS других плат не изменяются.
 - WiFi-модули зависят от `cfg80211`, а для RTL8723BS — ещё и от `mac80211` и
   крипто-модулей (`libarc4`, `aes_generic` и т.п.); состав определяется чипом.
+  RTL8821CU (`8821cu.ko`) — USB-драйвер с cfg80211; `oko-wifi` работает через
+  `wpa_supplicant -D nl80211`, `hostapd` и `dnsmasq`, поставленные пакетом
+  `wifi_app` в rootfs, а `wireless-regdb` даёт `/lib/firmware/regulatory.db`.
+  AP+STA для него не поддержан (`ap_st_unsupported`): драйвер не объявляет
+  совместимые комбинации интерфейсов.
 - **`amneziawg.ko` — условный модуль по требованию.** Флаг `RK_ENABLE_AWG=y`
   в активном board config включает сборку `drv_ko/amneziawg`; файл попадает в
   `/oem/usr/ko`, но `insmod_ko.sh` его не загружает. `oko-vpn` делает `insmod`
@@ -544,6 +555,40 @@ AIC8800 (`aic_load_fw` → `aic8800_fdrv`), AP6XXX (`bcmdhd`), RTL8723BS
   переживает полную прошивку; DHCP-клиент один (`dhcpcd`), его client ID —
   MAC, а не DUID из `/var/db/dhcpcd` (иначе после перепрошивки менялся бы
   адрес). Настройки статического IP также лежат в env-разделе.
+- `S97okoroute` запускается до `S98okowifi` и держит `oko-route monitor`:
+  один default-маршрут на аплинк с метриками `oko_net_metric` (100) и
+  `oko_wlan_metric` (600) из env, повторное выравнивание после renew DHCP,
+  failover по недоступности шлюза (`ping -I`, 3 отказа → metric+10000,
+  2 успеха → возврат, cooldown 30 с). `/etc/resolv.conf` пишет только
+  `oko-route`: в `/etc/dhcpcd.conf` добавлен `nohook resolv.conf`, резолверы
+  eth сохраняет хук `/lib/dhcpcd/dhcpcd-hooks/20-oko-route`, резолверы wlan —
+  `/tmp/wlan.dns`; порядок — по эффективным метрикам, до трёх серверов.
+  При `root=/dev/nfs` демон не трогает eth-маршрут и resolv.conf
+  (наблюдение и лог). `oko-net apply` и `oko-wifi apply` вызывают
+  `oko-route once` после настройки интерфейса. Равные метрики kernel не
+  хранит в одной таблице, поэтому `oko-route` разводит их (wlan = +1).
+- `S98okowifi` запускается после `S21appinit`; `insmod_wifi.sh` загружает USB
+  драйвер фоном, поэтому скрипт ждёт `wlan0` до 30 с. STA ставит default
+  route через `wlan0` с `oko_wlan_metric`; Ethernet остаётся приоритетным при
+  меньшей метрике, при недоступном STA поднимается SoftAP `192.168.43.1/24`.
+  SoftAP всегда WPA2-PSK: пароль берётся из `oko_wlan_ap_psk`, а при пустом
+  значении — заводский `ybrjveytljdthzq` (публичный дефолт KI-030: сменить
+  через `oko-wifi set`/`/api/wifi`, вернуть — `fw_setenv oko_wlan_ap_psk`).
+  Открытой точки нет. SoftAP — управляющая сеть, не аплинк: `oko-route`
+  учитывает wlan0 только при `wpa_state=COMPLETED`. Настройки — env `oko_wlan_*`, сканирование и
+  SD-импорт — `/usr/bin/oko-wifi`.
+- `oko-route` — единственный владелец weak-host защиты, когда eth0 и wlan0
+  находятся в одной подсети. В `once` и в каждом витке `monitor` он
+  идемпотентно пишет `net.ipv4.conf.{all,default}.arp_ignore=1` и
+  `arp_announce=2`, а строгий `rp_filter=1` переводит в loose-режим `2`.
+  Для интерфейсов с IPv4 он держит таблицы 100 (eth0) и 101 (wlan0) с
+  connected-префиксом и default через шлюз, плюс правила `from <ip>/32`
+  (100/200) и `iif <if>` (110/210), чтобы ответ уходил тем же интерфейсом.
+  Пересборка выполняется только при смене штампа адрес/шлюз
+  (`/run/oko-route/policy.stamp`); занятые чужие приоритеты обходятся
+  выбором свободного номера (`/run/oko-route/policy.rules`). При
+  `root=/dev/nfs` таблицы ставятся теми же, потому что их default совпадает
+  с main и NFS-путь не меняется.
 - `S49ntp`, `S50sshd`, `S50telnet` рассчитывают на уже поднятую сеть.
 
 ## 8. Источники и проверка

@@ -26,6 +26,43 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Добавлено
 
+- **SoftAP всегда WPA2-PSK с заводским паролем (OKO).** `oko-wifi` больше не
+  поднимает открытую точку: пустой `oko_wlan_ap_psk` в `load_settings`
+  заменяется заводским `ybrjveytljdthzq`, а `start_ap` всегда пишет `wpa=2`,
+  `wpa_passphrase`, `wpa_key_mgmt=WPA-PSK` и `rsn_pairwise=CCMP`. Пароль
+  виден оператору в `oko-wifi env`, `GET /api/wifi` и `/api/wifi/apinfo`
+  (назначение последнего — показать пароль точки с телефона). Явно заданный
+  пароль (`oko-wifi set`, `/api/wifi`, SD-конфиг) переопределяет заводский;
+  вернуть заводский — `fw_setenv oko_wlan_ap_psk` (удаление переменной).
+  Пароль публичный, уровня `admin/oko-change-me`, и обязателен к смене при
+  вводе в эксплуатацию (KI-030). Стенд 2026-11-12 (DUT `192.168.52.33`,
+  фабричное env, рабочее дерево): `oko-wifi env` и `apinfo` →
+  `ybrjveytljdthzq`, hostapd → `wpa=2`/CCMP, OSD `wifi ap`, адрес
+  `192.168.43.1/24`; клиент с хоста (`wpa_supplicant`, `iw`) ассоциировался
+  по `WPA2-PSK`/`CCMP`, получил DHCP `192.168.43.17`, ping и HTTP к
+  `192.168.43.1` отвечают; неверный пароль → `4-Way Handshake failed` /
+  `WRONG_KEY` без ассоциации, DUT остаётся в AP; кастомный
+  `custom-hotspot-pass` ассоциируется и виден в конфиге и `apinfo`, после
+  `fw_setenv oko_wlan_ap_psk` снова заводский.
+- **SoftAP is always WPA2-PSK with a factory password (OKO).** `oko-wifi` no
+  longer brings up an open access point: an empty `oko_wlan_ap_psk` is
+  replaced by the factory `ybrjveytljdthzq` in `load_settings`, and
+  `start_ap` always writes `wpa=2`, `wpa_passphrase`, `wpa_key_mgmt=WPA-PSK`
+  and `rsn_pairwise=CCMP`. The password is visible in `oko-wifi env`,
+  `GET /api/wifi` and `/api/wifi/apinfo` (the latter exists to show the AP
+  password from a phone). An explicitly set password (`oko-wifi set`,
+  `/api/wifi`, SD config) overrides the factory one; restoring it is
+  `fw_setenv oko_wlan_ap_psk` (delete the variable). The password is public,
+  on the level of `admin/oko-change-me`, and must be changed before
+  deployment (KI-030). Bench 2026-11-12 (DUT `192.168.52.33`, factory env,
+  working tree): `oko-wifi env` and `apinfo` → `ybrjveytljdthzq`, hostapd →
+  `wpa=2`/CCMP, OSD `wifi ap`, address `192.168.43.1/24`; a host client
+  (`wpa_supplicant`, `iw`) associated over `WPA2-PSK`/`CCMP`, got DHCP
+  `192.168.43.17`, ping and HTTP to `192.168.43.1` answer; a wrong password
+  gives `4-Way Handshake failed` / `WRONG_KEY` with no association while the
+  DUT stays in AP; the custom `custom-hotspot-pass` associates and shows up
+  in the config and `apinfo`, and `fw_setenv oko_wlan_ap_psk` restores the
+  factory one.
 - **OSD: реальный Wi-Fi RSSI и режим SoftAP вместо симуляции (OKO).**
   `oko-osd` больше не рисует случайный RSSI: поле `WiFi` в `/tmp/osd-dyn.txt`
   (`reg1`) берётся из `wpa_cli -i wlan0 status` и
@@ -69,6 +106,145 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   the file is 31–99 bytes (<255), the frame shows four lines
   (`output/bench/osd-20261112-220334-*`); `api_check` 105/0, `ui_check` and
   `osd_check` passed, and the image was flashed over TFTP.
+- **Два интерфейса в одной сети: weak-host защита (OKO).**
+  `oko-route` (вызывается из `once` и каждого витка `monitor`) теперь
+  выставляет `arp_ignore=1` и `arp_announce=2` на `all`/`default`, а при
+  строгом `rp_filter=1` переводит его в loose-режим `2`; ARP-ответы больше
+  не уходят с чужого интерфейса. Для eth0 и wlan0 создаются постоянные
+  таблицы 100/101 (`<prefix> dev <if> src <ip>` и `default via <gw>`), к ним
+  добавляются правила `from <ip>/32` (100/200) и `iif <if>` (110/210);
+  занятые чужие приоритеты обходятся выбором свободного номера, выбор
+  хранится в `/run/oko-route/policy.rules`. Пересборка идёт только при
+  смене штампа адрес/шлюз, поэтому DHCP renew не вызывает flap. `show`
+  дополнен `eth_addr`, `wlan_addr`, `multihome`, `arp_tuning`, `rp_filter`,
+  `policy_tables`; `/api/network` отдаёт `multihome`, `arp_tuning`,
+  `policy_tables`, `eth_addr`, `wlan_addr`; в WebUI Network появилась строка
+  «Защита двух интерфейсов» (EN/RU). Стенд 2026-11-12 (eth0 DHCP
+  `192.168.52.33/24`, wlan0 static `192.168.52.44/24` в той же подсети):
+  параллельный ping 20/20 на каждый адрес — 0% потерь; `ip route get
+  <host> from <addr>` уходит в eth0/wlan0 соответственно; ARP на PC —
+  `.33` → MAC eth0, `.44` → MAC wlan0, flap нет; HTTP-снимок и RTSP
+  DESCRIBE — 200 на обоих адресах; dead-шлюз eth (iptables DROP ICMP) →
+  `eth_demoted=1`, default на wlan0, возврат после снятия DROP; AP-фолбэк
+  `192.168.43.1` работает; static eth+static wlan в одной подсети —
+  10/10 пингов на каждый адрес; 3 цикла eth link down/up — оба адреса
+  живы; netboot-ветка (подмена `/proc/cmdline`) не меняет eth-default и
+  resolv. Найден и исправлен дефект: `ip addr flush` из `oko-net apply`
+  очищал таблицу 100 при неизменном штампе — теперь пустая таблица
+  форсирует пересборку. `api_check` 105/0, `ui_check` зелёный;
+  `check_image_contents` 30 required / 63 forbidden; образ прошит по
+  TFTP. Не прогонялись: VPN поверх деградированного линка, реальный
+  NFS-boot, 10 циклов линка (сделано 3).
+- **Two interfaces in one subnet: weak-host protection (OKO).**
+  `oko-route` (called from `once` and every `monitor` pass) now sets
+  `arp_ignore=1`/`arp_announce=2` on `all`/`default` and switches a strict
+  `rp_filter=1` to the loose mode `2`, so ARP replies no longer leave through
+  the wrong interface. Permanent tables 100/101 are built for eth0 and wlan0
+  (`<prefix> dev <if> src <ip>` plus `default via <gw>`), with `from <ip>/32`
+  rules (100/200) and `iif <if>` rules (110/210); occupied foreign priorities
+  are skipped by picking a free number and remembering it in
+  `/run/oko-route/policy.rules`. Rebuilds happen only when the address/gateway
+  stamp changes, so a DHCP renewal does not flap the tables. `show` reports
+  `eth_addr`, `wlan_addr`, `multihome`, `arp_tuning`, `rp_filter`,
+  `policy_tables`; `/api/network` exposes `multihome`, `arp_tuning`,
+  `policy_tables`, `eth_addr`, `wlan_addr`; the Network WebUI has a
+  "Dual-interface protection" line (EN/RU). Bench 2026-11-12 (eth0 DHCP
+  `192.168.52.33/24`, wlan0 static `192.168.52.44/24` in the same subnet):
+  parallel ping 20/20 to each address, 0% loss; `ip route get <host> from
+  <addr>` leaves through eth0/wlan0 respectively; on the PC `.33` resolves
+  to the eth0 MAC and `.44` to the wlan0 MAC with no flap; the HTTP snapshot
+  and RTSP DESCRIBE return 200 on both addresses; a dead eth gateway
+  (iptables ICMP DROP) sets `eth_demoted=1` and moves the default to wlan0,
+  and it returns when the DROP is removed; the `192.168.43.1` AP fallback
+  works; static eth + static wlan in one subnet passes 10/10 pings to each
+  address; three eth link down/up cycles leave both addresses alive; the
+  netboot branch (faked `/proc/cmdline`) keeps the eth default and resolv
+  untouched. Fixed a defect found here: `ip addr flush` in `oko-net apply`
+  emptied table 100 while the stamp stayed the same — an empty table now
+  forces a rebuild. `api_check` 105/0, `ui_check` passed,
+  `check_image_contents` 30 required / 63 forbidden, and the image was
+  flashed over TFTP. Not run: VPN over a degraded link, a real NFS boot,
+  10 link cycles (3 were done).
+- **Два аплинка: eth0 + Wi-Fi STA, приоритеты и failover (OKO).**
+  Новый `/usr/bin/oko-route` — единый владелец маршрутов по умолчанию и
+  `/etc/resolv.conf`. Приоритеты `oko_net_metric` (100) и `oko_wlan_metric`
+  (600) хранятся в env U-Boot; демон из `S97okoroute` каждые 5 с
+  пере-выравнивает метрики после renew DHCP, проверяет шлюз через
+  `ping -I` (3 отказа → metric+10000, 2 успеха → возврат, cooldown 30 с) и
+  при `root=/dev/nfs` не трогает eth-маршрут и resolv.conf. `/etc/resolv.conf`
+  теперь пишет только `oko-route`: dhcpcd получил `nohook resolv.conf`, его
+  резолверы забирает хук `/lib/dhcpcd/dhcpcd-hooks/20-oko-route`, резолверы
+  wlan — из `/tmp/wlan.dns`; до трёх серверов, dedup, порядок по эффективным
+  метрикам. Равные метрики автоматически разводятся (Wi-Fi = +1), потому что
+  ядро держит один default на metric. В `/api/network` добавлены `metric`,
+  `active_default`, `wlan_active`, `demoted`, `netboot`, в `/api/wifi` —
+  `metric`; POST `metric=` пишет только приоритет. WebUI: поля
+  «Приоритет (metric)» в карточках Ethernet и Wi-Fi и строка «Активный
+  аплинк» с признаком failover. Стенд 2026-11-12: два default (100/600),
+  WebUI с обоих адресов; падение eth-шлюза → demote eth до 10100 и трафик
+  через wlan за ≤30 с, возврат без вмешательства; падение и возврат шлюза
+  wlan; выдёргивание eth-линка; equal-metric 100/100 разводится до 100/101;
+  netboot-ветка не меняет eth-метрику и resolv; 20-минутный soak с
+  чередованием линков — без сбоев.
+- **Dual uplink: eth0 + Wi-Fi STA, priorities and failover (OKO).**
+  New `/usr/bin/oko-route` is the single owner of the default routes and
+  `/etc/resolv.conf`. Priorities `oko_net_metric` (100) and
+  `oko_wlan_metric` (600) live in the U-Boot env; the `S97okoroute` daemon
+  re-aligns the metrics every 5 s after a DHCP renewal, probes the gateway
+  with `ping -I` (three failures → metric+10000, two successes → restore,
+  30 s cooldown) and leaves the Ethernet route and resolv.conf alone when
+  `root=/dev/nfs`. `/etc/resolv.conf` is written only by `oko-route`: dhcpcd
+  uses `nohook resolv.conf`, its resolvers are saved by
+  `/lib/dhcpcd/dhcpcd-hooks/20-oko-route`, and the Wi-Fi resolvers come from
+  `/tmp/wlan.dns`; up to three servers, de-duplicated, ordered by the
+  effective metrics. Equal metrics are separated automatically (Wi-Fi = +1)
+  because the kernel keeps one default per metric. `/api/network` now
+  returns `metric`, `active_default`, `wlan_active`, `demoted` and `netboot`;
+  `/api/wifi` returns `metric`; POST `metric=` stores only the priority. The
+  WebUI has "Priority (metric)" fields in the Ethernet and Wi-Fi cards and an
+  "Active uplink" line with the failover hint. Bench 2026-11-12: two defaults
+  (100/600) and the WebUI on both addresses; a dead Ethernet gateway demotes
+  eth to 10100 and traffic moves to wlan within 30 s, then returns on its
+  own; the Wi-Fi gateway was dropped and restored; the eth link was
+  pulled; equal metrics 100/100 become 100/101; the netboot branch keeps the
+  eth metric and resolv untouched; a 20-minute soak with alternating links
+  passed.
+
+- **USB Wi-Fi: RTL8821CU, STA с SoftAP-фолбэком, WebUI и SD-конфиг.**
+  В `sysdrv/drv_ko/wifi/rtl8821cu/` добавлен драйвер RTL8821CU/RTL8811CU
+  (morrownr `8821cu-20210916`, GPL-2.0), он собирается для ядра SDK и
+  копируется в `/oem/usr/ko/8821cu.ko`; `insmod_wifi.sh` распознаёт
+  `0bda:c811` и родственные USB ID. Новый `/usr/bin/oko-wifi` хранит
+  настройки в env U-Boot (`oko_wlan_*`), поднимает STA через
+  `wpa_supplicant -D nl80211`, при неудаче — SoftAP `OKO-XXXX` на
+  `192.168.43.1/24` с `dnsmasq`, умеет скан (`wpa_cli scan_results`) и
+  однократный импорт `/mnt/sdcard/oko-wifi.conf` с переименованием в
+  `.applied-<hash>`. Автозапуск — `S98okowifi`; из вендорского `S99hciinit`
+  убрана ветка `ifconfig wlan0 up && udhcpc`. В divinus добавлены
+  `/api/wifi`, `/api/wifi/scan`, `/api/wifi/apinfo`, в WebUI — карточка
+  **Сеть → Wi-Fi** (EN/RU); в образ включён `wireless-regdb`. AP+STA
+  отклоняется для этого драйвера (`ap_st_unsupported`). Проверено на стенде
+  с `0bda:c811`: скан, STA (WPA2, DHCP, ping/HTTP/RTSP по wlan0),
+  AP-фолбэк, статический IP, сохранение настроек после ребута, SD-импорт и
+  20-минутный soak (20/20 проверок без потерь).
+- **USB Wi-Fi: RTL8821CU, STA with SoftAP fallback, WebUI and SD config.**
+  Added the RTL8821CU/RTL8811CU driver (morrownr `8821cu-20210916`,
+  GPL-2.0) under `sysdrv/drv_ko/wifi/rtl8821cu/`; it builds against the SDK
+  kernel and is installed as `/oem/usr/ko/8821cu.ko`. `insmod_wifi.sh` now
+  detects `0bda:c811` and related USB IDs. The new `/usr/bin/oko-wifi` stores
+  settings in the U-Boot env (`oko_wlan_*`), runs STA through
+  `wpa_supplicant -D nl80211`, falls back to a SoftAP `OKO-XXXX` on
+  `192.168.43.1/24` with `dnsmasq`, scans through `wpa_cli scan_results` and
+  imports `/mnt/sdcard/oko-wifi.conf` once, renaming it to
+  `.applied-<hash>`. Boot integration is `S98okowifi`; the vendor
+  `S99hciinit` branch `ifconfig wlan0 up && udhcpc` was removed. divinus
+  gained `/api/wifi`, `/api/wifi/scan` and `/api/wifi/apinfo`; the WebUI has
+  a **Network → Wi-Fi** card (EN/RU), and `wireless-regdb` is part of the
+  image. AP+STA is refused for this driver (`ap_st_unsupported`). Verified on
+  the bench with `0bda:c811`: scan, STA (WPA2, DHCP, ping/HTTP/RTSP over
+  wlan0), AP fallback, static IP, persistence across reboot, SD import and a 20-minute
+  soak (20/20 checks without losses).
+
 - **USB host за хабом: HID, USB-сеть и Bluetooth (OKO).**
   Порт RV1106 переведён в dual-role: с OTG-переходником и внешним питанием он
   работает как host (хаб и устройства за ним), с кабелем к ПК остаётся device
@@ -143,6 +319,25 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   rejects (KI-053).
 
 ### Изменено
+
+- **DNS и default-маршрут: единый владелец (OKO).**
+  `oko-wifi` больше не пишет `/etc/resolv.conf` и не хардкодит metric 600:
+  default через wlan ставится с `oko_wlan_metric`, а DNS складывается в
+  `/tmp/wlan.dns`. `oko-net` в static-режиме ставит default через
+  `ip route replace ... metric oko_net_metric`, не перезаписывает
+  resolv.conf и при apply останавливает только udhcpc, привязанный к eth0
+  (lease wlan переживает смену Ethernet). Оба apply вызывают
+  `oko-route once`; `S97okoroute` стартует до `S98okowifi`. В `INIT_ORDER.md`
+  §4 добавлены строки `S97okoroute` и `S98okowifi`.
+
+- **DNS and default route: a single owner (OKO).**
+  `oko-wifi` no longer writes `/etc/resolv.conf` and no longer hardcodes
+  metric 600: the wlan default uses `oko_wlan_metric`, and its resolvers go
+  to `/tmp/wlan.dns`. In static mode `oko-net` installs the default with
+  `ip route replace ... metric oko_net_metric`, stops overwriting
+  resolv.conf and kills only the udhcpc bound to eth0, so the wlan lease
+  survives an Ethernet change. Both apply paths run `oko-route once`;
+  `S97okoroute` starts before `S98okowifi`; `INIT_ORDER.md` §4 adds both rows.
 
 - **`S99usb0config` определяет USB-роль по extcon (OKO).**
   Скрипт больше не проверяет строку `dr_mode` в DTS: роль читается из

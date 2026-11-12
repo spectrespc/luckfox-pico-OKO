@@ -4,7 +4,7 @@
 (RV1106, SPI NAND, Buildroot) с сенсором SC230AI: паспорт платформы, индекс по
 файлам статусов проверки и краткие команды проверки.
 
-Статус на 2026-11-10. Пометки: **работает** — проверено на стенде;
+Статус на 2026-11-12. Пометки: **работает** — проверено на стенде;
 **ограничено** — работает с оговоркой; **заблокировано** — отказ с причиной.
 
 | Файл | Содержание |
@@ -82,6 +82,27 @@ bench/run.sh dut.py --host 192.168.52.97 'cat /proc/device-tree/usbdrd/usb@ffb00
 - В `divinus` нельзя использовать макросы ctype (`isalnum`, `isspace`):
   `compat.c` определяет `__ctype_b` и перекрывает таблицу uClibc — процесс
   падает. Проверки символов делаются ASCII-сравнениями.
+- Сеть: eth0 и wlan0 (STA) — равноправные аплинки, оба могут быть подняты
+  одновременно. Приоритет задаётся метриками `oko_net_metric` (по умолчанию
+  100) и `oko_wlan_metric` (600) в env; `S97okoroute` держит по одному
+  default на аплинк, переключает трафик при недоступности шлюза (3 отказа →
+  metric+10000, 2 успеха → возврат) и единолично пишет `/etc/resolv.conf`
+  (DNS обоих линков, порядок по метрикам). SoftAP — управляющая сеть
+  **WPA2-PSK** с заводским паролем `ybrjveytljdthzq`, пока `oko_wlan_ap_psk`
+  не задан (сменить — KI-030); не аплинк; при `root=/dev/nfs` eth-маршрут и
+  resolv не трогаются. Равные метрики разводятся (Wi-Fi получает +1), потому что ядро хранит один default
+  на metric. VPN-туннель при failover переподнимается на новом аплинке;
+  per-VPN pin по интерфейсу не поддерживается.
+- Сеть: если eth0 и wlan0 подключены к одной подсети, `oko-route` включает
+  weak-host защиту — `arp_ignore=1`/`arp_announce=2`, loose `rp_filter` при
+  строгом значении, per-interface таблицы 100/101 с правилами
+  `from <ip>/32`/`iif <if>`. Пересборка только по смене штампа адрес/шлюз;
+  чужие занятые приоритеты обходятся выбором свободного. Состояние отдаётся
+  в `/api/network` (`multihome`, `arp_tuning`, `policy_tables`, `eth_addr`,
+  `wlan_addr`) и показывается в WebUI. Стенд 2026-11-12: eth0 `.33/24` +
+  wlan0 `.44/24` в одной подсети — параллельный ping 20/20 на каждый адрес,
+  ARP 1 IP = 1 MAC, HTTP/RTSP 200 на обоих адресах, static+static 10/10,
+  failover и возврат, 3 цикла link down/up (`FEATURES_VERIFIED.md`).
 - VPN: WireGuard (`type=wg`, встроенный модуль ядра), AmneziaWG (`type=awg`,
   out-of-tree `amneziawg.ko`, `RK_ENABLE_AWG=y`) и OpenVPN-клиент (`type=ovpn`,
   пакет `openvpn 2.5.7` + `CONFIG_TUN=y`) применяются своим POSIX-хелпером
@@ -130,7 +151,7 @@ Entry point for OKO capabilities on the Luckfox Pico Pro Max (RV1106, SPI NAND,
 Buildroot) with the SC230AI sensor: platform passport, an index of the
 verification-status files and short verification commands.
 
-Status as of 2026-11-10. Markers: **works**, **limited**, **blocked**.
+Status as of 2026-11-12. Markers: **works**, **limited**, **blocked**.
 
 | File | Content |
 |---|---|
@@ -160,6 +181,19 @@ microSD limits are in `FEATURES_UNVERIFIED.md`. A real STM32 update (CBT6,
 WebUI `app-1.0.1.bin` → rollback `app-1.0.0.bin`, dotted `1.0.0` in
 `/api/firmware`) is verified. Flashing procedure and bench addresses are in
 `TESTBENCH.md`; evidence is in `VERIFIED_FUNCTIONS.md`.
+
+Ethernet and a Wi-Fi station (`eth0`, `wlan0`) are peer uplinks and can be up
+at the same time. Their priority is set by `oko_net_metric` (default 100) and
+`oko_wlan_metric` (600) in the U-Boot env; `S97okoroute` keeps one default
+route per uplink, moves traffic when a gateway stops answering (three failures
+→ metric+10000, two successes → restore) and is the only writer of
+`/etc/resolv.conf` (resolvers of both links, ordered by metric). The SoftAP is
+a **WPA2-PSK** management network protected by the factory password
+`ybrjveytljdthzq` while `oko_wlan_ap_psk` is unset (change it — KI-030), not
+an uplink; under `root=/dev/nfs` the eth route and resolv
+are left untouched. Equal metrics are separated (Wi-Fi gets +1) because
+the kernel stores one default per metric. A VPN tunnel is re-established on the
+new uplink after a failover; per-VPN interface pinning is not supported.
 
 The USB port is dual-role (`dr_mode = "otg"`): with an OTG adapter and a hub it
 acts as a host (hub, HID, USB net, Bluetooth dongles), and it stays a gadget

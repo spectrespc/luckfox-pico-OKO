@@ -74,6 +74,13 @@ if [ $? -eq 0 ]; then
 	insmod 8188fu.ko
 fi
 
+#rtl8821cu / rtl8811cu (RTL8811CU, RTL8821CU)
+cat /sys/bus/usb/devices/*/uevent | grep -E "bda\/(c811|c820|c821|c82a|c82b|b820|b82b)"
+if [ $? -eq 0 ]; then
+	insmod cfg80211.ko
+	insmod 8821cu.ko
+fi
+
 #ssv6115
 cat /sys/bus/usb/devices/*/uevent | grep "8065\/6011"
 if [ $? -eq 0 ]; then

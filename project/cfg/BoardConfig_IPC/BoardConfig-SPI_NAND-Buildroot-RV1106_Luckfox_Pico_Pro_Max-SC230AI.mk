@@ -121,7 +121,8 @@ export RK_ENABLE_WIFI=y
 # enable AmneziaWG kernel module (in-tree WireGuard stays built in)
 export RK_ENABLE_AWG=y
 
-# config wifi ssid and passwd
+# vendor wpa_supplicant template; OKO Wi-Fi is configured at runtime
+# through /usr/bin/oko-wifi and oko_wlan_* in the U-Boot env.
 export LF_WIFI_SSID="Your wifi ssid"
 export LF_WIFI_PSK="Your wifi password"
 

@@ -5,7 +5,7 @@
 в `FEATURES_VERIFIED.md`; паспорт платформы, общие примечания и команды
 проверки — в `FEATURES.md`; открытые дефекты и обходы — в `KNOWN_ISSUES.md`.
 
-Статус на 2026-11-10. Пометки: **ограничено** — работает с оговоркой;
+Статус на 2026-11-12. Пометки: **ограничено** — работает с оговоркой;
 **заблокировано** — отказ с причиной.
 
 ## Русский
@@ -23,7 +23,7 @@
 | Видео и стриминг | Поток H.265 в браузере | `http://<хост>:8889/cam/`, HLS `8888` | `services/stream/` | MediaMTX 1.21.3 | **ограничено** — Chromium (Playwright 1248) WebRTC закрывает с `codecs not supported by client`, HLS отдаётся как `hvc1` и в MSE не играет; H.265 смотрится в Safari или нативном плеере. С H.264 (`mp4.codec: H.264` + `rtpSDP H264/90000`) WebRTC играет 1080p30 в Chromium — проверено 2026-11-10 |
 | Видео и стриминг | YOLO `source: vi1` | VI selfpath (chn1) как источник кадров | `/api/yolo`, `[yolo]` | `gating.c`, API и WebUI отклоняют значение | **заблокировано** — включение `vi1` привело к зависанию платы; значение отклоняется с причиной |
 | Видео и стриминг | Второй рантайм RKNN 2.x | Модели toolkit 2.x, `yolo.runtime: 2` | `/api/yolo` (`runtime`), `/api/models` (`runtime`) | `librknnmrt2.so` с отдельным SONAME, два handle в HAL, проверка SDK-версии | **ограничено** — AIISP на 1.6.0 + YOLO на 2.x в одном процессе, переключение runtime без рестарта и 2-часовой soak проверены; mAP 2.x-модели на размеченном наборе не измерен |
-| Сеть | WiFi AIC8800 | Модули собираются и копируются в `/oem/usr/ko` | `RK_ENABLE_WIFI=y` | вендорские модули без правок OKO | **ограничено** — WiFi-стек не проверялся; сеть проверена по Ethernet |
+| Сеть | WiFi AIC8800 (SDIO) | Модули `aic8800dc`/`aic_load_fw`/`aic8800_fdrv` собираются в `/oem/usr/ko` | `RK_ENABLE_WIFI=y` | вендорские модули без правок OKO | **ограничено** — USB RTL8821CU проверен отдельно (`FEATURES_VERIFIED.md`); SDIO-сборка и AP+STA не тестировались |
 | Телеметрия (oko-ec) | Датчики | SHT21 `0x40` — T/RH; INA3221 или INA226 `0x41` — U/I/P; STM32 EC `0x42` — U/I/T, SOC, ячейки, OTA | `/dev/i2c-3`, `i2cdetect -y 3` | `i2c-dev` без драйверов (`CONFIG_HWMON` выключен), автоопределение INA | **ограничено** — адреса видны; у INA3221 силовые входы не подключены |
 | microSD | Hotplug | Извлечение и установка карты | udev, `/api/storage` | определение по `device/type=SD` | **ограничено** — проверено unbind/bind; физическое извлечение не проверялось |
 | USB | Dual-role host + хаб | Порт работает host'ом с OTG-переходником и внешним питанием, device — при подключении к ПК; хаб и устройства за ним | `dr_mode = "otg"` в активном DTS, `/sys/devices/platform/ff3e0000.usb2-phy/otg_mode` (`otg`/`host`/`peripheral`), `lsusb`, `dmesg` | OKO: `dr_mode` «peripheral» → «otg», фрагмент `rv1106-usb-host.config`, роль-зависимый `S99usb0config` | **ограничено** — стенд 2026-11-10: device-роль (extcon `USB=1`, UDC `configured`, gadget виден на ПК), принудительный host (`echo host` → xHCI + корневые хабы) и два цикла host→device с автоматическим возвратом gadget проверены; физический OTG-переходник с хабом/HID/USB-сетью/BT не подключался, VBUS — KI-054 |
@@ -114,7 +114,7 @@ reason (**blocked**) or not yet verified. Confirmed features are in
 commands are in `FEATURES.md`; open defects and workarounds are in
 `KNOWN_ISSUES.md`.
 
-Status as of 2026-11-10.
+Status as of 2026-11-12.
 
 | Group | Feature | Description | Control (API, YAML section) | What was added (OKO vs vendor V1.4) | Status |
 |---|---|---|---|---|---|
@@ -127,7 +127,7 @@ Status as of 2026-11-10.
 | Video and streaming | H.265 stream in a browser | `http://<host>:8889/cam/`, HLS `8888` | `services/stream/` | MediaMTX 1.21.3 | **limited** — Chromium (Playwright 1248) closes WebRTC with `codecs not supported by client` and HLS is served as `hvc1`, which MSE rejects; H.265 needs Safari or a native player. With H.264 (`mp4.codec: H.264` + `rtpSDP H264/90000`) WebRTC plays 1080p30 in Chromium — verified 2026-11-10 |
 | Video and streaming | YOLO `source: vi1` | VI selfpath (chn1) as the frame source | `/api/yolo`, `[yolo]` | `gating.c`, API and WebUI reject the value | **blocked** — enabling `vi1` hung the board; the value is refused with a reason |
 | Video and streaming | Second RKNN 2.x runtime | Models built by toolkit 2.x, `yolo.runtime: 2` | `/api/yolo` (`runtime`), `/api/models` (`runtime`) | `librknnmrt2.so` with a distinct SONAME, two HAL handles, SDK-version check | **limited** — AIISP on 1.6.0 plus YOLO on 2.x in one process, runtime switching without a restart and a 2-hour soak were verified; the 2.x model mAP on a labelled set is not measured |
-| Network | WiFi AIC8800 | Modules are built and copied to `/oem/usr/ko` | `RK_ENABLE_WIFI=y` | vendor modules without OKO changes | **limited** — WiFi stack unverified; networking verified over Ethernet |
+| Network | WiFi AIC8800 (SDIO) | `aic8800dc`/`aic_load_fw`/`aic8800_fdrv` are built into `/oem/usr/ko` | `RK_ENABLE_WIFI=y` | vendor modules without OKO changes | **limited** — USB RTL8821CU is verified separately (`FEATURES_VERIFIED.md`); the SDIO build and AP+STA are untested |
 | Telemetry (`oko-ec`) | Sensors | SHT21 `0x40` — T/RH; INA3221 or INA226 `0x41` — U/I/P; STM32 EC `0x42` — U/I/T, SOC, cells, OTA | `/dev/i2c-3`, `i2cdetect -y 3` | `i2c-dev` without drivers (`CONFIG_HWMON` off), INA autodetection | **limited** — addresses respond; INA3221 power inputs are not wired |
 | microSD | Hotplug | Card removal and insertion | udev, `/api/storage` | detection via `device/type=SD` | **limited** — verified with unbind/bind only; physical removal untested |
 | USB | Dual-role host + hub | The port acts as a host with an OTG adapter and external power, and as a device when connected to a PC; hub and devices behind it | `dr_mode = "otg"` in the active DTS, `/sys/devices/platform/ff3e0000.usb2-phy/otg_mode` (`otg`/`host`/`peripheral`), `lsusb`, `dmesg` | OKO: `dr_mode` "peripheral" → "otg", `rv1106-usb-host.config` fragment, role-aware `S99usb0config` | **limited** — bench 2026-11-10: the device role (extcon `USB=1`, UDC `configured`, gadget visible on a PC), forced host (`echo host` → xHCI plus root hubs) and two host→device cycles with automatic gadget re-bind were verified; a physical OTG adapter with a hub/HID/USB net/BT was not attached, VBUS — KI-054 |

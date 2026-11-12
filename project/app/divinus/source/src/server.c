@@ -19,6 +19,7 @@
 #include "ntp.h"
 #include "update.h"
 #include "vpn.h"
+#include "wifi.h"
 #include "analytics/models.h"
 #include "analytics/yolo.h"
 
@@ -216,6 +217,18 @@ static int capture_command(const char *command, char *output, size_t outputSize)
 static bool valid_ipv4(const char *value) {
     struct in_addr address;
     return value && *value && inet_pton(AF_INET, value, &address) == 1;
+}
+
+/* Route priority: 1..99999, decimal digits.  Lower wins. */
+static bool valid_metric(const char *value) {
+    size_t i, length;
+
+    if (!value || !*value) return false;
+    length = strlen(value);
+    if (length > 5) return false;
+    for (i = 0; i < length; i++)
+        if (value[i] < '0' || value[i] > '9') return false;
+    return atoi(value) >= 1;
 }
 
 /* OKO: helpers shared by the operational endpoints (WebUI rework). */
@@ -4304,12 +4317,20 @@ void respond_request(http_request_t *req) {
 
     if (EQUALS(req->uri, "/api/network")) {
         char mode[8] = "", ipaddr[16] = "", netmask[16] = "";
-        char gateway[16] = "", dns[16] = "";
-        bool haveMode = false;
+        char gateway[16] = "", dns[16] = "", metric[8] = "";
+        bool haveMode = false, haveMetric = false;
         char fieldMode[8] = "dhcp", fieldIp[16] = "", fieldMask[16] = "";
         char fieldGateway[16] = "", fieldDns[16] = "", fieldMac[18] = "";
+        char fieldMetric[8] = "";
         char currentIp[16] = "", currentMac[18] = "", dhcpRunning[8] = "false";
-        char commandOut[1024];
+        char actDev[16] = "", actGw[16] = "", actMetric[8] = "";
+        char wlanActive[8] = "false", demoted[24] = "", netboot[8] = "false";
+        char ethAddr[20] = "", wlanAddr[20] = "";
+        char multihome[8] = "0", arpTuning[8] = "off", policyTables[8] = "off";
+        /* The web server handles one request at a time in a single thread;
+         * keep the two popen() outputs out of the already deep stack frame
+         * (respond_request is called on a 128 KiB thread stack). */
+        static char commandOut[1024], routeOut[1024];
 
         if (req->query) {
             while (req->query) {
@@ -4329,21 +4350,26 @@ void respond_request(http_request_t *req) {
                     snprintf(gateway, sizeof(gateway), "%s", value);
                 } else if (EQUALS(key, "dns")) {
                     snprintf(dns, sizeof(dns), "%s", value);
+                } else if (EQUALS(key, "metric")) {
+                    snprintf(metric, sizeof(metric), "%s", value);
+                    haveMetric = true;
                 }
             }
         }
 
-        if (haveMode) {
+        if (haveMode || haveMetric) {
             const char *error = NULL;
-            if (strcmp(mode, "dhcp") && strcmp(mode, "static")) {
+            if (haveMode && strcmp(mode, "dhcp") && strcmp(mode, "static")) {
                 error = "mode must be dhcp or static";
-            } else if (!strcmp(mode, "static") &&
+            } else if (haveMode && !strcmp(mode, "static") &&
                 (!valid_ipv4(ipaddr) || !valid_ipv4(netmask))) {
                 error = "static mode requires a valid IPv4 address and netmask";
-            } else if (*gateway && !valid_ipv4(gateway)) {
-                error = "invalid gateway address";
-            } else if (*dns && !valid_ipv4(dns)) {
+            } else if (!valid_ipv4(dns) && *dns) {
                 error = "invalid DNS address";
+            } else if (!valid_ipv4(gateway) && *gateway) {
+                error = "invalid gateway address";
+            } else if (haveMetric && !valid_metric(metric)) {
+                error = "metric must be 1 to 99999";
             }
 
             if (error) {
@@ -4358,9 +4384,13 @@ void respond_request(http_request_t *req) {
                 return;
             }
 
-            snprintf(commandOut, sizeof(commandOut),
-                "/usr/bin/oko-net set '%s' '%s' '%s' '%s' '%s'",
-                mode, ipaddr, netmask, gateway, dns);
+            if (haveMode)
+                snprintf(commandOut, sizeof(commandOut),
+                    "/usr/bin/oko-net set '%s' '%s' '%s' '%s' '%s' '%s'",
+                    mode, ipaddr, netmask, gateway, dns, metric);
+            else
+                snprintf(commandOut, sizeof(commandOut),
+                    "/usr/bin/oko-net setmetric '%s'", metric);
             if (system(commandOut) != 0) {
                 char errorResponse[320];
                 int errorLen = sprintf(errorResponse,
@@ -4392,6 +4422,8 @@ void respond_request(http_request_t *req) {
                         snprintf(fieldGateway, sizeof(fieldGateway), "%s", value);
                     else if (!strcmp(line, "dns"))
                         snprintf(fieldDns, sizeof(fieldDns), "%s", value);
+                    else if (!strcmp(line, "metric"))
+                        snprintf(fieldMetric, sizeof(fieldMetric), "%s", value);
                     else if (!strcmp(line, "mac"))
                         snprintf(fieldMac, sizeof(fieldMac), "%s", value);
                     else if (!strcmp(line, "current_ip"))
@@ -4405,6 +4437,42 @@ void respond_request(http_request_t *req) {
             }
         }
 
+        /* The active default route and the failover state come from the
+         * routing daemon, not from the interface helpers. */
+        if (capture_command("/usr/bin/oko-route show", routeOut,
+                sizeof(routeOut)) == 0) {
+            char *line = strtok(routeOut, "\n");
+            while (line) {
+                char *value = strchr(line, '=');
+                if (value) {
+                    *value++ = '\0';
+                    if (!strcmp(line, "active_default_dev"))
+                        snprintf(actDev, sizeof(actDev), "%s", value);
+                    else if (!strcmp(line, "active_default_gw"))
+                        snprintf(actGw, sizeof(actGw), "%s", value);
+                    else if (!strcmp(line, "active_default_metric"))
+                        snprintf(actMetric, sizeof(actMetric), "%s", value);
+                    else if (!strcmp(line, "wlan_active"))
+                        snprintf(wlanActive, sizeof(wlanActive), "%s", value);
+                    else if (!strcmp(line, "demoted"))
+                        snprintf(demoted, sizeof(demoted), "%s", value);
+                    else if (!strcmp(line, "netboot"))
+                        snprintf(netboot, sizeof(netboot), "%s", value);
+                    else if (!strcmp(line, "multihome"))
+                        snprintf(multihome, sizeof(multihome), "%s", value);
+                    else if (!strcmp(line, "arp_tuning"))
+                        snprintf(arpTuning, sizeof(arpTuning), "%s", value);
+                    else if (!strcmp(line, "policy_tables"))
+                        snprintf(policyTables, sizeof(policyTables), "%s", value);
+                    else if (!strcmp(line, "eth_addr"))
+                        snprintf(ethAddr, sizeof(ethAddr), "%s", value);
+                    else if (!strcmp(line, "wlan_addr"))
+                        snprintf(wlanAddr, sizeof(wlanAddr), "%s", value);
+                }
+                line = strtok(NULL, "\n");
+            }
+        }
+
         respLen = sprintf(response,
             "HTTP/1.1 200 OK\r\n"
             "Content-Type: application/json;charset=UTF-8\r\n"
@@ -4413,15 +4481,178 @@ void respond_request(http_request_t *req) {
             "{\"mode\":\"%s\",\"ipaddr\":\"%s\",\"netmask\":\"%s\","
             "\"gateway\":\"%s\",\"dns\":\"%s\",\"mac\":\"%s\","
             "\"current_ip\":\"%s\",\"current_mac\":\"%s\","
-            "\"dhcp_running\":%s}",
+            "\"dhcp_running\":%s,\"metric\":\"%s\","
+            "\"active_default\":{\"dev\":\"%s\",\"gw\":\"%s\",\"metric\":%s},"
+            "\"wlan_active\":%s,\"demoted\":\"%s\",\"netboot\":%s,"
+            "\"multihome\":%s,\"arp_tuning\":%s,\"policy_tables\":%s,"
+            "\"eth_addr\":\"%s\",\"wlan_addr\":\"%s\"}",
             fieldMode, fieldIp, fieldMask, fieldGateway, fieldDns, fieldMac,
-            currentIp, currentMac, dhcpRunning);
+            currentIp, currentMac, dhcpRunning, fieldMetric,
+            actDev, actGw, actMetric[0] ? actMetric : "null",
+            wlanActive, demoted,
+            (!strcmp(netboot, "1") || !strcmp(netboot, "true")) ?
+            "true" : "false",
+            (!strcmp(multihome, "1") || !strcmp(multihome, "true")) ?
+            "true" : "false",
+            (!strcmp(arpTuning, "on")) ? "true" : "false",
+            (!strcmp(policyTables, "on")) ? "true" : "false",
+            ethAddr, wlanAddr);
         send_and_close(req->clntFd, response, respLen);
 
         /* The static IP change can drop this TCP connection; apply after the
          * response has been sent. */
         if (haveMode)
             system("(sleep 1; /usr/bin/oko-net apply) >/dev/null 2>&1 &");
+        else if (haveMetric)
+            system("(sleep 1; /usr/bin/oko-route once) >/dev/null 2>&1 &");
+        return;
+    }
+
+    /* OKO: USB Wi-Fi settings (STA with SoftAP fallback).
+     *   GET  /api/wifi          — stored settings and live state
+     *   POST /api/wifi          — store settings (form/query) or scan=1
+     *   GET  /api/wifi/scan     — cached scan result
+     *   GET  /api/wifi/apinfo   — hotspot SSID, passphrase and address */
+    if (STARTS_WITH(req->uri, "/api/wifi")) {
+        /* Single-threaded server: keep the 8 KiB JSON buffer off the stack. */
+        static char body[8192];
+
+        if (EQUALS(req->uri, "/api/wifi/scan")) {
+            size_t len = wifi_scan_json(body, sizeof(body));
+            if (!len) {
+                reply_error(req->clntFd, "failed",
+                    "cannot read the scan cache", "run a scan first");
+                return;
+            }
+            reply_json(req->clntFd, body, len);
+            return;
+        }
+
+        if (EQUALS(req->uri, "/api/wifi/apinfo")) {
+            size_t len = wifi_apinfo_json(body, sizeof(body));
+            if (!len) {
+                reply_error(req->clntFd, "failed",
+                    "cannot read the Wi-Fi state", "check the USB adapter");
+                return;
+            }
+            reply_json(req->clntFd, body, len);
+            return;
+        }
+
+        if (EQUALS(req->uri, "/api/wifi")) {
+            char mode[8] = "", ssid[65] = "", psk[96] = "";
+            char dhcp[8] = "", ipaddr[16] = "", netmask[16] = "";
+            char gateway[16] = "", dns[16] = "", apssid[65] = "";
+            char appsk[96] = "", error[128] = "", metric[8] = "";
+            bool haveMode = false, haveMetric = false, scanRequested = false;
+
+            if (!wifi_available()) {
+                reply_error(req->clntFd, "unavailable",
+                    "the Wi-Fi helper is not installed", "");
+                return;
+            }
+
+            if (req->query) {
+                while (req->query) {
+                    char *value = split(&req->query, "&");
+                    char *key;
+
+                    if (!value || !*value) continue;
+                    key = split(&value, "=");
+                    if (!key || !*key || !value) continue;
+                    unescape_uri(value);
+                    if (EQUALS(key, "scan")) {
+                        if (query_bool(value)) scanRequested = true;
+                    } else if (EQUALS(key, "mode")) {
+                        snprintf(mode, sizeof(mode), "%s", value);
+                        haveMode = true;
+                    } else if (EQUALS(key, "ssid")) {
+                        snprintf(ssid, sizeof(ssid), "%s", value);
+                    } else if (EQUALS(key, "psk")) {
+                        snprintf(psk, sizeof(psk), "%s", value);
+                    } else if (EQUALS(key, "dhcp")) {
+                        snprintf(dhcp, sizeof(dhcp), "%s", value);
+                    } else if (EQUALS(key, "ipaddr") || EQUALS(key, "ip")) {
+                        snprintf(ipaddr, sizeof(ipaddr), "%s", value);
+                    } else if (EQUALS(key, "netmask") || EQUALS(key, "mask")) {
+                        snprintf(netmask, sizeof(netmask), "%s", value);
+                    } else if (EQUALS(key, "gateway") || EQUALS(key, "gw")) {
+                        snprintf(gateway, sizeof(gateway), "%s", value);
+                    } else if (EQUALS(key, "dns")) {
+                        snprintf(dns, sizeof(dns), "%s", value);
+                    } else if (EQUALS(key, "ap_ssid")) {
+                        snprintf(apssid, sizeof(apssid), "%s", value);
+                    } else if (EQUALS(key, "ap_psk")) {
+                        snprintf(appsk, sizeof(appsk), "%s", value);
+                    } else if (EQUALS(key, "metric")) {
+                        snprintf(metric, sizeof(metric), "%s", value);
+                        haveMetric = true;
+                    }
+                }
+            }
+
+            if (scanRequested && !haveMode) {
+                if (wifi_scan_start(error, sizeof(error)) != 0) {
+                    reply_error(req->clntFd, "busy", error,
+                        "disconnect the hotspot or wait for the adapter");
+                    return;
+                }
+                reply_json(req->clntFd, "{\"state\":\"scanning\"}",
+                    sizeof("{\"state\":\"scanning\"}") - 1);
+                return;
+            }
+
+            if (!EQUALS(req->method, "GET") && !EQUALS(req->method, "POST")) {
+                send_http_error(req->clntFd, 405);
+                return;
+            }
+
+            if (haveMode) {
+                int rc = wifi_save(mode, ssid, psk, *dhcp ? dhcp : "on",
+                    ipaddr, netmask, gateway, dns, apssid, appsk, metric,
+                    error, sizeof(error));
+
+                if (rc != 0) {
+                    reply_error(req->clntFd,
+                        rc == -2 ? "ap_st_unsupported" : "invalid",
+                        error,
+                        rc == -2 ? "use sta or ap" :
+                        "check the SSID, passphrase and IP fields");
+                    return;
+                }
+            } else if (haveMetric) {
+                int rc = wifi_save_metric(metric, error, sizeof(error));
+
+                if (rc != 0) {
+                    reply_error(req->clntFd, "invalid", error,
+                        "the priority must be 1 to 99999");
+                    return;
+                }
+            }
+
+            {
+                size_t len = wifi_status_json(body, sizeof(body));
+                if (!len) {
+                    reply_error(req->clntFd, "failed",
+                        "cannot read the Wi-Fi state",
+                        "check the USB adapter and the U-Boot env");
+                    return;
+                }
+                reply_json(req->clntFd, body, len);
+            }
+
+            /* The WebUI may be connected through the hotspot or the station
+             * link, so restart Wi-Fi only after the response is flushed. */
+            if (haveMode)
+                system("(sleep 1; /usr/bin/oko-wifi apply) "
+                    ">/dev/null 2>&1 &");
+            else if (haveMetric)
+                system("(sleep 1; /usr/bin/oko-route once) "
+                    ">/dev/null 2>&1 &");
+            return;
+        }
+
+        send_http_error(req->clntFd, 404);
         return;
     }
 

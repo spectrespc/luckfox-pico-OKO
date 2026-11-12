@@ -111,13 +111,22 @@ System**. Ширина ≥ 60em даёт в Live две колонки (прев
 | Streams | `/api/mp4`, `/api/substream`, `/api/mjpeg`, `/api/jpeg`, `/api/audio`, `/api/venc`, `/api/rtsp`, `/api/onvif`, `/api/streams` |
 | Events | `/api/ivs` (настройки и журнал), `/api/yolo` (NPU-детекция), `/api/models` (список, загрузка, активация, удаление) |
 | Storage | `/api/storage`, `/api/record`, `/api/recordings`, `/api/recordings/file`, `/api/recordings/delete` |
-| Network | `/api/network`, `/api/time` (`ntp`, `ntp_server`, `tz`), `/api/vpn`, `/api/vpn/import`, `/api/vpn/export` |
+| Network | `/api/network`, `/api/time` (`ntp`, `ntp_server`, `tz`), `/api/wifi`, `/api/wifi/scan`, `/api/wifi/apinfo`, `/api/vpn`, `/api/vpn/import`, `/api/vpn/export` |
 | OSD | `/api/osd/{0..9}` (текст или картинка) |
 | System | `/api/status`, `/api/time`, `/api/web-auth`, `/api/cmd` (`save`, `restart`, `reboot`, `export`, `log`), `/api/cmd/import`, `/api/flash`, `/api/firmware` |
 
-Карточки OKO: **Network → VPN** (профиль `wg0`/`awg0`, бейдж типа, живое
-состояние, импорт файлом или текстом, Connect/Disconnect/Autostart/Delete,
-скачивание профиля) и **Live → Focus assist** (`enable`, `mode`, `fps`, ROI
+Карточки OKO: **Network → Ethernet/Wi-Fi** (поля «Приоритет (metric)»,
+`metric` в `/api/network` и `/api/wifi`; в карточке текущего линка строка
+«Активный аплинк» — `dev → gw` с метрикой и пометкой failover из
+`active_default`/`demoted`; строка «Защита двух интерфейсов» из
+`multihome`/`arp_tuning`/`policy_tables`/`eth_addr`/`wlan_addr`),
+**Network → Wi-Fi** (режим `sta`/`ap`/`both`/`off`,
+выбор сети
+со сканированием и подстановкой SSID, пароль, DHCP/статика, параметры точки
+доступа, живое состояние `wpa_state`/IP/адаптер и `Apply` с подтверждением),
+**Network → VPN** (профиль `wg0`/`awg0`, бейдж типа, живое состояние, импорт
+файлом или текстом, Connect/Disconnect/Autostart/Delete, скачивание профиля)
+и **Live → Focus assist** (`enable`, `mode`, `fps`, ROI
 прямо на живом видео с рамкой, живой `metric_avg`/`cells_used`/`status`); также
 **System → Controller firmware / Firmware versions** (target, файл,
 `confirm=FLASH`, прогресс и журнал; строки STM32/STM8 с `state`, `version`,
@@ -151,14 +160,15 @@ SoC, Uptime, IP, чипы возможностей и Refresh. Полей с `Ap
 | Планировщики (motion/intrusion/video-plan/screenshot) | **backlog** |
 | Поиск архива по типам (black/white-list, snapshot) | **backlog** — сейчас список `.mp4`/`.jpg` |
 | Privacy mask / ROI | **неприменимо** в этом образе — в divinus/rockface нет API |
-| DDNS, PPPoE, WiFi-scan | **backlog** — WiFi-стек не проверялся |
+| WiFi-scan | **перенесено** — `/api/wifi?scan=1` + `/api/wifi/scan`, карточка Network → Wi-Fi |
+| DDNS, PPPoE | **backlog** |
 | WASM-плеер wxplayer (~220 КБ gzip) | **неприменимо** — превью MP4/MJPEG без WebRTC |
 | Журнал событий | **перенесено** — RAM-кольцо `/api/ivs`; файловый журнал — backlog |
 
 ### 6. Backlog
 
 JWT и роли вместо Basic-auth, HTTPS, обновление прошивки из UI, factory reset,
-планировщики, поиск по архиву и фильтры, DDNS/PPPoE/WiFi, privacy mask/ROI,
+планировщики, поиск по архиву и фильтры, DDNS/PPPoE, privacy mask/ROI,
 двусторонний звук, ONVIF PTZ, файловый журнал событий, экспорт диагностики
 одним архивом.
 
@@ -173,7 +183,7 @@ JWT и роли вместо Basic-auth, HTTPS, обновление проши�
 - `/api/status` дополнен `ip`, `sd_free_mb`, `sd_total_mb`.
 - `/api/time?ts=` читает `long` (раньше `short` обрезал эпоху).
 - Новые: `/api/cmd?reboot|export|log`, `/api/cmd/import`, `/api/web-auth`,
-  `/api/recordings*`, `/api/telemetry`; NTP-ключи в YAML и `ntp.c`.
+  `/api/recordings*`, `/api/telemetry`, `/api/wifi*`; NTP-ключи в YAML и `ntp.c`.
 - Битый конфиг при старте откатывается из `divinus.yaml.bak` (один раз).
 - В `compat.c` определена функция `__ctype_b`, которая через `-rdynamic`
   перекрывает таблицу ctype uClibc. Поэтому в новом коде (`valid_hostname`,
@@ -187,6 +197,12 @@ JWT и роли вместо Basic-auth, HTTPS, обновление проши�
   останавливает сервер — кнопки выхода нет.
 - Пароли RTSP/ONVIF/WebUI не читаются через API: поля пустые, пустое значение
   не отправляется.
+- Wi-Fi: пароль станции хранится открытым текстом в env U-Boot и не
+  возвращается через API (`psk_set`); пустое поле сохраняет прежний пароль.
+  Пароль точки доступа возвращается в `/api/wifi/apinfo`, чтобы к ней можно
+  было подключиться. `both` (AP+STA) отклоняется, если драйвер не объявляет
+  совместимые комбинации интерфейсов; RTL8821CU в этом образе — только STA
+  или AP по отдельности.
 - RTSP-порт, аудиокодек, ONVIF и SmartP применяются после перезапуска.
 - OSD-текст — только латиница (`simsun_en.ttf`), кириллицы в шрифте нет.
 - NTP: при пустом `ntp_server` divinus не трогает демон из
@@ -222,10 +238,16 @@ Network, OSD, System**) with a sticky status bar, an EN/RU switch (default
 read state, toast feedback built from `reason`/`hint`, and `POST` form bodies for
 every write. `GET` remains supported. New endpoints: `/api/cmd?reboot|export|log`,
 `/api/cmd/import` (multipart), `/api/web-auth`, `/api/recordings` (+ `/file`,
-`/delete`), `/api/telemetry`, and `ntp`/`ntp_server` on `/api/time`;
+`/delete`), `/api/telemetry`, `/api/wifi` (+ `/scan`, `/apinfo`), and
+`ntp`/`ntp_server` on `/api/time`;
 `/api/status` gained `ip`, `sd_free_mb`, `sd_total_mb`. Static serving is
 restricted to `/mnt/sdcard/`, and an unparsable configuration is rolled back from
-`divinus.yaml.bak` at startup. OKO cards: **Live → Focus assist** (enable, mode,
+`divinus.yaml.bak` at startup. OKO cards: **Network → Current link** (active
+default route with its metric/failover hint, plus the dual-interface
+protection line built from `multihome`/`arp_tuning`/`policy_tables` and the
+live `eth_addr`/`wlan_addr`), **Network → Wi-Fi** (mode `sta`/`ap`/`both`/`off`, network scan
+with SSID selection, password, DHCP/static IP, hotspot settings, live
+`wpa_state`/IP/adapter and Apply with confirmation), **Live → Focus assist** (enable, mode,
 fps, ROI over the live video, live metric) and **System → Controller firmware /
 Firmware versions** (STM32/STM8 upload with `confirm=FLASH`, progress and log;
 cached versions with a 10 s refresh). Firmware runs in a worker so the HTTP
@@ -257,14 +279,18 @@ Uptime, IP, feature chips and Refresh. None of these rows takes part in the
 `Apply`/dirty machinery; card actions stay in **Storage**.
 
 The ipcweb catalog was used as a reference: take-photo/record control, archive
-listing, log export, config export/import, reboot and NTP are ported; JWT and
+listing, log export, config export/import, reboot, NTP and Wi-Fi scan are ported; JWT and
 user management, firmware upgrade, factory reset, schedulers, archive type
-filters, DDNS/PPPoE/WiFi, two-way audio, ONVIF PTZ and a file-backed event log
+filters, DDNS/PPPoE, two-way audio, ONVIF PTZ and a file-backed event log
 are backlog; privacy mask/ROI and the WASM player do not apply to this image.
 
 Limitations: Basic-auth has no logout and no HTTPS (passwords travel with every
 request and are stored as plain text in `divinus.yaml`), RTSP/ONVIF/WebUI
-passwords are never read back, RTSP port/audio codec/ONVIF/SmartP need a
+passwords are never read back, the station PSK is stored in plain text in the
+U-Boot env and is not returned (`psk_set`), an empty passphrase field keeps the
+stored value, the hotspot passphrase is returned only by `/api/wifi/apinfo`,
+`both` (AP+STA) is refused unless the driver advertises compatible interface
+combinations (RTL8821CU: STA or AP separately), RTSP port/audio codec/ONVIF/SmartP need a
 restart, OSD text is Latin-only, NTP takes over ten seconds after boot (after
 `S49ntp`), and HDR/`osd.scope=all` remain gated with the reason shown in the UI.
 Enabling the AF metric does not need the STM8: Apply sends `motor=1`, but the

@@ -9,10 +9,13 @@
 #
 #   oko-net apply                 read env and configure eth0
 #   oko-net env                   print current settings as key=value
-#   oko-net set <mode> <ip> <mask> <gw> <dns>
+#   oko-net set <mode> <ip> <mask> <gw> <dns> [metric]
 #                                 validate and store settings (no apply)
+#   oko-net setmetric <metric>    validate and store only oko_net_metric
 #
-# mode is "dhcp" or "static".  IP values are IPv4 dotted quads.
+# mode is "dhcp" or "static".  IP values are IPv4 dotted quads.  The default
+# route metric (oko_net_metric, default 100) is ordered against the Wi-Fi
+# uplink by /usr/bin/oko-route, which also owns /etc/resolv.conf.
 
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
@@ -42,6 +45,16 @@ is_ipv4() {
 
 is_mac() {
 	echo "$1" | grep -Eq '^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$'
+}
+
+valid_metric() {
+	[ -n "$1" ] || return 1
+	case "$1" in
+		*[!0-9]*) return 1 ;;
+	esac
+	[ ${#1} -le 5 ] || return 1
+	[ "$1" -ge 1 ] || return 1
+	return 0
 }
 
 env_get() {
@@ -93,7 +106,19 @@ load_settings() {
 	NETMASK=$(env_get oko_netmask)
 	GATEWAY=$(env_get oko_gateway)
 	DNS=$(env_get oko_dns)
+	METRIC=$(env_get oko_net_metric)
+	valid_metric "$METRIC" || METRIC=100
 	MAC=$(ensure_mac)
+}
+
+# Stop only the DHCP client bound to eth0: a lease on wlan0 belongs to the
+# Wi-Fi uplink and must survive an Ethernet apply.
+kill_eth_udhcpc() {
+	for _pid in $(pidof udhcpc 2>/dev/null); do
+		if grep -aq 'eth0' "/proc/$_pid/cmdline" 2>/dev/null; then
+			kill "$_pid" 2>/dev/null
+		fi
+	done
 }
 
 current_ip() {
@@ -112,6 +137,7 @@ show_env() {
 	echo "netmask=$NETMASK"
 	echo "gateway=$GATEWAY"
 	echo "dns=$DNS"
+	echo "metric=$METRIC"
 	echo "mac=$MAC"
 	echo "current_ip=$(current_ip)"
 	echo "current_mac=$(current_mac)"
@@ -128,7 +154,7 @@ apply_network() {
 	# S41dhcpcd is replaced by a stub in this image; still stop a manually
 	# started daemon so only one DHCP client owns eth0.
 	killall dhcpcd 2>/dev/null
-	killall udhcpc 2>/dev/null
+	kill_eth_udhcpc
 
 	ifconfig eth0 down 2>/dev/null
 	ip addr flush dev eth0 2>/dev/null
@@ -138,22 +164,30 @@ apply_network() {
 	ifconfig eth0 up 2>/dev/null
 
 	if [ "$MODE" = "static" ] && is_ipv4 "$IPADDR" && is_ipv4 "$NETMASK"; then
-		killall udhcpc 2>/dev/null
+		kill_eth_udhcpc
 		ifconfig eth0 "$IPADDR" netmask "$NETMASK" up 2>/dev/null
 		route del default dev eth0 2>/dev/null
 		if [ -n "$GATEWAY" ] && is_ipv4 "$GATEWAY"; then
-			route add default gw "$GATEWAY" 2>/dev/null
+			ip route replace default via "$GATEWAY" dev eth0 \
+				metric "$METRIC" 2>/dev/null
 		fi
-		: > /etc/resolv.conf
-		if [ -n "$DNS" ] && is_ipv4 "$DNS"; then
-			echo "nameserver $DNS" >> /etc/resolv.conf
-		fi
+		# /etc/resolv.conf is written by oko-route, which merges both
+		# uplinks in metric order (the static DNS comes from oko_dns).
 	else
-		killall udhcpc 2>/dev/null
+		kill_eth_udhcpc
 		killall dhcpcd 2>/dev/null
 		# dhcpcd.conf uses the MAC as client ID (not a DUID that is lost on
 		# a full flash), and -b leaves the daemon running for renewals.
 		dhcpcd -b eth0 >/dev/null 2>&1
+	fi
+
+	if [ -x /usr/bin/oko-route ]; then
+		/usr/bin/oko-route once >/dev/null 2>&1
+	else
+		: > /etc/resolv.conf
+		if [ -n "$DNS" ] && is_ipv4 "$DNS"; then
+			echo "nameserver $DNS" >> /etc/resolv.conf
+		fi
 	fi
 }
 
@@ -163,6 +197,7 @@ set_settings() {
 	_mask=$3
 	_gw=$4
 	_dns=$5
+	_metric=$6
 
 	case "$_mode" in
 		dhcp|static) ;;
@@ -181,12 +216,27 @@ set_settings() {
 		echo "invalid DNS" >&2
 		return 1
 	fi
+	if [ -n "$_metric" ] && [ "$_metric" != "-" ] && ! valid_metric "$_metric"; then
+		echo "invalid metric" >&2
+		return 1
+	fi
 
 	env_set oko_net_mode "$_mode" || return 1
 	env_set oko_ipaddr "$_ip" || return 1
 	env_set oko_netmask "$_mask" || return 1
 	env_set oko_gateway "$_gw" || return 1
 	env_set oko_dns "$_dns" || return 1
+	if valid_metric "$_metric"; then
+		env_set oko_net_metric "$_metric" || return 1
+	fi
+	return 0
+}
+
+# The routing daemon reads the metric from the env every cycle, so only the
+# value is written here; no apply is needed.
+set_metric() {
+	valid_metric "$1" || { echo "invalid metric" >&2; return 1; }
+	env_set oko_net_metric "$1" || return 1
 	return 0
 }
 
@@ -199,10 +249,13 @@ case "$1" in
 		;;
 	set)
 		shift
-		set_settings "$1" "$2" "$3" "$4" "$5"
+		set_settings "$1" "$2" "$3" "$4" "$5" "$6"
+		;;
+	setmetric)
+		set_metric "$2"
 		;;
 	*)
-		echo "usage: $0 {apply|env|set <dhcp|static> <ip> <mask> <gw> <dns>}" >&2
+		echo "usage: $0 {apply|env|set <dhcp|static> <ip> <mask> <gw> <dns> [metric]|setmetric <metric>}" >&2
 		exit 1
 		;;
 esac

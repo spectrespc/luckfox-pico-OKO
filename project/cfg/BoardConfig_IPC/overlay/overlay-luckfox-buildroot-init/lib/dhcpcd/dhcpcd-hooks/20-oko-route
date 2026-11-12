@@ -1,0 +1,21 @@
+# OKO: /etc/resolv.conf is written by /usr/bin/oko-route (see "nohook
+# resolv.conf" in /etc/dhcpcd.conf).  Keep the resolvers of this lease in /run
+# so the routing daemon can merge them with the Wi-Fi uplink and order both by
+# the configured metrics.  This file is sourced by dhcpcd-run-hooks.
+
+if [ -n "$interface" ]; then
+	mkdir -p /run/oko-route
+	case "$reason" in
+	BOUND|RENEW|REBIND|REBOOT|INFORM)
+		if [ -n "$new_domain_name_servers" ]; then
+			printf '%s\n' $new_domain_name_servers \
+				> "/run/oko-route/$interface.dns"
+		else
+			rm -f "/run/oko-route/$interface.dns"
+		fi
+		;;
+	EXPIRE|FAIL|RELEASE|STOP|NAK|CARRIER|NOCARRIER)
+		rm -f "/run/oko-route/$interface.dns"
+		;;
+	esac
+fi

@@ -19,6 +19,8 @@ sysdrv/tools/board/dosfstools/dosfstools-4.2/
 # Core dumps
 core
 core.*
+# The RTL8821CU vendor driver has a source directory named core/.
+!sysdrv/drv_ko/wifi/rtl8821cu/core/
 
 # Python bytecode
 __pycache__/

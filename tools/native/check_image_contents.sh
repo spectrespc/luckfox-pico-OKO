@@ -41,6 +41,7 @@ OEM_REQUIRED=(
 	usr/lib/librga.so
 	usr/ko/sc230ai.ko
 	usr/ko/rockit.ko
+	usr/ko/8821cu.ko
 )
 
 ROOTFS_REQUIRED=(
@@ -48,7 +49,13 @@ ROOTFS_REQUIRED=(
 	usr/bin/media-ctl
 	usr/bin/dtc
 	usr/bin/oko-update
+	usr/bin/oko-wifi
+	usr/bin/oko-route
 	etc/init.d/S20oko-update
+	etc/init.d/S97okoroute
+	etc/init.d/S98okowifi
+	lib/dhcpcd/dhcpcd-hooks/20-oko-route
+	lib/firmware/regulatory.db
 	etc/oko-release
 	usr/sbin/fw_setenv
 )

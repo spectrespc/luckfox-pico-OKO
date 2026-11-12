@@ -120,6 +120,49 @@ LBA не совпадут.
 
 Подробные адреса, команды и порядок действий — в `TESTBENCH.md`.
 
+## Wi-Fi (USB)
+
+В образ входит драйвер RTL8821CU/RTL8811CU (`8821cu.ko`), поэтому USB-адаптер
+`0bda:c811` работает сразу после загрузки: `insmod_wifi.sh` определяет его по
+`uevent` и поднимает `wlan0`. Настройка — WebUI **Сеть → Wi-Fi** или
+`/api/wifi`; вручную — `/usr/bin/oko-wifi` (`apply`, `env`, `scan`,
+`sdimport`). Параметры хранятся в env U-Boot (`oko_wlan_*`) и переживают
+прошивку `oem`/`rootfs`. Если клиент не подключается, поднимается SoftAP
+`OKO-XXXX` на `192.168.43.1/24`; точка всегда WPA2-PSK: пока
+`oko_wlan_ap_psk` не задан, пароль заводский `ybrjveytljdthzq` (публичный
+дефолт, сменить до ввода в эксплуатацию — KI-030; вернуть заводский —
+`fw_setenv oko_wlan_ap_psk`), и веб-интерфейс доступен с телефона по этому
+паролю. AP+STA одновременно этот драйвер не поддерживает. Конфиг можно принести на microSD:
+`oko-wifi.conf` в корне карты импортируется один раз при монтировании.
+Подробности — `bench/README.md` и `FEATURES_VERIFIED.md`.
+
+## Два аплинка: Ethernet и Wi-Fi
+
+`eth0` и `wlan0` (STA) могут быть подняты одновременно. Приоритет задаётся
+метриками `oko_net_metric` (по умолчанию 100) и `oko_wlan_metric` (600) в env
+U-Boot — меньшая метрика выигрывает; поля «Приоритет (metric)» есть в WebUI
+**Network → Ethernet/Wi-Fi**, API принимает `POST /api/network?metric=` и
+`POST /api/wifi?metric=`. Демон `oko-route` (`S97okoroute`) держит по одному
+default-маршруту на аплинк, пере-выравнивает их после renew DHCP, единолично
+пишет `/etc/resolv.conf` (DNS обоих линков в порядке метрик) и переключает
+трафик, если шлюз перестал отвечать: 3 неудачных `ping -I` → метрика
++10000, 2 успеха → возврат, cooldown 30 с. В WebUI строка «Активный аплинк»
+показывает текущий default и признак failover. SoftAP — управляющая сеть, а
+не аплинк. При `root=/dev/nfs` eth-маршрут и resolv не трогаются (KI-060).
+Равные метрики автоматически разводятся (Wi-Fi получает +1), потому что ядро
+хранит один default на metric; для предсказуемости задавайте разные значения.
+Ограничения — KI-059.
+
+Если `eth0` и `wlan0` подключены к одной сети (LAN-порты роутера и его Wi-Fi),
+`oko-route` включает weak-host защиту: `arp_ignore=1`/`arp_announce=2`,
+loose `rp_filter` при строгом значении и per-interface таблицы 100/101 с
+правилами `from <ip>`/`iif <if>`. ARP-ответы и исходящие пакеты остаются на
+том интерфейсе, которому принадлежит адрес, поэтому оба адреса камеры
+остаются доступны параллельно. Состояние видно в WebUI **Network → Текущее
+подключение → Защита двух интерфейсов** и в `/api/network`
+(`multihome`, `arp_tuning`, `policy_tables`, `eth_addr`, `wlan_addr`);
+ручных настроек нет.
+
 ## Медиа-фичи divinus
 
 Стример `divinus` (запускается при наличии `/userdata/divinus.enable`) получил
@@ -132,6 +175,8 @@ LBA не совпадут.
 | SmartP/SVC/motion deblur/QP | работает (SmartP — со следующего старта) | `POST /api/venc`, `[venc]` |
 | Ethernet: DHCP/static IP | работает | WebUI `Network`, `/api/network`, env `oko_*` |
 | Второй H.26x поток `/live/1` | работает | `POST /api/substream`, `[substream]` |
+| Два аплинка eth0 + Wi-Fi STA | работает: приоритеты, failover по шлюзу, единый DNS | WebUI поля «Приоритет», `/api/network?metric=`, `/api/wifi?metric=`, `/usr/bin/oko-route` |
+| eth0 и Wi-Fi в одной подсети | работает: weak-host защита (ARP, policy-таблицы 100/101), оба адреса живут параллельно | автоматически в `/usr/bin/oko-route`, статус в WebUI Network |
 | AIISP (ночная шумоподавка) | работает при модели в `/oem/usr/lib` | `POST /api/aiisp`, `[aiisp]` |
 | IVS (детекция движения/объектов) | работает (MD), действия: снимок, клип, OSD | `POST /api/ivs`, `[ivs]` |
 | Runtime IQ (`switch_scene`/`updateIq`) | API работает, смена сцены принята | `POST /api/iq`, `[iq]` |

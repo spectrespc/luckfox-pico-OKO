@@ -886,10 +886,62 @@
 					<div class="ctl"><input type="text" id="network_gateway" data-group="network" data-k="gateway" placeholder="192.168.52.1"></div></div>
 				<div class="field"><label data-i18n="dns">DNS</label>
 					<div class="ctl"><input type="text" id="network_dns" data-group="network" data-k="dns" placeholder="192.168.52.1"></div></div>
+				<div class="field"><label data-i18n="uplink_priority">Priority (metric)</label>
+					<div class="ctl"><input type="text" id="network_metric" data-group="network" data-k="metric" placeholder="100"></div></div>
 				<div class="actions">
 					<button type="button" class="btn primary" data-apply="network" data-ep="network" disabled data-i18n="apply">Apply</button>
 				</div>
 				<p class="note" data-i18n="network_note">Stored in the U-Boot environment; survives a /userdata reset. Changing the address can disconnect this page.</p>
+			</div>
+
+			<div class="card wide" id="wifi-card">
+				<h3><span data-i18n="wifi">Wi-Fi</span>
+					<span class="badge-state off" id="wifi-wlan0-badge">–</span></h3>
+				<div class="field"><label data-i18n="wifi_mode">Mode</label>
+					<div class="ctl"><select id="wifi_mode" data-group="wifi" data-k="mode" onchange="updateWifiFields()">
+						<option value="sta" data-i18n="wifi_mode_sta">Station (client)</option>
+						<option value="ap" data-i18n="wifi_mode_ap">Hotspot</option>
+						<option value="both" data-i18n="wifi_mode_both">Station + hotspot</option>
+						<option value="off" data-i18n="wifi_mode_off">Off</option>
+					</select></div></div>
+				<div class="field" id="wifi_sta_row"><label data-i18n="wifi_ssid">Network</label>
+					<div class="ctl"><input type="text" id="wifi_ssid" data-group="wifi" data-k="ssid" maxlength="32" autocomplete="off">
+						<button type="button" class="btn" onclick="wifiScan()" data-i18n="wifi_scan">Scan</button></div></div>
+				<div class="field" id="wifi_psk_row"><label data-i18n="wifi_psk">Password</label>
+					<div class="ctl"><input type="password" id="wifi_psk" data-group="wifi" data-k="psk" autocomplete="new-password" placeholder="8–63"></div></div>
+				<div id="wifi-scan-list" class="hint"></div>
+				<div class="field"><label data-i18n="wifi_ip_mode">IP mode</label>
+					<div class="ctl"><select id="wifi_dhcp" data-group="wifi" data-k="dhcp" onchange="updateWifiFields()">
+						<option value="on">DHCP</option><option value="off" data-i18n="static">Static</option></select></div></div>
+				<div class="field"><label data-i18n="ip_address">IP address</label>
+					<div class="ctl"><input type="text" id="wifi_ipaddr" data-group="wifi" data-k="ipaddr" placeholder="192.168.52.100"></div></div>
+				<div class="field"><label data-i18n="netmask">Netmask</label>
+					<div class="ctl"><input type="text" id="wifi_netmask" data-group="wifi" data-k="netmask" placeholder="255.255.255.0"></div></div>
+				<div class="field"><label data-i18n="gateway">Gateway</label>
+					<div class="ctl"><input type="text" id="wifi_gateway" data-group="wifi" data-k="gateway" placeholder="192.168.52.1"></div></div>
+				<div class="field"><label data-i18n="dns">DNS</label>
+					<div class="ctl"><input type="text" id="wifi_dns" data-group="wifi" data-k="dns" placeholder="192.168.52.1"></div></div>
+				<div class="field"><label data-i18n="uplink_priority">Priority (metric)</label>
+					<div class="ctl"><input type="text" id="wifi_metric" data-group="wifi" data-k="metric" placeholder="600"></div></div>
+				<h3 style="margin-top:1em"><span data-i18n="wifi_hotspot">Hotspot</span></h3>
+				<div class="field"><label data-i18n="wifi_ap_ssid">Hotspot name</label>
+					<div class="ctl"><input type="text" id="wifi_ap_ssid" data-group="wifi" data-k="ap_ssid" maxlength="32" placeholder="OKO-XXXX"></div></div>
+				<div class="field"><label data-i18n="wifi_ap_psk">Hotspot password</label>
+					<div class="ctl"><input type="password" id="wifi_ap_psk" data-group="wifi" data-k="ap_psk" autocomplete="new-password" placeholder="8–63"></div></div>
+				<div class="tel-grid">
+					<div class="tel"><span data-i18n="wifi_state">State</span><b id="wifi_wpa_state">–</b></div>
+					<div class="tel"><span data-i18n="ip_address">IP address</span><b id="wifi_current_ip">–</b></div>
+					<div class="tel"><span data-i18n="wifi_driver">Adapter</span><b id="wifi_driver">–</b></div>
+					<div class="tel"><span data-i18n="wifi_usb_id">USB ID</span><b id="wifi_usb_id">–</b></div>
+					<div class="tel"><span data-i18n="wifi_ap_active">Hotspot active</span><b id="wifi_ap_active">–</b></div>
+					<div class="tel"><span data-i18n="wifi_stations">Clients</span><b id="wifi_stations">–</b></div>
+					<div class="tel"><span data-i18n="wifi_ap_st">AP + STA</span><b id="wifi_chip_supports_ap_st">–</b></div>
+				</div>
+				<div class="actions">
+					<button type="button" class="btn primary" data-apply="wifi" data-ep="wifi" disabled data-i18n="apply">Apply</button>
+					<button type="button" class="btn" onclick="apiRead('wifi')" data-i18n="refresh">Refresh</button>
+				</div>
+				<p class="note" data-i18n="wifi_note">Settings are stored in the U-Boot environment. A station without a working uplink starts a hotspot (OKO-XXXX, 192.168.43.1). An empty password keeps the stored one.</p>
 			</div>
 
 			<div class="card wide" id="vpn-card">
@@ -940,6 +992,10 @@
 					<div class="ctl"><span id="network_mac">–</span></div></div>
 				<div class="field"><label data-i18n="dhcp_client">DHCP client</label>
 					<div class="ctl"><span id="network_dhcp_running">–</span></div></div>
+				<div class="field"><label data-i18n="active_uplink">Active uplink</label>
+					<div class="ctl"><span id="network_active_uplink">–</span></div></div>
+				<div class="field"><label data-i18n="multihome_status">Dual-interface protection</label>
+					<div class="ctl"><span id="network_multihome">–</span></div></div>
 				<div class="actions">
 					<button type="button" class="btn" onclick="apiRead('network')" data-i18n="refresh">Refresh</button>
 				</div>
@@ -1277,6 +1333,13 @@ var I18N = {
 		modified: "Modified", download: "Download", delete: "Delete",
 		ethernet: "Ethernet", static: "Static", ip_address: "IP address",
 		netmask: "Netmask", gateway: "Gateway", dns: "DNS",
+		uplink_priority: "Priority (metric, lower wins)",
+		active_uplink: "Active uplink", uplink_none: "no default route",
+		failover_active: "failover", metric: "metric",
+		multihome_status: "Dual-interface protection",
+		multihome_idle: "not needed — different subnets",
+		multihome_on: "Ethernet and Wi-Fi share a subnet — ARP/routing protection enabled",
+		multihome_partial: "partially enabled",
 		network_note: "Stored in the U-Boot environment; survives a /userdata reset. Changing the address can disconnect this page.",
 		current_link: "Current link", mac_address: "MAC address",
 		persistent_mac: "Persistent MAC", dhcp_client: "DHCP client",
@@ -1496,6 +1559,13 @@ var I18N = {
 		modified: "Изменён", download: "Скачать", delete: "Удалить",
 		ethernet: "Ethernet", static: "Статический", ip_address: "IP-адрес",
 		netmask: "Маска", gateway: "Шлюз", dns: "DNS",
+		uplink_priority: "Приоритет (metric, меньше — главнее)",
+		active_uplink: "Активный аплинк", uplink_none: "нет маршрута по умолчанию",
+		failover_active: "failover", metric: "metric",
+		multihome_status: "Защита двух интерфейсов",
+		multihome_idle: "не требуется — разные подсети",
+		multihome_on: "Ethernet и Wi-Fi в одной сети — защита ARP/маршрутизации включена",
+		multihome_partial: "включена частично",
 		network_note: "Хранится в окружении U-Boot и переживает сброс /userdata. Смена адреса может разорвать эту страницу.",
 		current_link: "Текущее подключение", mac_address: "MAC-адрес",
 		persistent_mac: "Постоянный MAC", dhcp_client: "DHCP-клиент",
@@ -1754,7 +1824,9 @@ var READ_HOOKS = {
 	'substream_mode': function (v) { return ['CBR', 'VBR', 'QP', 'ABR', 'AVBR'][v] || 'CBR'; },
 	'substream_profile': function (v) { return ['BP', 'MP', 'HP'][v] || 'MP'; },
 	'status_sd_total_mb': fmtMiB,
-	'status_sd_free_mb': fmtMiB
+	'status_sd_free_mb': fmtMiB,
+	'wifi_ap_active': function (v) { return v ? t('yes') : t('no'); },
+	'wifi_chip_supports_ap_st': function (v) { return v ? t('yes') : t('no'); }
 };
 
 function setField(id, v) {
@@ -1799,6 +1871,8 @@ function applyValues(ep, dec) {
 	if (ep === 'record') { lastRecord = dec; updateRecordBadge(dec); }
 	if (ep === 'storage') updateStorageFields(dec);
 	if (ep === 'time') updateTimeFields(dec);
+	if (ep === 'network') updateNetworkCard(dec);
+	if (ep === 'wifi') updateWifiCard(dec);
 }
 
 function apiRead(ep, cb) {
@@ -2204,6 +2278,64 @@ I18N.ru.ntp_on = "NTP ON";
 I18N.en.ntp_off = "NTP OFF";
 I18N.ru.ntp_off = "NTP OFF";
 
+/* Wi-Fi (USB adapter). */
+I18N.en.wifi = "Wi-Fi";
+I18N.ru.wifi = "Wi-Fi";
+I18N.en.wifi_mode = "Mode";
+I18N.ru.wifi_mode = "Режим";
+I18N.en.wifi_mode_sta = "Station (client)";
+I18N.ru.wifi_mode_sta = "Клиент (STA)";
+I18N.en.wifi_mode_ap = "Hotspot";
+I18N.ru.wifi_mode_ap = "Точка доступа";
+I18N.en.wifi_mode_both = "Station + hotspot";
+I18N.ru.wifi_mode_both = "Клиент + точка доступа";
+I18N.en.wifi_mode_off = "Off";
+I18N.ru.wifi_mode_off = "Выключено";
+I18N.en.wifi_ssid = "Network";
+I18N.ru.wifi_ssid = "Сеть";
+I18N.en.wifi_psk = "Password";
+I18N.ru.wifi_psk = "Пароль";
+I18N.en.wifi_scan = "Scan";
+I18N.ru.wifi_scan = "Сканировать";
+I18N.en.wifi_ip_mode = "IP mode";
+I18N.ru.wifi_ip_mode = "Режим IP";
+I18N.en.wifi_hotspot = "Hotspot";
+I18N.ru.wifi_hotspot = "Точка доступа";
+I18N.en.wifi_ap_ssid = "Hotspot name";
+I18N.ru.wifi_ap_ssid = "Имя точки доступа";
+I18N.en.wifi_ap_psk = "Hotspot password";
+I18N.ru.wifi_ap_psk = "Пароль точки доступа";
+I18N.en.wifi_state = "State";
+I18N.ru.wifi_state = "Состояние";
+I18N.en.wifi_driver = "Adapter";
+I18N.ru.wifi_driver = "Адаптер";
+I18N.en.wifi_usb_id = "USB ID";
+I18N.ru.wifi_usb_id = "USB ID";
+I18N.en.wifi_ap_active = "Hotspot active";
+I18N.ru.wifi_ap_active = "Точка доступа активна";
+I18N.en.wifi_stations = "Clients";
+I18N.ru.wifi_stations = "Клиенты";
+I18N.en.wifi_ap_st = "AP + STA";
+I18N.ru.wifi_ap_st = "AP + STA";
+I18N.en.wifi_absent = "no adapter";
+I18N.ru.wifi_absent = "нет адаптера";
+I18N.en.wifi_unsupported = "unsupported";
+I18N.ru.wifi_unsupported = "не поддерживается";
+I18N.en.wifi_note = "Settings are stored in the U-Boot environment. A station without a working uplink starts a hotspot (OKO-XXXX, 192.168.43.1). An empty password keeps the stored one. The priority orders the station route against Ethernet when both links are up.";
+I18N.ru.wifi_note = "Настройки хранятся в окружении U-Boot. Если клиент не подключается, поднимается точка доступа OKO-XXXX на 192.168.43.1. Пустой пароль сохраняет прежний. Приоритет задаёт порядок маршрута Wi-Fi относительно Ethernet, когда подняты оба линка.";
+I18N.en.wifi_confirm = "Changing Wi-Fi settings can disconnect this page. Continue?";
+I18N.ru.wifi_confirm = "Смена настроек Wi-Fi может разорвать эту страницу. Продолжить?";
+I18N.en.wifi_ssid_required = "Choose a network SSID.";
+I18N.ru.wifi_ssid_required = "Укажите SSID сети.";
+I18N.en.wifi_ap_st_unsupported = "This adapter cannot run AP and STA at the same time.";
+I18N.ru.wifi_ap_st_unsupported = "Этот адаптер не умеет работать в AP и STA одновременно.";
+I18N.en.wifi_scanning = "Scanning…";
+I18N.ru.wifi_scanning = "Сканирование…";
+I18N.en.wifi_scan_empty = "No networks found.";
+I18N.ru.wifi_scan_empty = "Сети не найдены.";
+I18N.en.wifi_scan_timeout = "The scan did not finish; try again.";
+I18N.ru.wifi_scan_timeout = "Сканирование не завершилось; повторите.";
+
 /* ============================ storage ============================ */
 function updateStorageFields(dec) {
 	var mounted = dec.sd_mounted === true;
@@ -2517,6 +2649,122 @@ function updateNetworkFields() {
 		var el = $(ids[i]);
 		if (el) el.disabled = disabled;
 	}
+}
+
+/* Summary of the default-route owner: dev → gateway (metric), plus the failover
+   hint when oko-route demoted one of the uplinks. */
+function updateNetworkCard(dec) {
+	var mh = $('network_multihome');
+	if (mh) {
+		var mtext;
+		if (!dec.multihome) {
+			mtext = t('multihome_idle');
+		} else if (dec.arp_tuning && dec.policy_tables) {
+			mtext = t('multihome_on');
+			if (dec.eth_addr) mtext += ' · eth0 ' + dec.eth_addr;
+			if (dec.wlan_addr) mtext += ' · wlan0 ' + dec.wlan_addr;
+		} else {
+			mtext = t('multihome_partial');
+		}
+		mh.textContent = mtext;
+	}
+
+	var el = $('network_active_uplink');
+	if (!el) return;
+	var ad = dec.active_default || {};
+	if (!ad.dev) { el.textContent = t('uplink_none'); return; }
+	var text = ad.dev + ' → ' + (ad.gw || '?') +
+		' · ' + t('metric') + ' ' + ad.metric;
+	if (dec.demoted)
+		text += ' · ' + t('failover_active') + ': ' + dec.demoted;
+	el.textContent = text;
+}
+
+/* ============================ Wi-Fi ============================ */
+var lastWifi = null;
+var wifiScanTimer = null;
+
+function updateWifiFields() {
+	var mode = $('wifi_mode') ? $('wifi_mode').value : 'sta';
+	var dhcp = $('wifi_dhcp') ? $('wifi_dhcp').value : 'on';
+	var staOn = mode === 'sta' || mode === 'both';
+	var ids = ['wifi_ipaddr', 'wifi_netmask', 'wifi_gateway', 'wifi_dns'];
+	var i;
+
+	if ($('wifi_ssid')) $('wifi_ssid').disabled = !staOn;
+	if ($('wifi_psk')) $('wifi_psk').disabled = !staOn;
+	if ($('wifi_sta_row')) $('wifi_sta_row').style.display = staOn ? '' : 'none';
+	if ($('wifi_psk_row')) $('wifi_psk_row').style.display = staOn ? '' : 'none';
+	if ($('wifi-scan-list')) $('wifi-scan-list').style.display = staOn ? '' : 'none';
+	for (i = 0; i < ids.length; i++)
+		if ($(ids[i])) $(ids[i]).disabled = dhcp !== 'off';
+}
+
+function updateWifiCard(dec) {
+	lastWifi = dec;
+	var badge = $('wifi-wlan0-badge');
+	if (badge) {
+		badge.className = 'badge-state ' + (dec.wlan0_present ? 'on' : 'off');
+		badge.textContent = dec.wlan0_present ? (dec.driver || 'wlan0') : t('wifi_absent');
+	}
+	var both = $('wifi_mode').querySelector('option[value="both"]');
+	if (both) {
+		both.disabled = dec.chip_supports_ap_st !== true;
+		both.textContent = t('wifi_mode_both') + (both.disabled ? ' (' + t('wifi_unsupported') + ')' : '');
+	}
+	updateWifiFields();
+}
+
+function wifiScanRender(dec) {
+	var box = $('wifi-scan-list');
+	if (!box) return;
+	box.innerHTML = '';
+	var list = (dec && dec.results) || [];
+	var shown = 0, i;
+
+	if (!list.length) {
+		box.textContent = t('wifi_scan_empty');
+		return;
+	}
+	for (i = 0; i < list.length && shown < 10; i++) {
+		var r = list[i];
+		if (!r || !r.ssid) continue;
+		var b = document.createElement('button');
+		b.type = 'button';
+		b.className = 'btn';
+		b.textContent = r.ssid + ' · ' + r.signal + ' dBm';
+		b.title = r.bssid + ' · ' + r.channel + ' · ' + (r.flags || '');
+		b.setAttribute('data-ssid', r.ssid);
+		b.onclick = function () {
+			$('wifi_ssid').value = this.getAttribute('data-ssid');
+			if ($('wifi_mode').value === 'off') $('wifi_mode').value = 'sta';
+			updateWifiFields();
+			refreshGroup('wifi');
+		};
+		box.appendChild(b);
+		box.appendChild(document.createTextNode(' '));
+		shown++;
+	}
+	if (!shown) box.textContent = t('wifi_scan_empty');
+}
+
+function wifiScanPoll(n) {
+	if (n > 15) { setText('wifi-scan-list', t('wifi_scan_timeout')); return; }
+	wifiScanTimer = setTimeout(function () {
+		getJson('/api/wifi/scan', function (dec) {
+			if (dec && dec.state === 'done') { wifiScanRender(dec); return; }
+			wifiScanPoll(n + 1);
+		});
+	}, 1000);
+}
+
+function wifiScan() {
+	getJson('/api/wifi?scan=1', function (dec) {
+		if (!dec || dec.error) { toastError(dec); return; }
+		setText('wifi-scan-list', t('wifi_scanning'));
+		if (wifiScanTimer) clearTimeout(wifiScanTimer);
+		wifiScanPoll(0);
+	});
 }
 
 /* ============================ VPN ============================ */
@@ -3416,7 +3664,7 @@ var SECTION_LOAD = {
 	streams: ['mp4', 'substream', 'mjpeg', 'jpeg', 'audio', 'venc', 'rtsp', 'onvif'],
 	events: ['ivs', 'yolo'],
 	storage: ['storage', 'record'],
-	network: ['network', 'time'],
+	network: ['network', 'time', 'wifi'],
 	osd: ['osd/0', 'osd/1', 'osd/2', 'osd/3', 'osd/4', 'osd/5', 'osd/6', 'osd/7', 'osd/8', 'osd/9'],
 	system: ['status', 'time']
 };
@@ -3453,6 +3701,7 @@ function showSection(name) {
 		loadStreams();
 	} else if (name === 'network') {
 		vpnLoad();
+		apiRead('wifi');
 	}
 	poll();
 	if (name === 'live') autoStartPreview();
@@ -3464,6 +3713,17 @@ function onApplyClick(g) {
 			(!$('network_ipaddr').value || !$('network_netmask').value))
 			return toast('err', t('network_static_required'));
 		if (!confirm(t('network_confirm'))) return;
+	}
+	if (g === 'wifi') {
+		var wmode = $('wifi_mode').value;
+		if ((wmode === 'sta' || wmode === 'both') && !$('wifi_ssid').value)
+			return toast('err', t('wifi_ssid_required'));
+		if (wmode === 'both' && (!lastWifi || lastWifi.chip_supports_ap_st !== true))
+			return toast('err', t('wifi_ap_st_unsupported'));
+		if ($('wifi_dhcp').value === 'off' &&
+			(!$('wifi_ipaddr').value || !$('wifi_netmask').value))
+			return toast('err', t('network_static_required'));
+		if (!confirm(t('wifi_confirm'))) return;
 	}
 	applyGroup(g);
 }

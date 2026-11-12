@@ -345,6 +345,10 @@ case "$1" in
 		do_mount "$2"
 		_rc=$?
 		lock_release
+		# Import oko-wifi.conf once; the helper validates and renames it.
+		if [ "$_rc" = "0" ] && [ -x /usr/bin/oko-wifi ]; then
+			/usr/bin/oko-wifi sdimport >/dev/null 2>&1 &
+		fi
 		exit $_rc
 		;;
 	remove)
@@ -359,6 +363,9 @@ case "$1" in
 		do_mount "$2"
 		_rc=$?
 		lock_release
+		if [ "$_rc" = "0" ] && [ -x /usr/bin/oko-wifi ]; then
+			/usr/bin/oko-wifi sdimport >/dev/null 2>&1 &
+		fi
 		exit $_rc
 		;;
 	unmount)
