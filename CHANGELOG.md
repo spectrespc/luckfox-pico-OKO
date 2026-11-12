@@ -26,6 +26,49 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Добавлено
 
+- **OSD: реальный Wi-Fi RSSI и режим SoftAP вместо симуляции (OKO).**
+  `oko-osd` больше не рисует случайный RSSI: поле `WiFi` в `/tmp/osd-dyn.txt`
+  (`reg1`) берётся из `wpa_cli -i wlan0 status` и
+  `wpa_cli -i wlan0 signal_poll` (nl80211, dBm) и имеет четыре состояния —
+  `WiFi <полоски>/5 <dbm>dBm` при `wpa_state=COMPLETED` и RSSI в диапазоне
+  −120…−1 dBm, `wifi ap` при работающем SoftAP (`hostapd` с pid-файлом
+  `/run/hostapd-wlan0.pid`, живым процессом с именем `hostapd` и IPv4 на
+  `wlan0`), `wifi off` при наличии адаптера без ассоциации и без AP, и
+  полное отсутствие поля, когда `/sys/class/net/wlan0` нет: пустой
+  `@file`-файл заставляет divinus убрать регион. Проверка AP не даёт ложного
+  `wifi ap` после переподключения USB-донгла (hostapd жив на старом netdev,
+  адреса нет) и при переиспользовании pid из устаревшего pid-файла. В
+  real-ветке Wi-Fi делит последнюю строку с LTE, в fallback-ветке занимает
+  четвёртую; без адаптера не остаётся ни пустой строки, ни хвостового
+  пробела. LTE и GPS по-прежнему декоративная симуляция. Стенд 2026-11-12:
+  SoftAP → `wifi ap` (в т.ч. после boot), STA к `OKO-BENCH` →
+  `WiFi 4/5 -55dBm` (совпало с `signal_poll`), `disconnect` → `wifi off`,
+  переподключение USB при живом hostapd → `wifi off`, `authorized=0` → три
+  строки без Wi-Fi; файл 31–99 байт (<255), в кадре четыре строки
+  (`output/bench/osd-20261112-220334-*`); `api_check` 105/0, `ui_check` и
+  `osd_check` зелёные, образ прошит по TFTP.
+- **OSD: real Wi-Fi RSSI and SoftAP state instead of simulation (OKO).**
+  `oko-osd` no longer draws a random RSSI: the `WiFi` field in
+  `/tmp/osd-dyn.txt` (`reg1`) comes from `wpa_cli -i wlan0 status` and
+  `wpa_cli -i wlan0 signal_poll` (nl80211, dBm) and has four states —
+  `WiFi <bars>/5 <dbm>dBm` with `wpa_state=COMPLETED` and an RSSI in
+  −120…−1 dBm, `wifi ap` while the SoftAP runs (`hostapd` with the
+  `/run/hostapd-wlan0.pid` pid file, a live process named `hostapd` and an
+  IPv4 address on `wlan0`), `wifi off` when the adapter is present but not
+  associated and no AP runs, and no field at all when
+  `/sys/class/net/wlan0` is missing: an empty `@file` makes divinus drop the
+  region. The AP check avoids a phantom `wifi ap` after a USB dongle
+  re-plug (hostapd still alive on the old netdev, no address) and after a
+  recycled pid from a stale pid file. In the real branch Wi-Fi shares the
+  last line with LTE, in the fallback branch it takes the fourth line;
+  without an adapter neither an empty line nor a trailing space remains.
+  LTE and GPS stay decorative simulation. Bench 2026-11-12: SoftAP →
+  `wifi ap` (also after boot), STA to `OKO-BENCH` → `WiFi 4/5 -55dBm`
+  (matched `signal_poll`), `disconnect` → `wifi off`, USB re-plug with a
+  live hostapd → `wifi off`, `authorized=0` → three lines without Wi-Fi;
+  the file is 31–99 bytes (<255), the frame shows four lines
+  (`output/bench/osd-20261112-220334-*`); `api_check` 105/0, `ui_check` and
+  `osd_check` passed, and the image was flashed over TFTP.
 - **USB host за хабом: HID, USB-сеть и Bluetooth (OKO).**
   Порт RV1106 переведён в dual-role: с OTG-переходником и внешним питанием он
   работает как host (хаб и устройства за ним), с кабелем к ПК остаётся device

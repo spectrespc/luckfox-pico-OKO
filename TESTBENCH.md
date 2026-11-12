@@ -58,7 +58,7 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
 
 | Узел | Адрес |
 |---|---|
-| Устройство (DUT), NAND | `192.168.52.97` (DHCP; на `2026-11-10` выдан `192.168.52.15` — сверяйте `ifconfig eth0`) |
+| Устройство (DUT), NAND | `192.168.52.97` (DHCP; на `2026-11-12` выдан `192.168.52.33` — сверяйте `ifconfig eth0`) |
 | Устройство (DUT), NFS | `192.168.52.150` (статический из `ip=` в `sys_bootargs`) |
 | Хост TFTP/NFS | `192.168.52.200` |
 | Хост, приёмник UDP/RTP (MediaMTX) | `192.168.52.200`: `5600/udp` (вход от камеры), `8554/tcp` (RTSP), `8000–8001/udp` (RTP/RTCP для RTSP-читателей), `8888/tcp` (HLS), `8889/tcp` (WebRTC), `8189/udp` (WebRTC ICE), `9997/tcp` — control API только на `127.0.0.1` |
@@ -727,6 +727,12 @@ docker exec oko-mediamtx ffprobe -v error -show_streams rtsp://127.0.0.1:8554/ca
   (`reg1`), GPS — в правом верхнем (`reg2`), сообщения из `/tmp/osd.fifo` —
   в левом верхнем под телеметрией (`reg3`, TTL 60 с), CPU load / свободная
   память / температура CPU — тремя строками в левом нижнем углу (`reg4`).
+  Wi-Fi в `reg1` — реальный RSSI STA (`wpa_cli status`/`signal_poll`):
+  `WiFi <n>/5 <dBm>dBm` при `wpa_state=COMPLETED`, `wifi ap` при
+  работающем SoftAP (`hostapd` с pid-файлом `/run/hostapd-wlan0.pid`,
+  живым процессом `hostapd` и IPv4 на `wlan0`), `wifi off` без ассоциации
+  и без AP (скан, `mode=off`), а без `/sys/class/net/wlan0` поле и его
+  строка исчезают; LTE и GPS — симуляция.
   Провайдер `@file` — локальный патч `region.c`; данные пишут `oko-osd` и
   `reg0_text: "$t"`.
   Размер шрифта всех регионов — `24` px, цвет — ярко-зелёный `0x07e0`

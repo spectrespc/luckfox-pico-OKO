@@ -10,6 +10,14 @@
 #                LTE <bars>/5 <dbm>dBm WiFi <bars>/5 <dbm>dBm"
 #         fallback: "T <t>C\nBAT <p>%\nLTE ...\nWiFi ..."
 #       (literal backslash-n: divinus renders it as four lines)
+# - the WiFi field is real: RSSI comes from "wpa_cli signal_poll" (nl80211,
+#   dBm) once "wpa_cli status" reports wpa_state=COMPLETED.  Four states:
+#     associated with a valid RSSI -> "WiFi <bars>/5 <dbm>dBm"
+#     SoftAP running (hostapd pid file is alive) -> "wifi ap"
+#     adapter present, not associated, no SoftAP -> "wifi off"
+#     no adapter (/sys/class/net/wlan0 absent) -> field omitted entirely,
+#       which makes divinus drop the whole region when nothing is left.
+#   LTE and GPS values are still simulated.
 # - when /tmp/oko-ec.osd (written by "oko-ec daemon") is fresh (<= 30 s),
 #   OK=1 and has SHT/EC/INA lines, the SHT21, STM32 and INA3221 readings are
 #   real; otherwise the old simulated T/BAT telemetry is used.
@@ -18,8 +26,10 @@
 #                          (reg4, bottom-left, literal backslash-n: 3 lines)
 # - accepts one-line messages on /tmp/osd.fifo and shows them in
 #   /tmp/osd-msg.txt for 60 s (reg3, below the telemetry)
-# - GPS/LTE/WiFi values are simulated; CPU, memory and temperature are real.
+# - CPU, memory and temperature are real; GPS and LTE are simulated.
 
+WLAN=wlan0
+AP_PID=/run/hostapd-$WLAN.pid
 DYN=/tmp/osd-dyn.txt
 GPS=/tmp/osd-gps.txt
 REAL=/tmp/oko-ec.osd
@@ -36,7 +46,6 @@ lon=373000 # 37.3000 E
 temp=24
 bat=100
 lte=-78 # simulated LTE RSRP, dBm
-wifi=-56 # simulated WiFi RSSI, dBm
 tick=0
 
 cleanup() {
@@ -79,6 +88,52 @@ wifi_bars() {
 	elif [ "$1" -ge -70 ]; then echo 3
 	elif [ "$1" -ge -80 ]; then echo 2
 	else echo 1
+	fi
+}
+
+# SoftAP runs hostapd with -P /run/hostapd-wlan0.pid (see oko-wifi).  A live
+# pid alone is not enough: /run survives an AP->STA switch, so a recycled pid
+# must not turn into a phantom "wifi ap" — check the process name as well.
+# The address matters too: after a USB re-plug hostapd keeps running on the
+# old netdev while the re-created wlan0 has no IPv4, and the AP is not
+# serving; oko-wifi always puts the AP address on the interface.
+ap_active() {
+	local _pid
+	_pid=$(cat "$AP_PID" 2>/dev/null)
+	[ -n "$_pid" ] || return 1
+	kill -0 "$_pid" 2>/dev/null || return 1
+	[ "$(cat "/proc/$_pid/comm" 2>/dev/null)" = hostapd ] || return 1
+	ip -4 addr show dev "$WLAN" 2>/dev/null | grep -q 'inet '
+}
+
+# Sets wifi_txt: "WiFi <bars>/5 <dbm>dBm" when associated with a usable RSSI,
+# "wifi ap" while the SoftAP is running, "wifi off" when the adapter exists
+# but is not connected, and empty when the adapter is physically absent (the
+# caller then omits the whole field).
+# wpa_cli is the only usable source: iw is not shipped and the WEXT/vendor
+# procfs paths are disabled in this build, but supplicant runs on nl80211 and
+# signal_poll returns dBm.  In AP mode there is no supplicant, so status just
+# fails and the AP check decides.
+wifi_read() {
+	local _st _r
+	wifi_txt=
+	[ -e "/sys/class/net/$WLAN" ] || return 0
+	_st=$(wpa_cli -i "$WLAN" status 2>/dev/null | \
+		sed -n 's/^wpa_state=//p' | head -n 1)
+	_r=$(wpa_cli -i "$WLAN" signal_poll 2>/dev/null | \
+		sed -n 's/^RSSI=//p' | head -n 1)
+	# Validate the format before comparing: a non-numeric value would make
+	# test fail noisily.  Allowed range is -120..-1 dBm.
+	case "$_r" in
+		-1[01][0-9] | -120 | -[1-9] | -[1-9][0-9]) ;;
+		*) _r="" ;;
+	esac
+	if [ "$_st" = COMPLETED ] && [ -n "$_r" ]; then
+		wifi_txt="WiFi $(wifi_bars "$_r")/5 ${_r}dBm"
+	elif ap_active; then
+		wifi_txt="wifi ap"
+	else
+		wifi_txt="wifi off"
 	fi
 }
 
@@ -136,7 +191,7 @@ write_dyn() {
 
 	read_real
 	lte_bars_now=$(lte_bars "$lte")
-	wifi_bars_now=$(wifi_bars "$wifi")
+	wifi_read
 
 	if [ "$real_ok" = 1 ] && [ "$real_sensor" = 1 ]; then
 		sht_str="$real_sht"
@@ -146,9 +201,17 @@ write_dyn() {
 		[ -n "$ec_str" ] || ec_str="STM32 --"
 		[ -n "$ina_str" ] || ina_str="INA --"
 
-		printf '%s\\n%s\\n%s\\nLTE %s/5 %ddBm WiFi %s/5 %ddBm\n' \
-			"$sht_str" "$ec_str" "$ina_str" \
-			"$lte_bars_now" "$lte" "$wifi_bars_now" "$wifi" >"$DYN.tmp"
+		# LTE and WiFi share the last line; no adapter means no WiFi tail
+		# (and no trailing space before the closing literal "\n").
+		if [ -n "$wifi_txt" ]; then
+			printf '%s\\n%s\\n%s\\nLTE %s/5 %ddBm %s\n' \
+				"$sht_str" "$ec_str" "$ina_str" \
+				"$lte_bars_now" "$lte" "$wifi_txt" >"$DYN.tmp"
+		else
+			printf '%s\\n%s\\n%s\\nLTE %s/5 %ddBm\n' \
+				"$sht_str" "$ec_str" "$ina_str" \
+				"$lte_bars_now" "$lte" >"$DYN.tmp"
+		fi
 	else
 		t_str="${temp}C"
 		b_str="${bat}%"
@@ -157,9 +220,14 @@ write_dyn() {
 			[ -n "$real_bat" ] && b_str="$real_bat"
 		fi
 
-		printf 'T %s\\nBAT %s\\nLTE %s/5 %ddBm\\nWiFi %s/5 %ddBm\n' \
-			"$t_str" "$b_str" "$lte_bars_now" "$lte" \
-			"$wifi_bars_now" "$wifi" >"$DYN.tmp"
+		if [ -n "$wifi_txt" ]; then
+			printf 'T %s\\nBAT %s\\nLTE %s/5 %ddBm\\n%s\n' \
+				"$t_str" "$b_str" "$lte_bars_now" "$lte" \
+				"$wifi_txt" >"$DYN.tmp"
+		else
+			printf 'T %s\\nBAT %s\\nLTE %s/5 %ddBm\n' \
+				"$t_str" "$b_str" "$lte_bars_now" "$lte" >"$DYN.tmp"
+		fi
 	fi
 	mv -f "$DYN.tmp" "$DYN"
 }
@@ -297,10 +365,6 @@ while :; do
 		lte=$((lte + RANDOM % 7 - 3))
 		[ "$lte" -lt -110 ] && lte=-110
 		[ "$lte" -gt -60 ] && lte=-60
-
-		wifi=$((wifi + RANDOM % 7 - 3))
-		[ "$wifi" -lt -85 ] && wifi=-85
-		[ "$wifi" -gt -40 ] && wifi=-40
 
 		write_dyn
 	fi
