@@ -227,9 +227,9 @@ int region_prepare_image(char *path, hal_bitmap *bitmap) {
     }
 
     spng_set_crc_action(ctx, SPNG_CRC_USE, SPNG_CRC_USE);
-    spng_set_chunk_limits(ctx,
-        app_config.web_server_thread_stack_size,
-        app_config.web_server_thread_stack_size);
+    /* Bound the decoded chunk size independently of the web-server stack:
+     * the stack size is a thread attribute, not a PNG parser budget. */
+    spng_set_chunk_limits(ctx, 64 * 1024, 64 * 1024);
     spng_set_png_file(ctx, file);
 
     struct spng_ihdr ihdr;

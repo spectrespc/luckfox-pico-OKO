@@ -8,7 +8,7 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
 
 | Поле | Значение |
 |---|---|
-| Дата обновления | `2026-11-12` |
+| Дата обновления | `2026-11-13` |
 | Ответственный | `<ФИО>` |
 | Статус | активен |
 | Назначение | сборка прошивки и прошивка SPI NAND для отладки IPC |
@@ -25,7 +25,7 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
 | Сенсор | SC230AI (MIPI CSI, драйвер `sc230ai`, 1080p30 / 480p120; `HDR_X2` экспериментально; `divinus` кодирует 30 fps) |
 | Двигатель | `STM8S003F3P6` на I2C (адрес `0x60`, `/dev/i2c-3`, 100 кГц) — привод фокуса/зума |
 | Питание | `<источник, напряжение, ток>` |
-| Подключение к ПК | USB (OTG) + UART; Maskrom — `<кнопка / перемычка>` |
+| Подключение к ПК | USB host: хаб `1a40:0101` на порту DUT (gadget/adb недоступны, KI-057); UART через ESP32 telnet-UART bridge `192.168.52.17:23`; Maskrom — `<кнопка / перемычка>` при прямом USB |
 | Серийный номер / метка | `<S/N>` |
 
 ## 3. Хост
@@ -45,10 +45,11 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
 
 | Интерфейс | Значение | Примечание |
 |---|---|---|
-| UART | последний `/dev/ttyACM*` | `bench/serial_exec.py` берёт последний найденный; сейчас это `/dev/ttyACM1` (CH340), `/dev/ttyACM0` — CMSIS-DAP |
-| Скорость UART | `115200 8N1` | задана в скриптах `bench/` |
+| UART | **telnet `192.168.52.17:23`** (ESP32 telnet-UART bridge) | основной путь: `telnet 192.168.52.17` или `bench/run.sh serial_exec.py …`; `bench/uart.py` сам отвечает на IAC-согласование и вырезает его из потока. Мост обслуживает **одного клиента**: перед запуском скриптов закройте другие telnet-сессии, иначе connect завершится `timed out` |
+| UART, резерв | последний `/dev/ttyACM*` | локальный USB-UART, если мост недоступен: `--port /dev/ttyACM0` или `OKO_SERIAL_PORT=/dev/ttyACM0` |
+| Скорость UART | `115200 8N1` | мост настроен на ту же скорость; задана в скриптах `bench/` |
 | Ethernet | лабораторная сеть `192.168.52.0/24` | через порт устройства |
-| USB | `<порт / хаб>` | используется для Maskrom-прошивки; порт DUT — dual-role (`dr_mode = "otg"`), для проверки host нужны OTG-переходник, хаб и отдельное питание 5 В (не от того же USB-порта) |
+| USB | DUT — host: хаб `1a40:0101` (4 порта), питание платы отдельное 5 В | хаб подключён (2026-11-11), за ним — `0bda:c811` (Realtek 802.11ac NIC, RTL8821CU); с 2026-11-12 драйвер `8821cu.ko` входит в образ. Порт закреплён в host-режиме (`dr_mode = "host"`), устройство за хабом видно сразу после загрузки; Maskrom-прошивка по этому порту возможна только при прямом кабеле к хосту (хаб скрывает загрузчик), по умолчанию прошивка — TFTP (§7-TFTP). VBUS SoC не управляет |
 | I2C3-M1 | `/dev/i2c-3`, 100 кГц, `GPIO1_D2`/`GPIO1_D3` | SHT21 `0x40`, INA3221 `0x41` (`A0` = VS; die ID `0x3220`; силовые входы пока не подключены), STM32 ACPI-EC `0x42`; нужны внешние pull-up 2.2–4.7 кОм к 3.3 В (в DTS `pcfg_pull_none_smt`) |
 
 Требования к хосту: Python 3 и зависимости из `bench/requirements.txt`;
@@ -61,6 +62,7 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
 | Устройство (DUT), NAND | `192.168.52.97` (DHCP; на `2026-11-12` выдан `192.168.52.33` — сверяйте `ifconfig eth0`) |
 | Устройство (DUT), NFS | `192.168.52.150` (статический из `ip=` в `sys_bootargs`) |
 | Хост TFTP/NFS | `192.168.52.200` |
+| UART-мост (ESP32 telnet-UART) | `192.168.52.17`, TCP `23` (telnet, консоль DUT, 115200 8N1) |
 | Хост, приёмник UDP/RTP (MediaMTX) | `192.168.52.200`: `5600/udp` (вход от камеры), `8554/tcp` (RTSP), `8000–8001/udp` (RTP/RTCP для RTSP-читателей), `8888/tcp` (HLS), `8889/tcp` (WebRTC), `8189/udp` (WebRTC ICE), `9997/tcp` — control API только на `127.0.0.1` |
 | Маска | `255.255.255.0` |
 | Шлюз | `192.168.52.254` |
@@ -68,7 +70,7 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
 В автономном режиме адрес `eth0` выдаётся по DHCP (`oko-lunch.sh` → `oko-net apply`).
 В NFS-режиме адрес задаётся в cmdline (`ip=192.168.52.150::…:off`), а `oko-lunch.sh`
 пропускает DHCP. Фактический адрес смотрите на DUT (`ifconfig eth0`) или в
-serial-консоли. Для стабильных проверок зарезервируйте адрес `192.168.52.150`
+консоли UART (telnet-мост, §4). Для стабильных проверок зарезервируйте адрес `192.168.52.150`
 в DHCP-сервере лабораторной сети.
 
 ## 6. Учётные данные
@@ -91,11 +93,66 @@ serial-консоли. Для стабильных проверок зарезе
 
 ## 7. Прошивка SPI NAND
 
+### 7-TFTP. Прошивка по TFTP (по умолчанию)
+
+Основной режим стенда с 2026-11-11: USB-порт DUT занят хабом, Maskrom по USB
+хост не видит, а TFTP доступен по Ethernet. USB и кнопки Maskrom не нужны.
+Перед запуском закройте свои telnet-сессии к мосту (§4) — он обслуживает
+одного клиента, иначе скрипт не подключится (`timed out`).
+
+```sh
+./build.sh firmware                 # output/image/{boot,oem,rootfs,userdata}.img
+tools/native/setup_netboot.sh       # TFTP/NFS-контейнер services/ (если ещё не поднят)
+bench/run.sh tftp_flash.py          # boot + oem + rootfs, затем reset
+bench/run.sh tftp_flash.py --components boot          # только ядро и DTB
+bench/run.sh tftp_flash.py --userdata                 # плюс factory-userdata (стирает раздел)
+bench/run.sh tftp_flash.py --no-reset                 # остаться в U-Boot для проверок
+```
+
+Что делает скрипт:
+
+1. По консоли (§4) входит в U-Boot: если Linux загружен — перезагружает его и
+   ловит `Hit any key to stop autoboot`, иначе ждёт prompt `=>`.
+   Плата в Maskrom/RKUART по консоли не восстанавливается — нужен power cycle.
+2. Проверяет разделы через `mtd list` и сеть (`ipaddr`/`serverip`/`gatewayip`,
+   `ping 192.168.52.200`).
+3. Для каждого компонента: `tftp ${ramdisk_addr_r} <образ>` (адрес
+   `0x00e00000`, RAM от 14 МиБ), сверяет `Bytes transferred` с размером файла,
+   затем `mtd erase <dev> <offset> <size>` и
+   `mtd write <dev> ${ramdisk_addr_r} <offset> <size>`. В этом U-Boot
+   `CONFIG_CMD_MTDPARTS` выключен, поэтому `mtd` работает с целым устройством
+   (`spi-nand0` из `mtd list`) и смещение/размер задаются явно по таблице:
+
+   | Раздел | Offset | Size |
+   |---|---|---|
+   | boot | `0x00100000` | `0x00600000` |
+   | oem | `0x00700000` | `0x02800000` |
+   | userdata | `0x02f00000` | `0x02800000` |
+   | rootfs | `0x05700000` | `0x0a800000` |
+
+   Размер образа передаётся в `mtd write` явно: по умолчанию команда пишет
+   весь раздел (168 МиБ для rootfs) из RAM.
+4. Восстанавливает `sys_bootargs` на NAND-загрузку (`ubi.mtd=6 root=ubi0:rootfs
+   rootfstype=ubifs rk_dma_heap_cma=66M`), `saveenv` и `reset`.
+
+Проверка после загрузки: `cat /proc/cmdline` (`root=ubi0:rootfs`), `cat /proc/mtd`
+(разметка `boot 6M / oem 40M / userdata 40M / rootfs 168M`), `uname -a`,
+`df -h /userdata`. Логи — `output/bench/netboot-<дата>.log`. Проверено на стенде
+2026-11-11: записаны `boot`, `oem`, `rootfs`, плата загрузилась с
+`root=ubi0:rootfs`, `dr_mode = "host"`, хаб `1a40:0101` и устройство за ним
+видны в `lsusb`.
+
+Ограничения: стирание `rootfs` (168 МиБ) в U-Boot занимает несколько минут;
+`env`, `idblock` и `uboot` не трогаются (их меняет только полный `update.img`
+через Maskrom, §7A); при обрыве питания во время `mtd write` прошивка
+повторяется тем же способом (U-Boot остаётся доступен по UART).
+
 ### A. SPI NAND (автономная загрузка)
 
 1. На хосте: `source tools/native/env.sh && ./build.sh firmware`.
 2. Результат: `output/image/update.img`.
-3. Перевести устройство в Maskrom — `<кнопка / перемычка>`.
+3. Перевести устройство в Maskrom — `<кнопка / перемычка>`; USB-порт DUT
+   подключить к хосту **напрямую** (через хаб из §4 Maskrom не виден).
 4. Прошить: `./rkflash.sh` или `tools/linux/Linux_Upgrade_Tool/upgrade_tool`.
 5. Перезагрузить; загрузка пойдёт из SPI NAND без хоста.
 
@@ -108,7 +165,8 @@ serial-консоли. Для стабильных проверок зарезе
 >
 > Если `reboot loader` на DUT не переводит плату в loader-режим (проверено
 > 2026-11-05: обычная перезагрузка), остановите U-Boot по UART
-> (`<Ctrl+C>` в окне `Hit key to stop autoboot`) и выполните `download`:
+> (`<Ctrl+C>` в окне `Hit key to stop autoboot`; консоль — telnet-мост §4
+> или `bench/run.sh netboot.py catch`) и выполните `download`:
 > команда отвечает `Enter rockusb failed, fallback to bootrom...`, после чего
 > `upgrade_tool ld` видит устройство в режиме `Maskrom`. Дальше — обычный
 > `./rkflash.sh update`; кнопка/перемычка Maskrom не нужна.
@@ -379,6 +437,28 @@ cat /proc/rkisp-vir0
 # режим сенсора: 1920x1080@10000/300000 (30 fps)
 media-ctl -p | grep -A6 'sc230ai 4-0032' | grep fmt
 
+# STM32 EC: ошибки шины I2C3 и форензика (после загрузки)
+dmesg | grep -c 'SCL hold by slave'          # ожидается 0
+dmesg | grep 'rk3x-i2c' | tail -5            # timeout, ipd: 0x80 => slave держал SCL
+/usr/sbin/i2cdetect -y -r 3 | grep 42        # 0x42 отвечает
+/oem/usr/bin/oko-ec info                     # device_type 2, proto 3
+
+# Счётчики DEBUG_BUILD (-DEC_DEBUG_BUILD=ON): 60 байт ответа 0x28
+/usr/sbin/i2ctransfer -y 3 w3@0x42 0x01 0x00 0x28
+sleep 0.2
+/usr/sbin/i2ctransfer -y 3 r63@0x42          # timeout_fires/bus_hang_events в payload
+
+# Воспроизведение H1 и проверка таймерного отпускания линии
+/usr/sbin/i2ctransfer -y 3 w4@0x42 0x02 0x00 0x29 0x01
+/usr/sbin/i2ctransfer -y 3 r63@0x42 || true  # ожидается один timeout, затем шина жива
+/usr/sbin/i2ctransfer -y 3 w4@0x42 0x02 0x00 0x29 0x00
+
+# Soak-матрица (отчёт в output/bench/ec_bus_soak-*.json)
+bench/run.sh ec_bus_soak.py --mode all --iterations 20
+
+# Если EC завис в Stop и SWD не подключается (init mode failed):
+# нужен NRST/снятие always-on 3.3 В; см. docs/hardware.md §8.
+
 # проверка потока (divinus должен быть остановлен): ожидается 30.0 fps
 v4l2-ctl -d /dev/video0 --stream-mmap --stream-count=60 --stream-poll
 
@@ -610,22 +690,18 @@ dmesg | tail -50
 | `oko-ec battery` пишет, что устройство в загрузчике | STM32 в режиме загрузчика (`device_type = 1`); выполнить `oko-ec reset` и повторить |
 | `/tmp/oko-ec.osd` не появляется | не запущен `S21oko-ec` (нет `/dev/i2c-3` или `/oem/usr/bin/oko-ec`), есть `/userdata/oko-ec.disable`, либо демон уже работает (см. `/tmp/oko-ec.log`) |
 
-### USB host (dual-role) и устройства за хабом
+### USB host и устройства за хабом
+
+Порт закреплён в host-режиме (`dr_mode = "host"`): UDC и gadget не
+регистрируются, `usb0`/adb отсутствуют, роль не переключается.
 
 ```sh
-# режим из DTB, текущая роль PHY и роль по extcon
-cat /proc/device-tree/usbdrd/usb@ffb00000/dr_mode       # otg
-cat /sys/devices/platform/ff3e0000.usb2-phy/otg_mode    # otg | host | peripheral
-cat /sys/class/extcon/extcon0/state                     # USB=1 (device) / USB-HOST=1 (host)
-# принудительный host, если автоопределение не сработало:
-#   echo host > /sys/devices/platform/ff3e0000.usb2-phy/otg_mode
-#   echo otg  > /sys/devices/platform/ff3e0000.usb2-phy/otg_mode
+# режим из DTB и отсутствие gadget
+cat /proc/device-tree/usbdrd/usb@ffb00000/dr_mode       # host
+ls /sys/class/udc                                       # пусто
+ifconfig usb0                                           # нет интерфейса
 
-# в device-роли: gadget поднят и usb0 получил адрес
-cat /sys/class/udc/ffb00000.usb/state                   # configured
-ifconfig usb0                                           # 172.32.0.93
-
-# хаб и устройства за ним (host-роль)
+# хаб и устройства за ним
 lsusb
 dmesg | grep -iE 'usb|dwc3|xhci' | tail -30
 
@@ -643,9 +719,10 @@ bluetoothctl --version                  # 5.86
 bluetoothctl list                       # адаптер после подключения донгла
 ```
 
-Гаджет-регресс проверяется от ПК: при подключении кабеля `lsusb` на хосте
-видит rockusb/RNDIS DUT, `adb devices` показывает устройство; `reboot loader`
-и Maskrom-прошивка от `dr_mode` не зависят.
+Возврат к gadget требует вернуть `dr_mode = "otg"` в DTS и пересобрать
+`boot` (KI-057). Maskrom-загрузчик от `dr_mode` не зависит, но по USB виден
+только при прямом подключении к хосту — хаб на порту DUT его скрывает;
+поэтому прошивка по умолчанию идёт по TFTP (§7-TFTP).
 
 ### UDP/RTP-раздача камеры (divinus → MediaMTX → RTSP)
 
@@ -687,19 +764,16 @@ docker exec oko-mediamtx ffprobe -v error -show_streams rtsp://127.0.0.1:8554/ca
 
 ## 9. Известные особенности
 
-- **USB-порт работает в dual-role (`otg`).** Роль переключает
-  `phy-rockchip-inno-usb2` по `bvalid`/`iddig` через extcon, читает её
-  `dwc3/drd.c`: при подключении к ПК порт остаётся device (gadget, `usb0`/adb),
-  с OTG-переходником и хабом — становится host. VBUS 5 В SoC не управляет,
-  поэтому хаб и устройства должны питаться от платы/внешнего источника;
-  bus-powered хаб без питания может не определиться. Принудительно:
-  `echo host > /sys/devices/platform/ff3e0000.usb2-phy/otg_mode` (обратно —
-  `otg`). `S99usb0config` определяет роль по extcon, выдаёт `usb0`
-  `172.32.0.93` и после host-режима заново биндит configfs-gadget (DWC3 сам
-  UDC не возвращает); при устойчивой ошибке биндинга пауза между попытками
-  растёт 5→60 с — проверено 2026-11-10. Legacy `g_mass_storage` в ядре
-  выключен: он захватывал UDC и срывал инициализацию gadget (KI-056).
-  Ограничения — KI-054.
+- **USB-порт закреплён в host-режиме (`dr_mode = "host"`).** С 2026-11-11
+  порт не переключается: при загрузке xHCI поднимается сразу, хаб `1a40:0101`
+  и устройство за ним (`0bda:c811`) видны в `lsusb` без `otg_mode`. Gadget
+  функций нет: UDC не регистрируется, `usb0`/RNDIS и adb отсутствуют,
+  `S50usbdevice` и `S99usb0config` сами выходят по `dr_mode` (KI-057).
+  VBUS 5 В SoC не управляет — хаб и устройства питаются от платы/внешнего
+  источника; bus-powered хаб без питания может не определиться. Maskrom по
+  USB виден только при прямом кабеле к хосту, поэтому прошивка по умолчанию —
+  TFTP (§7-TFTP). Legacy `g_mass_storage` выключен (KI-056).
+  Ограничения — KI-054, KI-057.
 - **SoftAP всегда WPA2-PSK.** В AP-фолбэке (`OKO-XXXX`, `192.168.43.1/24`)
   точка защищена WPA2-PSK; если `oko_wlan_ap_psk` не задан, используется
   заводский пароль `ybrjveytljdthzq` (публичный дефолт KI-030; смена —

@@ -398,6 +398,13 @@ usb_device_stop()
 
 case "$1" in
 start)
+	# OKO: a host-only port (dr_mode = "host") registers no UDC, so the
+	# configfs gadget cannot bind and adbd has nothing to talk to.  Skip the
+	# whole setup instead of logging a failed UDC write on every boot.
+	if [ "$(cat /proc/device-tree/usbdrd/usb@ffb00000/dr_mode 2>/dev/null)" = "host" ]; then
+		echo "usb gadget: dr_mode=host, skipping S50usbdevice"
+		exit 0
+	fi
 	ifconfig lo up
 #	if [ ! -e "/tmp/.usb_config" ]; then
 #		echo "$0: Cannot find .usb_config"

@@ -18,7 +18,7 @@
 | Папка | Назначение |
 |---|---|
 | `config/` | Извлечённые дефконфиги для быстрой настройки: `buildroot_defconfig`, `kernel_defconfig`, `dts_config`. |
-| `bench/` | Утилиты тестового стенда: UART/SSH-команды, netboot через TFTP/NFS (`netboot.py`), переключение NAND/NFS через env U-Boot (`nfs_env.py`), проверка OSD по RTSP (`osd_check.py`), сквозная проверка UDP/RTP-раздачи через MediaMTX (`stream_check.py`), матрица HTTP API (`api_check.py`), WebUI в headless Chromium (`ui_check.py`), AF-метрика и CSV (`focus_check.py`), версии/прошивка контроллеров (`firmware_check.py`), выкатка бинарника в `/oem` (`deploy_divinus.py`), 20-минутный soak двух аплинков (`uplink_soak.py`), venv. В сборке прошивки не участвует. |
+| `bench/` | Утилиты тестового стенда: консоль по UART (telnet-мост ESP32 или `/dev/ttyACM*`, `uart.py`/`serial_exec.py`) и SSH-команды, netboot через TFTP/NFS (`netboot.py`), прошивка SPI NAND по TFTP (`tftp_flash.py`, режим по умолчанию), переключение NAND/NFS через env U-Boot (`nfs_env.py`), проверка OSD по RTSP (`osd_check.py`), сквозная проверка UDP/RTP-раздачи через MediaMTX (`stream_check.py`), матрица HTTP API (`api_check.py`), WebUI в headless Chromium (`ui_check.py`), AF-метрика и CSV (`focus_check.py`), версии/прошивка контроллеров (`firmware_check.py`), выкатка бинарника в `/oem` (`deploy_divinus.py`), 20-минутный soak двух аплинков (`uplink_soak.py`), venv. В сборке прошивки не участвует. |
 | `services/` | Docker-сервисы стенда. `services/docker-compose.yml` — контейнер `oko-services`: TFTP (`output/image`), NFS-экспорт `output/srv/nfs/rootfs`, неактивные шаблоны WireGuard/AmneziaWG/OpenVPN (`conf/`), запуск — `tools/native/setup_netboot.sh`. `services/stream/` — отдельный профиль `oko-mediamtx` (MediaMTX, host-сеть): принимает RTP камеры на `5600/udp` и отдаёт RTSP/HLS/WebRTC. В сборке прошивки не участвует. |
 | `research/` | Архив внешних исследований: заметки о переносимости upstream-кода и минимальные read-only снимки upstream-файлов с провенансом. В сборке прошивки не участвует. |
 | `media/` | Медиастек Rockchip: кодеки, 2D-ускорение, ISP, NPU, медиафреймворк и примеры. |
@@ -117,10 +117,14 @@
 - `app/oko-ec/`
 - `app/stm32_acpi-ec/` — полные исходники прошивки STM32 ACPI-EC
   (`spectrespc/stm32_acpi-ec`, git subtree, пин
-  `41728ddaf6936d49a5fb65676ca5203dd631b4f6`): `boot/`, `app/`, `hal/`,
-  `common/`, CMake-сборка, тесты и `tools/bootloader_tool`. Отдельная
-  CMake-сборка, в `./build.sh` и образ OKO не входит; отправка изменений —
-  `tools/stm32_push.sh`, обновление — `tools/stm32_pull.sh`
+  `41728ddaf6936d49a5fb65676ca5203dd631b4f6`): `boot/`, `app/`,
+  `hal/include` + `hal/f1` + `hal/c0`, `common/` (CRC, meta, protocol v3,
+  `power_fsm`), `platform/stm32f103` + `platform/stm32c0`, CMake-сборка,
+  тесты и `tools/bootloader_tool`. Цели C8T6/CBT6 (F103), C011x6
+  (STM32C011F6, стенд, 6 КиБ SRAM) и C031x6 (STM32C031F6, 12 КиБ SRAM):
+  кнопка питания + Stop; карта пинов — `docs/hardware.md`.
+  Отдельная CMake-сборка, в `./build.sh` и образ OKO не входит; отправка
+  изменений — `tools/stm32_push.sh`, обновление — `tools/stm32_pull.sh`
   (`app/STM32_FIRMWARE.md`).
 - `app/STM32_FIRMWARE.md` — сборка, пин и порядок push/pull для STM32.
 - `app/STM8_FIRMWARE.md` — сборка, пин и порядок push/pull для STM8.
@@ -188,7 +192,7 @@
   `arch/arm/boot/dts/rv1106g-luckfox-pico-pro-max-sc230ai.dts` (Pro Max +
   выключенные `&sc3336`/`&mis5001`), фрагмент `rv1106-sc230ai.config` собирает
   только `sc230ai`, фрагмент `rv1106-usb-host.config` — встроенные HID,
-  USB-сеть и Bluetooth для dual-role USB-порта.
+  USB-сеть и Bluetooth для USB-порта в host-режиме.
 - `source/buildroot` — распакованное дерево Buildroot (корневая файловая
   система); в git не хранится.
 - `tools/board/buildroot` — вендорская обвязка Buildroot: tarball

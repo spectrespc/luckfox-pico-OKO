@@ -30,7 +30,7 @@ BootROM → U-Boot → ядро Linux → busybox init → init-скрипты �
 | `RK_UBOOT_DEFCONFIG` | `luckfox_rv1106_uboot_defconfig` | конфигурация U-Boot |
 | `RK_UBOOT_DEFCONFIG_FRAGMENT` | `rk-sfc.config` | поддержка SPI flash controller |
 | `RK_KERNEL_DEFCONFIG` | `luckfox_rv1106_linux_defconfig` | базовая конфигурация ядра |
-| `RK_KERNEL_DEFCONFIG_FRAGMENT` | `rv1106-netboot.config rv1106-sc230ai.config rv1106-usb-host.config` | netboot (IP_PNP/ROOT_NFS) + `CONFIG_VIDEO_SC230AI=m`; SC3336/IMX415/MIS5001/MIA1321 явно выключены; usb-host — встроенные HID/USB-net/Bluetooth для dual-role порта |
+| `RK_KERNEL_DEFCONFIG_FRAGMENT` | `rv1106-netboot.config rv1106-sc230ai.config rv1106-usb-host.config` | netboot (IP_PNP/ROOT_NFS) + `CONFIG_VIDEO_SC230AI=m`; SC3336/IMX415/MIS5001/MIA1321 явно выключены; usb-host — встроенные HID/USB-net/Bluetooth для host-порта (`dr_mode = "host"`) |
 | `RK_BOOTARGS_CMA_SIZE` | `66M` | в cmdline попадает как `rk_dma_heap_cma=66M` |
 | `RK_CAMERA_SENSOR_IQFILES` | `sc230ai_CMK-OT2115-PC1_30IRC-F16.json` | IQ-файл сенсора |
 | `RK_ENABLE_WIFI` | `y` | WiFi-модули собираются и копируются в `/oem/usr/ko` |
@@ -116,31 +116,35 @@ SPI NAND, если `sys_bootargs` не сохранён в env.
 | 3 | `S02klogd` | логгер ядра | после `S01syslogd` |
 | 4 | `S02sysctl` | применение `/etc/sysctl.conf` | `/proc` уже смонтирован |
 | 5 | `S10udev` | eudev, создание узлов устройств; правило `60-oko-sdcard.rules` вызывает `oko-sdcard add/remove` и монтирует карту в `/mnt/sdcard` (состояние — `/run/oko-sd.state`) | должен пройти до монтирования по `by-name`; `&sdmmc` в DTS — съёмная карта с `sdmmc0_det` |
-| 6 | `S20linkmount` | симлинки `/dev/block/by-name`, монтирование `oem`/`userdata` | ключевой этап, см. ниже |
-| 7 | `S20oko-osd` | `divinus` — единственный стример (всегда создаёт `/userdata/divinus.enable`), бутстрап OSD-конфига, запуск `oko-osd`; `/tmp/osd-sys.txt` — `CPU …\nMEM FREE … SD FREE …\nT …C` | оверлей OKO; после `S20linkmount`, до `S21appinit` |
-| 8 | `S20oko-update` | пост-проверка обновления ПО: сравнивает `/etc/oko-release` с `/userdata/oko-update.pending`, пишет `/userdata/oko-update.state`, удаляет `sd_update.txt` и образы с microSD | оверлей OKO; после `S20linkmount` (и `S20oko-osd`), до `S21appinit`; при отсутствии `.pending` завершается без работы |
+| 6 | `S11modules` | загрузка модулей из `/etc/modules-load.d/*.conf` (`modprobe`) | до `S20linkmount`; модули OKO грузит `insmod_ko.sh` из `S21appinit` |
+| 7 | `S20linkmount` | симлинки `/dev/block/by-name`, монтирование `oem`/`userdata` | ключевой этап, см. ниже |
+| 8 | `S20oko-osd` | `divinus` — единственный стример (всегда создаёт `/userdata/divinus.enable`), бутстрап OSD-конфига, запуск `oko-osd`; `/tmp/osd-sys.txt` — `CPU …\nMEM FREE … SD FREE …\nT …C` | оверлей OKO; после `S20linkmount`, до `S21appinit` |
 | 9 | `S20okotz` | применение `[system] tz` из `/userdata/divinus.yaml` к `/etc/TZ`: относительный симлинк на `usr/share/zoneinfo/uclibc/<зона>` | оверлей OKO; после `S20linkmount`/`S20oko-osd`, до `S21appinit`; нет ключа или зона невалидна — остаётся зона образа (`Europe/Moscow`) |
-| 10 | `S20urandom` | сохранение/восстановление seed urandom | — |
-| 11 | `S21appinit` | `sh /oem/usr/bin/oko-lunch.sh` | **требует смонтированных `/oem` и `/userdata`** |
-| 12 | `S21oko-ec` | запуск `oko-ec daemon` (телеметрия EC/INA/SHT21 в `/tmp/oko-ec.json` и `/tmp/oko-ec.osd`) | оверлей OKO; после `S20linkmount` и `S21appinit` (лексикографический порядок), требует `/dev/i2c-3` и `/oem/usr/bin/oko-ec`; opt-out — `/userdata/oko-ec.disable` |
-| 13 | `S35iptables` | правила firewall | сеть ещё не обязательна |
-| 14 | `S40network` | базовая настройка сети | — |
-| 15 | `S41dhcpcd` | заглушка OKO; DHCP управляется `/usr/bin/oko-net` | после `S40network` |
-| 16 | `S45oko-vpn` | autostart профилей VPN с `auto=1` и watchdog | оверлей OKO; после `S41dhcpcd` (ждёт default route до 60 с), требует `/oem/usr/bin/{wg,awg}` или `/usr/sbin/openvpn`, `/usr/bin/oko-vpn` и `/userdata/vpn`; профили `wg0`/`awg0`/`tun0`; opt-out — нет профилей с `auto=1` |
-| 17 | `S49ntp` | синхронизация времени | требует рабочей сети; `divinus` (запущен раньше, из `S21appinit`) через 10 с учитывает `ntp_enable`/`ntp_server` и может остановить этот демон |
-| 18 | `S50sshd` | SSH-сервер | сеть |
-| 19 | `S50telnet` | telnet-сервер | сеть |
-| 20 | `S50usbdevice` | настройка USB-режима (gadget) | выполняется всегда; при `dr_mode = "otg"` UDC существует в device-роли, биндинг configfs-gadget не меняется; legacy `g_mass_storage` выключен (KI-056) |
-| 21 | `S60micinit` | настройка микрофонного тракта через `amixer` | аудио-модули ядра |
-| 22 | `S60openvpn` | штатный init-скрипт пакета buildroot | **неактивен**: читает `/etc/openvpn/*.conf` (каталога нет), профилями OKO управляет `S45oko-vpn`; не удалять, чтобы пакет оставался целостным |
-| 23 | `S97okoroute` | `/usr/bin/oko-route monitor` фоном: единый владелец default-маршрутов, `/etc/resolv.conf`, ARP-тюнинга и policy-таблиц; метрики `oko_net_metric`/`oko_wlan_metric` из env, failover по недоступности шлюза (`ping -I`, 3 отказа → metric+10000, 2 успеха → возврат, cooldown 30 с), при `root=/dev/nfs` eth-маршрут и resolv не трогает | оверлей OKO; после `S21appinit` (eth уже настроен `oko-net apply`) и `S45oko-vpn`, до `S98okowifi`; `fw_printenv`/`fw_setenv`, `ip`, `ping`, `wpa_cli`; opt-out — отсутствие `/usr/bin/oko-route` |
-| 24 | `S98okowifi` | `/usr/bin/oko-wifi apply` фоном: ждёт `wlan0` до 30 с и поднимает STA или SoftAP по env `oko_wlan_*`; SoftAP всегда WPA2-PSK — пароль из `oko_wlan_ap_psk` или заводский `ybrjveytljdthzq` | оверлей OKO; после `S21appinit` (`insmod_ko.sh` → `insmod_wifi.sh` фоном) и `S45oko-vpn`; `wpa_supplicant`/`hostapd`/`dnsmasq` из rootfs, `/usr/bin/oko-wifi` |
-| 25 | `S99hciinit` | `hciattach` для AIC8800; ветка `wlan0`/`udhcpc` удалена | зависит от `aic8800_fdrv`; `wlan0` принадлежит `S98okowifi` |
-| 26 | `S99luckfoxconfigload` | `luckfox-config load` — восстановление настроек | `/userdata` |
-| 27 | `S99luckfoxcustomoverlay` | применение пользовательского DT-overlay из `/mnt/cfg` | `dtc`, `configfs` |
-| 28 | `S99oko-test` | тестовый маркер OKO: пишет `/tmp/oko-test-ok` и строку в `/dev/kmsg` | оверлей OKO, `MARKER` в скрипте |
-| 29 | `S99rtcinit` | калибровка RTC при «нулевом» времени; RTC хранится в UTC (`hwclock -u`, `date -u`) | — |
-| 30 | `S99usb0config` | роль-aware настройка `usb0` и watchdog роли | определяет роль по `/sys/class/extcon/*/state`: в device-роли ставит `172.32.0.93` и, если UDC пуст после host-режима, перезапускает `S50usbdevice`; в host-роли ничего не делает |
+| 10 | `S20oko-update` | пост-проверка обновления ПО: сравнивает `/etc/oko-release` с `/userdata/oko-update.pending`, пишет `/userdata/oko-update.state`, удаляет `sd_update.txt` и образы с microSD | оверлей OKO; после `S20linkmount` (и `S20oko-osd`), до `S21appinit`; при отсутствии `.pending` завершается без работы |
+| 11 | `S20urandom` | сохранение/восстановление seed urandom | — |
+| 12 | `S21appinit` | `sh /oem/usr/bin/oko-lunch.sh` | **требует смонтированных `/oem` и `/userdata`** |
+| 13 | `S21oko-ec` | запуск `oko-ec daemon` (телеметрия EC/INA/SHT21 в `/tmp/oko-ec.json` и `/tmp/oko-ec.osd`) | оверлей OKO; после `S20linkmount` и `S21appinit` (лексикографический порядок), требует `/dev/i2c-3` и `/oem/usr/bin/oko-ec`; opt-out — `/userdata/oko-ec.disable` |
+| 14 | `S30dbus-daemon` | системный `dbus-daemon` для BlueZ | после `S21oko-ec`; нужен `bluetoothctl`/`bluetoothd` |
+| 15 | `S35iptables` | правила firewall | сеть ещё не обязательна |
+| 16 | `S40bluetoothd` | `bluetoothd -n` (BlueZ 5.86) для USB-BT | после `S30dbus-daemon` и `S35iptables`; `btusb`/`bluetooth` в ядре |
+| 17 | `S40network` | базовая настройка сети | — |
+| 18 | `S41dhcpcd` | заглушка OKO; DHCP управляется `/usr/bin/oko-net` | после `S40network` |
+| 19 | `S45oko-vpn` | autostart профилей VPN с `auto=1` и watchdog | оверлей OKO; после `S41dhcpcd` (ждёт default route до 60 с), требует `/oem/usr/bin/{wg,awg}` или `/usr/sbin/openvpn`, `/usr/bin/oko-vpn` и `/userdata/vpn`; профили `wg0`/`awg0`/`tun0`; opt-out — нет профилей с `auto=1` |
+| 20 | `S49ntp` | синхронизация времени | требует рабочей сети; `divinus` (запущен раньше, из `S21appinit`) через 10 с учитывает `ntp_enable`/`ntp_server` и может остановить этот демон |
+| 21 | `S50crond` | busybox `crond` (pid-файл через `start-stop-daemon`) | после сети (`S50sshd`/`S50telnet`); задачи — `/etc/crontabs` |
+| 22 | `S50sshd` | SSH-сервер | сеть |
+| 23 | `S50telnet` | telnet-сервер | сеть |
+| 24 | `S50usbdevice` | настройка USB-режима (gadget) | при `dr_mode = "host"` выходит сразу (`usb gadget: dr_mode=host, skipping`): UDC нет, gadget невозможен; в `otg` биндит configfs-gadget как раньше; legacy `g_mass_storage` выключен (KI-056/KI-057) |
+| 25 | `S60micinit` | настройка микрофонного тракта через `amixer` | аудио-модули ядра |
+| 26 | `S60openvpn` | штатный init-скрипт пакета buildroot | **неактивен**: читает `/etc/openvpn/*.conf` (каталога нет), профилями OKO управляет `S45oko-vpn`; не удалять, чтобы пакет оставался целостным |
+| 27 | `S97okoroute` | `/usr/bin/oko-route monitor` фоном: единый владелец default-маршрутов, `/etc/resolv.conf`, ARP-тюнинга и policy-таблиц; метрики `oko_net_metric`/`oko_wlan_metric` из env, failover по недоступности шлюза (`ping -I`, 3 отказа → metric+10000, 2 успеха → возврат, cooldown 30 с), при `root=/dev/nfs` eth-маршрут и resolv не трогает | оверлей OKO; после `S21appinit` (eth уже настроен `oko-net apply`) и `S45oko-vpn`, до `S98okowifi`; `fw_printenv`/`fw_setenv`, `ip`, `ping`, `wpa_cli`; opt-out — отсутствие `/usr/bin/oko-route` |
+| 28 | `S98okowifi` | `/usr/bin/oko-wifi apply` фоном: ждёт `wlan0` до 30 с и поднимает STA или SoftAP по env `oko_wlan_*`; SoftAP всегда WPA2-PSK — пароль из `oko_wlan_ap_psk` или заводский `ybrjveytljdthzq` | оверлей OKO; после `S21appinit` (`insmod_ko.sh` → `insmod_wifi.sh` фоном) и `S45oko-vpn`; `wpa_supplicant`/`hostapd`/`dnsmasq` из rootfs, `/usr/bin/oko-wifi` |
+| 29 | `S99hciinit` | `hciattach` для AIC8800; ветка `wlan0`/`udhcpc` удалена | зависит от `aic8800_fdrv`; `wlan0` принадлежит `S98okowifi` |
+| 30 | `S99luckfoxconfigload` | `luckfox-config load` — восстановление настроек | `/userdata` |
+| 31 | `S99luckfoxcustomoverlay` | применение пользовательского DT-overlay из `/mnt/cfg` | `dtc`, `configfs` |
+| 32 | `S99oko-test` | тестовый маркер OKO: пишет `/tmp/oko-test-ok` и строку в `/dev/kmsg` | оверлей OKO, `MARKER` в скрипте |
+| 33 | `S99rtcinit` | калибровка RTC при «нулевом» времени; RTC хранится в UTC (`hwclock -u`, `date -u`) | — |
+| 34 | `S99usb0config` | роль-aware настройка `usb0` и watchdog роли | при `dr_mode = "host"` выходит сразу (`usb: dr_mode=host, gadget and usb0 are not configured`); в `otg` определяет роль по `/sys/class/extcon/*/state`, ставит `172.32.0.93` и после host-режима перезапускает `S50usbdevice` с backoff |
 
 `S20linkmount` генерируется в `project/build.sh` (при разборе таблицы разделов) в файл
 `$RK_PROJECT_OUTPUT/S20linkmount` с `bootmedium=$RK_BOOT_MEDIUM`. Для `spi_nand` он:
@@ -575,7 +579,8 @@ RTL8821CU/RTL8811CU (`0bda:c811` и родственные ID, `cfg80211` + `882
   значении — заводский `ybrjveytljdthzq` (публичный дефолт KI-030: сменить
   через `oko-wifi set`/`/api/wifi`, вернуть — `fw_setenv oko_wlan_ap_psk`).
   Открытой точки нет. SoftAP — управляющая сеть, не аплинк: `oko-route`
-  учитывает wlan0 только при `wpa_state=COMPLETED`. Настройки — env `oko_wlan_*`, сканирование и
+  учитывает wlan0 только
+  при `wpa_state=COMPLETED`. Настройки — env `oko_wlan_*`, сканирование и
   SD-импорт — `/usr/bin/oko-wifi`.
 - `oko-route` — единственный владелец weak-host защиты, когда eth0 и wlan0
   находятся в одной подсети. В `once` и в каждом витке `monitor` он

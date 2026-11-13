@@ -26,6 +26,15 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Добавлено
 
+- **STM32 EC: таймерное освобождение прижатой SCL и отладочный слой.**
+  В прошивку C011/C031 добавлены аппаратный SCL-low timeout `TIMEOUTR`
+  (~15 мс) с обработкой `I2C_ISR_TIMEOUT`, программный bus-watchdog
+  (`POWER_BUS_HANG_MS=15`), счётчики/снимки I2C с зеркалом в
+  `PWR->BKP2R/BKP3R` и команды `0x28`/`0x29` (только
+  `-DEC_DEBUG_BUILD=ON`). Если мастер исчезает посреди чтения, EC
+  отпускает линию сам, без NRST. Добавлен `bench/ec_bus_soak.py` —
+  матрица reboot/read-window/detect/hold-scl.
+
 - **SoftAP всегда WPA2-PSK с заводским паролем (OKO).** `oko-wifi` больше не
   поднимает открытую точку: пустой `oko_wlan_ap_psk` в `load_settings`
   заменяется заводским `ybrjveytljdthzq`, а `start_ap` всегда пишет `wpa=2`,
@@ -134,7 +143,7 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   форсирует пересборку. `api_check` 105/0, `ui_check` зелёный;
   `check_image_contents` 30 required / 63 forbidden; образ прошит по
   TFTP. Не прогонялись: VPN поверх деградированного линка, реальный
-  NFS-boot, 10 циклов линка (сделано 3).
+  NFS-boot, 10 циклов линка (сделано 3), ассоциация клиента к SoftAP.
 - **Two interfaces in one subnet: weak-host protection (OKO).**
   `oko-route` (called from `once` and every `monitor` pass) now sets
   `arp_ignore=1`/`arp_announce=2` on `all`/`default` and switches a strict
@@ -164,7 +173,7 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   forces a rebuild. `api_check` 105/0, `ui_check` passed,
   `check_image_contents` 30 required / 63 forbidden, and the image was
   flashed over TFTP. Not run: VPN over a degraded link, a real NFS boot,
-  10 link cycles (3 were done).
+  10 link cycles (3 were done), SoftAP client association.
 - **Два аплинка: eth0 + Wi-Fi STA, приоритеты и failover (OKO).**
   Новый `/usr/bin/oko-route` — единый владелец маршрутов по умолчанию и
   `/etc/resolv.conf`. Приоритеты `oko_net_metric` (100) и `oko_wlan_metric`
@@ -245,8 +254,104 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   wlan0), AP fallback, static IP, persistence across reboot, SD import and a 20-minute
   soak (20/20 checks without losses).
 
+- **Прошивка EC: C0-цели STM32C011F6P6 (стенд) и STM32C031F6P6 (OKO).**
+  В `project/app/stm32_acpi-ec/` добавлены `MCU=C011x6` (TSSOP20, 32 КиБ
+  Flash, 6 КиБ SRAM) и `MCU=C031x6` (32 КиБ Flash, 12 КиБ SRAM):
+  загрузчик 8 КиБ + приложение 20 КиБ, карта пинов и обвязка в
+  `docs/hardware.md`, `cmake/FindSTM32CubeC0.cmake` и
+  `platform/stm32c0/`. На стенде `st-info` определяет `STM32C011xx`
+  (flash 32768, pagesize 2048, sram 6144). Приложение управляет питанием хоста
+  (`PWR_EN`/`PWR_GOOD`/`HOST_WAKE`), кнопкой power и сном Stop;
+  FSM `common/power_fsm.c` (short/long/very-long/double, graceful
+  SLEEP/SHUTDOWN/REBOOT, power-cycle, boot-fail, LED-коды) покрыт
+  `tests/test_power_fsm.c`. Протокол обновлён до **v3**:
+  `GET_POWER 0x20`/`SET_POWER 0x21`, команды `0x01…0x0E`/`0x10…0x12`
+  совместимы с proto-2. `hal/` разделён на `hal/include`, `hal/f1`,
+  `hal/c0`; флаг OTA — линкер-символ `__ec_update_flag`; для C0 flash
+  пишется double-word по 8 байт. Фактические размеры: boot 3 996 Б,
+  app 7 628 Б (gcc 14.2.1). В C0 нет LPTIM, а RTC не имеет
+  wakeup-таймера, поэтому Stop покидается только кнопкой или адресом I2C
+  (отличие от первоначального плана зафиксировано в
+  `docs/architecture.md`). Живая проверка на стенде: SWD-доступ получен,
+  bootloader и app прошиты и верифицированы, валидная `MetaConfig`
+  записана, приложение запускается из загрузчика, FSM в OFF,
+  `PWR_EN=0`, I2C `PE=0`, backup-регистры сохраняются. Вход в Stop
+  подтверждён (SCB->SCR.SLEEPDEEP=1, PC на WFI); попутно исправлен баг:
+  pending-прерывание SysTick немедленно выводило ядро из Stop — SysTick
+  теперь останавливается и сбрасывается перед WFI. Найден и исправлен
+  дефекты C0 I2C: `TXIE` был активен до адреса (TXDR предзагружался
+  `0xFF`, ответ начинался с лишнего байта), а выключение `TXIE` после
+  последнего байта при `NOSTRETCH=0` удерживало SCL при чтении хостом
+  большего буфера. Теперь `TXIE` включается только на ADDR чтения,
+  отдаёт `0xFF`-filler до STOP, а на STOP/NACK/ошибке периферия
+  переконфигурируется (PE=0/1), очищая TXDR и отпуская линию. Отдельно
+  найдено, что `WUPEN` в рабочем режиме прижимал SCL на C011 — теперь он
+  ставится только перед `WFI`. Живые проверки через I2C-мастер DUT
+  пройдены: `info` (proto 3, 7628 Б), `battery`, `GET_POWER`, wake по
+  адресу после Stop; физическая кнопка и ток Stop не проверялись.
+- **EC firmware: C0 targets STM32C011F6P6 (bench) and STM32C031F6P6
+  (OKO).** Added `MCU=C011x6` (TSSOP20, 32 KiB flash, 6 KiB SRAM) and
+  `MCU=C031x6` (32 KiB flash, 12 KiB SRAM) to
+  `project/app/stm32_acpi-ec/`: an 8 KiB bootloader plus a 20 KiB
+  application, pin/wiring map in `docs/hardware.md`,
+  `cmake/FindSTM32CubeC0.cmake` and `platform/stm32c0/`. The application
+  drives host power (`PWR_EN`/`PWR_GOOD`/`HOST_WAKE`), the power button and
+  Stop; `common/power_fsm.c` (short/long/very-long/double, graceful
+  SLEEP/SHUTDOWN/REBOOT, power-cycle, boot-fail, LED codes) is covered by
+  `tests/test_power_fsm.c`. The protocol is now **v3**:
+  `GET_POWER 0x20`/`SET_POWER 0x21`; `0x01…0x0E`/`0x10…0x12` remain
+  compatible with proto-2 hosts. `hal/` is split into `hal/include`,
+  `hal/f1`, `hal/c0`; the OTA flag is the `__ec_update_flag` linker symbol;
+  C0 flash is programmed in 8-byte double words. Measured sizes: boot
+  3,996 B, app 7,628 B (gcc 14.2.1). The bench `st-info` reports
+  `STM32C011xx` (flash 32768, pagesize 2048, sram 6144). C0 has no LPTIM
+  and its RTC has no wakeup timer, so Stop is left only by the button or
+  the I2C address (recorded as a deviation from the initial plan in
+  `docs/architecture.md`). Live bench verification: SWD access obtained,
+  bootloader and app flashed and verified, a valid `MetaConfig` was
+  written, the application boots from the bootloader, the FSM is in OFF,
+  `PWR_EN=0`, I2C `PE=0`, and the backup registers persist. Stop entry is
+  confirmed (SCB->SCR.SLEEPDEEP=1, PC at WFI); a bug was fixed where a
+  pending SysTick interrupt immediately woke the core — SysTick is now
+  stopped and its pending flag cleared before WFI. A C0 I2C defect was
+  found and fixed: `TXIE` was enabled before the address, so TXDR was
+  preloaded with `0xFF` and every response had a leading byte; disabling
+  `TXIE` after the last byte also let the slave hold SCL forever when the
+  host read more bytes than the frame (`NOSTRETCH=0`). `TXIE` is now
+  enabled only for a read after ADDR, stays on with `0xFF` filler until
+  STOP, and STOP/NACK/error reconfigure the peripheral (PE=0/1) to clear
+  TXDR and release the bus. `WUPEN` left set in run mode pulled SCL low on
+  the C011 and killed the bus; it is now set only just before `WFI` and
+  cleared after wake. Bench-verified: `oko-ec info` (proto 3, 7628 B),
+  `battery`, `GET_POWER`, address wake after Stop. The physical button and
+  Stop current were not tested.
+
+- **Прошивка SPI NAND по TFTP — режим по умолчанию (OKO).**
+  Новый `bench/tftp_flash.py`: входит в U-Boot по консоли (telnet-мост или
+  `/dev/ttyACM*`), грузит `output/image/*.img` на `ramdisk_addr_r`, сверяет
+  `Bytes transferred` с размером файла и пишет разделы `mtd erase`/`mtd write`
+  по таблице offset/size (в этом U-Boot `CONFIG_CMD_MTDPARTS` выключен, `mtd`
+  работает с целым `spi-nand0`), затем восстанавливает NAND-`sys_bootargs`,
+  `saveenv` и `reset`. Флаги: `--components`, `--userdata`, `--no-reset`.
+  Стенд 2026-11-11: записаны `boot`, `oem`, `rootfs`, плата загрузилась с
+  `root=ubi0:rootfs`, TFTP-сеанс восстановил env после NFS-режима.
+  USB и Maskrom не нужны; описано в `TESTBENCH.md` §7-TFTP, `README_RU.md`,
+  `bench/README.md`, `.kilo/command/bench.md`.
+- **TFTP flashing of SPI NAND is the default mode (OKO).**
+  New `bench/tftp_flash.py`: enters U-Boot over the console (telnet bridge or
+  `/dev/ttyACM*`), loads `output/image/*.img` to `ramdisk_addr_r`, checks
+  `Bytes transferred` against the file size and writes the partitions with
+  `mtd erase`/`mtd write` using the offset/size table (this U-Boot has
+  `CONFIG_CMD_MTDPARTS` off, so `mtd` works on the whole `spi-nand0`), then
+  restores the NAND `sys_bootargs`, runs `saveenv` and resets. Flags:
+  `--components`, `--userdata`, `--no-reset`. Bench 2026-11-11: `boot`, `oem`
+  and `rootfs` were written, the board booted with `root=ubi0:rootfs`, and the
+  env was restored after an NFS session. USB and Maskrom are not needed; see
+  `TESTBENCH.md` §7-TFTP, `README_RU.md`, `bench/README.md`,
+  `.kilo/command/bench.md`.
+
 - **USB host за хабом: HID, USB-сеть и Bluetooth (OKO).**
-  Порт RV1106 переведён в dual-role: с OTG-переходником и внешним питанием он
+  Порт RV1106 переведён в dual-role (позже закреплён в host, см. «Изменено»): с OTG-переходником и внешним питанием он
   работает как host (хаб и устройства за ним), с кабелем к ПК остаётся device
   (gadget, `usb0`/adb). Новый фрагмент ядра `rv1106-usb-host.config` включает
   встроенными HID (`CONFIG_HID`, `CONFIG_USB_HID`), USB-сеть
@@ -261,10 +366,12 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   неприменимые вендорские патчи bluez удалены из дерева. VBUS 5 В SoC не
   управляет (KI-054). Стенд 2026-11-10: device-роль и gadget (`usb0`
   `172.32.0.93`, перечисление на ПК), принудительный host и автоматический
-  возврат gadget после host-режима проверены; хаб/HID/USB-сеть/BT физически
-  не подключались, `bluetoothd`+`dbus-daemon`+`bluetoothctl 5.86` работают.
+  возврат gadget после host-режима проверены. 2026-11-11: с хабом
+  `1a40:0101` автоопределение остаётся device, а в принудительном host хаб и
+  устройство за ним (`0bda:c811`) перечисляются; HID/USB-сеть/BT не
+  подключались, `bluetoothd`+`dbus-daemon`+`bluetoothctl 5.86` работают.
 - **USB host behind a hub: HID, USB networking and Bluetooth (OKO).**
-  The RV1106 port now runs in dual-role: with an OTG adapter and external power
+  The RV1106 port now runs in dual-role (later pinned to host, see "Changed"): with an OTG adapter and external power
   it is a host (a hub and the devices behind it), and with a cable to a PC it
   stays a device (gadget, `usb0`/adb). The new kernel fragment
   `rv1106-usb-host.config` builds in HID (`CONFIG_HID`, `CONFIG_USB_HID`), USB
@@ -279,8 +386,10 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   was added and the inapplicable vendor bluez patches were dropped from the
   tree. The SoC does not control VBUS 5 V (KI-054). Bench 2026-11-10: the device
   role and gadget (`usb0` `172.32.0.93`, enumeration on a PC), forced host and
-  the automatic gadget re-bind after a host excursion were verified; a hub,
-  HID, USB networking and BT were not attached, while `bluetoothd` +
+  the automatic gadget re-bind after a host excursion were verified. On
+  2026-11-11 the hub `1a40:0101` keeps autodetection in the device role, while
+  in forced host the hub and its downstream device (`0bda:c811`) enumerate; HID,
+  USB networking and BT were not attached, while `bluetoothd` +
   `dbus-daemon` + `bluetoothctl 5.86` run.
 
 - **Стенд: приёмник UDP/RTP MediaMTX и сквозная проверка раздачи (OKO).**
@@ -328,8 +437,8 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   resolv.conf и при apply останавливает только udhcpc, привязанный к eth0
   (lease wlan переживает смену Ethernet). Оба apply вызывают
   `oko-route once`; `S97okoroute` стартует до `S98okowifi`. В `INIT_ORDER.md`
-  §4 добавлены строки `S97okoroute` и `S98okowifi`.
-
+  §4 таблица приведена к фактическому набору S*-скриптов (`S11modules`,
+  `S30dbus-daemon`, `S40bluetoothd`, `S50crond`, `S97okoroute`).
 - **DNS and default route: a single owner (OKO).**
   `oko-wifi` no longer writes `/etc/resolv.conf` and no longer hardcodes
   metric 600: the wlan default uses `oko_wlan_metric`, and its resolvers go
@@ -337,7 +446,61 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   `ip route replace ... metric oko_net_metric`, stops overwriting
   resolv.conf and kills only the udhcpc bound to eth0, so the wlan lease
   survives an Ethernet change. Both apply paths run `oko-route once`;
-  `S97okoroute` starts before `S98okowifi`; `INIT_ORDER.md` §4 adds both rows.
+  `S97okoroute` starts before `S98okowifi`. The `INIT_ORDER.md` §4 table now
+  matches the actual S* set (`S11modules`, `S30dbus-daemon`, `S40bluetoothd`,
+  `S50crond`, `S97okoroute`).
+
+- **USB-порт закреплён в host-режиме (`otg` → `host`) (OKO).**
+  В активном DTS `dr_mode = "host"`: xHCI поднимается при загрузке, хаб
+  `1a40:0101` и устройство за ним видны в `lsusb` без `otg_mode`. Gadget
+  функций больше нет — UDC не регистрируется, `usb0`/RNDIS и adb недоступны;
+  `S50usbdevice` получил guard по `dr_mode` (`usb gadget: dr_mode=host,
+  skipping`), `S99usb0config` при `host` выходит сразу, а логика ролей
+  сохранена для возврата к `otg`. Maskrom по USB виден только при прямом
+  кабеле к хосту, поэтому прошивка по умолчанию переведена на TFTP (§7-TFTP).
+  Стенд 2026-11-11: прошивка по TFTP, загрузка с `root=ubi0:rootfs`,
+  `dr_mode = "host"`, хаб и `0bda:c811` в `lsusb`, UDC/`usb0`/adbd отсутствуют
+  (KI-057). Обновлены `INIT_ORDER.md`, `FEATURES*.md`, `KNOWN_ISSUES.md`,
+  `TESTBENCH.md`, `README_RU.md`, `STRUCTURE.md`.
+- **USB port pinned to host mode (`otg` → `host`) (OKO).**
+  The active DTS now has `dr_mode = "host"`: xHCI comes up at boot and the hub
+  `1a40:0101` with its downstream device appear in `lsusb` without `otg_mode`.
+  The gadget is gone — no UDC, no `usb0`/RNDIS and no adb; `S50usbdevice` got a
+  `dr_mode` guard (`usb gadget: dr_mode=host, skipping`) and `S99usb0config`
+  exits immediately on `host`, while the role logic is kept for returning to
+  `otg`. Maskrom over USB is only visible with a direct cable to the host, so
+  the default flashing mode moved to TFTP (§7-TFTP). Bench 2026-11-11: flashed
+  over TFTP, booted with `root=ubi0:rootfs`, `dr_mode = "host"`, hub and
+  `0bda:c811` in `lsusb`, no UDC/`usb0`/adbd (KI-057). Updated `INIT_ORDER.md`,
+  `FEATURES*.md`, `KNOWN_ISSUES.md`, `TESTBENCH.md`, `README_RU.md`,
+  `STRUCTURE.md`.
+
+- **Стенд: консоль DUT через ESP32 telnet-UART bridge (OKO).**
+  UART RV1106 теперь доступен по telnet `192.168.52.17:23` (115200 8N1).
+  Новый `bench/uart.py` — минимальный telnet-клиент: отвечает на
+  IAC-согласование (WILL ECHO/SGA → DONT/WONT), вырезает IAC/SB из потока и
+  отдаёт pyserial-совместимый интерфейс; `serial_exec.py` и `netboot.py`
+  используют мост по умолчанию, локальный `/dev/ttyACM*` включается через
+  `--port /dev/ttyACM0` или `OKO_SERIAL_PORT`; мост обслуживает одного
+  клиента, поэтому перед запуском скриптов нужно закрыть другие telnet-сессии.
+  Обновлены `TESTBENCH.md`
+  (§1/§2/§4/§5), `README_RU.md`, `AGENTS.md` и `bench/README.md`; в §4
+  зафиксировано, что USB-хаб подключён. Проверено на стенде 2026-11-11:
+  `bench/run.sh serial_exec.py 'uname -a'` логинится через мост и выполняет
+  команду (kernel `#12`).
+- **Bench: the DUT console moved to the ESP32 telnet-UART bridge (OKO).**
+  The RV1106 UART is now reachable over telnet at `192.168.52.17:23`
+  (115200 8N1). The new `bench/uart.py` is a minimal telnet client: it answers
+  IAC negotiation (WILL ECHO/SGA → DONT/WONT), strips IAC/SB from the stream
+  and exposes a pyserial-compatible interface; `serial_exec.py` and
+  `netboot.py` use the bridge by default, while a local `/dev/ttyACM*` is
+  selected with `--port /dev/ttyACM0` or `OKO_SERIAL_PORT`; the bridge serves a
+  single client, so other telnet sessions must be closed before running the
+  scripts. `TESTBENCH.md`
+  (§1/§2/§4/§5), `README_RU.md`, `AGENTS.md` and `bench/README.md` were
+  updated, and §4 now records the connected USB hub. Bench 2026-11-11:
+  `bench/run.sh serial_exec.py 'uname -a'` logs in through the bridge and runs
+  the command (kernel `#12`).
 
 - **`S99usb0config` определяет USB-роль по extcon (OKO).**
   Скрипт больше не проверяет строку `dr_mode` в DTS: роль читается из
@@ -1211,6 +1374,35 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   `#af-state`) and `bench/README.md`.
 
 ### Исправлено
+
+- **STM32 EC: I2C1 тактировался от PCLK, из-за чего не работало
+  пробуждение из Stop по адресу.** `RCC->CCIPR.I2C1SEL` было `00`
+  (PCLK): в Stop периферия не тактируется, `WUPEN` не будит ядро, а
+  `TIMINGR`/`tTIMEOUT` считаются от 12 МГц вместо 48 МГц. Исправлено на
+  `10` (HSIKER). Также: `i2c_pause()`/`i2c_resume()` теперь реально
+  работают в приложении; Stop не удерживает линию под маской
+  прерываний; транзакция, разбудившая EC, не обрывается сбросом `TXIE`;
+  `flash-app` для C011 использует конфиг OpenOCD C0; хост повторяет
+  неудачную запись кадра (`I2C_WRITE_RETRIES`).
+
+- **divinus: переполнение стека при экспорте конфигурации и лога (OKO).**
+  `GET /api/cmd?export` и `?log` завершались SIGSEGV: кадр
+  `respond_request` (8 КиБ HTTP-ответа и 8 КиБ JSON Wi-Fi) вместе с 8,8 КиБ
+  потоковой отдачей не помещался в стек веб-сервера (64 КиБ по factory-YAML).
+  Буферы `/api/wifi` и `popen()` вынесены в static, фабричный и дефолтный
+  `web_server_thread_stack_size` подняты до 128 КиБ, а лимит PNG-чанков
+  spng вынесен в отдельную константу 64 КиБ (раньше он наследовал размер
+  стека). Проверено на стенде: export 4236 Б и log 200 OK, divinus не
+  падает, `api_check` — 105/0.
+- **divinus: stack exhaustion when exporting the configuration and log (OKO).**
+  `GET /api/cmd?export` and `?log` ended with SIGSEGV: the
+  `respond_request` frame (the 8 KiB HTTP response plus the 8 KiB Wi-Fi JSON)
+  with the 8.8 KiB streaming function did not fit the web-server stack
+  (64 KiB in the factory YAML). The `/api/wifi` and `popen()` buffers are now
+  static, the factory/default `web_server_thread_stack_size` is 128 KiB, and
+  the spng PNG chunk limit is now a separate 64 KiB constant instead of
+  following the stack size. Bench-verified: export 4236 B and log 200 OK,
+  divinus stays up, and `api_check` is 105/0.
 
 - **Legacy `g_mass_storage` срывал инициализацию USB-gadget (OKO).**
   В вендорском defconfig был `CONFIG_USB_MASS_STORAGE=y`: legacy-драйвер

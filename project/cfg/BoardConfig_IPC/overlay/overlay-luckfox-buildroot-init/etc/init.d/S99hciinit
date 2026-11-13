@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# OKO: Bluetooth bring-up for the built-in AIC8800 SDIO combo.  The vendor
+# script also brought wlan0 up and started a DHCP client on it; wlan0 is now
+# owned by /usr/bin/oko-wifi and /etc/init.d/S98okowifi, so that branch is
+# removed to keep one DHCP client and one Wi-Fi state machine in the image.
 
 check_hciconfig() {
 	if command -v hciattach &> /dev/null; then
@@ -10,7 +15,6 @@ check_hciconfig() {
 			else
 				echo "hci0 not found or not available."
 			fi
-      ifconfig wlan0 up && udhcpc -i wlan0 > /dev/null 2>&1
 		else
 			echo "aic8800_fdrv not found."
 		fi
@@ -25,4 +29,3 @@ case $1 in
 		exit 1
 		;;
 esac
-

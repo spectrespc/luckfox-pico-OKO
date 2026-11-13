@@ -50,17 +50,66 @@ int i2c_transport_open(const char *device, uint8_t addr)
     return fd;
 }
 
-int i2c_transport_write_read_timed(int fd, const uint8_t *wbuf, size_t wlen,
-                                   uint8_t *rbuf, size_t rlen,
-                                   unsigned delay_us, unsigned retries)
+/* Проверить адрес на уже открытом fd: 1 — ACK, 0 — NACK, -1 — ошибка. */
+static int transport_probe_fd(int fd)
 {
-    ssize_t written = write(fd, wbuf, wlen);
-    if (written != (ssize_t)wlen)
+    uint8_t byte = 0;
+    ssize_t n = read(fd, &byte, 1);
+
+    if (n == 1)
     {
+        return 1;
+    }
+
+    if (n == 0 || errno == ENXIO || errno == ENODEV || errno == EREMOTEIO || errno == EIO)
+    {
+        return 0;
+    }
+
+    return -1;
+}
+
+/* Запись кадра с повтором: после неудачи ждём и проверяем адрес.
+ * Повтор не делается, если запись уже прошла (иначе команда с
+ * побочным эффектом выполнилась бы дважды). */
+static int transport_write_retry(int fd, const uint8_t *wbuf, size_t wlen, unsigned delay_us)
+{
+    for (unsigned attempt = 0; attempt < I2C_WRITE_RETRIES; attempt++)
+    {
+        ssize_t written = write(fd, wbuf, wlen);
+
+        if (written == (ssize_t)wlen)
+        {
+            return 0;
+        }
+
         if (transport_verbose)
         {
             fprintf(stderr, "I2C write failed (%zd/%zu): %s\n", written, wlen, strerror(errno));
         }
+
+        if (attempt + 1 < I2C_WRITE_RETRIES)
+        {
+            usleep(delay_us);
+
+            int ack = transport_probe_fd(fd);
+
+            if (ack != 1 && transport_verbose)
+            {
+                fprintf(stderr, "I2C write retry: address probe %d\n", ack);
+            }
+        }
+    }
+
+    return -1;
+}
+
+int i2c_transport_write_read_timed(int fd, const uint8_t *wbuf, size_t wlen,
+                                   uint8_t *rbuf, size_t rlen,
+                                   unsigned delay_us, unsigned retries)
+{
+    if (transport_write_retry(fd, wbuf, wlen, delay_us) < 0)
+    {
         return -1;
     }
 
@@ -118,21 +167,7 @@ int i2c_transport_probe(const char *device, uint8_t addr)
         return -1;
     }
 
-    uint8_t byte = 0;
-    ssize_t n = read(fd, &byte, 1);
-    int result;
-    if (n == 1)
-    {
-        result = 1;
-    }
-    else if (n == 0 || errno == ENXIO || errno == ENODEV || errno == EREMOTEIO || errno == EIO)
-    {
-        result = 0;
-    }
-    else
-    {
-        result = -1;
-    }
+    int result = transport_probe_fd(fd);
 
     close(fd);
     return result;

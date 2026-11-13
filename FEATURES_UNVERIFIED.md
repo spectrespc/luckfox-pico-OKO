@@ -24,9 +24,10 @@
 | Видео и стриминг | YOLO `source: vi1` | VI selfpath (chn1) как источник кадров | `/api/yolo`, `[yolo]` | `gating.c`, API и WebUI отклоняют значение | **заблокировано** — включение `vi1` привело к зависанию платы; значение отклоняется с причиной |
 | Видео и стриминг | Второй рантайм RKNN 2.x | Модели toolkit 2.x, `yolo.runtime: 2` | `/api/yolo` (`runtime`), `/api/models` (`runtime`) | `librknnmrt2.so` с отдельным SONAME, два handle в HAL, проверка SDK-версии | **ограничено** — AIISP на 1.6.0 + YOLO на 2.x в одном процессе, переключение runtime без рестарта и 2-часовой soak проверены; mAP 2.x-модели на размеченном наборе не измерен |
 | Сеть | WiFi AIC8800 (SDIO) | Модули `aic8800dc`/`aic_load_fw`/`aic8800_fdrv` собираются в `/oem/usr/ko` | `RK_ENABLE_WIFI=y` | вендорские модули без правок OKO | **ограничено** — USB RTL8821CU проверен отдельно (`FEATURES_VERIFIED.md`); SDIO-сборка и AP+STA не тестировались |
+
 | Телеметрия (oko-ec) | Датчики | SHT21 `0x40` — T/RH; INA3221 или INA226 `0x41` — U/I/P; STM32 EC `0x42` — U/I/T, SOC, ячейки, OTA | `/dev/i2c-3`, `i2cdetect -y 3` | `i2c-dev` без драйверов (`CONFIG_HWMON` выключен), автоопределение INA | **ограничено** — адреса видны; у INA3221 силовые входы не подключены |
 | microSD | Hotplug | Извлечение и установка карты | udev, `/api/storage` | определение по `device/type=SD` | **ограничено** — проверено unbind/bind; физическое извлечение не проверялось |
-| USB | Dual-role host + хаб | Порт работает host'ом с OTG-переходником и внешним питанием, device — при подключении к ПК; хаб и устройства за ним | `dr_mode = "otg"` в активном DTS, `/sys/devices/platform/ff3e0000.usb2-phy/otg_mode` (`otg`/`host`/`peripheral`), `lsusb`, `dmesg` | OKO: `dr_mode` «peripheral» → «otg», фрагмент `rv1106-usb-host.config`, роль-зависимый `S99usb0config` | **ограничено** — стенд 2026-11-10: device-роль (extcon `USB=1`, UDC `configured`, gadget виден на ПК), принудительный host (`echo host` → xHCI + корневые хабы) и два цикла host→device с автоматическим возвратом gadget проверены; физический OTG-переходник с хабом/HID/USB-сетью/BT не подключался, VBUS — KI-054 |
+| USB | Host + хаб | Порт закреплён host'ом: хаб и устройства за ним; gadget/adb недоступны | `dr_mode = "host"` в активном DTS, `lsusb`, `/sys/class/udc` (пусто), `dmesg` | OKO: `dr_mode` «peripheral» → «host», фрагмент `rv1106-usb-host.config`, guard'ы в `S50usbdevice`/`S99usb0config` | **ограничено** — стенд 2026-11-11: после прошивки по TFTP xHCI поднимается сразу, хаб `1a40:0101` и `0bda:c811` за ним видны в `lsusb` без `otg_mode`; UDC/`usb0`/adbd отсутствуют. HID, USB-сеть и BT-донгл не подключались; VBUS — KI-054, недоступность gadget — KI-057 |
 | USB | HID за хабом | Клавиатура/мышь | `/dev/input/event*`, `evtest` | `CONFIG_HID=y`, `CONFIG_USB_HID=y`, `CONFIG_INPUT_MOUSE=y` | **не проверено** — стенд 2026-11-10: `usbhid` и `psmouse` зарегистрированы, HID-устройство не подключалось |
 | USB | USB-сеть (host) | RNDIS/CDC ECM/NCM, ASIX AX8817x/88179, RTL8150/8152 | `ip link`, `udhcpc -i usb0` | `CONFIG_USB_NET_*`, `CONFIG_USB_RTL815x` | **не проверено** — зарегистрированы `asix`, `ax88179_178a`, `cdc_ether`, `cdc_ncm`, `cdc_subset`, `rndis_host`, `r8152`, `rtl8150`; адаптер не подключался. Для RTL8153 нужна прошивка `rtl_nic`, в образ не входит |
 | USB | Bluetooth | USB-BT-донгл, `bluetoothd` + `bluetoothctl` | `/etc/init.d/S30dbus-daemon`, `S40bluetoothd`, `bluetoothctl list` | `CONFIG_BT*`, bluez5_utils 5.86, dbus, libglib2, linux-firmware (RTL87xx/88xx BT, AR3012) | **ограничено** — стенд 2026-11-10: `dbus-daemon` 1.16.2 и `bluetoothd` запущены, `bluetoothctl` 5.86 работает (uclibc-патч `wordexp`), `btusb` зарегистрирован; BT-адаптер не подключался, `bluetoothctl list` без контроллера |
@@ -42,15 +43,15 @@
   `v4l2-ctl`, `media-ctl` и `rgaImDemo`. Стендовый цикл этой ветки —
   отложенный гейт, см. `KNOWN_ISSUES.md`.
 
-- **USB host/BT: проверена роль и gadget, классы за хабом — нет.** Для порта в
-  режиме `otg` собраны ядро с HID/USB-net/Bluetooth (`rv1106-usb-host.config`,
-  все символы `=y` в итоговом `.config`), DTB содержит `dr_mode = "otg"`, в
-  rootfs вошли `bluetoothctl`, `dbus-daemon`, `lsusb` (busybox) и BT-прошивки
-  `linux-firmware`. Стенд 2026-11-10: device-роль и gadget (UDC `configured`,
-  `usb0` `172.32.0.93`, перечисление на ПК), принудительный host (xHCI и
-  корневые хабы) и автоматический возврат gadget после host-режима проверены.
-  Хаб, HID, USB-сеть и BT-донгл физически не подключались; обходы для
-  VBUS/автоопределения роли включаются только по факту (KI-054).
+- **USB host/BT: хаб проверен, классы за ним — нет.** Для порта собраны ядро
+  с HID/USB-net/Bluetooth (`rv1106-usb-host.config`, все символы `=y` в
+  итоговом `.config`), DTB содержит `dr_mode = "host"`, в rootfs вошли
+  `bluetoothctl`, `dbus-daemon`, `lsusb` (busybox) и BT-прошивки
+  `linux-firmware`. Стенд 2026-11-11: после TFTP-прошивки плата загрузилась с
+  NAND, xHCI поднялся сразу, хаб `1a40:0101` и `0bda:c811` за ним видны в
+  `lsusb` без ручного `otg_mode`; UDC нет, `usb0`/adbd не запускаются
+  (`S50usbdevice`/`S99usb0config` выходят по `dr_mode`). HID, USB-сеть и
+  BT-донгл не подключались, VBUS — KI-054, gadget недоступен — KI-057.
 
 - **Бюджет каналов VPSS — 4.** Без IVS доступны main + sub + MJPEG + JPEG; с
   включённым IVS свободных каналов меньше. Проверено 2026-11-05: IVS + MJPEG
@@ -128,9 +129,10 @@ Status as of 2026-11-12.
 | Video and streaming | YOLO `source: vi1` | VI selfpath (chn1) as the frame source | `/api/yolo`, `[yolo]` | `gating.c`, API and WebUI reject the value | **blocked** — enabling `vi1` hung the board; the value is refused with a reason |
 | Video and streaming | Second RKNN 2.x runtime | Models built by toolkit 2.x, `yolo.runtime: 2` | `/api/yolo` (`runtime`), `/api/models` (`runtime`) | `librknnmrt2.so` with a distinct SONAME, two HAL handles, SDK-version check | **limited** — AIISP on 1.6.0 plus YOLO on 2.x in one process, runtime switching without a restart and a 2-hour soak were verified; the 2.x model mAP on a labelled set is not measured |
 | Network | WiFi AIC8800 (SDIO) | `aic8800dc`/`aic_load_fw`/`aic8800_fdrv` are built into `/oem/usr/ko` | `RK_ENABLE_WIFI=y` | vendor modules without OKO changes | **limited** — USB RTL8821CU is verified separately (`FEATURES_VERIFIED.md`); the SDIO build and AP+STA are untested |
+
 | Telemetry (`oko-ec`) | Sensors | SHT21 `0x40` — T/RH; INA3221 or INA226 `0x41` — U/I/P; STM32 EC `0x42` — U/I/T, SOC, cells, OTA | `/dev/i2c-3`, `i2cdetect -y 3` | `i2c-dev` without drivers (`CONFIG_HWMON` off), INA autodetection | **limited** — addresses respond; INA3221 power inputs are not wired |
 | microSD | Hotplug | Card removal and insertion | udev, `/api/storage` | detection via `device/type=SD` | **limited** — verified with unbind/bind only; physical removal untested |
-| USB | Dual-role host + hub | The port acts as a host with an OTG adapter and external power, and as a device when connected to a PC; hub and devices behind it | `dr_mode = "otg"` in the active DTS, `/sys/devices/platform/ff3e0000.usb2-phy/otg_mode` (`otg`/`host`/`peripheral`), `lsusb`, `dmesg` | OKO: `dr_mode` "peripheral" → "otg", `rv1106-usb-host.config` fragment, role-aware `S99usb0config` | **limited** — bench 2026-11-10: the device role (extcon `USB=1`, UDC `configured`, gadget visible on a PC), forced host (`echo host` → xHCI plus root hubs) and two host→device cycles with automatic gadget re-bind were verified; a physical OTG adapter with a hub/HID/USB net/BT was not attached, VBUS — KI-054 |
+| USB | Host + hub | The port is pinned to host: a hub and the devices behind it; the gadget and adb are unavailable | `dr_mode = "host"` in the active DTS, `lsusb`, `/sys/class/udc` (empty), `dmesg` | OKO: `dr_mode` "peripheral" -> "host", `rv1106-usb-host.config` fragment, guards in `S50usbdevice`/`S99usb0config` | **limited** - bench 2026-11-11: after flashing over TFTP xHCI comes up at boot, the hub `1a40:0101` and the `0bda:c811` behind it appear in `lsusb` without `otg_mode`; there is no UDC, `usb0` or adbd. HID, USB networking and a BT dongle were not attached; VBUS - KI-054, no gadget - KI-057 |
 | USB | HID behind a hub | Keyboard/mouse | `/dev/input/event*`, `evtest` | `CONFIG_HID=y`, `CONFIG_USB_HID=y`, `CONFIG_INPUT_MOUSE=y` | **unverified** — bench 2026-11-10: `usbhid` and `psmouse` are registered, no HID device was attached |
 | USB | USB networking (host) | RNDIS/CDC ECM/NCM, ASIX AX8817x/88179, RTL8150/8152 | `ip link`, `udhcpc -i usb0` | `CONFIG_USB_NET_*`, `CONFIG_USB_RTL815x` | **unverified** — `asix`, `ax88179_178a`, `cdc_ether`, `cdc_ncm`, `cdc_subset`, `rndis_host`, `r8152` and `rtl8150` are registered; no adapter was attached. RTL8153 needs the `rtl_nic` firmware, which is not shipped |
 | USB | Bluetooth | USB BT dongle, `bluetoothd` + `bluetoothctl` | `/etc/init.d/S30dbus-daemon`, `S40bluetoothd`, `bluetoothctl list` | `CONFIG_BT*`, bluez5_utils 5.86, dbus, libglib2, linux-firmware (RTL87xx/88xx BT, AR3012) | **limited** — bench 2026-11-10: `dbus-daemon` 1.16.2 and `bluetoothd` are running, `bluetoothctl` 5.86 works (uclibc `wordexp` patch), `btusb` is registered; no BT adapter was attached, `bluetoothctl list` shows no controller |
@@ -146,16 +148,16 @@ Status as of 2026-11-12.
   unavailable. `v4l2-ctl`, `media-ctl` and `rgaImDemo` are kept. The bench
   cycle for this branch is a deferred gate, see `KNOWN_ISSUES.md`.
 
-- **USB host/BT: the role and the gadget are verified, the classes behind a hub are not.**
-  For the `otg` port the kernel is built with HID/USB net/Bluetooth
-  (`rv1106-usb-host.config`, every symbol `=y` in the final `.config`), the DTB
-  carries `dr_mode = "otg"`, and the rootfs ships `bluetoothctl`,
-  `dbus-daemon`, `lsusb` (busybox) and the `linux-firmware` BT blobs. Bench
-  2026-11-10: the device role and gadget (UDC `configured`, `usb0`
-  `172.32.0.93`, enumeration on a PC), forced host (xHCI with root hubs) and
-  the automatic gadget re-bind after a host excursion were verified. A hub,
-  HID, USB networking and a BT dongle were not attached; the VBUS/role
-  workarounds are only enabled once a problem is confirmed (KI-054).
+- **USB host/BT: the hub is verified, the classes behind it are not.**
+  The kernel is built with HID/USB net/Bluetooth (`rv1106-usb-host.config`,
+  every symbol `=y` in the final `.config`), the DTB carries
+  `dr_mode = "host"`, and the rootfs ships `bluetoothctl`, `dbus-daemon`,
+  `lsusb` (busybox) and the `linux-firmware` BT blobs. Bench 2026-11-11: after
+  TFTP flashing the board booted from NAND, xHCI came up at boot, and the hub
+  `1a40:0101` with the `0bda:c811` behind it appeared in `lsusb` without a
+  manual `otg_mode`; there is no UDC and neither `usb0` nor adbd starts
+  (`S50usbdevice`/`S99usb0config` exit on `dr_mode`). HID, USB networking and a
+  BT dongle were not attached; VBUS - KI-054, no gadget - KI-057.
 
 - **VPSS channel budget is 4.** Without IVS, main + sub + MJPEG + JPEG are
   available; with IVS there are fewer free channels. On 2026-11-05, IVS + MJPEG

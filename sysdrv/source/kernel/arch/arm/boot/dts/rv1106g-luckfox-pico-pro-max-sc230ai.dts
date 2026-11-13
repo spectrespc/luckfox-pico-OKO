@@ -90,12 +90,15 @@
 &usbdrd_dwc3 {
 	status = "okay";
 	/*
-	 * OKO: dual-role.  With an OTG cable and a separate 5V supply the port
-	 * acts as a host (hub, HID, USB net, BT dongles); with a cable to a PC
-	 * it stays a peripheral (usb0/gadget), so rndis/adb keep working.
-	 * Maskrom/U-Boot download does not depend on dr_mode.
+	 * OKO: the port is a host only.  The bench needs the hub and the
+	 * devices behind it (bench 2026-11-11), and role autodetection with
+	 * that hub stayed on the device side, so the port is pinned to host.
+	 * Gadget functions (usb0/rndis, adb) are therefore unavailable;
+	 * S50usbdevice cannot bind an UDC and S99usb0config skips its work.
+	 * Return to "otg" to get the gadget back.  Maskrom/U-Boot download
+	 * does not depend on dr_mode.
 	 */
-	dr_mode = "otg";
+	dr_mode = "host";
 };
 
 /**********SPI**********/

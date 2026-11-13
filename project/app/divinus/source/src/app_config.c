@@ -403,7 +403,9 @@ enum ConfigError app_config_parse(void) {
     app_config.web_enable_static = false;
     app_config.isp_thread_stack_size = 16 * 1024;
     app_config.venc_stream_thread_stack_size = 16 * 1024;
-    app_config.web_server_thread_stack_size = 32 * 1024;
+    /* OKO: the request handler has deep frames (8 KiB HTTP response plus the
+     * config/log export streamer); 128 KiB keeps file downloads safe. */
+    app_config.web_server_thread_stack_size = 128 * 1024;
     app_config.watchdog = 0;
     app_config.ntp_enable = true;
     app_config.ntp_server[0] = '\0';

@@ -178,31 +178,26 @@
   `rtpSDP` на `H264/90000` — проверено 2026-11-10: WebRTC играет 1080p30.
   Статус: **принятое ограничение (P4)**.
 
-- **KI-054. USB-host за хабом: питание шины и физический OTG-переходник не проверены.**
-  Порт переведён в dual-role (`dr_mode = "otg"`), классы HID/USB-net/BT включены
-  в ядро. VBUS 5 В SoC не управляет: PHY запрашивает регулятор `vbus` из
-  `vbus-supply` otg-port, в RV1106 DTS его нет, записи разрешения VBUS в
+- **KI-054. USB-host: питание шины и классы за хабом не проверены.**
+  Порт закреплён в host-режиме (`dr_mode = "host"`), классы HID/USB-net/BT
+  включены в ядро. VBUS 5 В SoC не управляет: PHY запрашивает регулятор `vbus`
+  из `vbus-supply` otg-port, в RV1106 DTS его нет, записи разрешения VBUS в
   `rv1106_phy_cfgs` тоже нет. Поэтому устройства за хабом питаются только от
   схемы платы/внешнего 5 В, а bus-powered хаб без внешнего питания может не
-  подняться. На стенде 2026-11-10 проверено: роль device определяется по
-  `bvalid` (extcon `USB=1`, UDC `configured`, gadget перечисляется на ПК), а
-  принудительный host через
-  `/sys/devices/platform/ff3e0000.usb2-phy/otg_mode` (`echo host`, обратно
-  `otg`) поднимает xHCI с корневыми хабами. Сам OTG-переходник с хабом,
-  HID-устройством, USB-сетью и BT-донглом на железе не подключался. Обход
-  (только после подтверждения проблемы): тот же `otg_mode` или возврат к
-  `dr_mode = "host"`; молча не включается.
-  Статус: **частично проверено, хаб/HID/сеть/BT — untested**.
+  подняться. Стенд 2026-11-11: после TFTP-прошивки xHCI поднимается при
+  загрузке, хаб `1a40:0101` и устройство за ним (`0bda:c811`, Realtek
+  802.11ac NIC) перечисляются без ручного вмешательства (`lsusb`, дерево
+  `/sys/bus/usb/devices`). HID-устройство, USB-сеть и BT-донгл за хабом не
+  подключались.
+  Статус: **частично проверено; хаб — работает, HID/USB-сеть/BT — untested**.
 
-- **KI-055. `usb0` в режиме `otg` — закрыто (2026-11-10).**
+- **KI-055. `usb0` в режиме `otg` — закрыто (2026-11-10); в host-режиме не применимо.**
   Раньше `S99usb0config` смотрел строку `dr_mode` в DTS и при `"otg"` не
   назначал `172.32.0.93`. Скрипт переписан на определение роли через
   `/sys/class/extcon/*/state`; в device-роли он ставит адрес и следит за
-  сменой роли, а при возврате в device заново биндит configfs-gadget
-  (после host-режима DWC3 снимает UDC и сам его не возвращает). Проверено на
-  стенде 2026-11-10: два цикла host→device — UDC `configured`, `usb0`
-  `172.32.0.93`, gadget снова виден на ПК. RNDIS-обмен данными не измерялся
-  (на хосте нет прав на настройку `usb0`).
+  сменой роли, а при возврате в device заново биндит configfs-gadget.
+  Логика сохранена для возврата к `dr_mode = "otg"`, а при `"host"` скрипт
+  выходит сразу (UDC нет).
   Статус: **закрыто**.
 
 - **KI-056. Legacy `g_mass_storage` ломал gadget — закрыто (2026-11-10).**
@@ -213,9 +208,18 @@
   `/sys/class/udc` оставался пустым, adb/RNDIS не поднимались. Символ выключен
   во фрагменте `rv1106-usb-host.config`; gadget управляется через configfs
   (`USB_CONFIGFS_MASS_STORAGE` при необходимости включается в `S50usbdevice`).
-  Проверено: UDC `ffb00000.usb` присутствует, state `configured`, gadget
-  перечисляется.
   Статус: **закрыто**.
+
+- **KI-057. В host-режиме недоступны gadget, `usb0`/RNDIS и adb.**
+  Порт закреплён в `dr_mode = "host"`: DWC3 не регистрирует UDC, поэтому
+  `S50usbdevice` и `S99usb0config` выходят по `dr_mode` (иначе они писали бы
+  в несуществующий UDC и запускали adbd без функции). Maskrom по USB виден
+  только при прямом кабеле к хосту — установленный хаб его скрывает, поэтому
+  прошивка по умолчанию переведена на TFTP (`TESTBENCH.md` §7-TFTP).
+  Обход/возврат: `dr_mode = "otg"` в активном DTS, пересборка `boot` и
+  прошивка (§7-TFTP или Maskrom напрямую). Молча не переключается.
+  Статус: **принятое ограничение (by design)**.
+
 - **KI-059. Два аплинка: ограничения failover и приоритетов.**
   Активен всегда один default-маршрут (меньшая метрика), балансировки и
   агрегации нет. Равные `oko_net_metric`/`oko_wlan_metric` ядро не хранит в
@@ -334,6 +338,19 @@
   Статус: **гейт пройден, мерж не выполнен**.
 
 ### VPN
+
+- **KI-061. STM32 EC удерживал SCL, пока RV1106 перезагружался.**
+  `rk3x-i2c ff460000.i2c: timeout, ipd: 0x80` + `SCL hold by slave`:
+  если мастер исчезал между ADDR(read) и первым тактом, slave-transmitter
+  держал SCL, пока TXDR не заполнен; STOPF/NACKF уже не приходили, и EC
+  оставался в этом состоянии до NRST. Причина усиливалась тем, что
+  `RCC->CCIPR.I2C1SEL` был `00` (PCLK): в Stop I2C не тактировался,
+  `WUPEN` не будил ядро, а `tTIMEOUT` был ~60 мс вместо 15. Исправлено в
+  прошивке EC: `I2C1SEL=10` (HSIKER), `TIMEOUTR` (~15 мс) + bus-watchdog
+  (15 мс), настоящий `i2c_pause()` в приложении; хост повторяет запись.
+  Обход для старой прошивки: NRST/снятие always-on 3.3 В; при зависании в
+  Stop SWD не подключается (`init mode failed`). Статус: **исправлено в
+  исходниках, на стенде ожидает перепрошивки и power-cycle EC**.
 
 - **KI-037. `resolvconf` в образе нет.**
   `wg-quick`-логика с `DNS=` не может обновлять системный resolver через
@@ -628,31 +645,26 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   `H264/90000` — verified 2026-11-10: WebRTC plays 1080p30.
   Status: **accepted limitation (P4)**.
 
-- **KI-054. USB host behind a hub: bus power and a physical OTG adapter are unverified.**
-  The port runs in dual-role mode (`dr_mode = "otg"`) with the HID/USB-net/BT
+- **KI-054. USB host: bus power and the classes behind a hub are unverified.**
+  The port is pinned to host mode (`dr_mode = "host"`) with the HID/USB-net/BT
   classes built in. The SoC does not control VBUS 5 V: the PHY requests a `vbus`
   regulator from `vbus-supply` on the otg-port (absent from the RV1106 DTS), and
   `rv1106_phy_cfgs` has no VBUS enable register. Devices behind a hub are
   therefore powered only by the board supply or an external 5 V, and a
-  bus-powered hub may not come up. Bench 2026-11-10: the device role is detected
-  via `bvalid` (extcon `USB=1`, UDC `configured`, the gadget enumerates on a
-  PC), and forcing host through
-  `/sys/devices/platform/ff3e0000.usb2-phy/otg_mode` (`echo host`, back with
-  `otg`) brings up xHCI with its root hubs. An OTG adapter with a hub, a HID
-  device, USB networking and a BT dongle were not attached to the hardware.
-  Workaround (only after the problem is confirmed): the same `otg_mode`, or go
-  back to `dr_mode = "host"`; it is not enabled silently.
-  Status: **partially verified, hub/HID/net/BT untested**.
+  bus-powered hub may not come up. Bench 2026-11-11: after flashing over TFTP
+  xHCI comes up at boot, and the hub `1a40:0101` with the device behind it
+  (`0bda:c811`, Realtek 802.11ac NIC) enumerates without manual steps (`lsusb`,
+  `/sys/bus/usb/devices`). A HID device, USB networking and a BT dongle were not
+  attached.
+  Status: **partially verified; the hub works, HID/net/BT untested**.
 
-- **KI-055. `usb0` in `otg` mode — closed (2026-11-10).**
+- **KI-055. `usb0` in `otg` mode — closed (2026-11-10); not applicable in host mode.**
   `S99usb0config` used to read `dr_mode` from the DTS and skipped
   `172.32.0.93` when it was `"otg"`. The script now derives the role from
   `/sys/class/extcon/*/state`; in the device role it assigns the address and
   watches for role changes, re-binding the configfs gadget when the port
-  becomes a device again (after a host excursion DWC3 drops its UDC and does
-  not restore it by itself). Bench 2026-11-10: two host→device cycles — UDC
-  `configured`, `usb0` `172.32.0.93`, the gadget visible on the PC again. RNDIS
-  data throughput was not measured (no host permission to configure `usb0`).
+  becomes a device again. That logic is kept for a return to `dr_mode = "otg"`,
+  while with `"host"` the script exits immediately (there is no UDC).
   Status: **closed**.
 
 - **KI-056. The legacy `g_mass_storage` driver broke the gadget — closed (2026-11-10).**
@@ -663,8 +675,18 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   `/sys/class/udc` empty so adb/RNDIS could not start. The symbol is disabled in
   `rv1106-usb-host.config`; gadget functions are managed through configfs
   (`USB_CONFIGFS_MASS_STORAGE` can be enabled in `S50usbdevice` when needed).
-  Verified: UDC `ffb00000.usb` present, state `configured`, gadget enumerated.
   Status: **closed**.
+
+- **KI-057. Host mode disables the gadget, `usb0`/RNDIS and adb.**
+  The port is pinned to `dr_mode = "host"`: DWC3 registers no UDC, so
+  `S50usbdevice` and `S99usb0config` exit on `dr_mode` instead of writing to a
+  missing UDC and starting adbd without a function. Maskrom over USB is only
+  visible with a direct cable to the host - the attached hub hides it - so the
+  default flashing mode moved to TFTP (`TESTBENCH.md` §7-TFTP).
+  Workaround/rollback: set `dr_mode = "otg"` in the active DTS, rebuild `boot`
+  and flash (§7-TFTP or Maskrom with a direct cable). Not switched silently.
+  Status: **accepted limitation (by design)**.
+
 - **KI-059. Dual uplink: failover and priority limitations.**
   Only one default route is active at a time (the lower metric); there is no
   balancing or aggregation. The kernel cannot keep two equal
@@ -773,6 +795,20 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   Status: **gate passed, not merged**.
 
 ### VPN
+
+- **KI-061. The STM32 EC held SCL while the RV1106 rebooted.**
+  `rk3x-i2c ff460000.i2c: timeout, ipd: 0x80` + `SCL hold by slave`: when
+  the master disappeared between ADDR(read) and the first clock, the
+  slave-transmitter kept SCL low until TXDR was filled. STOPF/NACKF never
+  arrived, so the EC stayed in that state until NRST. The failure was made
+  worse by `RCC->CCIPR.I2C1SEL=00` (PCLK): I2C was not clocked in Stop,
+  `WUPEN` could not wake the core, and `tTIMEOUT` was ~60 ms instead of
+  15 ms. Fixed in the EC firmware: `I2C1SEL=10` (HSIKER), `TIMEOUTR`
+  (~15 ms) plus a 15 ms bus watchdog, a real `i2c_pause()` in the
+  application, and host write retries. Workaround for the old firmware:
+  NRST or removing the always-on 3.3 V; when the EC hangs in Stop, SWD
+  does not connect (`init mode failed`). Status: **fixed in source,
+  awaiting reflash and an EC power cycle on the bench**.
 
 - **KI-037. `resolvconf` is not in the image.** The wg-quick `DNS=` path cannot
   update the system resolver through `resolvconf`. `oko-vpn` supports two

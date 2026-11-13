@@ -7,8 +7,9 @@ Modes:
     reboot   log in to the running system, reboot it and catch U-Boot itself
     cmd      send a single command to an already reachable U-Boot prompt
 
-The serial port defaults to the last /dev/ttyACM* device (override with --port
-or OKO_SERIAL_PORT).  The U-Boot network parameters match TESTBENCH.md §5 and
+The console defaults to the ESP32 telnet-UART bridge,
+telnet://192.168.52.17:23 (override with --port or OKO_SERIAL_PORT); a local
+adapter also works, pass /dev/ttyACM0.  The U-Boot network parameters match TESTBENCH.md §5 and
 can be overridden with OKO_DUT_HOST / OKO_TFTP_HOST / OKO_GATEWAY / OKO_NFSROOT.
 
 Examples:
@@ -17,13 +18,12 @@ Examples:
     bench/run.sh netboot.py cmd 'printenv ipaddr'
 """
 import argparse
-import glob
 import os
 import sys
 import time
 from pathlib import Path
 
-import serial
+import uart
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUT = ROOT / "output" / "bench"
@@ -57,7 +57,7 @@ NETBOOT_CMDS = [
 
 
 def default_port():
-    return os.environ.get("OKO_SERIAL_PORT") or (sorted(glob.glob("/dev/ttyACM*")) or [None])[-1]
+    return uart.default_target()
 
 
 class Session:
@@ -69,7 +69,7 @@ class Session:
         self.path = out_dir / f"netboot-{stamp}.log"
         self.file = open(self.path, "wb", buffering=0)
         self.tail = b""
-        self.serial = serial.Serial(port_name, 115200, timeout=0)
+        self.serial = uart.open_uart(port_name, timeout=0)
         self.write(f"\n[opened {port_name} at {time.strftime('%H:%M:%S')}]\n".encode())
 
     def write(self, data):
@@ -186,7 +186,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("mode", choices=["catch", "reboot", "cmd"])
     parser.add_argument("command", nargs="?", help="single U-Boot command for mode 'cmd'")
-    parser.add_argument("--port", default=default_port(), help="UART device (default: last /dev/ttyACM*)")
+    parser.add_argument("--port", default=default_port(),
+                        help="telnet://host:port or a serial device (default: ESP32 bridge, env OKO_SERIAL_PORT)")
     parser.add_argument("--out", default=os.environ.get("OKO_BENCH_OUT", str(DEFAULT_OUT)),
                         help="artifact directory (default: output/bench)")
     parser.add_argument("--prompt-timeout", type=float, default=120.0,
@@ -200,7 +201,7 @@ def main():
     if args.mode == "cmd" and not args.command:
         parser.error("mode 'cmd' requires a command string")
     if not args.port:
-        print("no /dev/ttyACM* found; connect the DUT or pass --port", file=sys.stderr)
+        print("no console target; pass --port or set OKO_SERIAL_PORT", file=sys.stderr)
         return 1
 
     session = Session(args.port, Path(args.out).expanduser())

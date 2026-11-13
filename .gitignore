@@ -11,6 +11,7 @@ IMAGE/
 output/
 project/app/oko-ec/out/
 project/app/STM32CubeF1/
+project/app/STM32CubeC0/
 project/app/wifi_app/wpa_supplicant.conf
 config/
 sysdrv/tools/board/memtester/memtester-4.6.0/

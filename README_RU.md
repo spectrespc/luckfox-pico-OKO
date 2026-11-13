@@ -27,7 +27,7 @@
 | Режим | **SPI NAND** | автономная загрузка с flash (`root=ubi0:rootfs`) |
 | Сенсор | **SC230AI** | драйвер `sc230ai` + `rv1106-sc230ai.config`; 1080p30 и 480p120, `HDR_X2` экспериментально |
 | `RK_KERNEL_DTS` | `rv1106g-luckfox-pico-pro-max-sc230ai.dts` | device tree платы; `&sc3336`/`&mis5001` выключены |
-| USB | **dual-role (`otg`)** | фрагмент `rv1106-usb-host.config` включает HID/USB-сеть/Bluetooth; host — с OTG-переходником и хабом, gadget — при подключении к ПК |
+| USB | **host (`dr_mode = "host"`)** | фрагмент `rv1106-usb-host.config` включает HID/USB-сеть/Bluetooth; хаб на порту DUT, gadget/adb недоступны (KI-057); прошивка по умолчанию — TFTP |
 | I2C3-M1 | **включён, 100 кГц** | `pinctrl-0 = <&i2c3m1_xfer>` (`GPIO1_D2`/`GPIO1_D3`), устройство `/dev/i2c-3` |
 | `RK_BOOTARGS_CMA_SIZE` | `66M` | CMA для медиастека |
 | `RK_ENABLE_WIFI` | `y` | WiFi-модули в `/oem/usr/ko` |
@@ -88,15 +88,28 @@ source tools/native/env.sh
 > `output/image/update.img`. Старые `/userdata` и данные на NAND будут
 > потеряны — сохраните нужное на microSD/хост до прошивки.
 
-**A. Полная прошивка SPI NAND.**
+**TFTP (по умолчанию).** USB и Maskrom не нужны: U-Boot грузит
+`output/image/*.img` по сети и пишет разделы через `mtd`.
+
+```sh
+./build.sh firmware
+tools/native/setup_netboot.sh   # TFTP/NFS-контейнер services/
+bench/run.sh tftp_flash.py      # boot + oem + rootfs, затем reset
+```
+
+Подробности, флаги (`--components`, `--userdata`, `--no-reset`) и ограничения —
+`TESTBENCH.md` §7-TFTP.
+
+**A. Полная прошивка SPI NAND (резерв, USB/Maskrom).**
 
 ```sh
 ./build.sh firmware
 # output/image/update.img
-./rkflash.sh update   # полный образ; или tools/linux/Linux_Upgrade_Tool
+./rkflash.sh update   # или tools/linux/Linux_Upgrade_Tool
 ```
 
-Устройство переводится в режим Maskrom; затем образ пишется в SPI NAND.
+USB-порт DUT подключается к хосту напрямую (через хаб Maskrom не виден),
+устройство переводится в режим Maskrom; затем образ пишется в SPI NAND.
 
 **B. Покомпонентная прошивка изменённых разделов.**
 
@@ -132,7 +145,8 @@ LBA не совпадут.
 `oko_wlan_ap_psk` не задан, пароль заводский `ybrjveytljdthzq` (публичный
 дефолт, сменить до ввода в эксплуатацию — KI-030; вернуть заводский —
 `fw_setenv oko_wlan_ap_psk`), и веб-интерфейс доступен с телефона по этому
-паролю. AP+STA одновременно этот драйвер не поддерживает. Конфиг можно принести на microSD:
+паролю. AP+STA
+одновременно этот драйвер не поддерживает. Конфиг можно принести на microSD:
 `oko-wifi.conf` в корне карты импортируется один раз при монтировании.
 Подробности — `bench/README.md` и `FEATURES_VERIFIED.md`.
 
@@ -174,9 +188,9 @@ loose `rp_filter` при строгом значении и per-interface таб
 | Поворот 90/180/270 | работает через VENC | `POST /api/rotate`, `[rotate]` |
 | SmartP/SVC/motion deblur/QP | работает (SmartP — со следующего старта) | `POST /api/venc`, `[venc]` |
 | Ethernet: DHCP/static IP | работает | WebUI `Network`, `/api/network`, env `oko_*` |
-| Второй H.26x поток `/live/1` | работает | `POST /api/substream`, `[substream]` |
 | Два аплинка eth0 + Wi-Fi STA | работает: приоритеты, failover по шлюзу, единый DNS | WebUI поля «Приоритет», `/api/network?metric=`, `/api/wifi?metric=`, `/usr/bin/oko-route` |
 | eth0 и Wi-Fi в одной подсети | работает: weak-host защита (ARP, policy-таблицы 100/101), оба адреса живут параллельно | автоматически в `/usr/bin/oko-route`, статус в WebUI Network |
+| Второй H.26x поток `/live/1` | работает | `POST /api/substream`, `[substream]` |
 | AIISP (ночная шумоподавка) | работает при модели в `/oem/usr/lib` | `POST /api/aiisp`, `[aiisp]` |
 | IVS (детекция движения/объектов) | работает (MD), действия: снимок, клип, OSD | `POST /api/ivs`, `[ivs]` |
 | Runtime IQ (`switch_scene`/`updateIq`) | API работает, смена сцены принята | `POST /api/iq`, `[iq]` |
@@ -332,8 +346,10 @@ lsmod                            # загруженные модули ядра
 sh /oem/usr/ko/insmod_ko.sh      # ручная перезагрузка модулей (порядок важен)
 ```
 
-- Последовательный порт: `/dev/ttyACM0`, **115200 8N1** (устройство может
-  определиться и как `/dev/ttyACM1` — `bench/` берёт последний `ttyACM*`).
+- Консоль UART: **telnet `192.168.52.17:23`** — ESP32 telnet-UART bridge,
+  **115200 8N1**; `bench/run.sh serial_exec.py …` и `netboot.py` подключаются к
+  нему по умолчанию и сами снимают IAC-согласование. Резерв — локальный
+  USB-UART `/dev/ttyACM0` (`--port /dev/ttyACM0` или `OKO_SERIAL_PORT`).
 - Стример по умолчанию — `divinus` с включённым OSD (время справа снизу,
   телеметрия `T/BAT/LTE/WiFi` четырьмя строками слева сверху, GPS справа
   сверху, сообщения из `/tmp/osd.fifo` слева сверху, CPU/свободная память/

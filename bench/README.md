@@ -1,6 +1,9 @@
 # Утилиты тестового стенда
 
 Скрипты для работы с DUT (`Luckfox Pico Pro Max`, RV1106) по UART, SSH и RTSP.
+Консоль по умолчанию — ESP32 telnet-UART bridge `telnet://192.168.52.17:23`
+(`bench/uart.py`: минимальный telnet-клиент, отвечает на IAC и вырезает его
+из потока); локальный USB-UART `/dev/ttyACM*` остаётся резервом.
 Каталог не участвует в сборке прошивки; зависимости ставятся в отдельный venv
 внутри `output/` (gitignore).
 
@@ -11,6 +14,10 @@ bench/setup.sh                          # создать output/bench/venv и п
 bench/run.sh serial_exec.py 'cat /proc/uptime'
 bench/run.sh dut.py 'mount | grep -w " / "'
 bench/run.sh netboot.py catch           # затем сбросить питание DUT
+bench/run.sh tftp_flash.py              # прошивка SPI NAND по TFTP (по умолчанию)
+bench/run.sh ec_bus_soak.py --mode reboot --iterations 20
+bench/run.sh ec_bus_soak.py --mode read-window --iterations 50
+bench/run.sh ec_bus_soak.py --mode hold-scl   # нужна сборка -DEC_DEBUG_BUILD=ON
 ```
 
 `bench/run.sh` сам вызывает `setup.sh`, если venv ещё нет.
@@ -19,9 +26,11 @@ bench/run.sh netboot.py catch           # затем сбросить питан
 
 | Скрипт | Назначение |
 |---|---|
-| `serial_exec.py` | вход в консоль по UART (`/dev/ttyACM*`, 115200 8N1) и выполнение команд на DUT |
+| `serial_exec.py` | вход в консоль по UART (telnet-мост `192.168.52.17:23` или `/dev/ttyACM*`, 115200 8N1) и выполнение команд на DUT |
 | `dut.py` | выполнение команд по SSH через `paramiko` |
-| `netboot.py` | управление U-Boot: `catch` (спам Ctrl-C до `=>`, затем netboot-команды), `reboot` (перезагрузка DUT с перехватом U-Boot), `cmd '<команда>'` (одна команда в U-Boot); ядро берётся по TFTP из `output/image/boot.img`, rootfs — по NFS |
+| `netboot.py` | управление U-Boot (та же консоль: telnet-мост или `/dev/ttyACM*`): `catch` (спам Ctrl-C до `=>`, затем netboot-команды), `reboot` (перезагрузка DUT с перехватом U-Boot), `cmd '<команда>'` (одна команда в U-Boot); ядро берётся по TFTP из `output/image/boot.img`, rootfs — по NFS |
+| `tftp_flash.py` | прошивка SPI NAND по TFTP из U-Boot (режим по умолчанию): входит в prompt, грузит `output/image/*.img` на `ramdisk_addr_r`, `mtd erase` + `mtd write` с явным размером, восстанавливает NAND-`sys_bootargs`, `saveenv` и `reset`; `--components`, `--userdata`, `--no-reset` |
+| `uart.py` | транспорт консоли для `serial_exec.py`/`netboot.py`: telnet-клиент ESP32-моста (отвечает на IAC и вырезает его) или локальный pyserial по `--port /dev/ttyACM*` |
 | `nfs_env.py` | переключение штатной загрузки через env U-Boot: `status` (текущий `sys_bootargs` и режим `nand`/`nfs`), `on` (NFS-root, проверка `/`, `/oem`, `/userdata`), `off` (возврат на `ubi0:rootfs`); `--no-reboot` пишет переменную без перезагрузки |
 | `osd_check.py` | захват кадров RTSP (`--path`, по умолчанию `/live/0`), попарный диф боксов OSD-регионов, сохранение полных кадров и кропов |
 | `stream_check.py` | сквозная проверка UDP/RTP-раздачи камеры и приёмника MediaMTX: чтение `stream`/`mp4` из `/userdata/divinus.yaml` по SSH, опрос `/v3/paths/list`, декодирование `rtsp://<host>:8554/cam` через PyAV, fps и отклонение от `mp4.fps`, `--compare-dut` — сверка с собственным RTSP камеры, `--latency` — задержка ретрансляции по совпадению кадров; при `--compare-dut` эталоном fps служит сама камера, иначе `mp4.fps`; JSON и CSV в `output/bench/stream` (учётные данные в артефакты не пишутся), код 1 — отклонение, код 2 — метрика не снята |
@@ -32,6 +41,7 @@ bench/run.sh netboot.py catch           # затем сбросить питан
 | `uplink_soak.py` | 20-минутный soak двух аплинков: проверяет `active_default`, HTTP на eth/wlan-адресах и живой `divinus`, по фазам выдёргивает eth-линк и роняет шлюз временной Wi-Fi-точки (iptables в контейнере `oko-services`); `--seconds`, `--interval`, `--no-eth-toggle`, `--no-ap-toggle`; подготовка AP — `TESTBENCH.md` §9 |
 | `focus_check.py` | `/api/focus`: статус AF-метрики, ROI, мотор; `--enable`, `--roi x,y,w,h`, `--move`, `--seconds/--interval/--snapshot/--strict`, CSV в `--out` (по умолчанию `output/bench/focus`); код 2 — API жив, но снимок не снят, код 1 — метрика нулевая |
 | `firmware_check.py` | `/api/firmware` и `/api/flash`: версии STM32/STM8, состояние задачи; `--flash --confirm FLASH` запускает прошивку, `--negative` прогоняет проверки валидации (400) |
+| `ec_bus_soak.py` | soak шины I2C3 и STM32 EC: `reboot` (счёт `SCL hold by slave` после перезагрузки), `read-window` (reboot в окне чтения EC), `detect` (i2cdetect во время reboot), `hold-scl` (команда `0x29` в `DEBUG_BUILD`, проверка отпускания линии и `0x28`-счётчиков); отчёт и лог — `output/bench/ec_bus_soak-*.json/.log` |
 | `vpn_check.py` | WireGuard/AmneziaWG/OpenVPN на DUT: модуль или `/dev/net/tun`, импорт профиля через API, `up`, handshake или адрес `tun0`, маршруты, ping, `down`, негатив (хуки/plugin, delete без токена, credentials required), опционально `--iperf-peer`, reboot + автозапуск; артефакты — `output/bench/vpn` |
 
 ## Примеры
@@ -249,14 +259,19 @@ TESTBENCH.md §7D.
 |---|---|---|
 | `OKO_BENCH_OUT` | `output/bench` | каталог логов, кадров и кропов |
 | `OKO_BENCH_VENV` | `$OKO_BENCH_OUT/venv` | путь к virtualenv |
-| `OKO_SERIAL_PORT` | последний `/dev/ttyACM*` | UART-порт |
+| `OKO_SERIAL_PORT` | `telnet://192.168.52.17:23` | консоль: `telnet://host:port` (ESP32-мост) или `/dev/ttyACM*` |
 | `OKO_DUT_HOST` | `192.168.52.150` | адрес DUT по умолчанию (SSH/RTSP; текущий DHCP-адрес — `192.168.52.97`, см. TESTBENCH.md §5) |
 | `OKO_DUT_PASSWORD` | `luckfox` | пароль root (публичный вендорский дефолт) |
 | `OKO_RTSP_USER` / `OKO_RTSP_PASS` | `admin` / `oko-change-me` | учётка divinus (фабричный дефолт) |
+| `OKO_WIFI_SSID` / `OKO_WIFI_PSK` | — | стендовая точка доступа для ручных STA-проверок; в репозиторий не пишутся |
+| `OKO_UPLINK_DUT` | `192.168.44.50` | адрес DUT по Wi-Fi для `uplink_soak.py` (управление и проверка wlan-аплинка) |
+| `OKO_UPLINK_ETH` | `192.168.52.33` | адрес DUT по Ethernet для `uplink_soak.py` |
+| `OKO_UPLINK_AP_IF` / `OKO_UPLINK_AP_IP` | `wlan0` / `192.168.44.1` | интерфейс и адрес временной точки доступа на хосте (контейнер `oko-services`) |
 | `OKO_TFTP_HOST` | `192.168.52.200` | `serverip` для TFTP/NFS (netboot) |
 | `OKO_NFS_IP` | `192.168.52.150` | статический адрес DUT в NFS-режиме (`nfs_env.py`, `ip=`) |
 | `OKO_NAND_HOST` | `192.168.52.97` | DHCP-адрес DUT в NAND-режиме (проверка после `nfs_env.py off`) |
 | `OKO_CMA_SIZE` | `66M` | `rk_dma_heap_cma` в строках `nfs_env.py`/`netboot.py` (как `RK_BOOTARGS_CMA_SIZE`) |
+| `OKO_EC_BUS` | `/dev/i2c-3` | шина STM32 EC для `ec_bus_soak.py` |
 | `OKO_GATEWAY` | `192.168.52.254` | `gatewayip` (netboot) |
 | `OKO_NFSROOT` | `192.168.52.200:/srv/nfs/rootfs` | NFS-корень для `sys_bootargs` |
 | `OKO_VPN_PEER` | — | адрес VPN-пира на хосте для `vpn_check.py` (`--peer-host` важнее) |
@@ -273,6 +288,7 @@ TESTBENCH.md §7D.
 - Скриншоты WebUI: `output/bench/ui/<раздел>.png` и `mobile-system.png`.
 - VPN: `output/bench/vpn/report.json`, `ssh.log`, `profile.conf` (тестовый
   профиль; содержит ключи — не коммитить).
+- Soak шины EC: `output/bench/ec_bus_soak-<YYYYmmdd-HHMMSS>.json` и `.log`.
 - Каталог создаётся автоматически; `output/` в `.gitignore`.
 
 ## Wi-Fi на стенде
@@ -361,6 +377,9 @@ ap_psk=hotspot-pass-1
   и перелогиньтесь: `sudo usermod -aG dialout "$USER"`.
 - `device or resource busy` — порт держит другой процесс (`fuser /dev/ttyACM0`);
   `netboot.py` и `serial_exec.py` запускайте последовательно.
+- `cannot open telnet://192.168.52.17:23: timed out` — мост выключен или занят
+  другим telnet-клиентом; закройте его и повторите. Если мост недоступен,
+  переключитесь на USB-UART: `OKO_SERIAL_PORT=/dev/ttyACM0`.
 - `U-Boot prompt not found` — устройство уже загрузило Linux (используйте
   `netboot.py reboot`) либо автозагрузка не прерывается (проверьте `bootdelay`).
 - PyAV не ставится из-за отсутствия колеса под версию Python — поставьте

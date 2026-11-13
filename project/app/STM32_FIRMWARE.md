@@ -43,6 +43,43 @@ cmake --build build_host --target check
 
 `project/app/STM32CubeF1/` — локальная зависимость, в git не входит.
 
+### STM32C011F6P6 / STM32C031F6P6 (порт EC)
+
+Цели `-DMCU=C011x6` (6 КиБ SRAM, стенд) и `-DMCU=C031x6` (12 КиБ SRAM),
+TSSOP20, 32 КиБ Flash:
+загрузчик 8 КиБ + приложение 20 КиБ, метаданные — две страницы по 2 КиБ.
+Приложение управляет питанием хоста (`PWR_EN`, `PWR_GOOD`, `HOST_WAKE`),
+кнопкой power и сном Stop; протокол — v3 (`GET_POWER`/`SET_POWER`).
+Карта пинов и обвязка — `project/app/stm32_acpi-ec/docs/hardware.md`.
+
+SDK клонируется с `sparse-checkout` и подмодулями: в STM32CubeC0 каталоги
+`Drivers/CMSIS/Device/ST/STM32C0xx` и `Drivers/STM32C0xx_HAL_Driver` —
+подмодули, без `submodule update` они пустые. Путь
+`project/app/STM32CubeC0` виден `cmake/FindSTM32CubeC0.cmake`; эталон —
+`.github/actions/setup-sdk/action.yml`.
+
+```sh
+cd project/app
+git clone --depth 1 --filter=blob:none --sparse \
+    https://github.com/STMicroelectronics/STM32CubeC0.git STM32CubeC0
+git -C STM32CubeC0 sparse-checkout set Drivers
+git -C STM32CubeC0 submodule update --init --depth 1 \
+    Drivers/CMSIS/Device/ST/STM32C0xx Drivers/STM32C0xx_HAL_Driver
+cd stm32_acpi-ec
+cmake -B build-c011 -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake -DMCU=C011x6
+cmake --build build-c011
+cmake --build build-c011 --target flash-boot   # OpenOCD master
+cmake --build build-c011 --target flash-app
+```
+
+Нужен `arm-none-eabi-gcc` с newlib (`libnewlib-arm-none-eabi`,
+`libnewlib-dev`) и **OpenOCD из git master** (`scripts/openocd_c0.cfg`):
+в OpenOCD 0.12 из Debian нет `stm32c0x.cfg`. Фактические размеры на
+gcc 14.2.1: boot 4 232 Б, app 8 276 Б (debug 9 112 Б). На стенде `st-info` определяет
+STM32C011xx (sram 6144). В C0 нет LPTIM, а RTC не имеет wakeup-таймера, поэтому сон прерывается только кнопкой или адресом
+I2C; LSE не используется (отличие от первоначального плана).
+Короткое нажатие в AWAKE требует хоста с протоколом v3.
+
 ### Отправка изменений в STM32-репозиторий
 
 Правки делаются прямо в `project/app/stm32_acpi-ec/`, затем:
@@ -113,6 +150,44 @@ cmake --build build_host --target check
 ```
 
 `project/app/STM32CubeF1/` is a local dependency and is not tracked.
+
+### STM32C011F6P6 / STM32C031F6P6 (EC port)
+
+Targets `-DMCU=C011x6` (6 KiB SRAM, bench) and `-DMCU=C031x6` (12 KiB
+SRAM), TSSOP20, 32 KiB flash: an 8 KiB
+bootloader plus a 20 KiB application, with two 2 KiB metadata pages. The
+application drives host power (`PWR_EN`, `PWR_GOOD`, `HOST_WAKE`), the power
+button and Stop mode; the protocol is v3 (`GET_POWER`/`SET_POWER`). The pin
+map and wiring requirements are in
+`project/app/stm32_acpi-ec/docs/hardware.md`.
+
+SDK клонируется с `sparse-checkout` и подмодулями: в STM32CubeC0 каталоги
+`Drivers/CMSIS/Device/ST/STM32C0xx` и `Drivers/STM32C0xx_HAL_Driver` —
+подмодули, без `submodule update` они пустые. Путь
+`project/app/STM32CubeC0` виден `cmake/FindSTM32CubeC0.cmake`; эталон —
+`.github/actions/setup-sdk/action.yml`.
+
+```sh
+cd project/app
+git clone --depth 1 --filter=blob:none --sparse \
+    https://github.com/STMicroelectronics/STM32CubeC0.git STM32CubeC0
+git -C STM32CubeC0 sparse-checkout set Drivers
+git -C STM32CubeC0 submodule update --init --depth 1 \
+    Drivers/CMSIS/Device/ST/STM32C0xx Drivers/STM32C0xx_HAL_Driver
+cd stm32_acpi-ec
+cmake -B build-c011 -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake -DMCU=C011x6
+cmake --build build-c011
+cmake --build build-c011 --target flash-boot   # OpenOCD master
+cmake --build build-c011 --target flash-app
+```
+
+Requires `arm-none-eabi-gcc` with newlib (`libnewlib-arm-none-eabi`,
+`libnewlib-dev`) and **OpenOCD from git master**
+(`scripts/openocd_c0.cfg`): Debian OpenOCD 0.12 has no `stm32c0x.cfg`.
+Measured with gcc 14.2.1: boot 4,232 B, app 8,276 B (debug 9,112 B). On the bench `st-info` reports STM32C011xx (sram 6144). C0 has no LPTIM
+and its RTC has no wakeup timer, so Stop is left only by the button or by
+the I2C address; LSE is unused (a deviation from the initial plan). A short
+press in AWAKE requires a v3 host.
 
 ### Sending changes to the STM32 repository
 

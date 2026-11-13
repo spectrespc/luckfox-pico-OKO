@@ -26,7 +26,7 @@
 | Корневая ФС | Buildroot |
 | Разделы | `env` 256K, `idblock` 256K, `uboot` 512K, `boot` 6M, `oem` 40M, `userdata` 40M, `rootfs` 168M |
 | Активный DTS | `rv1106g-luckfox-pico-pro-max-sc230ai.dts` |
-| USB | dual-role (`dr_mode = "otg"`): host с OTG-переходником и хабом, gadget при подключении к ПК; встроенные HID, USB-сеть (RNDIS/CDC/ASIX/Realtek), Bluetooth (`btusb` + bluez `bluetoothctl`) |
+| USB | host-only (`dr_mode = "host"`): хаб и устройства за ним; встроенные HID, USB-сеть (RNDIS/CDC/ASIX/Realtek), Bluetooth (`btusb` + bluez `bluetoothctl`); gadget/adb недоступны (KI-057) |
 | Медиастек | `divinus` (OpenIPC), H.265/H.264, JPEG, RTSP, WebUI |
 | NPU-стек | драйвер `rknpu` 0.9.8 (`20240828`, non-IOMMU), мини-рантайм `librknnmrt.so` 1.6.0; опционально второй `librknnmrt2.so` 2.3.2 (`yolo.runtime: 2`), RGA-конверсия NV12→RGB888 по fd (`yolo.convert: rga`) и рамки детекции на видеопотоке (`yolo.boxes`, 2BPP RGN, два цвета) |
 | Сборка | нативная на Debian 13 (`tools/native/setup_host.sh`, `./build.sh firmware`), результат — `output/image/update.img` |
@@ -90,7 +90,8 @@ bench/run.sh dut.py --host 192.168.52.97 'cat /proc/device-tree/usbdrd/usb@ffb00
   (DNS обоих линков, порядок по метрикам). SoftAP — управляющая сеть
   **WPA2-PSK** с заводским паролем `ybrjveytljdthzq`, пока `oko_wlan_ap_psk`
   не задан (сменить — KI-030); не аплинк; при `root=/dev/nfs` eth-маршрут и
-  resolv не трогаются. Равные метрики разводятся (Wi-Fi получает +1), потому что ядро хранит один default
+  resolv не трогаются. Равные
+  метрики разводятся (Wi-Fi получает +1), потому что ядро хранит один default
   на metric. VPN-туннель при failover переподнимается на новом аплинке;
   per-VPN pin по интерфейсу не поддерживается.
 - Сеть: если eth0 и wlan0 подключены к одной подсети, `oko-route` включает
@@ -120,16 +121,17 @@ bench/run.sh dut.py --host 192.168.52.97 'cat /proc/device-tree/usbdrd/usb@ffb00
   `FEATURES_UNVERIFIED.md` (AWG).
 - Ограничения и непроверенные комбинации потоков, YOLO, датчиков и microSD
   собраны в `FEATURES_UNVERIFIED.md`.
-- USB-порт переведён в dual-role (`dr_mode = "otg"`): с OTG-переходником и
-  хабом порт работает как host (хаб, HID, USB-сеть, BT-донглы), при
-  подключении к ПК остаётся gadget (`usb0`, adb). VBUS 5 В SoC не управляет —
-  хаб и устройства питаются от платы или внешнего источника. Стенд
-  2026-11-10: device-роль и gadget (UDC `configured`, `usb0` `172.32.0.93`,
-  перечисление на ПК), принудительный host через
-  `/sys/devices/platform/ff3e0000.usb2-phy/otg_mode` (xHCI и корневые хабы) и
-  автоматический возврат gadget после host-режима проверены; хаб/HID/
-  USB-сеть/BT физически не подключались. Статусы — `FEATURES_UNVERIFIED.md`,
-  ограничения — `KNOWN_ISSUES.md` (KI-054), команды — `TESTBENCH.md` §8.
+- USB-порт закреплён в host-режиме (`dr_mode = "host"`): хаб и устройства за
+  ним работают без переключения ролей, gadget (`usb0`/RNDIS) и adb при этом
+  недоступны (`S50usbdevice` и `S99usb0config` сами выходят по `dr_mode`).
+  VBUS 5 В SoC не управляет — хаб и устройства питаются от платы или внешнего
+  источника. Стенд 2026-11-11: после прошивки по TFTP плата загрузилась с
+  `root=ubi0:rootfs`, `dr_mode = "host"`, хаб `1a40:0101` и `0bda:c811` за ним
+  видны в `lsusb` без ручного `otg_mode`; UDC отсутствует, `usb0`/adbd не
+  запускаются. HID-устройство, USB-сеть и BT-донгл за хабом не подключались.
+  Прошивка по умолчанию — TFTP (`TESTBENCH.md` §7-TFTP). Статусы —
+  `FEATURES_UNVERIFIED.md`, ограничения — `KNOWN_ISSUES.md`
+  (KI-054, KI-057), команды — `TESTBENCH.md` §8.
 - Часовой пояс: набор зон buildroot в `/usr/share/zoneinfo/uclibc`, `/etc/TZ` —
   относительный симлинк на выбранную зону; управление — `/api/time` (`tz=`),
   ключ `[system] tz` и WebUI «Синхронизация времени» (рядом с NTP показан
@@ -190,19 +192,20 @@ route per uplink, moves traffic when a gateway stops answering (three failures
 `/etc/resolv.conf` (resolvers of both links, ordered by metric). The SoftAP is
 a **WPA2-PSK** management network protected by the factory password
 `ybrjveytljdthzq` while `oko_wlan_ap_psk` is unset (change it — KI-030), not
-an uplink; under `root=/dev/nfs` the eth route and resolv
-are left untouched. Equal metrics are separated (Wi-Fi gets +1) because
+an uplink; under `root=/dev/nfs` the eth route and
+resolv are left untouched. Equal metrics are separated (Wi-Fi gets +1) because
 the kernel stores one default per metric. A VPN tunnel is re-established on the
 new uplink after a failover; per-VPN interface pinning is not supported.
 
-The USB port is dual-role (`dr_mode = "otg"`): with an OTG adapter and a hub it
-acts as a host (hub, HID, USB net, Bluetooth dongles), and it stays a gadget
-(`usb0`, adb) when plugged into a PC. The SoC does not control VBUS 5 V, so a
-hub and its devices are powered by the board or an external supply. Bench
-2026-11-10: the device role and gadget (UDC `configured`, `usb0`
-`172.32.0.93`, enumeration on a PC), forced host through
-`/sys/devices/platform/ff3e0000.usb2-phy/otg_mode` (xHCI with root hubs) and
-the automatic gadget re-bind after a host excursion were verified; a hub, HID,
-USB networking and Bluetooth were not attached. Status —
-`FEATURES_UNVERIFIED.md`, limits — `KNOWN_ISSUES.md` (KI-054), commands —
-`TESTBENCH.md` §8.
+The USB port is pinned to host mode (`dr_mode = "host"`): a hub and its devices
+work without role switching, while the gadget (`usb0`/RNDIS) and adb are
+unavailable (`S50usbdevice` and `S99usb0config` exit on `dr_mode`). The SoC does
+not control VBUS 5 V, so the hub and its devices are powered by the board or an
+external supply. Bench 2026-11-11: after flashing over TFTP the board boots with
+`root=ubi0:rootfs`, `dr_mode = "host"`, and the hub `1a40:0101` plus the
+`0bda:c811` behind it appear in `lsusb` without a manual `otg_mode`; there is no
+UDC and neither `usb0` nor adbd starts. A HID device, USB networking and a BT
+dongle were not attached. TFTP is the default flashing mode
+(`TESTBENCH.md` §7-TFTP). Status —
+`FEATURES_UNVERIFIED.md`, limits — `KNOWN_ISSUES.md` (KI-054, KI-057),
+commands — `TESTBENCH.md` §8.

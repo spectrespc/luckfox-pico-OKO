@@ -4,9 +4,19 @@ TARGET_IP="172.32.0.93"
 
 MAX_RETRIES=10
 
-# OKO: the USB port runs in dual-role mode (dr_mode = "otg"), so the DTS string
-# no longer tells the current role.  Read it from the extcon registered by
-# phy-rockchip-inno-usb2 (USB=1 -> device, USB-HOST=1 -> host).
+# OKO: the active profile pins the port to host (dr_mode = "host"), where the
+# DWC3 registers no UDC at all: gadget/usb0 cannot work and restarting
+# S50usbdevice would only loop.  The script stays role-aware so that switching
+# the DTS back to "otg" restores the old behaviour without edits.
+MODE_PATH="/proc/device-tree/usbdrd/usb@ffb00000/dr_mode"
+
+usb_mode() {
+	cat "$MODE_PATH" 2>/dev/null
+}
+
+# OKO: in dual-role mode the DTS string does not tell the current role.  Read
+# it from the extcon registered by phy-rockchip-inno-usb2 (USB=1 -> device,
+# USB-HOST=1 -> host).
 usb_role() {
 	for f in /sys/class/extcon/*/state; do
 		[ -r "$f" ] || continue
@@ -84,6 +94,10 @@ usb_watch() {
 
 case $1 in
 start)
+	if [ "$(usb_mode)" = "host" ]; then
+		echo "usb: dr_mode=host, gadget and usb0 are not configured"
+		exit 0
+	fi
 	usb0_config
 	usb_watch &
 	;;

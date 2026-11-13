@@ -9,18 +9,21 @@ agent: code
 
 ## Порядок работы
 
-1. **Подключения** — сверь §4: UART `/dev/ttyACM0`, `115200 8N1`, Ethernet
-   `192.168.52.0/24`; проверь наличие устройства (`ls /dev/ttyACM*`) и утилит
-   (`ls bench`, `ls output/bench/venv` при первом запуске).
+1. **Подключения** — сверь §4: UART по telnet `192.168.52.17:23` (ESP32-мост,
+   локальный `/dev/ttyACM*` — резерв), `115200 8N1`, Ethernet
+   `192.168.52.0/24`; проверь утилиты (`ls bench`,
+   `ls output/bench/venv` при первом запуске).
 2. **Сеть** — сверь §5: DUT получает адрес по DHCP (факт на 2026-11-01 —
    `192.168.52.65`), шлюз `192.168.52.254`; для стабильных проверок зарезервируйте
    `192.168.52.150` в DHCP-сервере.
 3. **Учётки** — §6: `root` / вендорский дефолт; секреты в репозиторий не писать.
-4. **Прошивка** — выбери режим по §7:
-   - A. SPI NAND: `./build.sh firmware` → `./rkflash.sh update` (полный образ);
+4. **Прошивка** — по умолчанию TFTP, `./build.sh firmware` →
+   `bench/run.sh tftp_flash.py` (§7-TFTP): USB и Maskrom не нужны.
+   Резерв по §7:
+   - A. SPI NAND через USB: `./rkflash.sh update` (полный образ, Maskrom,
+     USB-порт DUT — напрямую к хосту);
    - B. Покомпонентно: `upgrade_tool db output/image/download.bin`, затем
-     `wl` по LBA с полным размером раздела (`oem` 0x2800/0xF000,
-     `rootfs` 0x16800/0x69000) и `rd`; см. §7B.
+     `wl` по LBA с полным размером раздела и `rd`; см. §7B.
 5. **Диагностика** — пройди чек-лист §8 (модули, сенсор, `divinus`/`rkipc`, OSD
    в RTSP, сеть, монтирование, логи); команды на DUT — `bench/run.sh
    serial_exec.py …` / `bench/run.sh dut.py …`, OSD — `bench/run.sh osd_check.py`.
