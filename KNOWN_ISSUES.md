@@ -339,6 +339,18 @@
 
 ### VPN
 
+- **KI-062. `oko-ec flash`: COMMIT метаданных не применяется.**
+  Образ записывается, `VERIFY` возвращает OK, `COMMIT` печатает
+  `0x00 (OK)`, но MetaConfig не меняется: после RESET загрузчик видит
+  старые `img_size`/`seq`. Ручная последовательность
+  `BEGIN`+`VERIFY`+`COMMIT` (без `WRITE_DATA`) записывает мета корректно
+  (проверено SWD-дампом page0 seq15). Похоже на гонку: хост читает
+  устаревший ответ `VERIFY`, пока загрузчик ещё выполняет erase/program
+  метастраницы, и сразу шлёт RESET. Обход: прошить app/meta через SWD
+  (`program` + `flash write_image erase meta.bin 0x08007800`) или
+  отправить `COMMIT` вручную после `BEGIN`+`VERIFY`. Статус: **открыто,
+  требует отдельного разбора `oko-ec`/тайминга COMMIT**.
+
 - **KI-061. STM32 EC удерживал SCL, пока RV1106 перезагружался.**
   `rk3x-i2c ff460000.i2c: timeout, ipd: 0x80` + `SCL hold by slave`:
   если мастер исчезал между ADDR(read) и первым тактом, slave-transmitter
@@ -798,6 +810,19 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   Status: **gate passed, not merged**.
 
 ### VPN
+
+- **KI-062. `oko-ec flash`: the metadata COMMIT is not applied.**
+  The image is written and `VERIFY` returns OK, and `COMMIT` prints
+  `0x00 (OK)`, but MetaConfig does not change: after RESET the bootloader
+  still reports the old `img_size`/`seq`. A manual
+  `BEGIN`+`VERIFY`+`COMMIT` sequence (without `WRITE_DATA`) writes the
+  metadata correctly (verified with an SWD dump of page0 seq15). This
+  looks like a race: the host reads a stale `VERIFY` reply while the
+  bootloader is still erasing/programming the metadata page, then sends
+  RESET immediately. Workaround: flash app/meta over SWD (`program` plus
+  `flash write_image erase meta.bin 0x08007800`) or send `COMMIT` manually
+  after `BEGIN`+`VERIFY`. Status: **open, needs a separate `oko-ec`/COMMIT
+  timing investigation**.
 
 - **KI-061. The STM32 EC held SCL while the RV1106 rebooted.**
   `rk3x-i2c ff460000.i2c: timeout, ipd: 0x80` + `SCL hold by slave`: when
