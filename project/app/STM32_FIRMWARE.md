@@ -75,7 +75,7 @@ cmake --build build-c011 --target flash-app
 Нужен `arm-none-eabi-gcc` с newlib (`libnewlib-arm-none-eabi`,
 `libnewlib-dev`) и **OpenOCD из git master** (`scripts/openocd_c0.cfg`):
 в OpenOCD 0.12 из Debian нет `stm32c0x.cfg`. Фактические размеры на
-gcc 14.2.1: boot 4 232 Б, app 8 276 Б (debug 9 112 Б). На стенде `st-info` определяет
+gcc 14.2.1: boot 4 232 Б, app 8 276 Б (debug 9 172 Б). На стенде `st-info` определяет
 STM32C011xx (sram 6144). В C0 нет LPTIM, а RTC не имеет wakeup-таймера, поэтому сон прерывается только кнопкой или адресом
 I2C; LSE не используется (отличие от первоначального плана).
 Короткое нажатие в AWAKE требует хоста с протоколом v3.
@@ -184,7 +184,7 @@ cmake --build build-c011 --target flash-app
 Requires `arm-none-eabi-gcc` with newlib (`libnewlib-arm-none-eabi`,
 `libnewlib-dev`) and **OpenOCD from git master**
 (`scripts/openocd_c0.cfg`): Debian OpenOCD 0.12 has no `stm32c0x.cfg`.
-Measured with gcc 14.2.1: boot 4,232 B, app 8,276 B (debug 9,112 B). On the bench `st-info` reports STM32C011xx (sram 6144). C0 has no LPTIM
+Measured with gcc 14.2.1: boot 4,232 B, app 8,276 B (debug 9,172 B). On the bench `st-info` reports STM32C011xx (sram 6144). C0 has no LPTIM
 and its RTC has no wakeup timer, so Stop is left only by the button or by
 the I2C address; LSE is unused (a deviation from the initial plan). A short
 press in AWAKE requires a v3 host.

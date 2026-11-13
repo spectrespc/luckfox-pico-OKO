@@ -28,12 +28,14 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 - **STM32 EC: таймерное освобождение прижатой SCL и отладочный слой.**
   В прошивку C011/C031 добавлены аппаратный SCL-low timeout `TIMEOUTR`
-  (~15 мс) с обработкой `I2C_ISR_TIMEOUT`, программный bus-watchdog
+  (~10 мс) с обработкой `I2C_ISR_TIMEOUT`, программный bus-watchdog
   (`POWER_BUS_HANG_MS=15`), счётчики/снимки I2C с зеркалом в
-  `PWR->BKP2R/BKP3R` и команды `0x28`/`0x29` (только
+  `PWR->BKP2R/BKP3R` (16-битные, упакованы) и команды `0x28`/`0x29` (только
   `-DEC_DEBUG_BUILD=ON`). Если мастер исчезает посреди чтения, EC
   отпускает линию сам, без NRST. Добавлен `bench/ec_bus_soak.py` —
-  матрица reboot/read-window/detect/hold-scl.
+  матрица reboot/read-window/detect/hold-scl. Проверено на стенде C011
+  2026-11-13: hold-scl отпускается за ~10 мс, Stop→wake после 5 с, 40
+  ребутов (30 read-window) без `SCL hold by slave`.
 
 - **SoftAP всегда WPA2-PSK с заводским паролем (OKO).** `oko-wifi` больше не
   поднимает открытую точку: пустой `oko_wlan_ap_psk` в `load_settings`

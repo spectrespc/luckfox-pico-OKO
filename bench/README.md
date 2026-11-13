@@ -271,7 +271,7 @@ TESTBENCH.md §7D.
 | `OKO_NFS_IP` | `192.168.52.150` | статический адрес DUT в NFS-режиме (`nfs_env.py`, `ip=`) |
 | `OKO_NAND_HOST` | `192.168.52.97` | DHCP-адрес DUT в NAND-режиме (проверка после `nfs_env.py off`) |
 | `OKO_CMA_SIZE` | `66M` | `rk_dma_heap_cma` в строках `nfs_env.py`/`netboot.py` (как `RK_BOOTARGS_CMA_SIZE`) |
-| `OKO_EC_BUS` | `/dev/i2c-3` | шина STM32 EC для `ec_bus_soak.py` |
+| `OKO_EC_BUS` | `3` | номер шины i2c-tools (`3` = `/dev/i2c-3`) для `ec_bus_soak.py` |
 | `OKO_GATEWAY` | `192.168.52.254` | `gatewayip` (netboot) |
 | `OKO_NFSROOT` | `192.168.52.200:/srv/nfs/rootfs` | NFS-корень для `sys_bootargs` |
 | `OKO_VPN_PEER` | — | адрес VPN-пира на хосте для `vpn_check.py` (`--peer-host` важнее) |

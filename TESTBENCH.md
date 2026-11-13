@@ -455,6 +455,8 @@ sleep 0.2
 
 # Soak-матрица (отчёт в output/bench/ec_bus_soak-*.json)
 bench/run.sh ec_bus_soak.py --mode all --iterations 20
+# Проверено 2026-11-13 на C011 (debug 9172 Б): hold-scl ~10 мс,
+# 40 ребутов (30 read-window 0…150 мс) — 0 'SCL hold by slave'.
 
 # Если EC завис в Stop и SWD не подключается (init mode failed):
 # нужен NRST/снятие always-on 3.3 В; см. docs/hardware.md §8.

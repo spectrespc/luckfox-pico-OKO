@@ -346,11 +346,14 @@
   оставался в этом состоянии до NRST. Причина усиливалась тем, что
   `RCC->CCIPR.I2C1SEL` был `00` (PCLK): в Stop I2C не тактировался,
   `WUPEN` не будил ядро, а `tTIMEOUT` был ~60 мс вместо 15. Исправлено в
-  прошивке EC: `I2C1SEL=10` (HSIKER), `TIMEOUTR` (~15 мс) + bus-watchdog
+  прошивке EC: `I2C1SEL=10` (HSIKER), `TIMEOUTR` (~10 мс) + bus-watchdog
   (15 мс), настоящий `i2c_pause()` в приложении; хост повторяет запись.
   Обход для старой прошивки: NRST/снятие always-on 3.3 В; при зависании в
-  Stop SWD не подключается (`init mode failed`). Статус: **исправлено в
-  исходниках, на стенде ожидает перепрошивки и power-cycle EC**.
+  Stop SWD не подключается (`init mode failed`). Проверено на стенде
+  2026-11-13: hold-scl отпускается за ~10 мс (`timeout_fires=4`), Stop→wake
+  после 5 с работает, 40 ребутов (30 `read-window`) без `SCL hold by slave`.
+  Полные 300 ребутов не прогонялись. Статус: **исправлено и проверено на
+  стенде (частичный soak 40/300)**.
 
 - **KI-037. `resolvconf` в образе нет.**
   `wg-quick`-логика с `DNS=` не может обновлять системный resolver через
@@ -807,8 +810,11 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   (~15 ms) plus a 15 ms bus watchdog, a real `i2c_pause()` in the
   application, and host write retries. Workaround for the old firmware:
   NRST or removing the always-on 3.3 V; when the EC hangs in Stop, SWD
-  does not connect (`init mode failed`). Status: **fixed in source,
-  awaiting reflash and an EC power cycle on the bench**.
+  does not connect (`init mode failed`). Verified on the bench on
+  2026-11-13: hold-scl is released in ~10 ms (`timeout_fires=4`), Stop→wake
+  after 5 s works, and 40 reboots (30 `read-window`) produced no
+  `SCL hold by slave`. The full 300-reboot soak was not run. Status:
+  **fixed and bench-verified (partial soak 40/300)**.
 
 - **KI-037. `resolvconf` is not in the image.** The wg-quick `DNS=` path cannot
   update the system resolver through `resolvconf`. `oko-vpn` supports two

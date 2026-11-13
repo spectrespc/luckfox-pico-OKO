@@ -232,15 +232,22 @@ def run_hold_scl(dut, bus):
     dut.run("i2ctransfer -y %s r63@%s 2>/dev/null || true" % (bus, EC_ADDR), timeout=20)
     time.sleep(0.05)
 
+    # Disarm before probing again: while hold is armed every read is
+    # answered with 0xFF filler, which would hide the recovery.
+    dut.run("i2ctransfer -y %s w4@%s 0x02 0x00 0x29 0x00 || true" % (bus, EC_ADDR),
+            timeout=20)
+    time.sleep(0.1)
+
     ok, info = ec_info(dut)
+
+    if not ok:
+        time.sleep(0.2)
+        ok, info = ec_info(dut)
+
     debug = debug_snapshot(dut, bus)
 
     _, after = dut.run("dmesg | grep -c '%s' || true" % SCL_HOLD)
     after = int(re.sub(r"\D", "", after) or 0)
-
-    # Disarm so the next runs are normal again.
-    dut.run("i2ctransfer -y %s w4@%s 0x02 0x00 0x29 0x00 || true" % (bus, EC_ADDR),
-            timeout=20)
 
     released = ok and (after == before)
 
@@ -265,7 +272,8 @@ def main():
     parser.add_argument("--iterations", type=int, default=10)
     parser.add_argument("--delay-ms", type=int, default=None,
                         help="read-window: fixed delay; default sweeps 0..150 ms")
-    parser.add_argument("--bus", default=os.environ.get("OKO_EC_BUS", "/dev/i2c-3"))
+    parser.add_argument("--bus", default=os.environ.get("OKO_EC_BUS", "3"),
+                        help="i2c-tools bus number (default 3 = /dev/i2c-3)")
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--user", default=DEFAULT_USER)
     parser.add_argument("--password", default=DEFAULT_PASSWORD)
