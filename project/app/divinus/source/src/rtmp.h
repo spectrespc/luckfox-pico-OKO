@@ -40,5 +40,7 @@
 
 int rtmp_init(const char *url);
 void rtmp_close(void);
+/* True while the RTMP client is connected. */
+int rtmp_active(void);
 int rtmp_ingest_video(hal_vidpack *packet, int is_h265);
 int rtmp_ingest_audio(void *data, int len);

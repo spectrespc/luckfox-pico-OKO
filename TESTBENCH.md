@@ -8,7 +8,7 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
 
 | Поле | Значение |
 |---|---|
-| Дата обновления | `2026-11-13` |
+| Дата обновления | `2026-11-14` |
 | Ответственный | `<ФИО>` |
 | Статус | активен |
 | Назначение | сборка прошивки и прошивка SPI NAND для отладки IPC |
@@ -59,7 +59,7 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
 
 | Узел | Адрес |
 |---|---|
-| Устройство (DUT), NAND | `192.168.52.97` (DHCP; на `2026-11-12` выдан `192.168.52.33` — сверяйте `ifconfig eth0`) |
+| Устройство (DUT), NAND | `192.168.52.33` (DHCP; адрес может смениться — сверяйте `ifconfig eth0` или `/api/status`) |
 | Устройство (DUT), NFS | `192.168.52.150` (статический из `ip=` в `sys_bootargs`) |
 | Хост TFTP/NFS | `192.168.52.200` |
 | UART-мост (ESP32 telnet-UART) | `192.168.52.17`, TCP `23` (telnet, консоль DUT, 115200 8N1) |
@@ -322,8 +322,8 @@ docker run --rm --privileged \
    выполните те же команды через `sudo rsync` от root.
 3. Переключить корень и проверить после перезагрузки:
    ```sh
-   bench/run.sh nfs_env.py status --host 192.168.52.97   # режим и адрес до переключения
-   bench/run.sh nfs_env.py on  --host 192.168.52.97      # NFS-root
+   bench/run.sh nfs_env.py status --host 192.168.52.33   # режим и адрес до переключения
+   bench/run.sh nfs_env.py on  --host 192.168.52.33      # NFS-root
    bench/run.sh nfs_env.py off --host 192.168.52.150     # возврат на ubi0:rootfs
    ```
    `on` пишет `sys_bootargs` с `root=/dev/nfs … ip=192.168.52.150:…:off`,
@@ -478,13 +478,13 @@ ls /usr/share/zoneinfo/uclibc        # установленный набор з�
 hwclock -u                           # RTC идёт в UTC; вывод локальный, совпадает с date
 
 # контроллеры: версии, роль STM8, загрузчик
-curl -s -u admin:oko-change-me http://192.168.52.97/api/firmware
+curl -s -u admin:oko-change-me http://192.168.52.33/api/firmware
 /oem/usr/bin/oko-motor -b 3 -a 0x60 version
 /oem/usr/bin/oko-motor -b 3 -a 0x60 info
 /oem/usr/bin/oko-ec info
 
 # AF-метрика: 20 отсчётов; для SC230AI нужен contrast_af.enable=1 в IQ
-curl -s -X POST -u admin:oko-change-me 'http://192.168.52.97/api/focus?enable=1&motor=1'
+curl -s -X POST -u admin:oko-change-me 'http://192.168.52.33/api/focus?enable=1&motor=1'
 bench/run.sh focus_check.py --seconds 20 --interval 1 --snapshot
 # автофокус по контрастной сцене (opt-in): full + ROI + micro-fine (af=fine),
 # кривые в output/bench/
@@ -494,7 +494,7 @@ OKO_FOCUS_MOTOR_TESTS=1 OKO_FOCUS_AF_TESTS=1 bench/run.sh api_check.py
 lsmod | grep amneziawg
 /oem/usr/bin/awg version
 /usr/bin/oko-vpn status
-curl -s -u admin:oko-change-me http://192.168.52.97/api/vpn
+curl -s -u admin:oko-change-me http://192.168.52.33/api/vpn
 # полный прогон с пиром на хосте (см. bench/README.md, «VPN-пир на хосте»)
 bench/run.sh vpn_check.py --peer-host 192.168.52.1 \
   --profile output/bench/vpn/awg0.conf
@@ -522,19 +522,19 @@ cat /tmp/osd-dyn.txt; wc -c /tmp/osd-dyn.txt
 # это нормально; зависание/чёрный экран — откат на CPU и power cycle)
 LD_LIBRARY_PATH=/oem/usr/lib /oem/usr/bin/rgaImDemo --copy
 # конверсия YOLO на RGA: в логе не должно быть RGA_BLIT/falling back
-curl -s -u admin:oko-change-me -X POST 'http://192.168.52.97/api/yolo?convert=rga'
+curl -s -u admin:oko-change-me -X POST 'http://192.168.52.33/api/yolo?convert=rga'
 grep -aE 'rk_rga|RGA_BLIT|falling back' /tmp/divinus.log | tail
 
 # рамки детекции на потоке (2BPP RGN 12, слой 6): включение на лету
-curl -s -u admin:oko-change-me -X POST 'http://192.168.52.97/api/yolo?boxes=1'
+curl -s -u admin:oko-change-me -X POST 'http://192.168.52.33/api/yolo?boxes=1'
 grep -aE 'NN overlay region 12' /tmp/divinus.log | tail -1
 #   ожидается: "1920x1088 2BPP on 1 channel(s), layer 6"
 # для гарантированных детекций на статичной сцене: conf_threshold=0.05,
 # затем кадры RTSP и проверка красных/синих линий по краям рамок
-curl -s -u admin:oko-change-me -X POST 'http://192.168.52.97/api/yolo?conf_threshold=0.05'
-bench/run.sh osd_check.py --ip 192.168.52.97 --frames 3 --interval 1 --seconds 4
+curl -s -u admin:oko-change-me -X POST 'http://192.168.52.33/api/yolo?conf_threshold=0.05'
+bench/run.sh osd_check.py --ip 192.168.52.33 --frames 3 --interval 1 --seconds 4
 # выключение: регион уничтожается, кадры остаются чистыми
-curl -s -u admin:oko-change-me -X POST 'http://192.168.52.97/api/yolo?boxes=0'
+curl -s -u admin:oko-change-me -X POST 'http://192.168.52.33/api/yolo?boxes=0'
 # восстановить: conf_threshold=0.35, boxes=1, /api/cmd?save=1
 
 # RTSP отдаёт кадры при rtsp.enable=true и работающем VENC-канале
@@ -548,14 +548,14 @@ cat /proc/cmdline
 cat /proc/mtd
 
 # microSD: состояние, mount/unmount и формат (формат уничтожает данные карты)
-curl -s -u admin:oko-change-me http://192.168.52.97/api/storage
-curl -s -u admin:oko-change-me 'http://192.168.52.97/api/storage?action=unmount&token=<token>'
+curl -s -u admin:oko-change-me http://192.168.52.33/api/storage
+curl -s -u admin:oko-change-me 'http://192.168.52.33/api/storage?action=unmount&token=<token>'
 # без карты start=1 должен вернуть blocked и не создать файл в /oem или /userdata
-curl -s -u admin:oko-change-me 'http://192.168.52.97/api/record?enable=true&start=1'
+curl -s -u admin:oko-change-me 'http://192.168.52.33/api/record?enable=true&start=1'
 # с картой: format -> один раздел FAT32 OKO, затем запись 5 с и проверка MP4
 # token берётся из ответа /api/storage (поле format_token)
 curl -s -u admin:oko-change-me \
-  'http://192.168.52.97/api/storage?action=format&fs=fat32&confirm=FORMAT&token=<token>'
+  'http://192.168.52.33/api/storage?action=format&fs=fat32&confirm=FORMAT&token=<token>'
 ls -l /mnt/sdcard
 ls /oem/usr/ko | grep -E 'sc3336|mis5001|imx415|mia1321'   # пусто
 ls /oem/usr/share/iqfiles                                   # только sc230ai_*.json
@@ -567,8 +567,8 @@ hexdump -C /sys/class/i2c-adapter/i2c-3/of_node/clock-frequency
 # помощь фокусировке: AF-статистика (A6), мотор 0x60 и NPU в OSD
 bench/run.sh focus_check.py
 bench/run.sh focus_check.py --enable --polls 10
-curl -s -u admin:oko-change-me 'http://192.168.52.97/api/focus?map=1'
-curl -s -u admin:oko-change-me 'http://192.168.52.97/api/focus' | grep -o '"af":{[^}]*}'
+curl -s -u admin:oko-change-me 'http://192.168.52.33/api/focus?map=1'
+curl -s -u admin:oko-change-me 'http://192.168.52.33/api/focus' | grep -o '"af":{[^}]*}'
 i2cdetect -y 3 | grep -E ' 42 | 60 '
 # вторая строка несёт сводку SD: MEM FREE 77% SD FREE 14.8/14.8GiB
 cat /tmp/osd-sys.txt
@@ -595,10 +595,10 @@ ls -l project/app/stm8-motor/build/app-2.1.1.ihx \
 # Ethernet: MAC и настройки в env-разделе U-Boot
 fw_printenv oko_mac oko_net_mode oko_ipaddr oko_netmask oko_gateway oko_dns
 oko-net env
-curl -s -u admin:oko-change-me http://192.168.52.97/api/network
+curl -s -u admin:oko-change-me http://192.168.52.33/api/network
 # статический режим (сменить адрес на свободный; страница отключится)
 curl -s -u admin:oko-change-me \
-  'http://192.168.52.97/api/network?mode=static&ipaddr=192.168.52.220&netmask=255.255.255.0&gateway=192.168.52.254&dns=192.168.52.254'
+  'http://192.168.52.33/api/network?mode=static&ipaddr=192.168.52.220&netmask=255.255.255.0&gateway=192.168.52.254&dns=192.168.52.254'
 # после переподключения на .220 вернуть DHCP:
 curl -s -u admin:oko-change-me \
   'http://192.168.52.220/api/network?mode=dhcp&ipaddr=192.168.52.220&netmask=255.255.255.0&gateway=192.168.52.254&dns=192.168.52.254'
@@ -613,8 +613,8 @@ ls -l /oem/usr/bin/divinus /userdata/divinus.enable
 ls -l /userdata/divinus.yaml
 # проверка вырезанного состава (на хосте, после сборки)
 tools/native/check_image_contents.sh
-curl -s -u admin:oko-change-me http://192.168.52.97/api/status
-curl -s -u admin:oko-change-me -o /tmp/snap.jpg http://192.168.52.97/image.jpg
+curl -s -u admin:oko-change-me http://192.168.52.33/api/status
+curl -s -u admin:oko-change-me -o /tmp/snap.jpg http://192.168.52.33/image.jpg
 # OSD: time — bottom-right, telemetry (4 lines) — top-left, GPS — top-right,
 # msg — top-left below telemetry.
 # Смотреть в RTSP-потоке (кадры `/image.jpg` кодируются отдельным VENC-каналом
@@ -625,7 +625,7 @@ echo 'OKO MESSAGE 123' > /tmp/osd.fifo
 # через 60+ с reg3 гаснет: /tmp/osd-msg.txt пуст, /tmp/osd-msg.ts удалён
 ls -l /tmp/osd-dyn.txt /tmp/osd-msg.txt /tmp/osd.fifo
 # OSD с хоста: попарный диф регионов по RTSP, кадры и кропы в output/bench/
-bench/run.sh osd_check.py --ip 192.168.52.97 --seconds 17
+bench/run.sh osd_check.py --ip 192.168.52.33 --seconds 17
 # геометрия оверлеев и ePTZ: кроп, /mjpeg и /image.jpg, рестарт MP4
 bench/run.sh geometry_check.py --what zoom
 # NN-рамки и OSD под 0/90/180/270 — opt-in: модель, объект в кадре, штатив
@@ -634,7 +634,7 @@ OKO_GEOMETRY_TESTS=1 bench/run.sh geometry_check.py --what osd
 # сообщение в reg2: сначала на DUT, затем повторить osd_check.py
 bench/run.sh serial_exec.py "echo 'OKO MSG TEST' > /tmp/osd.fifo"
 # RTSP-корень divinus — без /live/0:
-# ffprobe -rtsp_transport tcp rtsp://admin:oko-change-me@192.168.52.97:554/
+# ffprobe -rtsp_transport tcp rtsp://admin:oko-change-me@192.168.52.33:554/
 
 # I2C3-M1 (GPIO1_D2/GPIO1_D3, 100 кГц) включён по умолчанию
 ls -l /dev/i2c-3
@@ -764,6 +764,73 @@ docker exec oko-mediamtx ffprobe -v error -show_streams rtsp://127.0.0.1:8554/ca
 | `codecProps.width/height` = 0, `ffprobe` не даёт разрешение | параметры VPS/SPS/PPS идут не отдельными NAL-юнитами (склеены в один RTP-пакет) — проверить сборку `divinus` |
 | Поток рвётся раз в несколько минут | перезапуск `divinus` (`kill -HUP`) рвёт последовательность RTP: приёмник пересобирает путь за 1–2 с |
 
+### 2026-11-14: лог UART RV1106 через ESP32
+
+К UART RV1106 подключён ESP32-мост `192.168.52.17`; он ведёт лог порта и
+отдаёт его по HTTP. Скачивание с хоста:
+
+```bash
+curl -s -c /tmp/c -X POST http://192.168.52.17/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"admin"}'
+curl -b /tmp/c -o output/bench/uar0.log \
+  'http://192.168.52.17/sd/download?path=uar0.log'
+```
+
+`uar0.log` — артефакт в `output/bench/` (не в `/tmp`); cookie-файл
+`/tmp/c` живёт одну сессию. Живая консоль и команды — через
+`bench/serial_exec.py` (`telnet://192.168.52.17:23`). Лог полезен, когда
+плата уже не отвечает по SSH/HTTP: в нём остаются kernel panic/oops,
+`sfc`/UBIFS и сообщения `divinus` до зависания.
+
+### 2026-11-14: деградация SPI NAND после серии power cycle
+
+После нескольких аварийных снятий питания на DUT (`192.168.52.33`) появились
+ошибки SPI NAND и UBIFS:
+
+```
+rockchip-sfc ffac0000.spi: DMA wait for transfer finish timeout
+rockchip-sfc ffac0000.spi: wait sfc idle timeout
+UBIFS error (ubi0:0): fallible_read_node: ... error -5
+UBIFS error (ubi4:0): make_reservation: cannot reserve ... error -30
+Fatal exception in interrupt
+```
+
+`ubi0` — rootfs, `ubi4` — `/oem`. `error -5` — это `EIO` (чтение не
+завершилось), `error -30` — `EROFS`: UBIFS после ошибок перевёл том в
+read-only, поэтому `make_reservation`/`do_writepage` не пишут. Причина
+выше — таймауты `rockchip-sfc`, а не флаг write-protect. Проявления:
+SSH/HTTP/ARP пропадают, shell не может выполнить `echo`, в консоли kernel
+panic при `sync`. Это состояние платы/флеша, а не `divinus`: до
+перепрошивки (TFTP/Maskrom) или замены платы DUT-проверки остановлены.
+После холодной загрузки 2026-11-14 recovery завершился, `ubi0`/`ubi4`/`ubi5`
+смонтированы `rw`, `touch /oem/probe` + `sync` прошли — сбой был
+транзиентным после kernel panic, а не постоянной защитой записи. При
+повторении `sfc ... timeout` проверять питание/пайку NAND. Если `sfc ... timeout` повторяется
+и после перепрошивки — проверять питание/пайку SPI NAND, а не образ.
+
+### 2026-11-14: kernel oops `dma_buf_release` после MPP/IVS
+
+При завершении `divinus` после работы с MPP/IVS ядро падает в
+`dma_buf_release`:
+
+```
+Internal error: Oops - BUG: 0 [#1] THUMB2
+PC is at dma_buf_release+0xa/0x58
+... __dentry_kill / __fput / do_exit
+Fixing recursive fault but reboot is needed!
+```
+
+Триггер на стенде 2026-11-14: destroy/recreate 2BPP-региона IVS
+(`ivs.boxes` 1→0→1) — сначала `mpp: dup mClientFd failed`,
+`getFd CHECK_GE`, SIGSEGV, затем oops при выходе. Это вендорный баг
+жизненного цикла MPP/DMA-buf, не UBIFS. После него
+устройство может остаться с зависшими процессами `divinus` в D-state;
+`killall -9` их не убирает. Восстановление — `reboot -f` по SSH или
+power cycle; затем убедиться, что остался ровно один `divinus`
+(`pidof divinus`) и что `/live/0` отдаёт кадры. Не запускать второй
+экземпляр вручную при живом init-процессе.
+
 ## 9. Известные особенности
 
 - **USB-порт закреплён в host-режиме (`dr_mode = "host"`).** С 2026-11-11
@@ -791,7 +858,7 @@ docker exec oko-mediamtx ffprobe -v error -show_streams rtsp://127.0.0.1:8554/ca
   -12` в `dmesg -l err`, `/image.jpg` отвечает 503, RTSP не отдаёт кадры.
   Высокий `loadavg` и потоки ядра в `DW` (`vlog`, `valloc`, `vpss`, `venc`, …)
   сами по себе не признак — они висят в `DW` и на здоровой плате. Лечение —
-  только перезагрузка (`bench/run.sh dut.py --host 192.168.52.97 'reboot'`,
+  только перезагрузка (`bench/run.sh dut.py --host 192.168.52.33 'reboot'`,
   ожидание 50–60 с); перед замерами геометрии проверяйте, что `/image.jpg`
   отвечает 200 и RTSP отдаёт кадры. После нескольких циклов
   `focus?enable=1/0` AF-метрика может оставаться `idle`/`no_stats` до

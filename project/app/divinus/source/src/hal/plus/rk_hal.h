@@ -95,6 +95,13 @@ int rk_region_setbitmap(int handle, hal_bitmap *bitmap);
 #define RK_RGN_NN_LUT_PERSON 0x0000FFu
 #define RK_RGN_NN_LUT_OTHER 0xFF0000u
 
+/* IVS overlay: a second 2BPP region under the YOLO boxes and the text.  It has
+ * its own lifecycle so the two features can be toggled independently. */
+#define RK_RGN_IVS_HANDLE 13
+#define RK_RGN_IVS_LAYER 5
+#define RK_RGN_IVS_LUT_MOTION 0x0000FFu
+#define RK_RGN_IVS_LUT_OD 0x00FF00u
+
 int rk_region_nn_supported(void);
 int rk_region_nn_create(int width, int height, int layer,
     unsigned int lut0, unsigned int lut1);
@@ -102,6 +109,19 @@ int rk_region_nn_begin(void **addr, unsigned int *stridePx,
     unsigned int *width, unsigned int *height);
 int rk_region_nn_commit(void);
 void rk_region_nn_destroy(void);
+
+int rk_region_ivs_supported(void);
+int rk_region_ivs_create(int width, int height, int layer,
+    unsigned int lut0, unsigned int lut1);
+int rk_region_ivs_begin(void **addr, unsigned int *stridePx,
+    unsigned int *width, unsigned int *height);
+int rk_region_ivs_commit(void);
+void rk_region_ivs_destroy(void);
+
+/* Serializes the vendor RGN calls.  A paint cycle must hold the lock across
+ * begin..paint..commit; create/destroy take it internally. */
+void rk_region_overlay_lock(void);
+void rk_region_overlay_unlock(void);
 
 int rk_sensor_find_v4l2_endpoint(void);
 

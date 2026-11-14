@@ -37,25 +37,82 @@ static float CalculateOverlap(float x0, float y0, float x1, float y1,
     return area / (square0 + square1 - area);
 }
 
-/* Simple insertion sort for descending scores (max 256 entries) */
-static void insertion_sort_desc(float *scores, yolo_detection *dets, int n) {
-    int i, j;
-    float key_score;
-    yolo_detection key_det;
+/* Normalise the raw pixel candidates and apply per-class NMS.  Shared by the
+ * YOLOv5 and YOLO11 decoders so both architectures use identical thresholds
+ * and result ordering. */
+static int yolo_finish_candidates(const yolo_detection *candidates,
+    const float *candidate_x1, const float *candidate_y1,
+    const float *candidate_x2, const float *candidate_y2, int total_candidates,
+    int model_w, int model_h, float nms_threshold, yolo_result *result)
+{
+    yolo_detection nms_dets[YOLO_MAX_CANDIDATES];
+    int order[YOLO_MAX_CANDIDATES];
+    int nms_count = 0;
+    int keep[YOLO_MAX_CANDIDATES];
+    int result_count = 0;
 
-    for (i = 1; i < n; i++) {
-        key_score = scores[i];
-        key_det = dets[i];
+    /* Sort candidate indices by descending score.  The coordinate arrays are
+     * indexed through `order`, so a box always stays paired with its score. */
+    for (int i = 0; i < total_candidates; i++)
+        order[i] = i;
+    for (int i = 1; i < total_candidates; i++) {
+        int key = order[i];
+        int j = i - 1;
 
-        j = i - 1;
-        while (j >= 0 && scores[j] < key_score) {
-            scores[j + 1] = scores[j];
-            dets[j + 1] = dets[j];
+        while (j >= 0 && candidates[order[j]].score < candidates[key].score) {
+            order[j + 1] = order[j];
             j--;
         }
-        scores[j + 1] = key_score;
-        dets[j + 1] = key_det;
+        order[j + 1] = key;
     }
+
+    for (int pos = 0; pos < total_candidates; pos++) {
+        int i = order[pos];
+        float nx1 = candidate_x1[i];
+        float ny1 = candidate_y1[i];
+        float nx2 = candidate_x2[i];
+        float ny2 = candidate_y2[i];
+
+        nms_dets[nms_count].class_id = candidates[i].class_id;
+        nms_dets[nms_count].score = candidates[i].score;
+        nms_dets[nms_count].x = clamp_0_10000(nx1 / (float)model_w * 10000.0f);
+        nms_dets[nms_count].y = clamp_0_10000(ny1 / (float)model_h * 10000.0f);
+        nms_dets[nms_count].w = clamp_0_10000((nx2 - nx1) / (float)model_w * 10000.0f);
+        nms_dets[nms_count].h = clamp_0_10000((ny2 - ny1) / (float)model_h * 10000.0f);
+        nms_count++;
+    }
+
+    /* Perform NMS: for each class, keep only detections with IoU <= threshold */
+    memset(keep, 0, sizeof(keep));
+
+    for (int i = 0; i < nms_count; i++) {
+        if (keep[i]) continue;
+
+        for (int j = i + 1; j < nms_count; j++) {
+            float iou;
+
+            if (keep[j]) continue;
+            if (nms_dets[i].class_id != nms_dets[j].class_id) continue;
+
+            iou = CalculateOverlap(
+                (float)nms_dets[i].x, (float)nms_dets[i].y,
+                (float)nms_dets[i].x + (float)nms_dets[i].w,
+                (float)nms_dets[i].y + (float)nms_dets[i].h,
+                (float)nms_dets[j].x, (float)nms_dets[j].y,
+                (float)nms_dets[j].x + (float)nms_dets[j].w,
+                (float)nms_dets[j].y + (float)nms_dets[j].h);
+
+            if (iou > nms_threshold) keep[j] = 1;
+        }
+    }
+
+    for (int i = 0; i < nms_count && result_count < YOLO_MAX_DETECTIONS; i++) {
+        if (keep[i]) continue;
+        result->det[result_count++] = nms_dets[i];
+    }
+
+    result->count = result_count;
+    return result_count;
 }
 
 /*
@@ -227,73 +284,168 @@ int yolo_postprocess(const int8_t *const outputs[3], const int dims[3][4],
         }
     }
 
-    /* Sort all candidates by descending score */
-    insertion_sort_desc(candidate_scores, candidates, total_candidates);
+    return yolo_finish_candidates(candidates, candidate_x1, candidate_y1,
+        candidate_x2, candidate_y2, total_candidates, model_w, model_h,
+        nms_threshold, result);
+}
 
-    /* Apply NMS per class using normalized coordinates */
-    /* Build per-class NMS using the overlap calculation */
-    yolo_detection nms_dets[YOLO_MAX_CANDIDATES];
-    int nms_count = 0;
+/* -------------------------------------------------------------------------
+ * YOLO11 (RKOPT export)
+ *
+ * Ported from the Apache-2.0 reference implementation in
+ * airockchip/rknn_model_zoo (examples/yolo11/cpp/postprocess.cc,
+ * Copyright (c) 2024 Rockchip Electronics Co., Ltd.).  The graph already
+ * ends with sigmoid on the class scores, so only dequantisation and the DFL
+ * expectation are left on the CPU.
+ * ---------------------------------------------------------------------- */
 
-    for (int i = 0; i < total_candidates; i++) {
-        /* Compute normalised coordinates: clamp to [0, 10000] */
-        float nx1 = candidate_x1[i];
-        float ny1 = candidate_y1[i];
-        float nx2 = candidate_x2[i];
-        float ny2 = candidate_y2[i];
+#define YOLO11_DFL_LEN 16
+#define YOLO11_OUTPUTS_PER_BRANCH 3
 
-        nms_dets[nms_count].class_id = candidates[i].class_id;
-        nms_dets[nms_count].score = candidates[i].score;
-        nms_dets[nms_count].x = clamp_0_10000(nx1 / (float)model_w * 10000.0f);
-        nms_dets[nms_count].y = clamp_0_10000(ny1 / (float)model_h * 10000.0f);
-        nms_dets[nms_count].w = clamp_0_10000((nx2 - nx1) / (float)model_w * 10000.0f);
-        nms_dets[nms_count].h = clamp_0_10000((ny2 - ny1) / (float)model_h * 10000.0f);
+/* Softmax over one DFL bin group followed by the expectation value. */
+static float yolo11_dfl_expectation(const float *bins, int len)
+{
+    float exponent[YOLO11_DFL_LEN];
+    float sum = 0.0f;
+    float weighted = 0.0f;
 
-        nms_count++;
+    if (len > YOLO11_DFL_LEN) len = YOLO11_DFL_LEN;
+    for (int i = 0; i < len; i++) {
+        exponent[i] = expf(bins[i]);
+        sum += exponent[i];
     }
+    if (sum <= 0.0f) return 0.0f;
+    for (int i = 0; i < len; i++)
+        weighted += exponent[i] / sum * (float)i;
+    return weighted;
+}
 
-    /* Perform NMS: for each class, keep only detections with IoU <= threshold */
-    int keep[YOLO_MAX_CANDIDATES];
-    memset(keep, 0, sizeof(keep));
+int yolo11_postprocess(const int8_t *const outputs[9], const int dims[9][4],
+    const int32_t zp[9], const float scale[9], int classes,
+    int model_w, int model_h, float conf_threshold, float nms_threshold,
+    yolo_result *result)
+{
+    yolo_detection candidates[YOLO_MAX_CANDIDATES];
+    float candidate_scores[YOLO_MAX_CANDIDATES];
+    float candidate_x1[YOLO_MAX_CANDIDATES];
+    float candidate_y1[YOLO_MAX_CANDIDATES];
+    float candidate_x2[YOLO_MAX_CANDIDATES];
+    float candidate_y2[YOLO_MAX_CANDIDATES];
+    int total_candidates = 0;
 
-    for (int i = 0; i < nms_count; i++) {
-        if (keep[i]) continue;
+    if (result) {
+        result->count = 0;
+        memset(result, 0, sizeof(*result));
+    }
+    if (!outputs || !dims || !zp || !scale || !result)
+        return 0;
+    if (classes < 1 || classes > 255 || model_w <= 0 || model_h <= 0)
+        return 0;
 
-        /* Compute IoU with all other detections of same class */
-        for (int j = i + 1; j < nms_count; j++) {
-            if (keep[j]) continue;
-            if (nms_dets[i].class_id != nms_dets[j].class_id) continue;
+    for (int branch = 0; branch < 3; branch++) {
+        int base = branch * YOLO11_OUTPUTS_PER_BRANCH;
+        const int8_t *box = outputs[base];
+        const int8_t *scores = outputs[base + 1];
+        const int8_t *scoreSum = outputs[base + 2];
+        int boxChannels = dims[base][3];
+        int gridW, gridH, dfl;
+        int strideW, strideH;
 
-            /* Compute IoU */
-            float iou = CalculateOverlap(
-                (float)nms_dets[i].x, (float)nms_dets[i].y,
-                (float)nms_dets[i].x + (float)nms_dets[i].w,
-                (float)nms_dets[i].y + (float)nms_dets[i].h,
-                (float)nms_dets[j].x, (float)nms_dets[j].y,
-                (float)nms_dets[j].x + (float)nms_dets[j].w,
-                (float)nms_dets[j].y + (float)nms_dets[j].h
-            );
+        if (!box || !scores || !scoreSum) continue;
+        if (boxChannels % 4 || boxChannels < 4)
+            continue;
+        dfl = boxChannels / 4;
+        if (dfl < 1 || dfl > YOLO11_DFL_LEN)
+            continue;
+        /* All three tensors of a scale share one grid; the channel counts are
+         * verified by the caller before the detector is activated. */
+        if (dims[base + 1][1] != dims[base][1] ||
+            dims[base + 1][2] != dims[base][2] ||
+            dims[base + 2][1] != dims[base][1] ||
+            dims[base + 2][2] != dims[base][2] ||
+            dims[base + 1][3] != classes || dims[base + 2][3] != 1)
+            continue;
+        gridW = dims[base][1];
+        gridH = dims[base][2];
+        if (gridW <= 0 || gridH <= 0) continue;
+        strideW = model_w / gridW;
+        strideH = model_h / gridH;
+        if (strideW <= 0 || strideH <= 0) continue;
 
-            if (iou > nms_threshold) {
-                keep[j] = 1;  /* Mark for removal */
+        for (int i = 0; i < gridH; i++) {
+            for (int j = 0; j < gridW; j++) {
+                int cell = i * gridW + j;
+                float sum = deqnt_affine_to_f32(scoreSum[cell],
+                    scale[base + 2], zp[base + 2]);
+                float best = 0.0f;
+                int bestClass = 0;
+
+                if (sum < conf_threshold) continue;
+
+                for (int c = 0; c < classes; c++) {
+                    float score = deqnt_affine_to_f32(
+                        scores[cell * classes + c], scale[base + 1],
+                        zp[base + 1]);
+                    if (score > best && score >= conf_threshold) {
+                        best = score;
+                        bestClass = c;
+                    }
+                }
+                if (best <= 0.0f) continue;
+
+                {
+                    float edges[4];
+                    float x1, y1, x2, y2;
+
+                    for (int e = 0; e < 4; e++) {
+                        float bins[YOLO11_DFL_LEN];
+
+                        for (int k = 0; k < dfl; k++)
+                            bins[k] = deqnt_affine_to_f32(
+                                box[cell * boxChannels + e * dfl + k],
+                                scale[base], zp[base]);
+                        edges[e] = yolo11_dfl_expectation(bins, dfl);
+                    }
+
+                    x1 = (-edges[0] + (float)j + 0.5f) * (float)strideW;
+                    y1 = (-edges[1] + (float)i + 0.5f) * (float)strideH;
+                    x2 = (edges[2] + (float)j + 0.5f) * (float)strideW;
+                    y2 = (edges[3] + (float)i + 0.5f) * (float)strideH;
+
+                    if (total_candidates >= YOLO_MAX_CANDIDATES) {
+                        int minIndex = 0;
+                        float minScore = candidate_scores[0];
+
+                        for (int k = 1; k < total_candidates; k++) {
+                            if (candidate_scores[k] < minScore) {
+                                minScore = candidate_scores[k];
+                                minIndex = k;
+                            }
+                        }
+                        if (best <= minScore) continue;
+                        total_candidates--;
+                        candidates[minIndex] = candidates[total_candidates];
+                        candidate_scores[minIndex] = candidate_scores[total_candidates];
+                        candidate_x1[minIndex] = candidate_x1[total_candidates];
+                        candidate_y1[minIndex] = candidate_y1[total_candidates];
+                        candidate_x2[minIndex] = candidate_x2[total_candidates];
+                        candidate_y2[minIndex] = candidate_y2[total_candidates];
+                    }
+
+                    candidates[total_candidates].class_id = bestClass;
+                    candidates[total_candidates].score = best;
+                    candidate_scores[total_candidates] = best;
+                    candidate_x1[total_candidates] = x1;
+                    candidate_y1[total_candidates] = y1;
+                    candidate_x2[total_candidates] = x2;
+                    candidate_y2[total_candidates] = y2;
+                    total_candidates++;
+                }
             }
         }
     }
 
-    /* Collect surviving detections (already sorted by score) */
-    int result_count = 0;
-    for (int i = 0; i < nms_count && result_count < YOLO_MAX_DETECTIONS; i++) {
-        if (!keep[i]) {
-            result->det[result_count].class_id = nms_dets[i].class_id;
-            result->det[result_count].score = nms_dets[i].score;
-            result->det[result_count].x = nms_dets[i].x;
-            result->det[result_count].y = nms_dets[i].y;
-            result->det[result_count].w = nms_dets[i].w;
-            result->det[result_count].h = nms_dets[i].h;
-            result_count++;
-        }
-    }
-
-    result->count = result_count;
-    return result_count;
+    return yolo_finish_candidates(candidates, candidate_x1, candidate_y1,
+        candidate_x2, candidate_y2, total_candidates, model_w, model_h,
+        nms_threshold, result);
 }

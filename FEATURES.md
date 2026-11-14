@@ -28,7 +28,7 @@
 | Активный DTS | `rv1106g-luckfox-pico-pro-max-sc230ai.dts` |
 | USB | host-only (`dr_mode = "host"`): хаб и устройства за ним; встроенные HID, USB-сеть (RNDIS/CDC/ASIX/Realtek), Bluetooth (`btusb` + bluez `bluetoothctl`); gadget/adb недоступны (KI-057) |
 | Медиастек | `divinus` (OpenIPC), H.265/H.264, JPEG, RTSP, WebUI |
-| NPU-стек | драйвер `rknpu` 0.9.8 (`20240828`, non-IOMMU), мини-рантайм `librknnmrt.so` 1.6.0; опционально второй `librknnmrt2.so` 2.3.2 (`yolo.runtime: 2`), RGA-конверсия NV12→RGB888 по fd (`yolo.convert: rga`) и рамки детекции на видеопотоке (`yolo.boxes`, 2BPP RGN, два цвета) |
+| NPU-стек | драйвер `rknpu` 0.9.8 (`20240828`, non-IOMMU), мини-рантайм `librknnmrt.so` 1.6.0; второй `librknnmrt2.so` **2.5.0** (`yolo.runtime: 2`) для YOLOv5/YOLO11 RKOPT, RGA-конверсия NV12→RGB888 по fd (`yolo.convert: rga`), рамки детекции на видеопотоке (`yolo.boxes`, 2BPP RGN 12, два цвета), отдельные рамки движения/OD (`ivs.boxes`, RGN 13, слой 5) и ролики событий pre/post (`record_clip`, fMP4 → `services/events`) |
 | Сборка | нативная на Debian 13 (`tools/native/setup_host.sh`, `./build.sh firmware`), результат — `output/image/update.img` |
 
 ### Как проверить
@@ -168,9 +168,9 @@ kernel 5.10.160. Partitions: `env` 256K, `idblock` 256K, `uboot` 512K, `boot` 6M
 `rv1106g-luckfox-pico-pro-max-sc230ai.dts`. Media stack: `divinus` (OpenIPC),
 H.265/H.264, JPEG, RTSP, WebUI. NPU stack: `rknpu` driver 0.9.8 (`20240828`,
 non-IOMMU) with the `librknnmrt.so` 1.6.0 mini-runtime and an optional second
-`librknnmrt2.so` 2.3.2 (`yolo.runtime: 2`), optional RGA NV12→RGB888
+`librknnmrt2.so` **2.5.0** (`yolo.runtime: 2`, YOLOv5 and YOLO11 RKOPT), optional RGA NV12→RGB888
 over dma-buf fds (`yolo.convert: rga`) and detection boxes on the stream
-(`yolo.boxes`, 2BPP RGN, two colours). Build: native on Debian 13
+(`yolo.boxes`, 2BPP RGN 12, two colours), separate motion/OD boxes (`ivs.boxes`, RGN 13, layer 5). Build: native on Debian 13
 (`./build.sh firmware`), output `output/image/update.img`.
 
 Software update from the WebUI stages a `.okp` package (manifest + `boot`,

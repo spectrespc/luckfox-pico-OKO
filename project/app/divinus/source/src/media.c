@@ -1,5 +1,6 @@
 #include "media.h"
 #include "gating.h"
+#include "record_clip.h"
 
 #include <time.h>
 
@@ -216,6 +217,11 @@ int save_video_stream(char index, hal_vidstream *stream) {
             if (record_wants_source(false))
                 record_ingest_stream(stream, isH265);
 
+            /* Event clips follow the encoded main stream, independently of
+             * the recorder: the clip ring copies the AU and returns at once. */
+            if (record_clip_wanted())
+                record_clip_ingest_stream(stream, isH265);
+
             if (app_config.stream_enable) {
                 /* One NAL unit per RTP packet.  A pack holds Annex-B data that
                  * may contain several NAL units (AUD/SPS/PPS/slices); sending
@@ -387,6 +393,10 @@ void media_stop(void) {
         udpOn = 0;
     }
     rtmp_close();
+}
+
+int media_stream_active(void) {
+    return (udpOn || rtmp_active()) ? 1 : 0;
 }
 
 void request_idr(int index) {

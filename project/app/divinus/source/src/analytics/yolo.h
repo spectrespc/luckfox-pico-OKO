@@ -3,11 +3,16 @@
 #include <stddef.h>
 
 /* Metadata read back from a .rknn model. */
+/* Detector architectures recognised by the output count. */
+#define YOLO_ARCH_V5 1      /* three branches, 3 * (5 + classes) channels */
+#define YOLO_ARCH_11 2      /* RKOPT: 9 outputs (box, classes, score sum) */
+
 typedef struct {
     int width;
     int height;
     int classes;
     int runtime;            /* 1 = RKNN 1.x, 2 = RKNN 2.x */
+    int arch;               /* YOLO_ARCH_V5 or YOLO_ARCH_11 */
     char sdk[64];
 } yolo_model_info;
 
@@ -21,6 +26,13 @@ int yolo_running(void);
  * or destroys the 2BPP overlay on its next tick; the value is not persisted
  * here (app_config.yolo_boxes is owned by the caller). */
 void yolo_boxes_request(int enable);
+
+/* Starts an event package without a detection (bench hook): the same JPEG
+ * bundle and clip as a real YOLO event. */
+int yolo_event_test(void);
+
+/* Architecture of the running detector, or 0 when no model is active. */
+int yolo_active_arch(void);
 
 /* Load a model for validation without touching the active context.  The
  * yolo.runtime value selects the library; the *runtime variants let the

@@ -9,7 +9,7 @@ Maskrom procedure from TESTBENCH.md §7B for the release state.
 
     bench/run.sh deploy_divinus.py
 
-Environment: OKO_DUT_HOST (default 192.168.52.97), OKO_DUT_PASSWORD
+Environment: OKO_DUT_HOST (default 192.168.52.33), OKO_DUT_PASSWORD
 (default `luckfox`, the vendor root password).
 """
 import os
@@ -17,7 +17,7 @@ import sys
 
 import paramiko
 
-HOST = os.environ.get("OKO_DUT_HOST", "192.168.52.97")
+HOST = os.environ.get("OKO_DUT_HOST", "192.168.52.33")
 PASSWORD = os.environ.get("OKO_DUT_PASSWORD", "luckfox")
 LOCAL = "project/app/divinus/source/divinus"
 REMOTE_NEW = "/userdata/divinus.new"

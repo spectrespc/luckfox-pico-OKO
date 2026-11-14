@@ -385,6 +385,11 @@ int rtmp_init(const char *url) {
     return ret;
 }
 
+int rtmp_active(void)
+{
+    return is_connected ? 1 : 0;
+}
+
 /**
  * Closes the RTMP connection and cleans up resources
  */

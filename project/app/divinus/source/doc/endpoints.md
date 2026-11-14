@@ -592,6 +592,27 @@ one graceful restart to create the channel in the RGN-safe
 }
 ```
 
+#### `/api/stream`
+
+**OKO.** UDP/RTP (and RTMP) push destinations of the `[stream]` section.
+
+| Method | Parameters | Description |
+|--------|------------|-------------|
+| POST | `enable` | `true`/`false`; applied live through `media_start()`/`media_stop()` |
+| POST | `udp_srcport` | `0..65535`; `0` uses the configured source port or the built-in default |
+| POST | `dest0..dest3` | `udp://host:port` or `rtmp://...`; an empty value clears the slot |
+
+Empty slots are compacted, so the destinations always form a contiguous list.
+A change while the stream is active recreates the UDP clients. Invalid schemes
+and a multicast first destination with a second address are rejected with
+HTTP 400 without touching the configuration (KI-052: put the unicast address
+first). Enabling with no destination returns `"note":"dest not set"`.
+
+```json
+{"enable":true,"udp_srcport":5600,"dest0":"udp://192.168.52.200:5600",
+ "dest1":"","dest2":"","dest3":"","running":true,"note":"stream started"}
+```
+
 #### `/api/aiisp`
 
 | Method | Parameters | Description |
@@ -613,8 +634,9 @@ throttles the encoder to `fps_enabled`/`fps_disabled`.
 | GET | `md_interval`, `od_interval`, `od_percent` | Detection tuning |
 | GET | `act_http_post`, `act_record`, `act_osd` | Motion actions |
 | GET | `record_seconds`, `record_source` | Clip settings |
+| GET/POST | `boxes` | `0`/`1`: draw blue motion rectangles on the main stream (OKO); an object hit without a vendor rectangle shows a centre marker. Applied by the IVS thread, no restart |
 
-The response also contains `events`, the last 16 detections:
+The response also contains `boxes` and `events`, the last 16 detections:
 ```json
 {"events":[{"time":"2026-11-04T09:15:00Z","frame":1234,"rects":1,"bbox":[100,80,200,300]}]}
 ```
@@ -626,6 +648,7 @@ NPU object detection settings (the `[yolo]` section of `divinus.yaml`).
 | Method | Parameters | Description |
 |--------|------------|-------------|
 | GET | – | Current settings and `running` |
+| GET | `detections=1`, `since=<seq>` | Read-only inference history; see below |
 | POST | `enable` | Start/stop the detector immediately |
 | POST | `source` | `vpss3` (default) or `vi0`; `vi1` and unknown values are rejected with HTTP 400 |
 | POST | `runtime` | `1` = `librknnmrt.so` 1.6.0 (default), `2` = `librknnmrt2.so` 2.x. Applied to the next activation, no restart |
@@ -640,15 +663,21 @@ carrying `"note":"restart required..."` means that only the listed fields need a
 restart; `enable` is applied live. Example:
 
 ```json
-{"enable":true,"source":"vpss3","runtime":2,"convert":"rga","boxes":true,
- "model_dir":"/userdata/models","model":"/userdata/models/yolov5n-r2.rknn",
+{"enable":true,"source":"vpss3","runtime":2,"arch":"yolo11","convert":"rga",
+ "boxes":true,"model_dir":"/userdata/models",
+ "model":"/userdata/models/yolo11n-640x384-r2.rknn",
  "input_width":640,"input_height":384,"fps":5,"conf_threshold":0.35,
  "nms_threshold":0.45,"classes":80,"pre_seconds":3,"post_seconds":2,
  "max_frames":20,"running":true}
 ```
 
-`model_dir` is the `yolo.model_dir` value from `divinus.yaml`; the model path
-is changed only by `/api/models/activate`. Two runtimes can be installed at
+`arch` is the architecture of the **running** model: `yolov5` (three
+`3*(5+classes)` outputs), `yolo11` (RKOPT: nine outputs, box/class/score-sum
+per scale) or `none` when no model is loaded. The architecture is detected
+from the output count at activation; YOLO11 models require `runtime=2` and an
+activation at `runtime=1` is refused with a readable reason. `model_dir` is
+the `yolo.model_dir` value from `divinus.yaml`; the model path is changed only
+by `/api/models/activate`. Two runtimes can be installed at
 once: `runtime=1` uses `librknnmrt.so` (1.6.0, also used by AIISP/RockIVA),
 `runtime=2` uses `librknnmrt2.so` (2.x). A runtime change does not restart the
 process or the current context; it applies to the next activation.
@@ -670,6 +699,99 @@ still runs and the boxes are skipped with one warning; enabling YOLO with
 `boxes=1` is then refused by `gating`. The region is recreated when the main
 stream size or 90/270 rotation changes, or when the overlay is no longer
 attached to the recreated VENC channel.
+
+`GET /api/yolo?detections=1&since=<seq>` is a read-only measurement endpoint:
+it returns the last 64 inferences (up to 8 strongest boxes each) and never
+changes the configuration, even when other keys are present. `since` is the
+`seq` of the last record already received; omit it or use `0` to read the whole
+buffered history. Coordinates keep the detector normalisation `0..10000` and
+do not depend on the source frame size; `ts` is CLOCK_MONOTONIC milliseconds.
+
+```json
+{"enable":true,"source":"vpss3","aiisp":"off","conf_threshold":0.35,
+ "since":0,"last":123,"detections":[
+  {"seq":123,"ts":987654,"source":"vpss3","aiisp":"off","count":1,
+   "dets":[{"cls":0,"score":0.620,"x":1000,"y":2000,"w":800,"h":1500}]}]}
+```
+
+`source` and `aiisp` are repeated per record: they show what the inference
+actually ran with, not the current settings. `aiisp` is the configured mode at
+inference time, so with `source=vi0` it does not prove that the AIISP
+post-processing touched the frame. `last` is the cursor to send back in the
+next request; when the response is truncated to stay under 8 KiB, `last` stops
+at the final record that fitted, so a client keeps polling without a gap.
+`since` without a value returns HTTP 200 with an empty `detections` list, as
+does a request made while `yolo.enable` is false. The history is reset when
+the detector starts.
+
+#### `/api/clip`
+
+Event clips: the encoded main-stream H.265 is copied into a RAM ring (last
+`pre_seconds`), trimmed to the newest keyframe before a YOLO event and written
+as a fragmented MP4 for `pre+post` seconds, then PUT to the receiver. The
+feature is configured by the `[event_clip]` section:
+
+```yaml
+event_clip:
+  enable: true
+  pre_seconds: 5      # 0..15, ring window; 5 s at 4 Mbit/s ≈ 2.5 MiB
+  post_seconds: 10    # 1..30
+  max_bytes: 16777216 # per-clip /tmp quota
+```
+
+| Method | Parameters | Description |
+|--------|------------|-------------|
+| GET | – | Ring/outbox state, counters and the last error |
+| POST | `enable` | `1`/`0`: start (`record_clip_start()`) or stop the collector |
+| POST | `pre_seconds` | `0..15`; applied live, rebuilding the ring (current clips are dropped) |
+| POST | `post_seconds` | `1..30`; same live rebuild |
+| POST | `max_bytes` | `0` (unlimited) or a per-clip byte count |
+| POST | `test=1` | Synthetic event: the shared `X-Event-Id` is used by both the JPEG package and the clip; needs a running model |
+| POST | – | HTTP 400 (clips never start without an explicit action) |
+
+```json
+{"enable":true,"running":true,"available":true,"reason":"","codec":"H.265",
+ "ring_kib":9775,"ring_bytes":4106387,"ring_entries":251,"ring_dropped":0,
+ "hold":0,"recording":0,"delivering":1,"sent":4,"lost":0,"retries_failed":1,
+ "skipped":0,"outbox_count":0,"outbox_bytes":0,"pre_seconds":5,"post_seconds":10,
+ "max_bytes":16777216,"last_error":""}
+```
+
+`available` is false with a human-readable `reason` when `[mp4] enable` is off,
+the main encoder channel is not running, or the `pre+post` window does not fit
+the 12 MiB ring at the configured bitrate (lower `pre_seconds`/`post_seconds`
+or `mp4.bitrate`). `skipped` counts events that found all four clip slots busy;
+`outbox_count` covers every `.mp4` in the outbox, not only the first batch. Delivery retries after 30 s,
+2 min and 10 min; after the third failure the clip is spooled to
+`/mnt/sdcard/oko-outbox/` (FIFO, 256 MiB, oldest evicted) and drained when the
+receiver returns. Without a mounted microSD the event is lost and `lost` is
+incremented. The ring is fed from the encoder thread with `trylock`, so the
+tap never blocks the stream; clips share `event_clip.pre_seconds/post_seconds`
+independently of the JPEG event bounds (`yolo.pre_seconds/post_seconds`).
+`/api/status` reports the feature as `features.clip`.
+
+#### `/api/http_post`
+
+**OKO.** `[http_post]` snapshot sender and receiver settings. The thread reads
+the configuration on every send, so only an `enable` transition starts or stops
+it; no restart is needed. The password is write-only: an empty `password`
+keeps the stored value and `GET` returns a boolean `password` flag.
+
+| Method | Parameters | Description |
+|--------|------------|-------------|
+| GET | – | Current settings plus `password` (set flag) and `note` |
+| POST | `enable` | `1`/`0`: periodic snapshots; event JPEG bundles and clips are sent whenever a host is set and IVS/YOLO/`event_clip` fires |
+| POST | `host` | `host` or `host:port`; empty or `none` disables sending |
+| POST | `url` | Absolute path starting with `/`, may contain strftime tokens |
+| POST | `login`, `password` | Optional Basic auth |
+| POST | `width`, `height`, `interval`, `qfactor` | Snapshot size, period and JPEG quality |
+| POST | `receiver_url` | Web receiver link for the UI; empty builds `http://<host>:8090/` |
+
+```json
+{"enable":true,"host":"192.168.52.200:8090","url":"/ingest/frame",
+ "login":"","width":640,"height":360,"interval":60,"qfactor":90,
+ "receiver_url":"","password":false,"note":"snapshot sender started"}
+```
 
 #### `/api/focus`
 
@@ -849,8 +971,12 @@ STM8 bootloader is active. An absent controller is not an API error.
 #### `/api/models`
 
 Precompiled `.rknn` models in `/userdata/models`. Uploads are limited to
-3 MiB because the HTTP request is buffered in RAM; a larger body would close
-the socket without a response.
+4.3 MiB (`4386 KiB`, the measured YOLO11n INT8 size +15 %); a larger body is
+refused with a readable message. Each record carries `runtime` and `arch`
+(`0` unknown, `1` YOLOv5, `2` YOLO11). A model above the quota (for example
+the 7.26 MiB RK3576 `Hanzo yolo11n.rknn`) is rejected by the quota before
+`rknn_init`; a model that loads but does not match the target is reported by
+the activation error.
 
 | Method | Path | Parameters | Description |
 |--------|------|------------|-------------|

@@ -26,6 +26,301 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Добавлено
 
+- **Web-конвертер RKNN (`services/converter/`).** Отдельный профиль
+  `oko-converter` (порт 8091, host-сеть) с браузерным UI и FastAPI: принимает
+  ONNX с статическим входом 640×384 (NCHW `[1,3,384,640]` или NHWC
+  `[1,384,640,3]`) и 20–200 калибровочных JPEG, собирает `.rknn` для `rv1106`
+  официальным `rknn-toolkit2` **2.5.0** (INT8 `asymmetric_quantized-8`).
+  Вендорский toolkit для rv1106 отклоняет `do_quantization=False` и
+  квантование без dataset, поэтому FP16-режим не предлагается: `dtype=fp16`
+  возвращает `422` с объяснением. Параметры `rknn.config` (`mean 0`,
+  `std 255`) совпадают с `tools/rknn-toolkit2/convert.py`. Конверсия идёт в
+  дочернем процессе одним слотом (таймаут 15 мин, отмена SIGKILL, лимит
+  очереди 10), состояние задач — `output/srv/converter/jobs/<id>/` (`meta.json`,
+  `model.onnx`, `calib/`, `model.rknn`, `log.txt`), после рестарта активные
+  задачи помечаются `interrupted`; retention — `CONVERTER_MAX_GB` (2 ГБ),
+  загрузка ONNX — `CONVERTER_MAX_UPLOAD_MIB` (256 МиБ), опциональный токен
+  `OKO_CONVERTER_TOKEN` (`X-OKO-Token`). Динамический вход, размер не 640×384,
+  INT8 без 20 JPEG и превышение лимита отклоняются с читаемым текстом (`422`/
+  `413`). Модели 2.5.0 требуют рантайм 2.5.0 на борту (текущий — 1.6.0/2.3.2);
+  проверка на rv1106 в этом изменении не выполнялась, операции с DUT не
+  проводились; на хосте проверены fixture (19 098 Б) и реальный
+  `yolo11n-640x384.onnx` (3 905 265 Б), включая целостность скачивания.
+  Добавлен `tools_fixture/make_fixture.py` для тестового ONNX и синтетических
+  кадров.
+- **RKNN web converter (`services/converter/`).** A separate `oko-converter`
+  profile (port 8091, host network) with a browser UI and FastAPI: accepts an
+  ONNX model with a static 640×384 input (NCHW `[1,3,384,640]` or NHWC
+  `[1,384,640,3]`) plus 20–200 JPEG calibration frames and produces an `.rknn`
+  for `rv1106` with the official `rknn-toolkit2` **2.5.0** (INT8
+  `asymmetric_quantized-8`). The vendor toolkit rejects
+  `do_quantization=False` and dataset-less quantization for rv1106, so no FP16
+  mode is offered: `dtype=fp16` returns `422` with an explanation. The
+  `rknn.config` parameters (`mean 0`, `std 255`) match
+  `tools/rknn-toolkit2/convert.py`. Conversion runs in one child-process slot
+  (15 min timeout, SIGKILL cancel, queue limit 10); job state lives in
+  `output/srv/converter/jobs/<id>/` (`meta.json`, `model.onnx`, `calib/`,
+  `model.rknn`, `log.txt`), active jobs become `interrupted` after a restart;
+  retention is `CONVERTER_MAX_GB` (2 GB), the ONNX upload cap is
+  `CONVERTER_MAX_UPLOAD_MIB` (256 MiB), and an optional `OKO_CONVERTER_TOKEN`
+  guards the API with `X-OKO-Token`. Dynamic inputs, non-640×384 sizes, INT8
+  without 20 JPEGs and oversized uploads are rejected with a readable message
+  (`422`/`413`). Models built with 2.5.0 need a 2.5.0 runtime on the board
+  (current board has 1.6.0/2.3.2); no rv1106 verification or DUT operations
+  were performed, while the host run covered the fixture (19 098 B) and a real
+  `yolo11n-640x384.onnx` (3 905 265 B) including download integrity.
+  `tools_fixture/make_fixture.py` generates a test ONNX and synthetic frames.
+- **WebUI для UDP/RTP-трансляции, рамки IVS и карточка отправки событий.**
+  Новый `GET/POST /api/stream` (`enable`, `udp_srcport`, скалярные
+  `dest0..dest3`) с живым применением: включение/выключение — `media_start()`/
+  `media_stop()`, смена адреса или порта при активном потоке — пересоздание
+  клиентов; пустой слот сжимается, проверяются схемы `udp://`/`rtmp://`, а
+  multicast первым при наличии второго адреса отклоняется с 400 (KI-052).
+  В разделе Streams появилась карточка «UDP/RTP-трансляция». Аналитика получила
+  ключ `ivs.boxes` и отдельный 2BPP-регион (handle 13, слой 5): синие рамки
+  движения рисуются поверх главного потока без перезапуска IVS, для OD без
+  прямоугольников показывается зелёный маркер; регион YOLO не затронут.
+  Ключ `ivs.boxes` принудительно отключён: на стенде включение 2BPP-региона
+  вешает MPP/VENC и всю плату, в том числе без YOLO (`dup mClientFd failed`
+  → SIGSEGV, KI-063); API возвращает 400, гейт не стартует IVS с
+  `boxes: true`, поток IVS всегда выключает рамки. IVS-детекция без рамок и
+  `act_osd` остаются доступны.
+  В разделе Events — карточка «Отправка событий (HTTP)»: `[http_post]`
+  (`enable`, `host`, `url`, `login`, `password`, `width`, `height`, `interval`,
+  `qfactor`, новый `receiver_url`), живой `GET/POST /api/http_post`, ссылка на
+  веб-приёмник (из `receiver_url` или `host:8090`), раскрывающееся описание
+  исходящего API кадров/роликов и эндпоинтов `services/events`; карточка
+  «Ролики событий» управляет `enable`/`pre_seconds`/`post_seconds`/`max_bytes`
+  через расширенный `POST /api/clip` и показывает счётчики доставки.
+- **WebUI for UDP/RTP streaming, IVS boxes and the event-upload card.**
+  New `GET/POST /api/stream` (`enable`, `udp_srcport`, scalar
+  `dest0..dest3`) applied live: enabling/disabling calls `media_start()`/
+  `media_stop()`, an address or port change with an active stream recreates the
+  clients; empty slots are compacted, `udp://`/`rtmp://` schemes are validated,
+  and a multicast first destination with a second address is rejected with 400
+  (KI-052). The Streams section has a new "UDP/RTP streaming" card. Analytics
+  gained `ivs.boxes` and a separate 2BPP region (handle 13, layer 5): blue
+  motion rectangles are drawn over the main stream without restarting IVS, and
+  OD without rectangles shows a green marker; the YOLO region is untouched.
+  The `ivs.boxes` key is hard-disabled: on the bench attaching the 2BPP region
+  hangs the MPP/VENC path and the whole board, including without YOLO (`dup
+  mClientFd failed` → SIGSEGV, KI-063); the API returns 400, the gate refuses
+  to start IVS with `boxes: true`, and the IVS thread always disables the
+  overlay. IVS detection without boxes and `act_osd` remain available. The
+  Events section has an "Event upload (HTTP)" card for `[http_post]` (`enable`,
+  `host`, `url`, `login`, `password`, `width`, `height`, `interval`, `qfactor`
+  and the new `receiver_url`), a live `GET/POST /api/http_post`, a receiver link
+  (from `receiver_url` or `host:8090`), a collapsible description of the
+  outgoing frame/clip API and the `services/events` endpoints; the "Event clips"
+  card drives `enable`/`pre_seconds`/`post_seconds`/`max_bytes` through the
+  extended `POST /api/clip` and shows delivery counters.
+
+### Исправлено
+
+- **Живое выключение `http_post` больше не вешает сервер.** Поток отправки
+  крутился на `while (keepRunning)`, а `http_post_stop()` делал `join`, поэтому
+  `enable=false` из WebUI блокировал обработчик навсегда; добавлен флаг
+  `httpPostRun`, старт стал идемпотентным, остановка будит цикл не позднее
+  одной секунды. Поведение при загрузке и завершении не изменилось.
+- **Live `http_post` disable no longer hangs the web server.** The sender
+  thread looped on `while (keepRunning)` while `http_post_stop()` joined it, so
+  `enable=false` from the WebUI blocked the request handler forever; a
+  `httpPostRun` flag was added, start is idempotent, and stop wakes the loop
+  within one second. Boot and shutdown behaviour is unchanged.
+- **Стек HTTP-сервера: новые обработчики переполняли 64 КиБ.** Кадр
+  `respond_request()` вырос до ~31 КиБ (локальные буферы `/api/stream` и
+  `/api/http_post`), и при `web_server_thread_stack_size: 65536` из yaml
+  `send_file()`/`send_stream_file()` уходили в SIGSEGV: статика
+  `//etc/passwd` и `/api/cmd?export` роняли процесс. Сервер теперь поднимает
+  стек до 128 КиБ и пишет предупреждение о слишком малом значении.
+- **HTTP server stack: the new handlers overflowed 64 KiB.** The
+  `respond_request()` frame grew to ~31 KiB (local buffers of `/api/stream`
+  and `/api/http_post`), and with `web_server_thread_stack_size: 65536` from
+  the yaml `send_file()`/`send_stream_file()` hit SIGSEGV: the static
+  `//etc/passwd` path and `/api/cmd?export` killed the process. The server now
+  raises the stack to 128 KiB and warns about a too-small value.
+
+### Изменено
+
+- **Адрес DUT в стендовых скриптах и TESTBENCH.** DHCP-адрес камеры в режиме
+  NAND — `192.168.52.33` вместо `192.168.52.97`: обновлены значения по
+  умолчанию `OKO_DUT_HOST`/`OKO_NAND_HOST` в `bench/`, примеры команд в
+  `bench/README.md` и `TESTBENCH.md §4–§5`.
+- **DUT address in the bench scripts and TESTBENCH.** The camera's DHCP address
+  in NAND mode is `192.168.52.33` instead of `192.168.52.97`: the
+  `OKO_DUT_HOST`/`OKO_NAND_HOST` defaults in `bench/`, the command examples in
+  `bench/README.md` and `TESTBENCH.md §4-§5` were updated.
+- **Документация: лог UART RV1106 через ESP32.** В `AGENTS.md §6` и
+  `TESTBENCH.md §8` добавлены команды входа на `192.168.52.17` и скачивания
+  `uar0.log` через `/sd/download`; лог сохраняется в `output/bench/`, cookie —
+  временный `/tmp/c`.
+- **Docs: RV1106 UART log through the ESP32 bridge.** `AGENTS.md §6` and
+  `TESTBENCH.md §8` now document logging in to `192.168.52.17` and downloading
+  `uar0.log` via `/sd/download`; the log is kept in `output/bench/`, the cookie
+  is the session-scoped `/tmp/c`.
+
+## [0.3.0] — 2026-11-14
+
+### Добавлено
+
+- **YOLO11, рантайм RKNN 2.5.0 и ролики событий.** Второй мини-рантайм
+  `librknnmrt2.so` обновлён до **2.5.0** (`Dockerfile.runtime`: тег, коммит
+  `2c723177…`, проверка SHA-256 оригинала `632d0e50…`, patched `6f1d83dd…`);
+  образ `oko-rknn-toolkit2:2.5.0` собран на колесе 2.5.0 с пинами
+  `protobuf 4.25.4`, `onnx 1.17.0`, `onnxruntime 1.17.3`, `numpy 1.24.4`,
+  `torch 1.10.1+cpu`; заголовок `hal/plus/rknn_api.h` синхронизирован с
+  2.5.0 (`user_key`, `-14..-16`, `rknn_create_mem2`). Новые
+  `Dockerfile.export11` и `export_yolo11.sh` экспортируют YOLO11n в RKOPT
+  (`format: rknn`, 9 выходов) на 640×384; модель INT8 3 905 345 Б,
+  архитектура определяется по числу выходов (`3` → yolov5, `9` → yolo11),
+  пишется в `models.json` (`arch`) и `/api/yolo` (`arch`), YOLO11 требует
+  `yolo.runtime=2`. Добавлен DFL-постпроцесс (порт Apache-2.0 из
+  `rknn_model_zoo`, score-sum фильтр, общий NMS) и хост-тест
+  `tests/yolo11_postprocess_test.c` с golden-рамками bus.jpg (3 person + bus,
+  ±2 px). Квота моделей поднята с 3 МиБ до 4386 КиБ (измеренный размер
+  +15 %), HTTP-буфер — до 10 МиБ, чтобы превышение квоты давало читаемую
+  ошибку. Добавлены ролики событий: RAM-кольцо AU main-потока (обрезка по
+  ключевому кадру), независимый fMP4-муксер `fmt/mp4_clip.c`, `record_clip`
+  с pre/post (`[event_clip]`), отправкой `PUT` на `http_post.url` с
+  `frame`→`clip` и заголовками `X-Event-Id/X-Cause/X-Model/X-Duration-Ms/X-Ts`,
+  повторами 30 с/2 мин/10 мин, outbox на microSD (256 МиБ, FIFO) и
+  `GET/POST /api/clip` (`test=1` — синтетическое событие с общим id для
+  JPEG-пачки и ролика). Сервис `services/events` (`oko-events`, порт 8090,
+  FastAPI + ffmpeg) принимает кадры и клип, хранит
+  `output/srv/events/<дата>/<event_id>/`, делает H.264-копию и JPEG-превью,
+  отдаёт `/api/events`, `/media/...`, HTML-список, retention
+  `EVENTS_MAX_GB`. `bench/event_check.py` проверяет сквозной сценарий,
+  длительность `pre+post ±2 с`, кодеки hevc→h264 и повторную доставку.
+  Проверено на DUT `192.168.52.33`: YOLO11n 640×384, 5 fps — NPU 28 %,
+  CPU `divinus` ~12 %; событие 14,4–14,8 с, 16–20 JPEG, `clip.mp4` hevc
+  1920×1080, `clip-h264.mp4` — h264; `api_check.py` 113 проверок без ошибок,
+  `event_check.py` зелёный (включая `--retry`), `osd_check.py` и `ui_check.py`
+  без регрессии; `MemFree` 79 МиБ при кольце 9,8 МиБ и активном YOLO11.
+  Полный `./build.sh all` прошёл, собран `output/image/update.img`
+  (71 936 586 Б); в образе `librknnmrt2.so` 2.5.0 после `strip --strip-debug`
+  (310 492 Б, sha `4b48d519…`), `divinus` с `[event_clip]` и YAML по умолчанию.
+  Soak `bench/clip_soak.py`: 10- и 5-минутные прогоны — 0 отказов камеры,
+  0 потерянных событий, outbox 0, `MemFree` стабилен (73–84 МиБ), кольцо
+  сбрасывало 7–25 AU при переполнении во время записи. Кольцо роликов
+  переведено на отдельный `malloc` на AU (без байтового wrap, который мог
+  затереть AU активного клипа) и 4 слота вместо 2: при детекции каждые 5 с
+  и клипе 15 с два слота теряли ~15 % событий, четыре покрывают три
+  перекрывающихся клипа; арена — `pre+post+5` с (11,5 МиБ при 4096 кбит/с).
+  Сервис: 4 воркера транскода, повторная постановка `pending` при старте,
+  защита `meta.json` от удалённого retention каталога и retention по
+  отдельным событиям с 10-минутной защитой (раньше удалялась целая дата и
+  свежие события). `event_check.py` ждёт транскод конкретного события, а не
+  всего списка. Outbox разгружается пачкой до 8 клипов за проход (раз в 15 с),
+  иначе после двухчасового простоя доставка растягивалась на часы.
+  Итоговый 2-часовой soak (2026-11-14, 09:34–11:35 UTC): 0 отказов камеры,
+  0 потерянных событий, outbox пуст, `sent` 1355, `ring_dropped` +805,
+  `retries_failed` 1, `MemFree` 75,8 → 69,6 МиБ (минимум), события 43 → 218.
+  Сценарий outbox с SD: спул и разгрузка — ok. Без SD (размонтирована):
+  после трёх ретраев `lost` 21, outbox 0, `/tmp` занят 26 МиБ из 90.
+  Dry-cycle: перезагрузка, автозапуск `divinus` (pid 410), YOLO11 активна,
+  `event_clip` работает; после ребута `api_check` 113/113, `event_check` и
+  `osd_check` зелёные. mAP YOLO11 и загрузка
+  RK3576-модели Hanzo не проверялись;
+  прямая копия Hanzo-модели в `/userdata/models` и активация дают
+  `rknn_init failed (-1)` с `E RKNN: incompatible model version: 6`
+  (ожидавшийся `-13` не воспроизводится: модель отклоняется по версии формата);
+  рамки YOLO11 проверены: регион 12 создан, в кадре есть красные/синие пиксели
+  оверлея (класс 25).
+- **YOLO11, RKNN 2.5.0 runtime and event clips.** The second mini-runtime
+  `librknnmrt2.so` is upgraded to **2.5.0** (`Dockerfile.runtime` pins the
+  tag, commit `2c723177…`, the original SHA-256 `632d0e50…` and the patched
+  `6f1d83dd…`); `oko-rknn-toolkit2:2.5.0` is built from the 2.5.0 wheel with
+  `protobuf 4.25.4`, `onnx 1.17.0`, `onnxruntime 1.17.3`, `numpy 1.24.4`,
+  `torch 1.10.1+cpu`; `hal/plus/rknn_api.h` is synced with 2.5.0 (`user_key`,
+  `-14..-16`, `rknn_create_mem2`). The new `Dockerfile.export11` and
+  `export_yolo11.sh` export YOLO11n in the RKOPT layout (`format: rknn`, nine
+  outputs) at 640×384; the INT8 model is 3,905,345 bytes, the architecture is
+  detected from the output count (`3` → yolov5, `9` → yolo11), stored in
+  `models.json` (`arch`) and exposed by `/api/yolo` (`arch`), and YOLO11
+  requires `yolo.runtime=2`. Added the DFL decoder (Apache-2.0 port from
+  `rknn_model_zoo`, score-sum filter, shared NMS) and the host test
+  `tests/yolo11_postprocess_test.c` with the bus.jpg golden boxes (3 person +
+  bus, ±2 px). The model quota grows from 3 MiB to 4386 KiB (measured size
+  +15 %) and the HTTP buffer to 10 MiB so an oversized upload gets a readable
+  error. Added event clips: a RAM ring of main-stream AUs (trimmed to the key
+  frame), an independent fMP4 muxer `fmt/mp4_clip.c`, `record_clip` with
+  pre/post (`[event_clip]`), `PUT` to `http_post.url` with `frame`→`clip` and
+  `X-Event-Id/X-Cause/X-Model/X-Duration-Ms/X-Ts`, retries at 30 s/2 min/
+  10 min, a 256 MiB FIFO microSD outbox and `GET/POST /api/clip` (`test=1` is
+  a synthetic event sharing its id with the JPEG package). The
+  `services/events` receiver (`oko-events`, port 8090, FastAPI + ffmpeg)
+  stores `output/srv/events/<date>/<event_id>/`, produces the H.264 copy and
+  JPEG preview, serves `/api/events`, `/media/...`, an HTML list and
+  `EVENTS_MAX_GB` retention. `bench/event_check.py` covers the end-to-end
+  flow, the `pre+post ±2 s` duration, hevc→h264 codecs and retry delivery.
+  Verified on the DUT `192.168.52.33`: YOLO11n 640×384 at 5 fps — NPU 28 %,
+  `divinus` CPU ~12 %; a 14.4–14.8 s event with 16–20 JPEG frames,
+  a hevc 1920×1080 `clip.mp4` and an h264 `clip-h264.mp4`; the
+  `bench/clip_soak.py` soak polls `/api/clip` and the receiver, sends a test
+  event while idle and records `sent/lost/outbox/ring_dropped/MemFree`; `api_check.py`
+  113 checks with no failures, `event_check.py` green (including `--retry`),
+  `osd_check.py` and `ui_check.py` regression-clean; `MemFree` 79 MiB with a
+  9.8 MiB ring and YOLO11 active. A full `./build.sh all` succeeded and produced
+  `output/image/update.img` (71,936,586 bytes); the image carries the 2.5.0
+  `librknnmrt2.so` after `strip --strip-debug` (310,492 bytes, sha
+  `4b48d519…`) and `divinus` with `[event_clip]`. The
+  `bench/clip_soak.py` 10- and 5-minute runs had zero camera failures, zero
+  lost events, an empty outbox and stable `MemFree` (73–84 MiB); the ring
+  dropped 7–25 AUs when it filled during an active clip. The clip ring now
+  allocates one buffer per AU (no byte-ring wrap that could overwrite an AU
+  held by an active clip) and uses four slots instead of two: at a detection
+  every 5 s and a 15 s clip, two slots lost ~15 % of the events, four cover
+  three overlapping clips; the arena is `pre+post+5` seconds (11.5 MiB at
+  4096 kbit/s). The service now runs four transcode workers, requeues
+  `pending` clips at startup, tolerates a `meta.json` removed by retention and
+  evicts individual events with a 10-minute protection window (it used to
+  remove the whole date, including fresh events). `event_check.py` waits for
+  the transcoded copy of its own event instead of the whole list. YOLO11 mAP and the
+  Hanzo RK3576 upload remain unverified; a direct copy of the Hanzo model into
+  `/userdata/models` plus activation returns `rknn_init failed (-1)` with
+  `E RKNN: incompatible model version: 6` (the expected `-13` does not
+  reproduce: the model is rejected by its format version); YOLO11 boxes were
+  checked — region 12 is created and the frame contains red/blue overlay
+  pixels (class 25).
+
+- **История инференсов YOLO и стенд ночного замера (KI-005).**
+  `GET /api/yolo?detections=1&since=<seq>` — read-only выдача последних 64
+  инференсов (до 8 боксов в нормировке 0..10000, `seq/ts/source/aiisp`);
+  статическое кольцо 7,5 КиБ, сброс при старте детектора, ответ ≤8 КиБ с
+  курсором `last`, `since` без значения — 200 с пустым списком. Добавлены
+  `bench/yolo_night.py` (матрица C1–C4 `{vpss3,vi0}×{AIISP off,on}`,
+  day-control C1/C4, `--phase ambient` для плат без ИК-железа, правка
+  `/userdata/divinus.yaml` + graceful restart, восстановление конфига,
+  recall / detection rate / mean score / FP per frame по `--gt`, артефакты в
+  `output/bench/yolo_night`) и хост-тест
+  `tests/yolo_history_test.c`; обновлены `endpoints.md` и `bench/README.md`.
+  Проверено на DUT `192.168.52.33`: сборка divinus, хост-тесты, `api_check.py`
+  108 проверок без ошибок. Модель `yolov5n-640x384.rknn` (2,66 МБ) собрана
+  через `tools/rknn-toolkit2` по 60 кадрам калибровки с DUT, загружена и
+  активирована; детектор ловит `person` со score 0.35–0.69. Матрица C1–C4
+  прогнана (`--phase ambient`, 4×40 с), но числа не опубликованы: три повтора
+  одной C1 дали detection rate 0.04/0.22/0.31 — сцена нестабильна; ИК-подсветки
+  и управляемого IR-cut на плате нет. KI-005 остаётся открытым.
+- **YOLO inference history and the night-measurement bench (KI-005).**
+  `GET /api/yolo?detections=1&since=<seq>` is a read-only view of the last 64
+  inferences (up to 8 boxes normalised to 0..10000, `seq/ts/source/aiisp`);
+  a static 7.5 KiB ring, reset when the detector starts, an answer capped at
+  8 KiB with a `last` cursor; `since` without a value returns HTTP 200 with an
+  empty list. Added `bench/yolo_night.py` (C1–C4
+  `{vpss3,vi0}×{AIISP off,on}`, day control C1/C4, `--phase ambient` for
+  boards without IR hardware, `/userdata/divinus.yaml` edit plus a graceful
+  restart, config restore, recall / detection rate / mean score / FP per frame
+  from `--gt`, artifacts in `output/bench/yolo_night`) and the host test
+  `tests/yolo_history_test.c`; updated `endpoints.md` and `bench/README.md`.
+  Verified on the DUT `192.168.52.33`: divinus build, host tests,
+  `api_check.py` 108 checks with no failures. The `yolov5n-640x384.rknn` model
+  (2.66 MB) was built with `tools/rknn-toolkit2` from 60 calibration frames
+  captured on the DUT, uploaded and activated; the detector finds `person`
+  with score 0.35–0.69. The C1–C4 matrix ran (`--phase ambient`, 4×40 s) but
+  its numbers are not published: three repeats of the same C1 gave detection
+  rate 0.04/0.22/0.31, i.e. the scene is unstable, and the board has no IR
+  illuminator or switchable IR-cut. KI-005 stays open.
+
 - **STM32 EC: таймерное освобождение прижатой SCL и отладочный слой.**
   В прошивку C011/C031 добавлены аппаратный SCL-low timeout `TIMEOUTR`
   (~10 мс) с обработкой `I2C_ISR_TIMEOUT`, программный bus-watchdog
@@ -430,6 +725,20 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   rejects (KI-053).
 
 ### Изменено
+
+- **Модели, события и второй рантайм в API.** `/api/yolo` отдаёт `arch`,
+  `/api/models` — поле `arch` у каждой записи, `/api/status` — `features.clip`;
+  `/api/models` принимает файлы до 4386 КиБ. `media/rknn2/README.md`,
+  `tools/rknn-toolkit2/README.md`, `services/README.md`, `bench/README.md`,
+  `STRUCTURE.md` и `endpoints.md` описывают 2.5.0, YOLO11 и сервис событий;
+  в `divinus.yaml` добавлена секция `[event_clip]` с комментариями.
+- **Models, events and the second runtime in the API.** `/api/yolo` reports
+  `arch`, `/api/models` carries `arch` per record, `/api/status` reports
+  `features.clip`, and `/api/models` accepts files up to 4386 KiB.
+  `media/rknn2/README.md`, `tools/rknn-toolkit2/README.md`,
+  `services/README.md`, `bench/README.md`, `STRUCTURE.md` and `endpoints.md`
+  describe 2.5.0, YOLO11 and the events service; `divinus.yaml` gets a
+  commented `[event_clip]` section.
 
 - **DNS и default-маршрут: единый владелец (OKO).**
   `oko-wifi` больше не пишет `/etc/resolv.conf` и не хардкодит metric 600:
@@ -1376,6 +1685,101 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   `#af-state`) and `bench/README.md`.
 
 ### Исправлено
+
+- **Ревью этапа 0.3.0: ёмкость кольца, outbox, рестарт и конкурентность.**
+  `record_clip_start` больше не урезает кольцо молча: при `pre+post`,
+  не помещающихся в 12 МиБ, функция отключается с причиной в `/api/clip`
+  (проверено: `post_seconds: 30` → «need a 23000 KiB ring … 12288 KiB limit»).
+  `clip_outbox_scan` суммирует все `.mp4`, а не первые 256 (проверено на 300
+  файлах: `outbox_count` 307), и `PATH_MAX`-буфер в скане заменён на 512 —
+  иначе серверный поток падал на большом outbox. Outbox разгружается
+  пачками с повторным сканом. Штатный `record_clip_stop` (SIGHUP/TERM)
+  теперь спулит активные и ожидающие клипы в outbox и считает потерю только
+  при отсутствии SD (проверено: 4,5 и 3,7 МБ клипы попали в outbox).
+  Добавлен счётчик `skipped` для событий, не получивших слот, очистка
+  осиротевших `/tmp/oko-clip-*.mp4` при старте (на стенде они занимали
+  90 МиБ tmpfs), защита от нулевых файлов в outbox.
+  В `services/events`: лимит тела кадра 8 МиБ (9 МиБ → HTTP 413), дата
+  события фиксируется по первому каталогу (кадры и клип через полночь UTC
+  не расходятся), `_requeue_pending` ставит только свежие `pending`, а не
+  весь архив и `failed`; retention уже удаляет события, а не дату.
+  `yolo_event_test` и capture-поток сериализованы `eventMtx` (общий
+  `activeEvent`/`eventSequence`). `bench/clip_soak.py` переиспользует SSH-
+  соединение, берёт SSH-пароль из `OKO_DUT_PASSWORD`, а пароль WebUI — из
+  `OKO_WEB_PASSWORD` (раньше один пароль ломал один из двух доступов).
+  Отправка JPEG-пачки проверяет `senderRunning` между кадрами: при выключенном
+  приёмнике SIGTERM завершается за 3 с (раньше минуты), клипы уходят в outbox.
+  После правок: 5-минутный
+  soak зелёный (0 lost, outbox 0), `event_check` и `api_check` 113/113.
+- **Review of 0.3.0: ring capacity, outbox, restart and concurrency.**
+  `record_clip_start` no longer silently caps the ring: when `pre+post` does
+  not fit in 12 MiB, the feature is disabled with a reason in `/api/clip`
+  (verified: `post_seconds: 30` → "need a 23000 KiB ring … 12288 KiB
+  limit"). `clip_outbox_scan` sums every `.mp4`, not the first 256 (verified
+  with 300 files: `outbox_count` 307), and its `PATH_MAX` buffer became 512 —
+  the 4 KiB frame overflowed the server-thread stack with a large outbox.
+  The outbox drains in batches with re-scans. A graceful `record_clip_stop`
+  (SIGHUP/TERM) now spools active and retrying clips to the outbox and counts
+  a loss only without an SD card (verified: 4.5 MB and 3.7 MB clips were
+  spooled). Added a `skipped` counter for events that got no clip slot,
+  startup cleanup of orphaned `/tmp/oko-clip-*.mp4` (they filled the 90 MiB
+  tmpfs on the bench), and a zero-size outbox guard. In `services/events`:
+  an 8 MiB frame-body limit (9 MiB → HTTP 413), the event date is pinned by
+  the first directory (frames and clip no longer split across UTC midnight),
+  `_requeue_pending` only queues recent `pending` clips instead of the whole
+  archive and `failed` entries; retention already evicts events, not a date.
+  `yolo_event_test` and the capture thread are serialised with `eventMtx`
+  (shared `activeEvent`/`eventSequence`). `bench/clip_soak.py` reuses one SSH
+  connection, reads the SSH password from `OKO_DUT_PASSWORD` and the WebUI
+  password from `OKO_WEB_PASSWORD` (a single shared value broke one of the two
+  logins). The JPEG package sender checks `senderRunning` between frames, so a
+  SIGTERM with the receiver down finishes in 3 s (previously minutes) and the
+  clips go to the outbox. After the fixes: the 5-minute soak
+  is green (0 lost, empty outbox), `event_check` and `api_check` 113/113.
+
+- **Нули в выключенном `[http_post]` и перепутанные рамки в NMS.**
+  `app_config_parse` теперь задаёт `http_post.width/height/interval/qfactor`
+  до разбора, поэтому сохранённый с `enable: false` файл больше не содержит
+  нулей и включение секции вручную не ломает следующий старт (ошибка
+  `CONFIG_PARAM_ISNT_IN_RANGE`). В YOLOv5-постпроцессе координаты
+  кандидатов теперь сортируются вместе со счётом (индексный массив), раньше
+  после сортировки рамка могла браться от другого кандидата; общий NMS
+  вынесен в `yolo_finish_candidates`.
+- **Zeros in a disabled `[http_post]` and mismatched NMS boxes.**
+  `app_config_parse` now seeds `http_post.width/height/interval/qfactor`
+  before parsing, so a file saved with `enable: false` no longer carries
+  zeros and enabling the section by hand does not break the next start
+  (`CONFIG_PARAM_ISNT_IN_RANGE`). The YOLOv5 decoder now sorts the candidate
+  coordinates together with their scores (index array); previously a box
+  could be paired with another candidate after sorting. The shared NMS lives
+  in `yolo_finish_candidates`.
+
+- **divinus: SIGSEGV при `/api/cmd?save` и активации модели (OKO).**
+  `app_config_open`, `app_config_restore` и `app_config_path` держали на
+  стеке по два-три буфера `PATH_MAX` (4 КиБ каждый). При
+  `web_server_thread_stack_size=65536` release-сборка (`-Os`) переполняла
+  стек HTTP-потока: падение в `readlink` на `GET /api/cmd?save` и
+  `POST /api/models/activate`. Буферы перенесены в кучу; циклы
+  `web_whitelist` ограничены размером массива (при четырёх записях
+  читался `web_whitelist[4]` за границей). Проверено на DUT: save и
+  активация модели проходят при 64 КиБ, `api_check.py` 108/108.
+- **divinus: SIGSEGV on `/api/cmd?save` and model activation (OKO).**
+  `app_config_open`, `app_config_restore` and `app_config_path` kept two to
+  three `PATH_MAX` buffers (4 KiB each) on the stack. With
+  `web_server_thread_stack_size=65536` the `-Os` release build overflowed the
+  HTTP thread stack and crashed in `readlink` on `GET /api/cmd?save` and
+  `POST /api/models/activate`. The buffers are now heap-allocated, and the
+  `web_whitelist` loops are bounded by the array size (with four entries they
+  read `web_whitelist[4]` out of bounds). Verified on the DUT: save and model
+  activation work with a 64 KiB stack, `api_check.py` 108/108.
+- **tools/rknn-toolkit2: образ не собирался из-за переименованного wheel.**
+  `Dockerfile.toolkit` скачивал wheel как `/tmp/rknn-toolkit2.whl`, и pip 23
+  отказывался его ставить без канонического имени файла. Wheel сохраняется
+  под оригинальным именем; модель `yolov5n-640x384.rknn` собрана и проверена.
+- **tools/rknn-toolkit2: the image failed on a renamed wheel.**
+  `Dockerfile.toolkit` downloaded the wheel as `/tmp/rknn-toolkit2.whl`, which
+  pip 23 refuses to install without the canonical filename. The wheel now
+  keeps its original name; `yolov5n-640x384.rknn` was built and verified.
 
 - **STM32 EC: I2C1 тактировался от PCLK, из-за чего не работало
   пробуждение из Stop по адресу.** `RCC->CCIPR.I2C1SEL` было `00`

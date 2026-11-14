@@ -6,6 +6,7 @@
 #include "gating.h"
 #include "hal/macros.h"
 #include "http_post.h"
+#include "record_clip.h"
 #include "ivs_events.h"
 #include "media.h"
 #include "network.h"
@@ -174,6 +175,19 @@ int main(int argc, char *argv[]) {
             HAL_WARNING("ivs", "Analytics blocked: %s\n", gate.reason);
     }
 
+    if (app_config.event_clip_enable) {
+        gating_result gate = gating_check("event_clip");
+
+        if (!gate.ok) {
+            app_config.event_clip_enable = false;
+            HAL_WARNING("clip", "Event clips blocked: %s (%s)\n",
+                gate.reason, gate.hint ? gate.hint : "no hint");
+        } else if (record_clip_start()) {
+            app_config.event_clip_enable = false;
+            HAL_WARNING("clip", "Event clip service could not be started\n");
+        }
+    }
+
     if (app_config.yolo_enable) {
         gating_result gate = gating_check("yolo");
         if (gate.ok) {
@@ -216,6 +230,8 @@ int main(int argc, char *argv[]) {
         night_disable();
 
     yolo_stop();
+
+    record_clip_stop();
 
     ivs_events_stop();
 

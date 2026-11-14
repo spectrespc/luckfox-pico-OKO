@@ -74,8 +74,21 @@ source tools/native/env.sh
 `tools/native/setup_netboot.sh` (нужны `docker.io` с плагином `docker compose`
 и членство в группе `docker`; см. `TESTBENCH.md` §7D и `services/README.md`).
 Отдельные Docker-пайплайны остались только для инструментов, не входящих в
-сборку прошивки: `tools/rknn-toolkit2/` (конвертация YOLO) и
-`tools/stm8-sdcc/` (прошивка STM8).
+сборку прошивки: `tools/rknn-toolkit2/` (конвертация YOLO, включая YOLO11 и
+рантайм RKNN 2.5.0) и `tools/stm8-sdcc/` (прошивка STM8).
+
+Приёмник событий камеры — отдельный профиль `services/events/`
+(`oko-events`, порт **8090**): принимает JPEG-пачки и H.265-ролики pre/post,
+хранит их в `output/srv/events`, делает H.264-копию для браузера:
+
+```sh
+docker compose -f services/events/docker-compose.yml up -d --build
+curl -fsS http://127.0.0.1:8090/health
+bench/run.sh event_check.py          # сквозной тест события
+```
+
+На камере включаются `[http_post]` (`host: 192.168.52.200:8090`,
+`url: /ingest/frame`) и `[event_clip]`; подробности — `services/README.md`.
 
 ## Загрузка на устройство
 

@@ -6,9 +6,10 @@
 - **NFS** — экспортирует `output/srv/nfs/rootfs` для netboot-цикла;
 - **опционально** — WireGuard, AmneziaWG, OpenVPN по готовому паттерну.
 
-Отдельно, в `services/stream/`, живёт приёмник UDP/RTP (MediaMTX) для проверки
-раздачи камеры — он не входит в этот контейнер и поднимается своим профилем
-compose (см. раздел «Приёмник UDP/RTP»).
+Отдельно живут профили `services/stream/` (приёмник UDP/RTP MediaMTX),
+`services/events/` (приём событий камеры) и `services/converter/`
+(web-конвертер ONNX → RKNN); они не входят в этот контейнер и поднимаются
+своими профилями compose.
 
 Контейнер работает с `network_mode: host` и `privileged: true`: он использует
 общий с хостом модуль ядра `nfsd` и устройство `/dev/net/tun`. Путь экспорта
@@ -110,6 +111,128 @@ docker compose -f services/stream/docker-compose.yml down
   `a=rtpmap:96 H265/90000` на `H264/90000` в `services/stream/mediamtx.yml`
   (`docker compose -f services/stream/docker-compose.yml restart`). Проверено
   2026-11-10: WebRTC играет 1080p30 в Chromium, HLS — H.264.
+
+## Сервис событий: `services/events/`
+
+Отдельный профиль `oko-events` (порт **8090**, `network_mode: host`) принимает
+пакеты событий камеры и хранит их в `output/srv/events`:
+
+- `PUT /ingest/frame` — JPEG-кадр с заголовками `X-Event-Id`,
+  `X-Frame-Index`, `X-Frame-Total`, `X-Frame-Ts`, `X-Event-Cause`, `X-Model`;
+- `PUT /ingest/clip` — fMP4 H.265 с `X-Event-Id`, `X-Cause`, `X-Model`,
+  `X-Duration-Ms`, `X-Ts`;
+- файлы события: `<ГГГГ-ММ-ДД>/<event_id>/` (`meta.json`, `frame-NNN.jpg`,
+  `clip.mp4`), плюс `clip-h264.mp4` и `clip.jpg` после транскодинга
+  (ffmpeg, `libx264 veryfast`, `+faststart`);
+- `GET /api/events?limit=`, `GET /api/events/<id>`, `GET /media/...`,
+  `GET /api/stats`, минимальный HTML-список на `/`;
+- retention: `EVENTS_MAX_GB` (по умолчанию 2 ГБ), удаляются старые даты;
+- опциональный `OKO_EVENTS_TOKEN`: при непустом значении требуется заголовок
+  `X-OKO-Token`. На стенде токен не задан.
+
+```sh
+docker compose -f services/events/docker-compose.yml up -d --build
+docker compose -f services/events/docker-compose.yml logs -f
+curl -fsS http://127.0.0.1:8090/health
+curl -fsS http://127.0.0.1:8090/api/events | head
+docker compose -f services/events/docker-compose.yml down
+```
+
+Камера настраивается в `/userdata/divinus.yaml`:
+
+```yaml
+http_post:
+  enable: true
+  host: 192.168.52.200:8090
+  url: /ingest/frame
+event_clip:
+  enable: true
+  pre_seconds: 5
+  post_seconds: 10
+  max_bytes: 16777216
+```
+
+Те же ключи настраиваются из WebUI камеры: Events → «Отправка событий
+(HTTP)» (живые `GET/POST /api/http_post`) и «Ролики событий» (`POST /api/clip`).
+Новый ключ `http_post.receiver_url` задаёт ссылку на этот сервис для карточки;
+при пустом значении ссылка строится из `host` с портом 8090. В карточке также
+раскрывается встроенное описание протокола (`<details>`): заголовки кадров и
+клипов, повторы, outbox и эндпоинты приёмника. `enable` в карточке управляет
+только периодическими снимками — событийные пачки и ролики уходят при заданном
+`host` по решениям IVS/YOLO/`event_clip`.
+
+Клип уходит на `/ingest/clip` (последний сегмент `frame` заменяется на
+`clip`); JPEG-пачка не меняется. Для клипа путь берётся из `url` без
+`strftime`-подстановок, поэтому держите его литеральным (`/ingest/frame`). Для браузера сервис отдаёт H.264-копию,
+потому что Chromium не играет H.265. Сквозная проверка —
+`bench/run.sh event_check.py` (`--retry`, `--outbox`, `--require-detection`).
+Если сервис недоступен, камера повторяет отправку (30 с / 2 мин / 10 мин),
+затем кладёт клип в outbox на microSD (`/mnt/sdcard/oko-outbox`, квота
+256 МиБ); без карты событие теряется и учитывается в `/api/clip` (`lost`).
+
+## Web-конвертер RKNN: `services/converter/`
+
+Отдельный профиль `oko-converter` (порт **8091**, `network_mode: host`):
+браузерная форма принимает ONNX-модель и 20–200 калибровочных JPEG, проверяет
+статический вход **640×384** (NCHW `[1,3,384,640]` или NHWC `[1,384,640,3]`) и
+конвертирует модель официальным `rknn-toolkit2` **2.5.0** для `rv1106` в INT8
+с калибровкой. FP16 и квантование без dataset вендорский toolkit для rv1106
+отклоняет (`not support do_quantization = False`; `dataset ... is None`),
+поэтому INT8 с 20–200 JPEG — единственный собираемый режим. Параметры
+`rknn.config` совпадают с `tools/rknn-toolkit2/convert.py`, поэтому web- и
+CLI-путь дают модели с одинаковыми параметрами и размером (побайтового
+совпадения нет: toolkit пишет в шапку адреса/указатели).
+
+```sh
+docker compose -f services/converter/docker-compose.yml up -d --build
+docker compose -f services/converter/docker-compose.yml logs -f
+curl -fsS http://127.0.0.1:8091/healthz
+# браузер: http://192.168.52.200:8091/
+```
+
+- **Один слот конверсии.** Каждая задача — дочерний процесс
+  `worker/convert.py` с таймаутом 15 мин; вторая задача ждёт в очереди
+  (лимит `queued` — 10, ответ `409`). Квантование пиково ест 2–3 ГБ RAM,
+  поэтому два процесса одновременно не запускаются.
+- **Состояние на диске.** Задачи лежат в `output/srv/converter/jobs/<id>/`
+  (`meta.json`, `model.onnx`, `calib/`, `model.rknn`, `log.txt`). После
+  рестарта контейнера задачи в статусе `queued`/`running` становятся
+  `interrupted`, файлы сохраняются. Завершённые задачи вытесняются по
+  `CONVERTER_MAX_GB` (по умолчанию 2; для теста можно задать
+  `CONVERTER_MAX_MB`).
+- **API** (все ответы — JSON, кроме `/` и скачивания): `POST /api/jobs`
+  (multipart `model`, `images[]`, `dtype`), `GET /api/jobs`,
+  `GET /api/jobs/<id>` (meta + хвост лога), `POST /api/jobs/<id>/cancel`,
+  `GET /api/jobs/<id>/download`, `DELETE /api/jobs/<id>` (только завершённые),
+  `GET /healthz`.
+- **Лимиты и допуски.** Загрузка ONNX — до `CONVERTER_MAX_UPLOAD_MIB`
+  (256 МиБ, ответ `413`); требуется 20–200 JPEG (без них rv1106-квантование
+  невозможно), `dtype=fp16` отклоняется с объяснением; динамический вход и
+  размер не 640×384 отклоняются с текстом-подсказкой (`422`). Размер файла
+  результата не ограничен квотой борта: загрузка на DUT — отдельная операция.
+- **Токен.** При непустом `OKO_CONVERTER_TOKEN` все `/api/*` и `/healthz`
+  требуют заголовок `X-OKO-Token`; UI хранит его в localStorage. На стенде
+  токен по умолчанию не задан. Секреты в git не кладутся — только env.
+- **Проверочный fixture.** `tools_fixture/make_fixture.py` собирает
+  двухслойный ONNX 640×384 и 25 JPEG. Запуск без установки Python-зависимостей
+  на хост:
+
+  ```sh
+  docker run --rm -v "$PWD/output/srv/converter:/out" \
+      --entrypoint python oko-converter:latest \
+      /app/tools_fixture/make_fixture.py --out /out/fixtures
+  ```
+
+- **Проверено на реальной модели.** `output/rknn/yolo11n-640x384.onnx`
+  (11 МБ, вход `images` `[1,3,384,640]`, 9 выходов) собран в `.rknn`
+  3 905 265 Б с 25 синтетическими JPEG; скачивание совпадает по sha256.
+- **Совместимость.** Модель собрана toolkit **2.5.0** и рассчитана на
+  мини-рантайм `librknnmrt.so` **2.5.0** на борту; текущая плата несёт
+  1.6.0/2.3.2, поэтому такая модель на ней не загрузится. Проверка на
+  rv1106 этим сервисом **не выполняется** — только конверсия и скачивание.
+- Образ большой (~2.5–3 ГБ: Torch и зависимости toolkit), собирается один раз
+  и кешируется. Вендорское колесо ставится с `--no-deps` и закреплённым
+  sha256 — как в `tools/rknn-toolkit2/Dockerfile.toolkit2`.
 
 ## Оговорки
 

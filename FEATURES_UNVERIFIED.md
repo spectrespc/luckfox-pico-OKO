@@ -16,13 +16,15 @@
 |---|---|---|---|---|---|
 | Видео и стриминг | SmartP | Настройка GOP | `/api/venc`, `[venc]` | SmartP stage `divinus` | **ограничено** — применяется со следующего старта, не перепроверялся |
 | Видео и стриминг | IVS | Детекция движения/объектов, снимок, клип, OSD | `/api/ivs`, `[ivs]` | IVS stage `divinus` + `gating.c` | **ограничено** — MD проверен; OD и событие на статичной сцене не подтверждены |
+| Видео и стриминг | Рамки IVS на потоке | Синие прямоугольники движения и зелёный маркер OD поверх main-потока | `/api/ivs?boxes=0\|1`, `[ivs] boxes`, WebUI «Рамки движения на потоке» | регион RGN 13 (2BPP, layer 5), `analytics/box_draw.*`, `ivs_events.c` | **заблокировано (2026-11-14)** — регион 13 создаётся и прямоугольники видны в кадре, но `ivs.boxes` даёт `dup mClientFd failed` → `getFd CHECK_GE` → SIGSEGV (KI-063). После холодной загрузки IVS **без рамок** стабилен 2 мин, с `act_osd=1` — 20 с, значит блокирует именно 2BPP-регион; часть прежних зависаний могла быть следствием транзиентного сбоя SPI NAND. Ключ отключён в API/потоке/UI. Тестовая сборка без блокировки (2026-11-14): с YOLO `vi0` регион 13 создаётся и IVS-события идут, но `boxes=0`→`boxes=1` (destroy/recreate) даёт `mpp: dup mClientFd failed` → SIGSEGV и D-state процесса; при выходе — kernel oops `dma_buf_release` (KI-063). Hard block восстановлен. Mirror/rotate и CMA +512 КиБ не проверялись |
 | Видео и стриминг | Runtime IQ | `switch_scene`, `updateIq` | `/api/iq`, `[iq]` | runtime IQ stage `divinus` | **ограничено** — сцена принята; `updateIq` не проверялся |
 | Видео и стриминг | HDR2/HDR3 | HDR на SC230AI | `/api/hdr` | HDR API + `gating.c`; экспериментальный HDR_X2 выключен | **заблокировано** — `librkaiq` не поддерживает SC230AI |
 | Видео и стриминг | OSD на всех потоках | `osd.scope=all` (main+sub+JPEG) | конфиг `[osd]`, гейт G4 | `gating.c` | **заблокировано** — multi-attach RGN не прошёл проверку |
 | Видео и стриминг | Multicast как первый `dest` | `dest: - udp://239.255.255.0:5600` первым адресом | `[stream] dest` | вендорская multicast-ветка отправки | **ограничено** — пакеты уходят в группу, но `seq`/`ssrc`/`tstamp` всегда 0 (стенд 2026-11-10: 2674 пакета, 60 уникальных `seq`, `ssrc=0`), стандартный приёмник такой поток не соберёт; если multicast-адрес стоит **вторым** после unicast, пакеты валидны (2889 пакетов, `seq` 59648→62536 без разрывов) |
 | Видео и стриминг | Поток H.265 в браузере | `http://<хост>:8889/cam/`, HLS `8888` | `services/stream/` | MediaMTX 1.21.3 | **ограничено** — Chromium (Playwright 1248) WebRTC закрывает с `codecs not supported by client`, HLS отдаётся как `hvc1` и в MSE не играет; H.265 смотрится в Safari или нативном плеере. С H.264 (`mp4.codec: H.264` + `rtpSDP H264/90000`) WebRTC играет 1080p30 в Chromium — проверено 2026-11-10 |
 | Видео и стриминг | YOLO `source: vi1` | VI selfpath (chn1) как источник кадров | `/api/yolo`, `[yolo]` | `gating.c`, API и WebUI отклоняют значение | **заблокировано** — включение `vi1` привело к зависанию платы; значение отклоняется с причиной |
-| Видео и стриминг | Второй рантайм RKNN 2.x | Модели toolkit 2.x, `yolo.runtime: 2` | `/api/yolo` (`runtime`), `/api/models` (`runtime`) | `librknnmrt2.so` с отдельным SONAME, два handle в HAL, проверка SDK-версии | **ограничено** — AIISP на 1.6.0 + YOLO на 2.x в одном процессе, переключение runtime без рестарта и 2-часовой soak проверены; mAP 2.x-модели на размеченном наборе не измерен |
+| Видео и стриминг | Второй рантайм RKNN 2.x | Модели toolkit 2.x, `yolo.runtime: 2` | `/api/yolo` (`runtime`, `arch`), `/api/models` (`runtime`, `arch`) | `librknnmrt2.so` **2.5.0** с отдельным SONAME, два handle в HAL, проверка SDK-версии | **ограничено** — YOLOv5n и YOLO11n (RKOPT, 9 выходов) собраны toolkit 2.5.0, грузятся и работают на runtime 2.5.0; модель, собранная toolkit 2.3.2, на 2.5.0 не проверялась (в дереве её не было); mAP YOLO11 на размеченном наборе не измерен; 2-часовой soak пройден (0 lost, outbox 0, память стабильна) |
+| Видео и стриминг | YOLO11/события: негативные и долгие сценарии | Модель RK3576 от Hanzo, mAP YOLO11, outbox без microSD, 2-часовой soak | `/api/models`, `/api/clip` | `models.c` (квота), `record_clip.c` | **ограничено** — `Hanzo-Huang/rk3576-ai-demos/models/yolo11n.rknn` (7,26 МБ, RK3576, без лицензии) отклоняется квотой 4386 КиБ; прямая копия в `/userdata/models` даёт `rknn_init failed (-1)` и `incompatible model version: 6` (не `-13`); потеря без SD проверена размонтированием карты (`lost` 21), outbox с картой — спул и разгрузка; mAP YOLO11 и поведение на другой сцене не измерены |
 | Сеть | WiFi AIC8800 (SDIO) | Модули `aic8800dc`/`aic_load_fw`/`aic8800_fdrv` собираются в `/oem/usr/ko` | `RK_ENABLE_WIFI=y` | вендорские модули без правок OKO | **ограничено** — USB RTL8821CU проверен отдельно (`FEATURES_VERIFIED.md`); SDIO-сборка и AP+STA не тестировались |
 
 | Телеметрия (oko-ec) | Датчики | SHT21 `0x40` — T/RH; INA3221 или INA226 `0x41` — U/I/P; STM32 EC `0x42` — U/I/T, SOC, ячейки, OTA | `/dev/i2c-3`, `i2cdetect -y 3` | `i2c-dev` без драйверов (`CONFIG_HWMON` выключен), автоопределение INA | **ограничено** — адреса видны; у INA3221 силовые входы не подключены |
@@ -65,11 +67,20 @@
   `FEATURES_VERIFIED.md`.
 - **AIISP.** Ночная точность шумоподавки не измерялась. Совместная работа AIISP
   и YOLO на `vpss3` проверена на стенде (демо 640×640: main 30–33 fps, NPU 28%,
-  без пропусков).
-- **RKNN 2.x.** Модель `yolov5n-640x384-r2.rknn` собрана toolkit 2.3.2 на тех же
-  100 кадрах калибровки; активация, смешанная нагрузка и переключение рантайма
-  без рестарта проверены. mAP на размеченном наборе не измерялся, поэтому
-  «2.x не хуже 1.6.0» по точности пока не доказано.
+  без пропусков). Модель `.rknn` собрана и активирована, матрица C1–C4 в
+  ambient-свете прогнана (`bench/yolo_night.py --phase ambient`), но числа не
+  опубликованы: повторы одной конфигурации расходятся (detection rate
+  0.04/0.22/0.31), сцена нестабильна. На этой плате нет ИК-подсветки и
+  управляемого IR-cut (`/api/night` отдаёт пины 999), поэтому ночной замер с
+  ИК физически недоступен; KI-005 открыт.
+- **RKNN 2.x / YOLO11.** Модели `yolov5n-640x384-r2.rknn` и
+  `yolo11n-640x384-r2.rknn` собраны toolkit 2.5.0 на тех же 60 кадрах
+  калибровки; активация, инференс и `arch=yolo11` проверены. Модель,
+  собранная toolkit 2.3.2, на рантайме 2.5.0 не проверялась; mAP YOLO11 на
+  размеченном наборе не измерялся, поэтому «YOLO11 не хуже YOLOv5» по
+  точности пока не доказано. 2-часовой soak с включённым кольцом роликов
+  пройден 2026-11-14: 0 отказов камеры, 0 потерянных событий, outbox пуст,
+  `MemFree` 75,8→69,6 МиБ.
 - **Поворот и рамки.** Канва 0/90/180/270 и совмещение NN-рамок проверены
   `OKO_GEOMETRY_TESTS=1` 2026-11-07 (IoU 0.62/0.71/0.71), OSD-текст остаётся
   в своих углах. Эталонной разметки положения рамок на повёрнутой сцене нет:
@@ -121,13 +132,15 @@ Status as of 2026-11-12.
 |---|---|---|---|---|---|
 | Video and streaming | SmartP | GOP change | `/api/venc`, `[venc]` | SmartP stage in `divinus` | **limited** — applies on next start, not re-verified |
 | Video and streaming | IVS | Motion/object detection, snapshot, clip, OSD | `/api/ivs`, `[ivs]` | IVS stage in `divinus` + `gating.c` | **limited** — MD verified; OD and static-scene events unconfirmed |
+| Video and streaming | IVS boxes on the stream | Blue motion rectangles and a green OD marker over the main stream | `/api/ivs?boxes=0\|1`, `[ivs] boxes`, WebUI "Motion boxes on the stream" | RGN 13 (2BPP, layer 5), `analytics/box_draw.*`, `ivs_events.c` | **blocked (2026-11-14)** — region 13 is created and the rectangles are visible in the frame, but `ivs.boxes` produces `dup mClientFd failed` → `getFd CHECK_GE` → SIGSEGV (KI-063). After a cold boot IVS **without boxes** was stable for 2 minutes and with `act_osd=1` for 20 s, so the 2BPP region itself is the trigger; some earlier hangs may have been the transient SPI NAND failure. The key is disabled in the API/thread/UI. A test build without the block (2026-11-14): with YOLO `vi0` region 13 is created and IVS events flow, but `boxes=0`→`boxes=1` (destroy/recreate) produces `mpp: dup mClientFd failed` → SIGSEGV and a D-state process; on exit the kernel hits `dma_buf_release` (KI-063). The hard block was restored. Mirror/rotate and the +512 KiB CMA delta were not checked |
 | Video and streaming | Runtime IQ | `switch_scene`, `updateIq` | `/api/iq`, `[iq]` | runtime IQ stage in `divinus` | **limited** — scene switch accepted, `updateIq` untested |
 | Video and streaming | HDR2/HDR3 | HDR on SC230AI | `/api/hdr` | HDR API + `gating.c`; experimental HDR_X2 disabled | **blocked** — `librkaiq` does not support SC230AI |
 | Video and streaming | OSD on all streams | `osd.scope=all` (main+sub+JPEG) | `[osd]` config, gate G4 | `gating.c` | **blocked** — multi-attach RGN failed verification |
 | Video and streaming | Multicast as the first `dest` | `dest: - udp://239.255.255.0:5600` as the first entry | `[stream] dest` | vendor multicast send branch | **limited** — packets reach the group but `seq`/`ssrc`/`tstamp` stay 0 (bench 2026-11-10: 2674 packets, 60 unique `seq` values, `ssrc=0`), so a standard receiver cannot assemble the stream; with the multicast address **second** after a unicast one the packets are valid (2889 packets, `seq` 59648→62536 without gaps) |
 | Video and streaming | H.265 stream in a browser | `http://<host>:8889/cam/`, HLS `8888` | `services/stream/` | MediaMTX 1.21.3 | **limited** — Chromium (Playwright 1248) closes WebRTC with `codecs not supported by client` and HLS is served as `hvc1`, which MSE rejects; H.265 needs Safari or a native player. With H.264 (`mp4.codec: H.264` + `rtpSDP H264/90000`) WebRTC plays 1080p30 in Chromium — verified 2026-11-10 |
 | Video and streaming | YOLO `source: vi1` | VI selfpath (chn1) as the frame source | `/api/yolo`, `[yolo]` | `gating.c`, API and WebUI reject the value | **blocked** — enabling `vi1` hung the board; the value is refused with a reason |
-| Video and streaming | Second RKNN 2.x runtime | Models built by toolkit 2.x, `yolo.runtime: 2` | `/api/yolo` (`runtime`), `/api/models` (`runtime`) | `librknnmrt2.so` with a distinct SONAME, two HAL handles, SDK-version check | **limited** — AIISP on 1.6.0 plus YOLO on 2.x in one process, runtime switching without a restart and a 2-hour soak were verified; the 2.x model mAP on a labelled set is not measured |
+| Video and streaming | Second RKNN 2.x runtime | Models built by toolkit 2.x, `yolo.runtime: 2` | `/api/yolo` (`runtime`, `arch`), `/api/models` (`runtime`, `arch`) | `librknnmrt2.so` **2.5.0** with a distinct SONAME, two HAL handles, SDK-version check | **limited** — YOLOv5n and YOLO11n (RKOPT, nine outputs) are built by toolkit 2.5.0 and load/run on runtime 2.5.0; a model built by toolkit 2.3.2 was not tested on 2.5.0 (none was left in the tree); the YOLO11 mAP on a labelled set is not measured; the 2-hour event-clip soak passed (0 lost, empty outbox, stable memory) |
+| Video and streaming | YOLO11/events: negative and long scenarios | Hanzo RK3576 model, YOLO11 mAP, outbox without a microSD, 2-hour soak | `/api/models`, `/api/clip` | `models.c` (quota), `record_clip.c` | **limited** — `Hanzo-Huang/rk3576-ai-demos/models/yolo11n.rknn` (7.26 MB, RK3576, no licence) is rejected by the 4386 KiB quota; a direct copy into `/userdata/models` yields `rknn_init failed (-1)` with `incompatible model version: 6` (not `-13`); the no-SD loss was tested by unmounting the card (`lost` 21) and the SD outbox spool/drain passed; the YOLO11 mAP and other scenes are not measured |
 | Network | WiFi AIC8800 (SDIO) | `aic8800dc`/`aic_load_fw`/`aic8800_fdrv` are built into `/oem/usr/ko` | `RK_ENABLE_WIFI=y` | vendor modules without OKO changes | **limited** — USB RTL8821CU is verified separately (`FEATURES_VERIFIED.md`); the SDIO build and AP+STA are untested |
 
 | Telemetry (`oko-ec`) | Sensors | SHT21 `0x40` — T/RH; INA3221 or INA226 `0x41` — U/I/P; STM32 EC `0x42` — U/I/T, SOC, cells, OTA | `/dev/i2c-3`, `i2cdetect -y 3` | `i2c-dev` without drivers (`CONFIG_HWMON` off), INA autodetection | **limited** — addresses respond; INA3221 power inputs are not wired |
@@ -170,7 +183,12 @@ Status as of 2026-11-12.
   `FEATURES_VERIFIED.md`.
 - **AIISP.** Night denoise accuracy is not measured. AIISP and YOLO on `vpss3`
   were verified together on the bench (640×640 demo: main 30–33 fps, NPU 28%,
-  no drops).
+  no drops). The `.rknn` model is built and active and the C1–C4 matrix was run
+  in ambient light (`bench/yolo_night.py --phase ambient`), but its numbers are
+  not published: repeats of one configuration disagree (detection rate
+  0.04/0.22/0.31), i.e. the scene is unstable. The board has no IR illuminator
+  or switchable IR-cut (`/api/night` reports pins 999), so an IR night
+  measurement is physically unavailable; KI-005 stays open.
 - **Rotation and boxes.** The canvas at 0/90/180/270 and the NN box mapping
   were measured with `OKO_GEOMETRY_TESTS=1` on 2026-11-07 (IoU
   0.62/0.71/0.71), and the OSD text keeps its corners. There is no reference

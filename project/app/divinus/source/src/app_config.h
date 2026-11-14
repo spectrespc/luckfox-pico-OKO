@@ -131,6 +131,7 @@ struct AppConfig {
     bool ivs_act_osd;
     unsigned int ivs_record_seconds;
     bool ivs_record_sub;
+    bool ivs_boxes;                     /* motion/OD rectangles on the stream */
 
     // [yolo]
     bool yolo_enable;
@@ -241,6 +242,14 @@ struct AppConfig {
     unsigned int http_post_height;
     unsigned int http_post_qfactor;
     unsigned int http_post_interval;
+    /* Web receiver UI link; empty means "build it from http_post.host". */
+    char http_post_receiver_url[256];
+
+    // [event_clip]
+    bool event_clip_enable;
+    unsigned int event_clip_pre_seconds;
+    unsigned int event_clip_post_seconds;
+    unsigned long long event_clip_max_bytes;
 };
 
 extern struct AppConfig app_config;

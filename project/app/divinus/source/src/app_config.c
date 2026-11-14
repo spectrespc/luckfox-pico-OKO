@@ -4,24 +4,35 @@ const char *appconf_paths[] = {"./divinus.yaml", "/etc/divinus.yaml", NULL};
 
 struct AppConfig app_config;
 
+/* OKO: path buffers live on the heap.  The HTTP thread may run with a small
+ * stack (web_server_thread_stack_size can be as low as 32 KiB), and the old
+ * 8 KiB of stack arrays here overflowed it on /api/cmd?save and model
+ * activation. */
 static inline void app_config_open(FILE **file, const char *flags) {
     const char **path = appconf_paths;
-    char conf_path[PATH_MAX], exe_path[PATH_MAX];
+    char *buf, *conf_path, *exe_path, *bak_path;
     *file = NULL;
 
-    ssize_t exe_len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+    buf = malloc(3 * PATH_MAX);
+    if (!buf) return;
+    conf_path = buf;
+    exe_path = buf + PATH_MAX;
+    bak_path = buf + 2 * PATH_MAX;
+
+    ssize_t exe_len = readlink("/proc/self/exe", exe_path, PATH_MAX - 1);
     if (exe_len != -1) {
-        char *dir = dirname(exe_path);
+        char *dir;
         exe_path[exe_len] = '\0';
-        snprintf(conf_path, sizeof(conf_path), "%s/divinus.yaml", dir);
+        dir = dirname(exe_path);
+        snprintf(conf_path, PATH_MAX, "%s/divinus.yaml", dir);
         if (!access(conf_path, F_OK)) {
             if (*flags == 'w') {
-                char bak_path[PATH_MAX];
-                sprintf(bak_path, "%s.bak", conf_path);
+                snprintf(bak_path, PATH_MAX, "%s.bak", conf_path);
                 remove(bak_path);
                 rename(conf_path, bak_path);
             }
             *file = fopen(conf_path, flags);
+            free(buf);
             return;
         }
     }
@@ -29,67 +40,87 @@ static inline void app_config_open(FILE **file, const char *flags) {
     while (*path) {
         if (access(*path++, F_OK)) continue;
         if (*flags == 'w') {
-            char bak_path[PATH_MAX];
-            sprintf(bak_path, "%s.bak", *(path - 1));
+            snprintf(bak_path, PATH_MAX, "%s.bak", *(path - 1));
             remove(bak_path);
             rename(*(path - 1), bak_path);
         }
         *file = fopen(*(path - 1), flags);
         break;
     }
+    free(buf);
 }
 
 void app_config_restore(void) {
-    char conf_path[PATH_MAX], exe_path[PATH_MAX];
+    char *buf = malloc(3 * PATH_MAX);
+    char *conf_path, *exe_path, *bak_path;
 
-    ssize_t exe_len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+    if (!buf) return;
+    conf_path = buf;
+    exe_path = buf + PATH_MAX;
+    bak_path = buf + 2 * PATH_MAX;
+
+    ssize_t exe_len = readlink("/proc/self/exe", exe_path, PATH_MAX - 1);
     if (exe_len != -1) {
-        char bak_path[PATH_MAX], *dir = dirname(exe_path);
+        char *dir;
         exe_path[exe_len] = '\0';
-        snprintf(conf_path, sizeof(conf_path), "%s/divinus.yaml", dir);
-        sprintf(bak_path, "%s.bak", conf_path);
+        dir = dirname(exe_path);
+        snprintf(conf_path, PATH_MAX, "%s/divinus.yaml", dir);
+        snprintf(bak_path, PATH_MAX, "%s.bak", conf_path);
         if (!access(bak_path, F_OK)) {
             remove(conf_path);
             rename(bak_path, conf_path);
+            free(buf);
             return;
         }
     }
 
-    const char **path = appconf_paths;
-    while (*path) {
-        char bak_path[PATH_MAX];
-        sprintf(bak_path, "%s.bak", *path);
-        if (!access(bak_path, F_OK)) {
-            remove(*path);
-            rename(bak_path, *path);
+    {
+        const char **path = appconf_paths;
+        while (*path) {
+            snprintf(bak_path, PATH_MAX, "%s.bak", *path);
+            if (!access(bak_path, F_OK)) {
+                remove(*path);
+                rename(bak_path, *path);
+            }
+            path++;
         }
-        path++;
     }
+    free(buf);
 }
 
 /* OKO: report the file that app_config_open() resolves to, without opening
  * it.  Mirrors the search order above: exe dir, ./divinus.yaml, /etc. */
 void app_config_path(char *out, size_t size) {
-    char exe_path[PATH_MAX], dir[PATH_MAX];
+    char *buf, *exe_path, *dir;
 
     if (!out || size == 0) return;
     out[0] = '\0';
 
-    ssize_t exe_len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+    buf = malloc(2 * PATH_MAX);
+    if (!buf) return;
+    exe_path = buf;
+    dir = buf + PATH_MAX;
+
+    ssize_t exe_len = readlink("/proc/self/exe", exe_path, PATH_MAX - 1);
     if (exe_len != -1) {
         exe_path[exe_len] = '\0';
-        snprintf(dir, sizeof(dir), "%s", exe_path);
+        snprintf(dir, PATH_MAX, "%s", exe_path);
         snprintf(out, size, "%s/divinus.yaml", dirname(dir));
-        if (!access(out, F_OK)) return;
+        if (!access(out, F_OK)) {
+            free(buf);
+            return;
+        }
     }
 
     for (const char **path = appconf_paths; *path; path++) {
         if (access(*path, F_OK)) continue;
         snprintf(out, size, "%s", *path);
+        free(buf);
         return;
     }
 
     snprintf(out, size, "%s", appconf_paths[0]);
+    free(buf);
 }
 
 int app_config_save(void) {
@@ -126,8 +157,11 @@ void app_config_dump(FILE *file) {
     fprintf(file, "  sensor_config: %s\n", app_config.sensor_config);
     fprintf(file, "  web_port: %d\n", app_config.web_port);
     if (!EMPTY(*app_config.web_whitelist)) {
+        int count = (int)(sizeof(app_config.web_whitelist) /
+            sizeof(app_config.web_whitelist[0]));
+
         fprintf(file, "  web_whitelist:\n");
-        for (int i = 0; app_config.web_whitelist[i] && *app_config.web_whitelist[i]; i++) {
+        for (int i = 0; i < count && *app_config.web_whitelist[i]; i++) {
             fprintf(file, "    - %s\n", app_config.web_whitelist[i]);
         }
     }
@@ -250,6 +284,7 @@ void app_config_dump(FILE *file) {
     fprintf(file, "  act_osd: %s\n", app_config.ivs_act_osd ? "true" : "false");
     fprintf(file, "  record_seconds: %d\n", app_config.ivs_record_seconds);
     fprintf(file, "  record_source: %s\n", app_config.ivs_record_sub ? "sub" : "main");
+    fprintf(file, "  boxes: %s\n", app_config.ivs_boxes ? "true" : "false");
 
     fprintf(file, "yolo:\n");
     fprintf(file, "  enable: %s\n", app_config.yolo_enable ? "true" : "false");
@@ -383,14 +418,23 @@ void app_config_dump(FILE *file) {
 
     fprintf(file, "http_post:\n");
     fprintf(file, "  enable: %s\n", app_config.http_post_enable ? "true" : "false");
-    fprintf(file, "  host: %s\n", app_config.http_post_host);
-    fprintf(file, "  url: %s\n", app_config.http_post_url);
-    fprintf(file, "  login: %s\n", app_config.http_post_login);
-    fprintf(file, "  password: %s\n", app_config.http_post_password);
+    /* Quoted: an unset value must survive a save/reload instead of becoming
+     * an empty line that parse_param_value() cannot read. */
+    fprintf(file, "  host: \"%s\"\n", app_config.http_post_host);
+    fprintf(file, "  url: \"%s\"\n", app_config.http_post_url);
+    fprintf(file, "  login: \"%s\"\n", app_config.http_post_login);
+    fprintf(file, "  password: \"%s\"\n", app_config.http_post_password);
     fprintf(file, "  width: %d\n", app_config.http_post_width);
     fprintf(file, "  height: %d\n", app_config.http_post_height);
     fprintf(file, "  interval: %d\n", app_config.http_post_interval);
     fprintf(file, "  qfactor: %d\n", app_config.http_post_qfactor);
+    fprintf(file, "  receiver_url: \"%s\"\n", app_config.http_post_receiver_url);
+
+    fprintf(file, "event_clip:\n");
+    fprintf(file, "  enable: %s\n", app_config.event_clip_enable ? "true" : "false");
+    fprintf(file, "  pre_seconds: %d\n", app_config.event_clip_pre_seconds);
+    fprintf(file, "  post_seconds: %d\n", app_config.event_clip_post_seconds);
+    fprintf(file, "  max_bytes: %llu\n", app_config.event_clip_max_bytes);
 }
 
 enum ConfigError app_config_parse(void) {
@@ -566,6 +610,15 @@ enum ConfigError app_config_parse(void) {
     app_config.mjpeg_bitrate = 1024;
     app_config.mjpeg_qfactor = 50;
 
+    /* A disabled [http_post] section is still written back by app_config_save;
+     * without these defaults the file would carry zeros, and enabling the
+     * feature by hand would fail the range check on the next start. */
+    app_config.http_post_width = 640;
+    app_config.http_post_height = 360;
+    app_config.http_post_interval = 60;
+    app_config.http_post_qfactor = 90;
+    strcpy(app_config.http_post_url, "/");
+
     app_config.mirror = false;
     app_config.flip = false;
     app_config.antiflicker = 0;
@@ -610,7 +663,9 @@ enum ConfigError app_config_parse(void) {
     parse_list(&ini, "system", "web_whitelist",
         sizeof(app_config.web_whitelist) / sizeof(*app_config.web_whitelist),
         &count, app_config.web_whitelist);
-    *app_config.web_whitelist[count] = '\0';
+    if (count < (int)(sizeof(app_config.web_whitelist) /
+            sizeof(*app_config.web_whitelist)))
+        *app_config.web_whitelist[count] = '\0';
     parse_bool(&ini, "system", "web_enable_auth", &app_config.web_enable_auth);
     parse_param_value(
         &ini, "system", "web_auth_user", app_config.web_auth_user);
@@ -905,7 +960,11 @@ enum ConfigError app_config_parse(void) {
     }
 
     parse_bool(&ini, "ivs", "enable", &app_config.ivs_enable);
-    if (app_config.ivs_enable) {
+    /* Parsed even while disabled: the WebUI edits the settings live and
+     * app_config_save() writes the whole section, so skipping it here would
+     * replace the configured values with defaults. */
+    parse_bool(&ini, "ivs", "boxes", &app_config.ivs_boxes);
+    {
         char val[16] = {0};
         int mode = app_config.ivs_mode;
         parse_int(&ini, "ivs", "mode", 1, 3, &mode);
@@ -1135,14 +1194,20 @@ enum ConfigError app_config_parse(void) {
     }
 
     parse_bool(&ini, "stream", "enable", &app_config.stream_enable);
-    if (app_config.stream_enable) {
-        int count, val;
+    /* The destinations are parsed even while disabled: the WebUI edits them
+     * before the stream is enabled, and every app_config_save() must write
+     * back the configured list instead of an empty one. */
+    {
+        unsigned int count;
+        int val;
+
         err = parse_int(&ini, "stream", "udp_srcport", 0, USHRT_MAX, &val);
         if (err == CONFIG_OK) app_config.stream_udp_srcport = (unsigned short)val;
+        /* Leave the last slot as the terminator; the API exposes four. */
         parse_list(&ini, "stream", "dest",
-            sizeof(app_config.stream_dests) / sizeof(*app_config.stream_dests),
+            sizeof(app_config.stream_dests) / sizeof(*app_config.stream_dests) - 1,
             &count, app_config.stream_dests);
-        *app_config.stream_dests[count] = '\0';
+        app_config.stream_dests[count][0] = '\0';
     }
 
     parse_bool(&ini, "audio", "enable", &app_config.audio_enable);
@@ -1256,45 +1321,66 @@ enum ConfigError app_config_parse(void) {
         parse_int(&ini, "mjpeg", "qfactor", 1, 99, &app_config.mjpeg_qfactor);
     }
 
+    parse_bool(&ini, "event_clip", "enable", &app_config.event_clip_enable);
+    {
+        int pre = (int)app_config.event_clip_pre_seconds;
+        int post = (int)app_config.event_clip_post_seconds;
+        uint64_t bytes;
+
+        parse_int(&ini, "event_clip", "pre_seconds", 0, 15, &pre);
+        parse_int(&ini, "event_clip", "post_seconds", 1, 30, &post);
+        if (parse_uint64(&ini, "event_clip", "max_bytes",
+                256ull * 1024, 64ull * 1024 * 1024, &bytes) == CONFIG_OK)
+            app_config.event_clip_max_bytes = (unsigned long long)bytes;
+        app_config.event_clip_pre_seconds = (unsigned int)pre;
+        app_config.event_clip_post_seconds = (unsigned int)post;
+    }
+
     parse_bool(&ini, "http_post", "enable", &app_config.http_post_enable);
-    if (app_config.http_post_enable) {
-        err = parse_param_value(
-            &ini, "http_post", "host", app_config.http_post_host);
-        if (err != CONFIG_OK)
-            goto RET_ERR;
-        err = parse_param_value(
-            &ini, "http_post", "url", app_config.http_post_url);
-        if (err != CONFIG_OK)
-            goto RET_ERR;
+    /* These keys are read even while the sender is disabled: app_config_save()
+     * writes the whole section, so skipping them would persist empty values
+     * and make a later `enable: true` unparsable.  A missing key is still an
+     * error when the sender is enabled, as before. */
+    parse_param_value_n(&ini, "http_post", "receiver_url",
+        app_config.http_post_receiver_url,
+        sizeof(app_config.http_post_receiver_url));
+    {
+        int v;
+        bool required = app_config.http_post_enable;
 
-        err = parse_param_value(
-            &ini, "http_post", "login", app_config.http_post_login);
-        if (err != CONFIG_OK)
-            goto RET_ERR;
-        err = parse_param_value(
-            &ini, "http_post", "password", app_config.http_post_password);
-        if (err != CONFIG_OK)
-            goto RET_ERR;
+        err = parse_param_value_n(&ini, "http_post", "host",
+            app_config.http_post_host, sizeof(app_config.http_post_host));
+        if (err != CONFIG_OK && required) goto RET_ERR;
+        err = parse_param_value_n(&ini, "http_post", "url",
+            app_config.http_post_url, sizeof(app_config.http_post_url));
+        if (err != CONFIG_OK && required) goto RET_ERR;
+        err = parse_param_value_n(&ini, "http_post", "login",
+            app_config.http_post_login, sizeof(app_config.http_post_login));
+        if (err != CONFIG_OK && required) goto RET_ERR;
+        err = parse_param_value_n(&ini, "http_post", "password",
+            app_config.http_post_password,
+            sizeof(app_config.http_post_password));
+        if (err != CONFIG_OK && required) goto RET_ERR;
 
-        err = parse_int(
-            &ini, "http_post", "width", 160, INT_MAX,
-            &app_config.http_post_width);
-        if (err != CONFIG_OK)
-            goto RET_ERR;
-        err = parse_int(
-            &ini, "http_post", "height", 120, INT_MAX,
-            &app_config.http_post_height);
-        if (err != CONFIG_OK)
-            goto RET_ERR;
-        err = parse_int(
-            &ini, "http_post", "interval", 1, INT_MAX,
-            &app_config.http_post_interval);
-        if (err != CONFIG_OK)
-            goto RET_ERR;
-        err = parse_int(
-            &ini, "http_post", "qfactor", 1, 99, &app_config.http_post_qfactor);
-        if (err != CONFIG_OK)
-            goto RET_ERR;
+        v = (int)app_config.http_post_width;
+        err = parse_int(&ini, "http_post", "width", 160, INT_MAX, &v);
+        if (err == CONFIG_OK) app_config.http_post_width = (unsigned int)v;
+        else if (required) goto RET_ERR;
+
+        v = (int)app_config.http_post_height;
+        err = parse_int(&ini, "http_post", "height", 120, INT_MAX, &v);
+        if (err == CONFIG_OK) app_config.http_post_height = (unsigned int)v;
+        else if (required) goto RET_ERR;
+
+        v = (int)app_config.http_post_interval;
+        err = parse_int(&ini, "http_post", "interval", 1, INT_MAX, &v);
+        if (err == CONFIG_OK) app_config.http_post_interval = (unsigned int)v;
+        else if (required) goto RET_ERR;
+
+        v = (int)app_config.http_post_qfactor;
+        err = parse_int(&ini, "http_post", "qfactor", 1, 99, &v);
+        if (err == CONFIG_OK) app_config.http_post_qfactor = (unsigned int)v;
+        else if (required) goto RET_ERR;
     }
 
     free(ini.str);

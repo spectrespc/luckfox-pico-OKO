@@ -18,7 +18,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-HOST = os.environ.get("OKO_DUT_HOST", "192.168.52.97")
+HOST = os.environ.get("OKO_DUT_HOST", "192.168.52.33")
 USER = os.environ.get("OKO_RTSP_USER", "admin")
 PASSWORD = os.environ.get("OKO_DUT_PASSWORD", "oko-change-me")
 TIMEOUT = 20
@@ -48,12 +48,15 @@ GET_JSON = [
     "/api/storage",
     "/api/ivs",
     "/api/yolo",
+    "/api/clip",
     "/api/models",
     "/api/focus",
     "/api/flash",
     "/api/firmware",
-    "/api/update",
+    # KI-064: GET /api/update kills divinus; do not poll it in the smoke test.
     "/api/streams",
+    "/api/stream",
+    "/api/http_post",
     "/api/vpn",
 ] + ["/api/osd/%d" % i for i in range(10)]
 
@@ -80,8 +83,9 @@ POST_NOOP = [
     "/api/focus",
     "/api/network",
     "/api/storage",
-    "/api/update",
     "/api/time",
+    "/api/stream",
+    "/api/http_post",
 ] + ["/api/osd/%d" % i for i in range(10)]
 
 
@@ -462,6 +466,156 @@ def focus_checks(failures, checks):
     return checks
 
 
+def feature_checks(failures, checks):
+    """Stream, IVS boxes, event upload and clip settings (non-destructive)."""
+    # /api/stream: every destination is a separate scalar for applyValues.
+    status, _headers, body = request("/api/stream")
+    try:
+        before = json.loads(body.decode())
+    except Exception:                              # noqa: BLE001
+        before = {}
+    checks += 1
+    if status != 200 or not all(k in before for k in
+            ("enable", "udp_srcport", "dest0", "dest1", "dest2", "dest3",
+             "running")):
+        failures.append("GET /api/stream: HTTP %s %r" % (status, before))
+    else:
+        print("GET  %-18s %s enable=%s dest0=%r" %
+              ("/api/stream", status, before.get("enable"),
+               before.get("dest0")))
+
+    # Bad schemes and the KI-052 ordering are rejected without a config change.
+    for query, label in (
+            ("dest0=ftp%3A%2F%2Fhost", "scheme"),
+            ("dest0=udp%3A%2F%2F239.255.255.0%3A5600"
+             "&dest1=udp%3A%2F%2F192.168.52.200%3A5600", "multicast first")):
+        checks += 1
+        status, _headers, body = request("/api/stream?" + query, "POST", b"")
+        try:
+            dec = json.loads(body.decode())
+        except Exception:                          # noqa: BLE001
+            dec = {}
+        if status != 400 or dec.get("error") != "invalid":
+            failures.append("POST /api/stream %s: expected 400, got %s %r" %
+                            (label, status, dec))
+        print("POST %-18s %s %s" % ("/api/stream " + label, status,
+                                    dec.get("error", "?")))
+
+    # A disabled stream must round-trip through POST and GET without losing
+    # the configured destinations or the source port.
+    checks += 1
+    status, _headers, body = request("/api/stream", "POST", b"enable=false")
+    try:
+        dec = json.loads(body.decode())
+    except Exception:                              # noqa: BLE001
+        dec = {}
+    if status != 200 or dec.get("enable") is not False:
+        failures.append("POST /api/stream enable=false: HTTP %s %r" %
+                        (status, dec))
+    for key in ("dest0", "dest1", "dest2", "dest3", "udp_srcport"):
+        if key in before and dec.get(key) != before.get(key):
+            failures.append("POST /api/stream enable=false lost %s: %r -> %r"
+                            % (key, before.get(key), dec.get(key)))
+    print("POST %-18s %s enable=%s dest0=%r port=%s" % (
+        "/api/stream off", status, dec.get("enable"), dec.get("dest0"),
+        dec.get("udp_srcport")))
+
+    # Restore the original destinations/port/state.
+    if before:
+        form = {"enable": "true" if before.get("enable") else "false",
+                "udp_srcport": str(before.get("udp_srcport", 0))}
+        for i in range(4):
+            form["dest%d" % i] = before.get("dest%d" % i) or ""
+        checks += 1
+        status, _headers, body = request("/api/stream", "POST",
+                                         urllib.parse.urlencode(form).encode())
+        print("POST %-18s %s (restore)" % ("/api/stream", status))
+        if status != 200:
+            failures.append("POST /api/stream restore: HTTP %s" % status)
+
+    # IVS boxes: live switch; 400 only when the RGN canvas is unavailable.
+    _status, _headers, body = request("/api/ivs")
+    try:
+        ivs_before = json.loads(body.decode()).get("boxes")
+    except Exception:                              # noqa: BLE001
+        ivs_before = None
+    checks += 1
+    status, _headers, body = request("/api/ivs?boxes=1", "POST", b"")
+    try:
+        dec = json.loads(body.decode())
+    except Exception:                              # noqa: BLE001
+        dec = {}
+    if status == 200 and dec.get("boxes") is not True:
+        failures.append("POST /api/ivs boxes=1: %r" % dec)
+    elif status != 200 and dec.get("error") != "invalid":
+        failures.append("POST /api/ivs boxes=1: HTTP %s %r" % (status, dec))
+    print("POST %-18s %s boxes=%s" % ("/api/ivs boxes", status,
+                                      dec.get("boxes")))
+    if ivs_before is not None:
+        request("/api/ivs?boxes=%d" % (1 if ivs_before else 0), "POST", b"")
+
+    # Event upload: read-only GET and URL validation; the sender is not
+    # enabled here, so the camera keeps sending nothing.
+    checks += 1
+    status, _headers, body = request("/api/http_post")
+    try:
+        dec = json.loads(body.decode())
+    except Exception:                              # noqa: BLE001
+        dec = {}
+    if status != 200 or not all(k in dec for k in
+            ("enable", "host", "url", "login", "width", "height", "interval",
+             "qfactor", "receiver_url", "password")):
+        failures.append("GET /api/http_post: HTTP %s %r" % (status, dec))
+    elif not isinstance(dec.get("password"), bool):
+        failures.append("GET /api/http_post leaks the password: %r" %
+                        dec.get("password"))
+    print("GET  %-18s %s host=%r password=%r" %
+          ("/api/http_post", status, dec.get("host"), dec.get("password")))
+
+    checks += 1
+    status, _headers, body = request("/api/http_post?url=ingest%2Fframe",
+                                     "POST", b"")
+    try:
+        dec = json.loads(body.decode())
+    except Exception:                              # noqa: BLE001
+        dec = {}
+    if status != 400 or dec.get("error") != "invalid":
+        failures.append("POST /api/http_post relative url: expected 400, "
+                        "got %s %r" % (status, dec))
+    print("POST %-18s %s %s" % ("/api/http_post url", status,
+                                dec.get("error", "?")))
+
+    # Clip settings: change the window only while the collector is stopped.
+    checks += 1
+    status, _headers, body = request("/api/clip")
+    try:
+        clip = json.loads(body.decode())
+    except Exception:                              # noqa: BLE001
+        clip = {}
+    if clip.get("enable") or clip.get("running"):
+        print("clip settings: skipped (collector is enabled)")
+    else:
+        pre = min(int(clip.get("pre_seconds", 5)), 15)
+        post = max(1, min(int(clip.get("post_seconds", 10)), 30))
+        max_bytes = int(clip.get("max_bytes", 0))
+        checks += 1
+        query = "enable=0&pre_seconds=%d&post_seconds=%d&max_bytes=%d" % (
+            pre, post, max_bytes)
+        status, _headers, body = request("/api/clip?" + query, "POST", b"")
+        try:
+            dec = json.loads(body.decode())
+        except Exception:                          # noqa: BLE001
+            dec = {}
+        if status != 200 or dec.get("pre_seconds") != pre or \
+                dec.get("post_seconds") != post:
+            failures.append("POST /api/clip settings: HTTP %s %r" %
+                            (status, dec))
+        print("POST %-18s %s pre=%s post=%s" % (
+            "/api/clip settings", status, dec.get("pre_seconds"),
+            dec.get("post_seconds")))
+    return checks
+
+
 def main():
     failures = []
     checks = 0
@@ -532,6 +686,81 @@ def main():
             failures.append("GET %s: expected 400 invalid, got HTTP %s %r" %
                 (path, status, dec))
         print("GET  %-18s %s %s" % (path, status, dec.get("error", "?")))
+
+    # Detection history (KI-005): read-only, always JSON, and a bad `since`
+    # must not turn into an error or mutate the configuration.
+    for query, expected_records in (("detections=1", None),
+                                    ("detections=1&since=1", None),
+                                    ("detections=1&since=", 0)):
+        checks += 1
+        status, _headers, body = request("/api/yolo?" + query)
+        try:
+            dec = json.loads(body.decode())
+        except Exception:                          # noqa: BLE001
+            dec = {}
+        if status != 200 or not isinstance(dec.get("detections"), list) or \
+                not isinstance(dec.get("last"), int) or \
+                "conf_threshold" not in dec or "aiisp" not in dec:
+            failures.append("GET /api/yolo?%s: HTTP %s %r" %
+                (query, status, dec))
+        elif expected_records is not None and \
+                len(dec["detections"]) != expected_records:
+            failures.append("GET /api/yolo?%s: %d records, expected %d" %
+                (query, len(dec["detections"]), expected_records))
+        print("GET  %-18s %s %d records" %
+              ("/api/yolo?detect", status, len(dec.get("detections") or [])))
+
+    # Event clips: the read-only state must be JSON with the honest
+    # availability fields; POST without an action is a 400, not a hidden
+    # no-op, so the bench does not start clips by accident.
+    checks += 1
+    status, _headers, body = request("/api/clip")
+    try:
+        dec = json.loads(body.decode())
+    except Exception:                              # noqa: BLE001
+        dec = {}
+    if status != 200 or not all(k in dec for k in
+            ("enable", "running", "available", "ring_kib", "sent", "lost",
+             "outbox_count")):
+        failures.append("GET /api/clip: HTTP %s %r" % (status, dec))
+    print("GET  %-18s %s ring %s KiB" % ("/api/clip", status,
+        dec.get("ring_kib")))
+
+    checks += 1
+    status, _headers, body = request("/api/clip", "POST", b"")
+    if not 400 <= status < 500:
+        failures.append("POST /api/clip without action: expected 400, got %s"
+            % status)
+    print("POST %-18s %s" % ("/api/clip empty", status))
+
+    # Architecture detection: /api/yolo reports the running model type and
+    # /api/models records it per file.
+    checks += 1
+    status, _headers, body = request("/api/yolo")
+    try:
+        dec = json.loads(body.decode())
+    except Exception:                              # noqa: BLE001
+        dec = {}
+    if status != 200 or dec.get("arch") not in ("none", "yolov5", "yolo11"):
+        failures.append("GET /api/yolo arch: HTTP %s %r" %
+            (status, dec.get("arch")))
+    print("GET  %-18s %s arch=%s" % ("/api/yolo", status, dec.get("arch")))
+
+    checks += 1
+    status, _headers, body = request("/api/models")
+    try:
+        dec = json.loads(body.decode())
+    except Exception:                              # noqa: BLE001
+        dec = {}
+    models = dec.get("models") or []
+    if status != 200 or any("arch" not in m for m in models):
+        failures.append("GET /api/models arch field: HTTP %s %r" %
+            (status, models))
+    elif any("yolo11" in m.get("name", "") and m.get("arch") not in (0, 2)
+             for m in models):
+        failures.append("yolo11 model recorded with another architecture: %r"
+            % models)
+    print("GET  %-18s %s %d models" % ("/api/models", status, len(models)))
 
     # VPN: a bad profile name, a missing action and a path traversal in the
     # export must be refused without touching the profiles.
@@ -625,6 +854,7 @@ def main():
     print("GET  %-18s %s %s/%s" % ("/api/time tz", status,
         dec.get("tz", "?"), dec.get("tz_current", "?")))
 
+    checks = feature_checks(failures, checks)
     checks = focus_checks(failures, checks)
 
     print("\n%d checks, %d failures" % (checks, len(failures)))

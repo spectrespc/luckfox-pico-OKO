@@ -9,6 +9,7 @@
 #include "hal/globals.h"
 #include "hal/plus/rk_hal.h"
 #include "media.h"
+#include "analytics/yolo.h"
 
 static const gating_result allowed = { true, NULL, NULL };
 
@@ -118,6 +119,12 @@ gating_result gating_check(const char *feature)
         if (app_config.yolo_enable && app_config.yolo_source == 1)
             return blocked("VPSS channel 3 is reserved by YOLO",
                 "set yolo.source to vi0 or disable YOLO first");
+        /* KI-063: the 2BPP IVS overlay hangs the MPP/VENC path on this image,
+         * even without the detector.  Analytics itself works without boxes. */
+        if (app_config.ivs_boxes)
+            return blocked("IVS boxes hang the board on this MPP build (KI-063)",
+                "set ivs.boxes to false; IVS detection without the overlay "
+                "works");
         return allowed;
     }
 
@@ -205,6 +212,17 @@ gating_result gating_check(const char *feature)
             access("/oem/usr/bin/oko-update", X_OK))
             return blocked("the oko-update helper is missing from the image",
                 "reflash the rootfs partition");
+        return allowed;
+    }
+
+    if (!strcmp(feature, "event_clip")) {
+        if (!app_config.mp4_enable)
+            return blocked("event clips need the main H.265 encoder",
+                "enable [mp4] in the configuration; the clip taps that "
+                "encoded stream");
+        if (channel_by_role(HAL_CHNROLE_MAIN) < 0)
+            return blocked("the main encoder channel is not running",
+                "check the stream settings and restart the camera");
         return allowed;
     }
 

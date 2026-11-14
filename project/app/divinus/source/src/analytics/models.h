@@ -3,10 +3,14 @@
 #include <stddef.h>
 
 /* Directory and per-file quota.  The HTTP request is buffered in RAM
- * (HTTP_MAX_BUF_SIZE == 4 MiB), so a larger upload would be closed without a
- * reply; the API refuses it explicitly instead. */
+ * (HTTP_MAX_BUF_SIZE in server.c), so a larger upload would be closed
+ * without a reply; the API refuses it explicitly instead.
+ *
+ * The INT8 YOLO11n RKOPT model is 3,905,345 bytes (640x384, 80 classes),
+ * so the old 3 MiB limit no longer fits.  The quota is that measurement
+ * plus ~15 % for a retrained or larger variant. */
 #define MODELS_DIR "/userdata/models"
-#define MODELS_QUOTA (3 * 1024 * 1024)
+#define MODELS_QUOTA (4386 * 1024)
 
 /* Creates MODELS_DIR when it is missing. */
 void models_start(void);

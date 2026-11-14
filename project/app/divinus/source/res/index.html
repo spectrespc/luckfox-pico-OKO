@@ -681,6 +681,26 @@
 			</div>
 
 			<div class="card">
+				<h3><span data-i18n="udp_stream">UDP/RTP streaming</span></h3>
+				<div class="field"><label data-i18n="enabled">Enabled</label>
+					<div class="ctl"><select id="stream_enable" data-group="stream" data-k="enable"><option value="false">OFF</option><option value="true">ON</option></select></div></div>
+				<div class="field"><label data-i18n="udp_srcport">UDP source port</label>
+					<div class="ctl"><input type="number" id="stream_udp_srcport" data-group="stream" data-k="udp_srcport" min="0" max="65535"></div></div>
+				<div class="field"><label data-i18n="stream_dest1">Destination 1</label>
+					<div class="ctl"><input type="text" id="stream_dest0" data-group="stream" data-k="dest0" placeholder="udp://192.168.1.10:5600"></div></div>
+				<div class="field"><label data-i18n="stream_dest2">Destination 2</label>
+					<div class="ctl"><input type="text" id="stream_dest1" data-group="stream" data-k="dest1" placeholder="udp://192.168.1.11:5600"></div></div>
+				<div class="field"><label data-i18n="stream_dest3">Destination 3</label>
+					<div class="ctl"><input type="text" id="stream_dest2" data-group="stream" data-k="dest2" placeholder="udp://192.168.1.12:5600"></div></div>
+				<div class="field"><label data-i18n="stream_dest4">Destination 4</label>
+					<div class="ctl"><input type="text" id="stream_dest3" data-group="stream" data-k="dest3" placeholder="udp://192.168.1.13:5600"></div></div>
+				<div class="actions">
+					<button type="button" class="btn primary" data-apply="stream" data-ep="stream" disabled data-i18n="apply">Apply</button>
+				</div>
+				<p class="note" data-i18n="stream_note">The main H.265 stream is sent without RTSP authentication. Put the unicast address first: a multicast first address corrupts RTP for the rest (KI-052). Only numeric IPv4 addresses are accepted. Port 0 uses the source port or the built-in default. Changes apply live.</p>
+			</div>
+
+			<div class="card">
 				<h3><span data-i18n="onvif">ONVIF</span></h3>
 				<div class="field"><label data-i18n="enabled">Enabled</label>
 					<div class="ctl"><select id="onvif_enable" data-group="onvif" data-k="enable"><option value="false">OFF</option><option value="true">ON</option></select></div></div>
@@ -727,6 +747,8 @@
 					<div class="ctl"><input type="number" id="ivs_od_interval" data-group="ivs" data-k="od_interval" min="1" max="100"></div></div>
 				<div class="field"><label data-i18n="od_percent">OD threshold (%)</label>
 					<div class="ctl"><input type="number" id="ivs_od_percent" data-group="ivs" data-k="od_percent" min="5" max="8"></div></div>
+				<div class="field"><label data-i18n="ivs_boxes">Motion boxes on the stream</label>
+					<div class="ctl"><select id="ivs_boxes" data-group="ivs" data-k="boxes" disabled><option value="false">OFF</option><option value="true">ON</option></select></div></div>
 				<div class="field"><label data-i18n="act_record">Record a clip on motion</label>
 					<div class="ctl"><select id="ivs_act_record" data-group="ivs" data-k="act_record"><option value="false">OFF</option><option value="true">ON</option></select></div></div>
 				<div class="field"><label data-i18n="clip_seconds">Clip length (s)</label>
@@ -741,6 +763,7 @@
 				<div class="actions">
 					<button type="button" class="btn primary" data-apply="ivs" data-ep="ivs" disabled data-i18n="apply">Apply</button>
 				</div>
+				<p class="note" data-i18n="ivs_boxes_note">Motion boxes are disabled on this build: attaching the 2BPP region hangs the MPP/VENC path even without YOLO (KI-063). Use the OSD indicator or IVS detection without the overlay.</p>
 			</div>
 
 			<div class="card">
@@ -773,6 +796,82 @@
 					<button type="button" class="btn primary" data-apply="yolo" data-ep="yolo" disabled data-i18n="apply">Apply</button>
 				</div>
 				<p class="note" data-i18n="yolo_note">Boxes are drawn on the main stream as a two-color overlay aligned to a 16-pixel grid; they refresh at the detection rate and disappear when nothing is detected. Frames around a detection are stored and sent by HTTP. VPSS channel 3 conflicts with IVS/MJPEG.</p>
+			</div>
+
+			<div class="card">
+				<h3><span data-i18n="http_post_card">Event upload (HTTP)</span></h3>
+				<div class="field"><label data-i18n="http_post_enable">Periodic snapshots</label>
+					<div class="ctl"><select id="http_post_enable" data-group="http_post" data-k="enable"><option value="false">OFF</option><option value="true">ON</option></select></div></div>
+				<div class="field"><label data-i18n="host">Receiver host</label>
+					<div class="ctl"><input type="text" id="http_post_host" data-group="http_post" data-k="host" placeholder="192.168.52.200:8090"></div></div>
+				<div class="field"><label data-i18n="url">Path</label>
+					<div class="ctl"><input type="text" id="http_post_url" data-group="http_post" data-k="url" placeholder="/ingest/frame"></div></div>
+				<div class="field"><label data-i18n="username">Username</label>
+					<div class="ctl"><input type="text" id="http_post_login" data-group="http_post" data-k="login" autocomplete="off"></div></div>
+				<div class="field"><label data-i18n="password">Password</label>
+					<div class="ctl"><input type="password" id="http_post_password" data-group="http_post" data-k="password" placeholder="(unchanged)" autocomplete="new-password"></div></div>
+				<div class="field"><label data-i18n="width_height">Width / height</label>
+					<div class="ctl"><input type="number" id="http_post_width" data-group="http_post" data-k="width" min="160">&nbsp;x&nbsp;<input type="number" id="http_post_height" data-group="http_post" data-k="height" min="120"></div></div>
+				<div class="field"><label data-i18n="http_post_interval">Snapshot interval (s)</label>
+					<div class="ctl"><input type="number" id="http_post_interval" data-group="http_post" data-k="interval" min="1"></div></div>
+				<div class="field"><label data-i18n="quality">Quality (%)</label>
+					<div class="ctl"><input type="number" id="http_post_qfactor" data-group="http_post" data-k="qfactor" min="1" max="99"></div></div>
+				<div class="field"><label data-i18n="receiver_url">Receiver web link</label>
+					<div class="ctl"><input type="text" id="http_post_receiver_url" data-group="http_post" data-k="receiver_url" placeholder="http://192.168.52.200:8090/"></div></div>
+				<div class="actions">
+					<button type="button" class="btn primary" data-apply="http_post" data-ep="http_post" disabled data-i18n="apply">Apply</button>
+				</div>
+				<p class="note" data-i18n="http_post_note">"Periodic snapshots" only controls the timer above. Event JPEG bundles and clips are sent to the host whenever IVS act_http_post, a YOLO event or an event clip fires; an empty host or "none" disables sending. The path may use strftime tokens.</p>
+				<div class="field"><label data-i18n="receiver_link">Event receiver</label>
+					<div class="ctl"><a id="http_post_link" target="_blank" rel="noopener" style="display:none">–</a></div></div>
+				<details>
+					<summary data-i18n="api_docs_title">Event API and receiver endpoints</summary>
+					<pre class="hint" style="white-space:pre-wrap" data-i18n="api_docs_body">Frame: PUT &lt;url&gt; image/jpeg
+  X-Event-Id, X-Frame-Index, X-Frame-Total, X-Frame-Ts,
+  X-Event-Cause, X-Model
+Clip:  PUT &lt;url with the last "frame" segment replaced by "clip"&gt;
+  video/mp4 (fMP4 H.265), X-Event-Id, X-Cause, X-Model,
+  X-Duration-Ms, X-Ts
+Basic auth is used when login and password are set. The URL accepts
+strftime tokens. Failed deliveries retry after 30 s, 2 min and 10 min
+and spool to /mnt/sdcard/oko-outbox.
+
+Receiver (services/events):
+  PUT /ingest/frame, PUT /ingest/clip  (X-OKO-Token when configured)
+  GET /api/events[?limit=N], GET /api/events/&lt;id&gt;
+  GET /media/&lt;date&gt;/&lt;id&gt;/&lt;file&gt;, GET /api/stats, GET /health</pre>
+				</details>
+			</div>
+
+			<div class="card">
+				<h3><span data-i18n="clip_card">Event clips</span></h3>
+				<div class="field"><label data-i18n="enabled">Enabled</label>
+					<div class="ctl"><select id="clip_enable" data-group="clip" data-k="enable"><option value="false">OFF</option><option value="true">ON</option></select></div></div>
+				<div class="field"><label data-i18n="clip_pre">Pre-roll (s)</label>
+					<div class="ctl"><input type="number" id="clip_pre_seconds" data-group="clip" data-k="pre_seconds" min="0" max="15"></div></div>
+				<div class="field"><label data-i18n="clip_post">Post-roll (s)</label>
+					<div class="ctl"><input type="number" id="clip_post_seconds" data-group="clip" data-k="post_seconds" min="1" max="30"></div></div>
+				<div class="field"><label data-i18n="clip_max">Clip byte quota (0 = off)</label>
+					<div class="ctl"><input type="number" id="clip_max_bytes" data-group="clip" data-k="max_bytes" min="0"></div></div>
+				<div class="actions">
+					<button type="button" class="btn primary" data-apply="clip" data-ep="clip" disabled data-i18n="apply">Apply</button>
+					<button type="button" class="btn" onclick="clipTest()" data-i18n="clip_test">Test event</button>
+				</div>
+				<div class="field"><label data-i18n="clip_stat_running">Collector</label>
+					<div class="ctl"><span id="clip_running" class="hint">–</span></div></div>
+				<div class="field"><label data-i18n="clip_stat_available">Available</label>
+					<div class="ctl"><span id="clip_available" class="hint">–</span></div></div>
+				<div class="field"><label data-i18n="clip_stat_reason">Reason</label>
+					<div class="ctl"><span id="clip_reason" class="hint">–</span></div></div>
+				<div class="field"><label data-i18n="clip_stat_counts">Sent / lost / retries failed</label>
+					<div class="ctl"><span id="clip_sent" class="hint">–</span> / <span id="clip_lost" class="hint">–</span> / <span id="clip_retries_failed" class="hint">–</span></div></div>
+				<div class="field"><label data-i18n="clip_stat_outbox">Outbox (files / bytes)</label>
+					<div class="ctl"><span id="clip_outbox_count" class="hint">–</span> / <span id="clip_outbox_bytes" class="hint">–</span></div></div>
+				<div class="field"><label data-i18n="clip_stat_jobs">Recording / delivering</label>
+					<div class="ctl"><span id="clip_recording" class="hint">–</span> / <span id="clip_delivering" class="hint">–</span></div></div>
+				<div class="field"><label data-i18n="clip_stat_error">Last error</label>
+					<div class="ctl"><span id="clip_last_error" class="hint">–</span></div></div>
+				<p class="note" data-i18n="clip_note">The clip collector keeps the encoded main stream in RAM. Changing the pre/post window rebuilds the ring and drops clips that are still being recorded. The test event needs a running detector to share the event id with the JPEG bundle.</p>
 			</div>
 
 			<div class="card">
@@ -1313,6 +1412,10 @@ var I18N = {
 		rtsp_note: "The port and the audio codec apply after a restart. The password is never read back.",
 		onvif: "ONVIF",
 		onvif_note: "ONVIF applies after a restart; the password is never read back.",
+		udp_stream: "UDP/RTP streaming", udp_srcport: "UDP source port",
+		stream_dest1: "Destination 1", stream_dest2: "Destination 2",
+		stream_dest3: "Destination 3", stream_dest4: "Destination 4",
+		stream_note: "The main H.265 stream is sent without RTSP authentication. Put the unicast address first: a multicast first address corrupts RTP for the rest (KI-052). Only numeric IPv4 addresses are accepted. Port 0 uses the source port or the built-in default. Changes apply live.",
 		active_streams: "Active streams",
 		ivs: "Analytics (motion and objects)", ivs_md: "Motion", ivs_od: "Object",
 		ivs_md_od: "Motion + object", sensitivity: "Sensitivity (1-3)",
@@ -1320,6 +1423,25 @@ var I18N = {
 		od_percent: "OD threshold (%)", act_record: "Record a clip on motion",
 		clip_seconds: "Clip length (s)", record_source: "Clip source",
 		act_http_post: "Upload a snapshot (HTTP post)", act_osd: "OSD indicator",
+		ivs_boxes: "Motion boxes on the stream",
+		ivs_boxes_note: "Motion boxes are disabled on this build: attaching the 2BPP region hangs the MPP/VENC path even without YOLO (KI-063). Use the OSD indicator or IVS detection without the overlay.",
+		http_post_card: "Event upload (HTTP)",
+		http_post_enable: "Periodic snapshots", host: "Receiver host",
+		url: "Path", http_post_interval: "Snapshot interval (s)",
+		receiver_url: "Receiver web link", receiver_link: "Event receiver",
+		http_post_note: "Periodic snapshots only controls the timer above. Event JPEG bundles and clips are sent to the host whenever IVS act_http_post, a YOLO event or an event clip fires; an empty host or none disables sending. The path may use strftime tokens.",
+		api_docs_title: "Event API and receiver endpoints",
+		api_docs_body: "Frame: PUT <url> image/jpeg\n  X-Event-Id, X-Frame-Index, X-Frame-Total, X-Frame-Ts,\n  X-Event-Cause, X-Model\nClip:  PUT <url with the last 'frame' segment replaced by 'clip'>\n  video/mp4 (fMP4 H.265), X-Event-Id, X-Cause, X-Model,\n  X-Duration-Ms, X-Ts\nBasic auth is used when login and password are set. The URL accepts\nstrftime tokens. Failed deliveries retry after 30 s, 2 min and 10 min\nand spool to /mnt/sdcard/oko-outbox.\n\nReceiver (services/events):\n  PUT /ingest/frame, PUT /ingest/clip  (X-OKO-Token when configured)\n  GET /api/events[?limit=N], GET /api/events/<id>\n  GET /media/<date>/<id>/<file>, GET /api/stats, GET /health",
+		clip_card: "Event clips", clip_pre: "Pre-roll (s)",
+		clip_post: "Post-roll (s)", clip_max: "Clip byte quota (0 = off)",
+		clip_test: "Test event", clip_test_started: "Test event started",
+		clip_stat_running: "Collector", clip_stat_available: "Available",
+		clip_stat_reason: "Reason",
+		clip_stat_counts: "Sent / lost / retries failed",
+		clip_stat_outbox: "Outbox (files / bytes)",
+		clip_stat_jobs: "Recording / delivering",
+		clip_stat_error: "Last error",
+		clip_note: "The clip collector keeps the encoded main stream in RAM. Changing the pre/post window rebuilds the ring and drops clips that are still being recorded. The test event needs a running detector to share the event id with the JPEG bundle.",
 		microsd: "microSD card", capacity: "Capacity", free: "Free",
 		device: "Device", filesystem: "Filesystem", status: "Status",
 		mount: "Mount", unmount: "Unmount", format: "Format card",
@@ -1539,6 +1661,10 @@ var I18N = {
 		rtsp_note: "Порт и аудиокодек применяются после перезапуска. Пароль не читается обратно.",
 		onvif: "ONVIF",
 		onvif_note: "ONVIF применяется после перезапуска; пароль не читается обратно.",
+		udp_stream: "UDP/RTP-трансляция", udp_srcport: "Исходный порт UDP",
+		stream_dest1: "Назначение 1", stream_dest2: "Назначение 2",
+		stream_dest3: "Назначение 3", stream_dest4: "Назначение 4",
+		stream_note: "Основной поток H.265 уходит без RTSP-аутентификации. Первым укажите unicast-адрес: multicast первым портит RTP для остальных (KI-052). Допустимы только числовые адреса IPv4. Порт 0 — исходный порт или встроенный по умолчанию. Изменения применяются сразу.",
 		active_streams: "Активные потоки",
 		ivs: "Аналитика (движение и объекты)", ivs_md: "Движение", ivs_od: "Объекты",
 		ivs_md_od: "Движение + объекты", sensitivity: "Чувствительность (1-3)",
@@ -1546,6 +1672,25 @@ var I18N = {
 		od_percent: "Порог OD (%)", act_record: "Писать клип по движению",
 		clip_seconds: "Длина клипа (с)", record_source: "Источник клипа",
 		act_http_post: "Отправлять снимок (HTTP post)", act_osd: "Индикатор на OSD",
+		ivs_boxes: "Рамки движения на потоке",
+		ivs_boxes_note: "Рамки движения отключены в этой сборке: подключение 2BPP-региона вешает MPP/VENC даже без YOLO (KI-063). Используйте индикатор на OSD или детекцию IVS без рамок.",
+		http_post_card: "Отправка событий (HTTP)",
+		http_post_enable: "Периодические снимки", host: "Хост приёмника",
+		url: "Путь", http_post_interval: "Интервал снимков (с)",
+		receiver_url: "Ссылка на веб-приёмник", receiver_link: "Приёмник событий",
+		http_post_note: "«Периодические снимки» управляют только таймером выше. Пачки JPEG и ролики событий уходят на хост по решениям IVS act_http_post, события YOLO и клипа события; пустой host или none отключает отправку. В пути допустимы токены strftime.",
+		api_docs_title: "API событий и эндпоинты приёмника",
+		api_docs_body: "Кадр: PUT <url> image/jpeg\n  X-Event-Id, X-Frame-Index, X-Frame-Total, X-Frame-Ts,\n  X-Event-Cause, X-Model\nРолик: PUT <url, где последний сегмент 'frame' заменён на 'clip'>\n  video/mp4 (fMP4 H.265), X-Event-Id, X-Cause, X-Model,\n  X-Duration-Ms, X-Ts\nBasic-auth используется, если заданы login и password. В URL допустимы\nтокены strftime. Неудачные отправки повторяются через 30 с, 2 мин и 10 мин\nи складываются в /mnt/sdcard/oko-outbox.\n\nПриёмник (services/events):\n  PUT /ingest/frame, PUT /ingest/clip  (X-OKO-Token, если задан)\n  GET /api/events[?limit=N], GET /api/events/<id>\n  GET /media/<date>/<id>/<file>, GET /api/stats, GET /health",
+		clip_card: "Ролики событий", clip_pre: "Пре-ролл (с)",
+		clip_post: "Пост-ролл (с)", clip_max: "Квота ролика (байт, 0 = выкл)",
+		clip_test: "Тестовое событие", clip_test_started: "Тестовое событие запущено",
+		clip_stat_running: "Сборщик", clip_stat_available: "Доступен",
+		clip_stat_reason: "Причина",
+		clip_stat_counts: "Отправлено / потеряно / ошибок повтора",
+		clip_stat_outbox: "Очередь (файлов / байт)",
+		clip_stat_jobs: "Запись / доставка",
+		clip_stat_error: "Последняя ошибка",
+		clip_note: "Сборщик держит закодированный основной поток в RAM. Смена окна пре/пост-ролла пересоздаёт кольцо и теряет ещё записываемые ролики. Тестовому событию нужен работающий детектор, чтобы разделить id события с пачкой JPEG.",
 		microsd: "Карта microSD", capacity: "Ёмкость", free: "Свободно",
 		device: "Устройство", filesystem: "Файловая система", status: "Статус",
 		mount: "Подключить", unmount: "Отключить", format: "Форматировать",
@@ -1826,7 +1971,15 @@ var READ_HOOKS = {
 	'status_sd_total_mb': fmtMiB,
 	'status_sd_free_mb': fmtMiB,
 	'wifi_ap_active': function (v) { return v ? t('yes') : t('no'); },
-	'wifi_chip_supports_ap_st': function (v) { return v ? t('yes') : t('no'); }
+	'wifi_chip_supports_ap_st': function (v) { return v ? t('yes') : t('no'); },
+	/* The password is write-only: the API returns a "set" flag, not a value. */
+	'http_post_password': function () { return ''; },
+	'clip_running': function (v) { return v ? t('yes') : t('no'); },
+	'clip_available': function (v) { return v ? t('yes') : t('no'); },
+	'clip_reason': function (v) { return v || '–'; },
+	'clip_last_error': function (v) { return v || '–'; },
+	'clip_recording': function (v) { return v === undefined || v === null ? '–' : String(v); },
+	'clip_delivering': function (v) { return v === undefined || v === null ? '–' : String(v); }
 };
 
 function setField(id, v) {
@@ -1873,6 +2026,38 @@ function applyValues(ep, dec) {
 	if (ep === 'time') updateTimeFields(dec);
 	if (ep === 'network') updateNetworkCard(dec);
 	if (ep === 'wifi') updateWifiCard(dec);
+	if (ep === 'http_post') updateHttpPostLink(dec);
+}
+
+/* The receiver link prefers http_post.receiver_url; an empty value is derived
+ * from host:8090 (the events service port, not the PUT endpoint port). */
+function updateHttpPostLink(dec) {
+	var a = $('http_post_link');
+	if (!a) return;
+	var url = dec && typeof dec.receiver_url === 'string' ? dec.receiver_url : '';
+	var host = dec && typeof dec.host === 'string' ? dec.host : '';
+	if (!url && host && host !== 'none') {
+		var h = host, c = h.indexOf(':');
+		if (c > 0) h = h.slice(0, c);
+		url = 'http://' + h + ':8090/';
+	}
+	if (!url) {
+		a.style.display = 'none';
+		a.removeAttribute('href');
+		a.textContent = '–';
+		return;
+	}
+	a.style.display = '';
+	a.href = url;
+	a.textContent = url;
+}
+
+function clipTest() {
+	request('POST', '/api/clip?test=1', null, null, function (dec) {
+		if (!dec || dec.error) { toastError(dec); return; }
+		toast('ok', t('clip_test_started'), dec.note || '');
+		apiRead('clip');
+	});
 }
 
 function apiRead(ep, cb) {
@@ -3661,8 +3846,8 @@ function flashStart() {
 var SECTION_LOAD = {
 	live: ['record', 'eptz', 'rotate', 'mp4', 'mjpeg', 'isp'],
 	image: ['isp', 'night', 'aiisp', 'hdr', 'iq'],
-	streams: ['mp4', 'substream', 'mjpeg', 'jpeg', 'audio', 'venc', 'rtsp', 'onvif'],
-	events: ['ivs', 'yolo'],
+	streams: ['mp4', 'substream', 'mjpeg', 'jpeg', 'audio', 'venc', 'rtsp', 'stream', 'onvif'],
+	events: ['ivs', 'yolo', 'http_post', 'clip'],
 	storage: ['storage', 'record'],
 	network: ['network', 'time', 'wifi'],
 	osd: ['osd/0', 'osd/1', 'osd/2', 'osd/3', 'osd/4', 'osd/5', 'osd/6', 'osd/7', 'osd/8', 'osd/9'],

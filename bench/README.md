@@ -37,7 +37,10 @@ bench/run.sh ec_bus_soak.py --mode hold-scl   # нужна сборка -DEC_DEB
 | `geometry_check.py` | геометрия оверлеев и ePTZ: `--what zoom` — кроп на main/sub, `/mjpeg`/`/image.jpg`, критерий — нормированная корреляция с ожидаемым центром (mean\|diff\| печатается для справки); рестарт MP4 — отдельный opt-in `OKO_GEOMETRY_MP4_TESTS=1` (после смены кропа он ненадёжен); `--what boxes`/`--what osd` (opt-in `OKO_GEOMETRY_TESTS=1`) — совмещение NN-рамок и OSD-текста на 0/90/180/270; артефакты — `output/bench/geometry` |
 | `api_check.py` | матрица HTTP API: GET всех эндпоинтов, POST no-op, экспорт конфига и журнала, негативные проверки (статика, имена файлов, NTP); opt-in `OKO_FOCUS_MOTOR_TESTS=1`/`OKO_FOCUS_AF_TESTS=1` — движение моторов и автофокус (`af=1` full/ROI и micro-fine `af=fine`) с записью AF-кривых |
 | `ui_check.py` | WebUI в headless Chromium: восемь разделов, EN/RU, Apply/dirty-state, автозапуск предпросмотра, двухшаговый выбор ROI и строка автофокуса в «Видео», несохранённый выбор «Включить» переживает опрос, кнопка «Автофокус» (`af=fine`), сводка SD-карты в «Система → Статус» (сверка с `window.lastStatus`, работает и без карты), раскладка под окно на 1440×900 и мобильная 390×844 (нижний навбар 4×2), скриншоты (нужен Playwright) |
+| `event_check.py` | сквозная проверка событий: поднимает `services/events`, `POST /api/clip?test=1` на DUT, ждёт JPEG-пачку и клип, сверяет длительность `pre+post ±2 с` и кодеки (hevc → h264-копия) через ffprobe; `--retry` — остановка/запуск приёмника и доставка повтором, `--outbox` — вытеснение в outbox на microSD, `--require-detection` — живая детекция YOLO11; отчёт `output/bench/events/report.json` |
+| `clip_soak.py` | soak детектора и событий: опрос `/api/clip` и `services/events`, тестовое событие при простое, отчёт с `sent/lost/outbox/ring_dropped` и `MemFree`; `--minutes` (по умолчанию 120), `--interval`, `--event-every`; JSON — `output/bench/events/soak-*.json` |
 | `deploy_divinus.py` | копирование свежесобранного `divinus` в `/oem/usr/bin` по SSH и graceful restart (быстрая итерация, не замена прошивке) |
+| `yolo_night.py` | KI-005: ночная точность YOLO по матрице `{vpss3, vi0} × {AIISP off, on}` (C1–C4). Правка `/userdata/divinus.yaml` по SSH + graceful restart на каждую конфигурацию (vi0 иначе не применяется), `night`-сцена вручную через `/api/night`, сбор истории `/api/yolo?detections=1`, метрики recall / mean best score / FP per frame по `--gt` (IoU ≥ `--iou`), день C1/C4 — контроль методики; `--repeat`, `--seconds`, `--snapshots`, `--capture-gt`, `--deploy`, `--dry-run`, `--keep-config`; `report.json`/`report.csv` и `raw-*.json` в `output/bench/yolo_night` |
 | `uplink_soak.py` | 20-минутный soak двух аплинков: проверяет `active_default`, HTTP на eth/wlan-адресах и живой `divinus`, по фазам выдёргивает eth-линк и роняет шлюз временной Wi-Fi-точки (iptables в контейнере `oko-services`); `--seconds`, `--interval`, `--no-eth-toggle`, `--no-ap-toggle`; подготовка AP — `TESTBENCH.md` §9 |
 | `focus_check.py` | `/api/focus`: статус AF-метрики, ROI, мотор; `--enable`, `--roi x,y,w,h`, `--move`, `--seconds/--interval/--snapshot/--strict`, CSV в `--out` (по умолчанию `output/bench/focus`); код 2 — API жив, но снимок не снят, код 1 — метрика нулевая |
 | `firmware_check.py` | `/api/firmware` и `/api/flash`: версии STM32/STM8, состояние задачи; `--flash --confirm FLASH` запускает прошивку, `--negative` прогоняет проверки валидации (400) |
@@ -63,7 +66,7 @@ bench/run.sh netboot.py reboot
 bench/run.sh netboot.py cmd 'printenv ipaddr'
 
 # OSD: 17 с наблюдения; время меняется за 1 с, телеметрия и GPS — за 16 с
-bench/run.sh osd_check.py --ip 192.168.52.97 --seconds 17
+bench/run.sh osd_check.py --ip 192.168.52.33 --seconds 17
 
 # свои регионы (имя:x0,y0,x1,y1;...)
 bench/run.sh osd_check.py --regions 'telemetry:0,16,760,160;gps:1500,16,1920,64'
@@ -145,6 +148,69 @@ cd /tmp/kilo && apt-get download libasound2t64
 mkdir -p libasound && dpkg-deb -x libasound2t64_*.deb libasound
 LD_LIBRARY_PATH=/tmp/kilo/libasound/usr/lib/x86_64-linux-gnu bench/run.sh ui_check.py
 ```
+
+## Ночная точность YOLO (KI-005)
+
+`yolo_night.py` снимает A/B-метрики детектора на неподвижной сцене. Матрица:
+C1 `vpss3`+AIISP off, C2 `vpss3`+on, C3 `vi0`+on, C4 `vi0`+off. Ночь — все
+четыре конфигурации по `--repeat` прогонов (по умолчанию 3 × 60 с при
+`yolo.fps=5`), день — контроль C1/C4: расхождение среднего score больше 0.05
+означает нестабильную сцену, и числа публиковать нельзя.
+
+Подготовка сцены: 3–5 объектов COCO на штативе, неподвижно; днём
+`/api/night` ставит `ircut=on, irled=off`, ночью `ircut=off, irled=on,
+grayscale=on`, внешний свет выключен. IVS и MJPEG скрипт принудительно
+выключает: при них `vpss3` молча падает на `vi0` (`main.c`). Перед
+`/api/night` скрипт проверяет пины: если `ir_cut_pin1`/`irled_pin` равны 999
+(штатный конфиг на плате без ИК-железа), день/ночь не запускаются.
+
+Для платы без ИК-подсветки и управляемого IR-cut есть `--phase ambient`:
+C1–C4 без `/api/night`, числа трактуются как дневные и **не** являются
+ночной точностью. Контроль стабильности C1/C4 в этом режиме пишется в
+`ambient_control`.
+
+Модель не входит в образ. Сборка: `tools/rknn-toolkit2/README.md`
+(Docker-образы toolkit/export, калибровочные кадры с DUT), затем
+`POST /api/models` (multipart `file`) и `POST /api/models/activate?name=…`;
+активация проверяет `rknn_init`, формы тензоров и пробный инференс, после
+чего сохраняет `yolo.model`. Если в `/userdata/models` ровно один `.rknn`,
+`yolo_night.py` активирует его сам на preflight.
+
+Каждая конфигурация пишется в `/userdata/divinus.yaml` и применяется
+`kill -HUP` (vi0 требует пересоздания пайплайна). Исходный файл сохраняется в
+`/userdata/divinus.yaml.oko-yolo-night.bak` и восстанавливается в конце, если
+не указан `--keep-config`. Секреты — только через `OKO_DUT_PASSWORD`,
+`OKO_RTSP_USER`/`OKO_RTSP_PASS`.
+
+```sh
+# 1) снять кадр и шаблон разметки (сцена уже собрана, день)
+bench/run.sh yolo_night.py --capture-gt
+#    оператор размечает output/bench/yolo_night/gt.json: cls и x,y,w,h в 0..10000
+# 2) полный прогон: день (C1, C4) → ночь (C1–C4 × 3)
+bench/run.sh yolo_night.py --gt output/bench/yolo_night/gt.json --snapshots
+# 3) только ночь, две конфигурации, один повтор
+bench/run.sh yolo_night.py --phase night --configs C2,C4 --repeat 1 \
+  --gt output/bench/yolo_night/gt.json
+# 4) плата без ИК: C1–C4 в ambient-свете (дневные числа, не «ночь»)
+bench/run.sh yolo_night.py --phase ambient --configs C1,C2,C3,C4 \
+  --repeat 1 --seconds 40 --gt output/bench/yolo_night/gt.json
+```
+
+Метрики на конфигурацию: `recall` (доля GT-объектов, пойманных хотя бы одним
+кадром), `detection_rate` (средняя доля кадров с попаданием по объекту),
+`mean_best_score` (средний максимум score по пойманным объектам), `fp_frame`
+(доля инференсов с несопоставленной детекцией), плюс `detections_per_frame` и
+`empty_frames`. Результаты: `report.json` (сырые
+прогоны, сводка, `day_control`), `report.csv`, `raw-<фаза>-<конфиг>-rN.json`.
+Код возврата: 0 — измерение валидно, 1 — контроль дня не прошёл, 2 — сбой
+стенда/SSH/API.
+
+Тяжёлые медиа-прогоны исчерпывают CMA: после двух полных матриц перезагрузите
+DUT и проверьте `dmesg -l err` (ошибки `-12`). Сцена обесценивает GT при любом
+сдвиге камеры или объектов; повтор одной конфигурации должен давать
+|Δscore| ≤ 0.05, иначе числа не публикуются. После reboot конфиг откатывается
+к `.bak`, поэтому скрипт вызывает `/api/cmd?save` после применения и после
+восстановления.
 
 ## VPN-пир на хосте
 
@@ -235,11 +301,11 @@ bench/run.sh netboot.py reboot --uboot-command download
 в штатный образ.
 
 ```sh
-# режим и адрес DUT до переключения (при DHCP это 192.168.52.97)
-bench/run.sh nfs_env.py status --host 192.168.52.97
+# режим и адрес DUT до переключения (при DHCP это 192.168.52.33)
+bench/run.sh nfs_env.py status --host 192.168.52.33
 
 # NFS-root: reboot, ожидание SSH на 192.168.52.150, проверка /,/oem,/userdata
-bench/run.sh nfs_env.py on --host 192.168.52.97
+bench/run.sh nfs_env.py on --host 192.168.52.33
 
 # возврат на ubifs: проверка root=ubi0:rootfs и ubifs в mount
 bench/run.sh nfs_env.py off --host 192.168.52.150
@@ -260,7 +326,7 @@ TESTBENCH.md §7D.
 | `OKO_BENCH_OUT` | `output/bench` | каталог логов, кадров и кропов |
 | `OKO_BENCH_VENV` | `$OKO_BENCH_OUT/venv` | путь к virtualenv |
 | `OKO_SERIAL_PORT` | `telnet://192.168.52.17:23` | консоль: `telnet://host:port` (ESP32-мост) или `/dev/ttyACM*` |
-| `OKO_DUT_HOST` | `192.168.52.150` | адрес DUT по умолчанию (SSH/RTSP; текущий DHCP-адрес — `192.168.52.97`, см. TESTBENCH.md §5) |
+| `OKO_DUT_HOST` | `192.168.52.150` | адрес DUT по умолчанию (SSH/RTSP; текущий DHCP-адрес — `192.168.52.33`, см. TESTBENCH.md §5) |
 | `OKO_DUT_PASSWORD` | `luckfox` | пароль root (публичный вендорский дефолт) |
 | `OKO_RTSP_USER` / `OKO_RTSP_PASS` | `admin` / `oko-change-me` | учётка divinus (фабричный дефолт) |
 | `OKO_WIFI_SSID` / `OKO_WIFI_PSK` | — | стендовая точка доступа для ручных STA-проверок; в репозиторий не пишутся |
@@ -269,7 +335,7 @@ TESTBENCH.md §7D.
 | `OKO_UPLINK_AP_IF` / `OKO_UPLINK_AP_IP` | `wlan0` / `192.168.44.1` | интерфейс и адрес временной точки доступа на хосте (контейнер `oko-services`) |
 | `OKO_TFTP_HOST` | `192.168.52.200` | `serverip` для TFTP/NFS (netboot) |
 | `OKO_NFS_IP` | `192.168.52.150` | статический адрес DUT в NFS-режиме (`nfs_env.py`, `ip=`) |
-| `OKO_NAND_HOST` | `192.168.52.97` | DHCP-адрес DUT в NAND-режиме (проверка после `nfs_env.py off`) |
+| `OKO_NAND_HOST` | `192.168.52.33` | DHCP-адрес DUT в NAND-режиме (проверка после `nfs_env.py off`) |
 | `OKO_CMA_SIZE` | `66M` | `rk_dma_heap_cma` в строках `nfs_env.py`/`netboot.py` (как `RK_BOOTARGS_CMA_SIZE`) |
 | `OKO_EC_BUS` | `3` | номер шины i2c-tools (`3` = `/dev/i2c-3`) для `ec_bus_soak.py` |
 | `OKO_GATEWAY` | `192.168.52.254` | `gatewayip` (netboot) |
@@ -355,7 +421,7 @@ ap_psk=hotspot-pass-1
 
 - После двух и более тяжёлых медиа-прогонов подряд (`ui_check.py`,
   `geometry_check.py`, ручная отладка ePTZ/поворота) перезагружайте DUT:
-  `bench/run.sh dut.py --host 192.168.52.97 'reboot'` и подождите 50–60 с.
+  `bench/run.sh dut.py --host 192.168.52.33 'reboot'` и подождите 50–60 с.
 - Признаки исчерпания CMA (решающие): `dmesg -l err` с
   `cma_alloc ... ret: -12`, `/image.jpg` отвечает 503, RTSP не отдаёт кадры.
   Высокий `loadavg` и потоки ядра в состоянии `DW` сами по себе не признак:

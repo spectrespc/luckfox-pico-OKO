@@ -14,6 +14,8 @@
  */
 
 #include "yolo.h"
+#include "box_draw.h"
+#include "yolo_history.h"
 #include "yolo_postprocess.h"
 #include "nn_geom.h"
 
@@ -33,9 +35,10 @@
 #include "hal/plus/rk_rga.h"
 #include <sys/mman.h>
 #include "http_post.h"
+#include "record_clip.h"
 
 #define YOLO_EVENT_COOLDOWN_MS 5000
-#define YOLO_MAX_OUTPUTS 3
+#define YOLO_MAX_OUTPUTS 9
 #define YOLO_MAX_CONSECUTIVE_FAULTS 5
 
 #define YOLO_EVENT_FREE 0
@@ -52,6 +55,7 @@ typedef struct {
     rknn_context ctx;
     rk_rknn_impl *api;          /* selected RKNN runtime (1.x or 2.x) */
     int runtime;                /* 1 or 2, for logging and models.json */
+    int arch;                   /* YOLO_ARCH_V5 or YOLO_ARCH_11 */
     int ready;
     int generation;
     int width, height, classes;
@@ -76,6 +80,7 @@ typedef struct {
     int count;
     unsigned long long ts[64];
     unsigned char *frames;
+    char eventId[48];
 } yolo_event_slot;
 
 static yolo_model_dev yoloModel;
@@ -83,6 +88,9 @@ static pthread_mutex_t modelMtx = PTHREAD_MUTEX_INITIALIZER;
 
 static pthread_t captureThread, senderThread;
 static pthread_mutex_t senderMtx = PTHREAD_MUTEX_INITIALIZER;
+/* Serialises the event lifecycle (start/extend/finalize/test) between the
+ * capture thread and the HTTP test hook; senderMtx only covers slot reuse. */
+static pthread_mutex_t eventMtx = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t senderCond = PTHREAD_COND_INITIALIZER;
 static volatile int yoloRunning, senderRunning;
 static int captureStarted, senderStarted;
@@ -206,6 +214,19 @@ static int yolo_model_open(const char *path, yolo_model_dev *model,
             io.n_input, io.n_output);
         goto fail;
     }
+    /* The architecture is identified by the output count: three branches of
+     * 3*(5+classes) for YOLOv5 (and its YOLOv8-style export), or three
+     * scales of RKOPT box/class/score-sum tensors for YOLO11. */
+    if (io.n_output == 3)
+        model->arch = YOLO_ARCH_V5;
+    else if (io.n_output == 9)
+        model->arch = YOLO_ARCH_11;
+    else {
+        snprintf(error, errorSize,
+            "unsupported model layout: %u outputs, expected 3 (YOLOv5) "
+            "or 9 (YOLO11 RKOPT)", io.n_output);
+        goto fail;
+    }
     model->outputCount = (int)io.n_output;
 
     memset(&model->inputAttr, 0, sizeof(model->inputAttr));
@@ -301,7 +322,65 @@ static int yolo_model_open(const char *path, yolo_model_dev *model,
         }
     }
 
-    {
+    if (model->arch == YOLO_ARCH_11) {
+        int classes = -1;
+
+        for (int branch = 0; branch < 3; branch++) {
+            int base = branch * 3;
+            int gridW = model->width / (8 << branch);
+            int gridH = model->height / (8 << branch);
+            int dfl = (int)model->outputAttr[base].dims[3] / 4;
+
+            /* Every scale contributes box, class and score-sum tensors.  The
+             * native attributes may present the grid as [W,H] or [H,W]; both
+             * are accepted, anything else would shift the decode. */
+            for (int t = 0; t < 3; t++) {
+                int d1 = (int)model->outputAttr[base + t].dims[1];
+                int d2 = (int)model->outputAttr[base + t].dims[2];
+
+                if (!((d1 == gridW && d2 == gridH) ||
+                      (d1 == gridH && d2 == gridW))) {
+                    snprintf(error, errorSize,
+                        "YOLO11 output %d has grid %dx%d, expected %dx%d "
+                        "for scale %d", base + t, d1, d2, gridW, gridH,
+                        branch);
+                    goto fail;
+                }
+            }
+            if (dfl < 1 || dfl > 16) {
+                snprintf(error, errorSize,
+                    "YOLO11 box tensor %d has %d channels, expected 4*dfl_len "
+                    "with dfl_len <= 16", base,
+                    (int)model->outputAttr[base].dims[3]);
+                goto fail;
+            }
+            {
+                int branchClasses = (int)model->outputAttr[base + 1].dims[3];
+
+                if (branchClasses < 1 || branchClasses > 255) {
+                    snprintf(error, errorSize,
+                        "YOLO11 class tensor %d has %d channels",
+                        base + 1, branchClasses);
+                    goto fail;
+                }
+                if (classes < 0)
+                    classes = branchClasses;
+                else if (classes != branchClasses) {
+                    snprintf(error, errorSize,
+                        "YOLO11 class tensors disagree: %d vs %d channels",
+                        classes, branchClasses);
+                    goto fail;
+                }
+            }
+            if ((int)model->outputAttr[base + 2].dims[3] != 1) {
+                snprintf(error, errorSize,
+                    "YOLO11 score-sum tensor %d has %d channels, expected 1",
+                    base + 2, (int)model->outputAttr[base + 2].dims[3]);
+                goto fail;
+            }
+        }
+        model->classes = classes;
+    } else {
         int channels = (int)model->outputAttr[0].dims[3];
         int classes = channels / 3 - 5;
         if (channels <= 0 || channels % 3 ||
@@ -330,10 +409,14 @@ static int yolo_model_open(const char *path, yolo_model_dev *model,
         model->classes = classes;
     }
 
-    if (model->outputAttr[0].qnt_type != RKNN_TENSOR_QNT_AFFINE_ASYMMETRIC) {
-        snprintf(error, errorSize,
-            "the model is not INT8 quantised; RV1106 requires an INT8 model");
-        goto fail;
+    for (int i = 0; i < model->outputCount; i++) {
+        if (model->outputAttr[i].qnt_type !=
+            RKNN_TENSOR_QNT_AFFINE_ASYMMETRIC) {
+            snprintf(error, errorSize,
+                "output %d is not INT8 quantised; RV1106 requires an INT8 "
+                "model", i);
+            goto fail;
+        }
     }
 
     if (runTest) {
@@ -347,7 +430,7 @@ static int yolo_model_open(const char *path, yolo_model_dev *model,
     snprintf(model->path, sizeof(model->path), "%s", path);
     model->ready = 1;
     {
-        char shapes[128];
+        char shapes[256];
         int used = 0;
         shapes[0] = '\0';
         for (int i = 0; i < model->outputCount && used < (int)sizeof(shapes);
@@ -357,8 +440,10 @@ static int yolo_model_open(const char *path, yolo_model_dev *model,
                 model->outputAttr[i].dims[1], model->outputAttr[i].dims[2],
                 model->outputAttr[i].dims[3]);
         HAL_INFO("yolo", "Model %s: input %dx%d NHWC stride %d px, "
-            "%d 4D outputs (%s)\n", path, model->width, model->height,
-            model->inputStride, model->outputCount, shapes);
+            "arch=%s %d outputs (%s)\n", path, model->width, model->height,
+            model->inputStride,
+            model->arch == YOLO_ARCH_11 ? "yolo11" : "yolov5",
+            model->outputCount, shapes);
     }
     return EXIT_SUCCESS;
 
@@ -381,6 +466,7 @@ int yolo_model_probe_runtime(const char *path, int runtime,
             info->height = model.height;
             info->classes = model.classes;
             info->runtime = model.runtime;
+            info->arch = model.arch;
             memset(&sdk, 0, sizeof(sdk));
             if (!model.api->fnQuery(model.ctx, RKNN_QUERY_SDK_VERSION, &sdk,
                     sizeof(sdk)))
@@ -412,8 +498,9 @@ int yolo_model_swap(const char *path, char *error, size_t errorSize)
     yoloModel = model;
     pthread_mutex_unlock(&modelMtx);
 
-    HAL_INFO("yolo", "Active model: %s (%dx%d, %d classes, runtime %d)\n",
-        path, model.width, model.height, model.classes, model.runtime);
+    HAL_INFO("yolo", "Active model: %s (%dx%d, %d classes, runtime %d, "
+        "arch=%s)\n", path, model.width, model.height, model.classes,
+        model.runtime, model.arch == YOLO_ARCH_11 ? "yolo11" : "yolov5");
     return EXIT_SUCCESS;
 }
 
@@ -584,7 +671,8 @@ converted:
     }
 
     for (int i = 0; i < yoloModel.outputCount; i++) {
-        int stride = 8 << i;
+        int branch = yoloModel.arch == YOLO_ARCH_11 ? i / 3 : i;
+        int stride = 8 << branch;
         int gridW = yoloModel.width / stride;
         int gridH = yoloModel.height / stride;
         int d1 = (int)yoloModel.outputAttr[i].dims[1];
@@ -608,11 +696,42 @@ converted:
         dims[i][3] = yoloModel.outputAttr[i].dims[3];
     }
 
-    yolo_postprocess(outputs, (const int (*)[4])dims,
-        zp, scale, yolo_anchors, yoloModel.classes,
-        yoloModel.width, yoloModel.height,
-        (float)app_config.yolo_conf_threshold,
-        (float)app_config.yolo_nms_threshold, result);
+    if (yoloModel.arch == YOLO_ARCH_11)
+        yolo11_postprocess(outputs, (const int (*)[4])dims, zp, scale,
+            yoloModel.classes, yoloModel.width, yoloModel.height,
+            (float)app_config.yolo_conf_threshold,
+            (float)app_config.yolo_nms_threshold, result);
+    else
+        yolo_postprocess(outputs, (const int (*)[4])dims,
+            zp, scale, yolo_anchors, yoloModel.classes,
+            yoloModel.width, yoloModel.height,
+            (float)app_config.yolo_conf_threshold,
+            (float)app_config.yolo_nms_threshold, result);
+
+    /* Measurement history for /api/yolo?detections=1 (KI-005).  The result is
+     * already sorted by descending score, so a truncation keeps the strongest
+     * boxes; the copy is small and happens under the model mutex only to
+     * guarantee that a record never carries a half-filled result. */
+    {
+        yolo_history_det dets[YOLO_HISTORY_DETS];
+        int stored = result->count;
+
+        if (stored > YOLO_HISTORY_DETS) stored = YOLO_HISTORY_DETS;
+        for (int i = 0; i < stored; i++) {
+            float score = result->det[i].score;
+
+            if (score < 0.0f) score = 0.0f;
+            if (score > 1.0f) score = 1.0f;
+            dets[i].cls = (int16_t)result->det[i].class_id;
+            dets[i].score = (uint16_t)(score * 65535.0f + 0.5f);
+            dets[i].x = (uint16_t)result->det[i].x;
+            dets[i].y = (uint16_t)result->det[i].y;
+            dets[i].w = (uint16_t)result->det[i].w;
+            dets[i].h = (uint16_t)result->det[i].h;
+        }
+        yolo_history_push(frame->ts, (uint8_t)app_config.yolo_source,
+            (uint8_t)app_config.aiisp_enable, dets, stored);
+    }
 
     pthread_mutex_unlock(&modelMtx);
     return EXIT_SUCCESS;
@@ -626,53 +745,6 @@ converted:
  * every inference.  Positions and widths are aligned to 4 pixels (the 2BPP
  * line granularity), not to the 16-pixel canvas alignment.
  * ---------------------------------------------------------------------- */
-
-static const unsigned char rgn_lut_0_left[4] = {0x03, 0x0f, 0x3f, 0xff};
-static const unsigned char rgn_lut_0_right[4] = {0xc0, 0xf0, 0xfc, 0xff};
-static const unsigned char rgn_lut_1_left[4] = {0x02, 0x0a, 0x2a, 0xaa};
-static const unsigned char rgn_lut_1_right[4] = {0x80, 0xa0, 0xa8, 0xaa};
-
-/* Draws a rectangle into a 2BPP canvas whose rows are `stride` pixels wide.
- * `lut` selects the palette entry (0 or 1).  The vendor limit of four pixels
- * per line is kept; x and the width must be multiples of 4. */
-static void draw_rect_2bpp(unsigned char *buffer, unsigned int stride,
-    unsigned int height, int rx, int ry, int rw, int rh, int line, int lut)
-{
-    unsigned char *ptr = buffer;
-    unsigned char value = lut == 1 ? 0xaa : 0xff;
-
-    (void)height;
-
-    if (!buffer || line < 1 || line > 4 || rw < 4 || rh < line * 2 ||
-        rx < 0 || ry < 0 || (rx & 3) || (rw & 3))
-        return;
-
-    ptr += (stride * (unsigned int)ry + (unsigned int)rx) >> 2;
-
-    /* Top line. */
-    for (int i = 0; i < line; i++) {
-        memset(ptr, value, (size_t)((rw + 3) >> 2));
-        ptr += stride >> 2;
-    }
-
-    /* Left and right edges. */
-    for (int i = 0; i < rh - line * 2; i++) {
-        if (lut == 1) {
-            *ptr = rgn_lut_1_left[line - 1];
-            *(ptr + ((rw + 3) >> 2)) = rgn_lut_1_right[line - 1];
-        } else {
-            *ptr = rgn_lut_0_left[line - 1];
-            *(ptr + ((rw + 3) >> 2)) = rgn_lut_0_right[line - 1];
-        }
-        ptr += stride >> 2;
-    }
-
-    /* Bottom line. */
-    for (int i = 0; i < line; i++) {
-        memset(ptr, value, (size_t)((rw + 3) >> 2));
-        ptr += stride >> 2;
-    }
-}
 
 static volatile int boxesWanted;
 static int boxesReady;
@@ -772,7 +844,11 @@ static void yolo_boxes_render(const yolo_result *result)
 
     if (!boxesReady) return;
 
+    /* Hold the shared RGN lock for the whole paint cycle: the IVS thread uses
+     * the same VENC overlay and the vendor calls are not reentrant. */
+    rk_region_overlay_lock();
     if (rk_region_nn_begin(&addr, &stride, &canvasW, &canvasH)) {
+        rk_region_overlay_unlock();
         /* The canvas no longer matches (stream recreated): rebuild next tick. */
         rk_region_nn_destroy();
         boxesReady = 0;
@@ -794,7 +870,7 @@ static void yolo_boxes_render(const yolo_result *result)
                 &x, &y, &w, &h))
             continue;
 
-        /* draw_rect_2bpp needs a multiple of 4 for x and the width. */
+        /* box_draw_rect_2bpp needs a multiple of 4 for x and the width. */
         x &= ~3;
         y &= ~3;
         w = (w + 3) & ~3;
@@ -810,12 +886,17 @@ static void yolo_boxes_render(const yolo_result *result)
 
         /* class 0 is person in COCO. */
         lut = det->class_id == 0 ? 0 : 1;
-        draw_rect_2bpp(addr, stride, canvasH, x, y, w, h, 2, lut);
+        box_draw_rect_2bpp(addr, stride, canvasH, x, y, w, h, 2, lut);
     }
 
-    if (rk_region_nn_commit() && !commitWarned) {
-        HAL_WARNING("yolo", "Updating the bounding-box canvas failed\n");
-        commitWarned = 1;
+    {
+        int failed = rk_region_nn_commit();
+
+        rk_region_overlay_unlock();
+        if (failed && !commitWarned) {
+            HAL_WARNING("yolo", "Updating the bounding-box canvas failed\n");
+            commitWarned = 1;
+        }
     }
 }
 
@@ -829,6 +910,14 @@ static void yolo_event_finalize(void)
     pthread_mutex_unlock(&senderMtx);
 
     activeEvent = -1;
+}
+
+/* Base name of the active model, used by the JPEG and clip headers. */
+static void yolo_model_name(char *out, size_t size)
+{
+    const char *base = strrchr(app_config.yolo_model, '/');
+
+    snprintf(out, size, "%s", base ? base + 1 : app_config.yolo_model);
 }
 
 static void yolo_event_start(void)
@@ -867,6 +956,19 @@ static void yolo_event_start(void)
     activeEventEnd = now + eventPostMs;
     lastTriggerMs = now;
     eventSequence++;
+    snprintf(slot->eventId, sizeof(slot->eventId), "%llu-%llu",
+        (unsigned long long)time(NULL), eventSequence);
+
+    {
+        char modelName[96];
+        char clipError[128];
+
+        yolo_model_name(modelName, sizeof(modelName));
+        if (record_clip_trigger(slot->eventId, "yolo", modelName, clipError,
+                sizeof(clipError)))
+            HAL_WARNING("yolo", "Event %s: clip not started: %s\n",
+                slot->eventId, clipError);
+    }
 
     {
         char text[64];
@@ -913,6 +1015,7 @@ static void *yolo_capture_thread(void *arg)
             osdOwned = 0;
         }
 
+        pthread_mutex_lock(&eventMtx);
         if (activeEvent >= 0) {
             yolo_event_slot *slot = &eventSlots[activeEvent];
             int last = (ringNext - 1 + ringCapacity) % ringCapacity;
@@ -927,6 +1030,7 @@ static void *yolo_capture_thread(void *arg)
                 slot->count >= eventMaxFrames)
                 yolo_event_finalize();
         }
+        pthread_mutex_unlock(&eventMtx);
 
         yolo_boxes_sync();
 
@@ -943,12 +1047,14 @@ static void *yolo_capture_thread(void *arg)
 
         if (!result.count) continue;
 
+        pthread_mutex_lock(&eventMtx);
         if (activeEvent >= 0) {
             unsigned long long extend = now + eventPostMs;
             if (extend > activeEventEnd) activeEventEnd = extend;
         } else if (now - lastTriggerMs >= YOLO_EVENT_COOLDOWN_MS) {
             yolo_event_start();
         }
+        pthread_mutex_unlock(&eventMtx);
     }
 
     if (osdOwned) yolo_osd("");
@@ -963,11 +1069,14 @@ static void yolo_send_event(int slotIndex)
     const char *base;
     hal_jpegdata jpeg = {0};
 
-    snprintf(eventId, sizeof(eventId), "%llu-%llu",
-        (unsigned long long)time(NULL), eventSequence);
     base = strrchr(app_config.yolo_model, '/');
     snprintf(modelName, sizeof(modelName), "%s", base ? base + 1 :
         app_config.yolo_model);
+    if (slot->eventId[0])
+        snprintf(eventId, sizeof(eventId), "%s", slot->eventId);
+    else
+        snprintf(eventId, sizeof(eventId), "%llu-%llu",
+            (unsigned long long)time(NULL), eventSequence);
 
     if (!app_config.http_post_enable || !*app_config.http_post_host) {
         HAL_INFO("yolo", "Event %s has %d frame(s); HTTP post is disabled\n",
@@ -975,7 +1084,10 @@ static void yolo_send_event(int slotIndex)
         goto done;
     }
 
+    HAL_INFO("yolo", "Event %s: sending %d frame(s)\n", eventId,
+        slot->count);
     for (int i = 0; i < slot->count; i++) {
+        if (!senderRunning) break;
         if (rk_yolo_jpeg_encode(slot->frames + (size_t)i * frameBytes, &jpeg)) {
             HAL_WARNING("yolo", "Encoding event frame %d failed\n", i);
             break;
@@ -986,6 +1098,7 @@ static void yolo_send_event(int slotIndex)
             break;
         }
     }
+    HAL_INFO("yolo", "Event %s: frame upload finished\n", eventId);
 
 done:
     free(jpeg.data);
@@ -1023,9 +1136,37 @@ static void *yolo_sender_thread(void *arg)
     return NULL;
 }
 
+int yolo_event_test(void)
+{
+    int result = EXIT_FAILURE;
+
+    if (!yoloRunning || !ring || ringCapacity <= 0) return EXIT_FAILURE;
+    pthread_mutex_lock(&eventMtx);
+    if (activeEvent >= 0) {
+        activeEventEnd = yolo_now_ms() + eventPostMs;
+        result = EXIT_SUCCESS;
+    } else {
+        yolo_event_start();
+        lastTriggerMs = yolo_now_ms();   /* keep the cooldown after a test */
+        result = activeEvent >= 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
+    pthread_mutex_unlock(&eventMtx);
+    return result;
+}
+
 int yolo_running(void)
 {
     return yoloRunning;
+}
+
+int yolo_active_arch(void)
+{
+    int arch = 0;
+
+    pthread_mutex_lock(&modelMtx);
+    if (yoloModel.ready) arch = yoloModel.arch;
+    pthread_mutex_unlock(&modelMtx);
+    return arch;
 }
 
 int yolo_start(void)
@@ -1086,6 +1227,7 @@ int yolo_start(void)
     activeEvent = -1;
     lastTriggerMs = 0;
     eventSequence = 0;
+    yolo_history_reset();
     consecutiveFaults = 0;
     inferenceDisabled = 0;
     boxesWanted = app_config.yolo_boxes ? 1 : 0;

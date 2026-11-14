@@ -41,10 +41,22 @@
 ### Функциональные ограничения
 
 - **KI-005. Ночная точность YOLO не измерена.**
-  AIISP обрабатывает только кадр `vpss3`; при `vi0` детектор работает по
-  необработанному кадру. Днём AIISP + YOLO работают одновременно (main
-  30.2–32.8 fps, NPU 28%), но точность на ИК-сцене после AIISP и до него не
-  проверялась. Статус: **открыто (P5)**.
+  AIISP обрабатывает только кадр `vpss3`; `vi0` — `rkisp_mainpath`, кадр
+  после 3A ISP **без** AIISP-постобработки (не «необработанный кадр»).
+  Модель `yolov5n-640x384.rknn` собрана (`tools/rknn-toolkit2`, 60 кадров
+  калибровки с DUT, 2,66 МБ), загружена и активирована на DUT: детектор
+  работает, `person` ловится со score 0.35–0.69. Матрица C1–C4 прогнана в
+  ambient-свете (`bench/yolo_night.py --phase ambient`, 4×40 с): лучший score
+  0.69 / 0.64 / 0.53 / 0.47 и доля кадров с `person` 0.32 / 0.76 / 0.13 / 0.06
+  (C1 `vpss3` off, C2 `vpss3` on, C3 `vi0` on, C4 `vi0` off). Числа **не
+  опубликованы**: три повтора одной и той же C1 дали detection rate
+  0.04 / 0.22 / 0.31 и score 0.51 / 0.74 / 0.61 — сцена (человек в кадре,
+  работа 3A/экспозиции) нестабильна, критерий |Δscore| ≤ 0.05 не выполняется.
+  На этой плате также нет ИК-подсветки и управляемого IR-cut: при штатном
+  конфиге `/api/night` отдаёт `ir_cut_pin1=999`, `irled_pin=999`, узла ircut
+  в DTS Pro Max нет, линза фиксированная IR-корректированная, поэтому «ночь»
+  с ИК физически недоступна. Статус: **открыто (P5); модель и стенд готовы,
+  замер ждёт неподвижную сцену и ИК-железо**.
 
 - **KI-006. CMA/RSS под кольцом кадров не измерены.**
   `max_frames=20` при 640×640 — примерно 12 МБ MMZ; поведение при серии
@@ -168,7 +180,9 @@
   60 уникальных `seq`, `ssrc=0`. Если multicast-адрес стоит вторым после
   unicast, отправка идёт по unicast-ветке и поток валиден (2889 пакетов,
   `seq` 59648→62536 без разрывов). Обход: unicast первым, multicast вторым.
-  Статус: **принятое ограничение (P4)**.
+  С 2026-11-14 `POST /api/stream` и карточка WebUI отклоняют multicast первым
+  при наличии второго адреса (400, `dest` не меняется); уже записанный yaml
+  API не переписывает. Статус: **принятое ограничение (P4)**.
 
 - **KI-053. H.265 не играет в браузере.**
   Chromium не декодирует HEVC: страница `http://<хост>:8889/cam/` открывается,
@@ -239,7 +253,45 @@
   kernel/`ip=`. Это защита стенда, а не режим продукта.
   Статус: **принятое ограничение (by design)**.
 
-### Прошивка и конфигурация
+- **KI-063. Рамки IVS вешают MPP/VENC на RV1106.**
+  2026-11-14 на стенде: после включения `ivs.boxes` (MD, регион 13,
+  1920x1088) в логе `mpp: dup mClientFd failed!`,
+  `ma_encode_get_fd: mpp get fd failed`, `getFd: CHECK_GE failed`, затем
+  `SIGSEGV`; плата зависает целиком (SSH/HTTP/ARP недоступны, нужен power
+  cycle). Воспроизводится и с работающим YOLO, и **без него** (YOLO
+  остановлен, IVS включён отдельно) — значит, блокирует сам 2BPP-регион
+  поверх IVS-потока, а не только комбинация с детектором. Общий мьютекс RGN
+  (`rk_region_overlay_lock`) убрал гонку отрисовки, но не зависание
+  MPP/VENC. Обход: не включать `ivs.boxes`; IVS-детекция без рамок и
+  индикатор `act_osd` работают. В сборке ключ принудительно заблокирован:
+  `/api/ivs?boxes=1` возвращает 400, `gating_check("ivs")` не стартует IVS
+  при `boxes: true`, поток IVS всегда вызывает `ivs_boxes_request(0)`.
+  После этих прогонов стенд перешёл в деградацию SPI NAND
+  (`rockchip-sfc ... timeout`, `UBIFS ... error -5/-30`, `Fatal exception
+  in interrupt`, см. `TESTBENCH.md §8`), поэтому часть последующих
+  зависаний могла быть вызвана отказом флеша, а не IVS. Вывод о
+  несовместимости не окончательный; до проверки на здоровой плате ключ
+  остаётся жёстко отключённым.
+  Статус: **открыто, функция отключена; нужен здоровый DUT и разбор
+  vendor RGN/VENC**.
+  2026-11-14, тестовая сборка без блокировки: IVS **без YOLO `vi0`**
+  кадров не получает (`getResults` таймаут); с YOLO `vi0` регион 13
+  создаётся, IVS-события идут (16 событий), но после `boxes=0` → `boxes=1`
+  (destroy/recreate) в логе `mpp: dup mClientFd failed`, `getFd CHECK_GE`,
+  SIGSEGV; процесс остаётся в D-state, HTTP пропадает, нужен `reboot -f`.
+  При завершении такого процесса ядро также падало в `dma_buf_release`
+  (`Oops - BUG`, `Fixing recursive fault but reboot is needed`) — вендорный
+  баг жизненного цикла MPP/DMA-buf. Блокировка остаётся: живой тумблер
+  неизбежно пересоздаёт регион. Тестовая сборка с платы убрана.
+
+- **KI-064. `GET /api/update` роняет/подвешивает divinus.**
+  2026-11-14: и старая сборка 0.3.0 (`/userdata/divinus.old`), и новая
+  отвечают на запрос зависанием: в логе `New request: (GET) /api/update`,
+  ответа нет, процесс завершается без `Graceful shutdown`/`SIGSEGV`, после
+  чего HTTP недоступен. Повторяется после холодной загрузки и не связано с
+  SPI NAND (запись/чтение разделов в этот момент работают). Обход: не
+  опрашивать `/api/update`; `bench/api_check.py` исключает его из smoke-теста
+  до разбора `update_json()`/`gating_sd_space()`. Статус: **открыто**.
 
 - **KI-024. Полный `update.img` затирает U-Boot env.**
   MAC восстанавливается из serial, но статические сетевые настройки
@@ -538,9 +590,23 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
 ### Functional limitations
 
 - **KI-005. Night accuracy is not measured.** AIISP only processes `vpss3`
-  frames; `vi0` is unprocessed. Daytime AIISP + YOLO works (main 30.2–32.8 fps,
-  NPU 28%), but IR accuracy with and without AIISP is unknown.
-  Status: **open (P5)**.
+  frames; `vi0` is `rkisp_mainpath`, the frame after 3A ISP **without** AIISP
+  post-processing (it is not an "unprocessed" frame). The model
+  `yolov5n-640x384.rknn` was built with `tools/rknn-toolkit2` (60 calibration
+  frames from the DUT, 2.66 MB), uploaded and activated; the detector runs and
+  finds `person` with score 0.35–0.69. The C1–C4 matrix was executed in
+  ambient light (`bench/yolo_night.py --phase ambient`, 4×40 s): best score
+  0.69 / 0.64 / 0.53 / 0.47 and person frame rate 0.32 / 0.76 / 0.13 / 0.06
+  (C1 `vpss3` off, C2 `vpss3` on, C3 `vi0` on, C4 `vi0` off). The numbers are
+  **not published**: three repeats of the same C1 gave detection rate
+  0.04 / 0.22 / 0.31 and score 0.51 / 0.74 / 0.61 — the scene (a person in
+  front of the camera, 3A/exposure changes) is unstable and the |Δscore| ≤
+  0.05 criterion fails. The board also has no IR illuminator or switchable
+  IR-cut: with the stock config `/api/night` reports `ir_cut_pin1=999`,
+  `irled_pin=999`, the Pro Max DTS has no ircut node and the lens is fixed
+  IR-corrected, so a physical IR night scene is not available.
+  Status: **open (P5); the model and bench are ready, the run waits for a
+  static scene and IR hardware**.
 
 - **KI-006. CMA/RSS under the frame ring is not measured.** `max_frames=20` at
   640×640 is about 12 MB of MMZ; behaviour under event bursts is not recorded.
@@ -650,7 +716,10 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   packets, 60 unique `seq` values, `ssrc=0`. With the multicast address second
   after a unicast one the unicast branch is used and the stream is valid (2889
   packets, `seq` 59648→62536 without gaps). Workaround: unicast first,
-  multicast second. Status: **accepted limitation (P4)**.
+  multicast second. Since 2026-11-14 `POST /api/stream` and the WebUI card
+  reject a multicast first entry when a second address exists (400, `dest` is
+  left unchanged); the API does not rewrite an existing yaml. Status:
+  **accepted limitation (P4)**.
 
 - **KI-053. H.265 does not play in a browser.**
   Chromium has no HEVC decoder: `http://<host>:8889/cam/` opens, but the WebRTC
@@ -721,7 +790,46 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   installed. This is a bench safeguard, not a product mode.
   Status: **accepted limitation (by design)**.
 
-### Flashing and configuration
+- **KI-063. IVS boxes hang MPP/VENC on RV1106.**
+  On the bench on 2026-11-14, after enabling `ivs.boxes` (MD, region 13,
+  1920x1088) the log shows `mpp: dup mClientFd failed!`,
+  `ma_encode_get_fd: mpp get fd failed`, `getFd: CHECK_GE failed`, then
+  `SIGSEGV`; the whole board hangs (SSH/HTTP/ARP unreachable, power cycle
+  required). It reproduces with YOLO running and **without it** (YOLO
+  stopped, IVS enabled alone), so the 2BPP region over the IVS pipeline is
+  the trigger, not the detector combination. The shared RGN mutex
+  (`rk_region_overlay_lock`) removed the paint race but not the MPP/VENC
+  hang. Workaround: do not enable `ivs.boxes`; IVS detection without boxes
+  and the `act_osd` indicator work. The build hard-blocks the key:
+  `/api/ivs?boxes=1` returns 400, `gating_check("ivs")` refuses to start IVS
+  with `boxes: true`, and the IVS thread always calls
+  `ivs_boxes_request(0)`. After these runs the stand developed SPI NAND
+  degradation (`rockchip-sfc ... timeout`, `UBIFS ... error -5/-30`, `Fatal
+  exception in interrupt`, see `TESTBENCH.md §8`), so some of the later hangs
+  may have been caused by the flash failure rather than IVS. The
+  incompatibility conclusion is not final; the key stays hard-disabled until
+  it is retested on a healthy board. Status: **open, feature disabled; needs
+  a healthy DUT and a vendor RGN/VENC investigation**.
+  On 2026-11-14 a test build without the block: IVS **without YOLO `vi0`**
+  receives no frames (`getResults` timeout); with YOLO `vi0` region 13 is
+  created and IVS events flow (16 events), but after `boxes=0` → `boxes=1`
+  (destroy/recreate) the log shows `mpp: dup mClientFd failed`,
+  `getFd CHECK_GE`, SIGSEGV; the process stays in D-state, HTTP disappears
+  and `reboot -f` is required. On such a process exit the kernel also hit
+  `dma_buf_release` (`Oops - BUG`, `Fixing recursive fault but reboot is
+  needed`) — a vendor MPP/DMA-buf lifecycle bug. The block stays because the
+  live switch inevitably recreates the region. The test build was removed
+  from the board.
+
+- **KI-064. `GET /api/update` hangs/kills divinus.**
+  On 2026-11-14 both the previous 0.3.0 binary (`/userdata/divinus.old`) and
+  the new build hang on the request: the log shows
+  `New request: (GET) /api/update`, no reply follows, and the process exits
+  without `Graceful shutdown`/`SIGSEGV`, leaving HTTP unavailable. It
+  reproduces after a cold boot and is not related to the SPI NAND (partition
+  reads/writes work at that moment). Workaround: do not poll `/api/update`;
+  `bench/api_check.py` excludes it from the smoke test until
+  `update_json()`/`gating_sd_space()` is investigated. Status: **open**.
 
 - **KI-024. A full `update.img` wipes the U-Boot env.** The MAC is re-derived
   from the serial number, but static network settings

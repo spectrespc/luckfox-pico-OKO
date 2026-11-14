@@ -15,7 +15,7 @@ environment variables that bench/netboot.py uses, so there is a single
 source of truth:
 
     OKO_NFS_IP     192.168.52.150   static DUT address in NFS mode
-    OKO_NAND_HOST  192.168.52.97    DHCP address of the NAND boot
+    OKO_NAND_HOST  192.168.52.33    DHCP address of the NAND boot
     OKO_TFTP_HOST  192.168.52.200   NFS/TFTP server
     OKO_GATEWAY    192.168.52.254
     OKO_NFSROOT    192.168.52.200:/srv/nfs/rootfs
@@ -23,7 +23,7 @@ source of truth:
 
 Examples:
     bench/run.sh nfs_env.py status
-    bench/run.sh nfs_env.py on  --host 192.168.52.97
+    bench/run.sh nfs_env.py on  --host 192.168.52.33
     bench/run.sh nfs_env.py off --host 192.168.52.150
     bench/run.sh nfs_env.py on  --no-reboot
 """
@@ -43,7 +43,7 @@ DEFAULT_OUT = ROOT / "output" / "bench"
 ENV_FILE = ROOT / "output" / "image" / ".env.txt"
 
 NFS_IP = os.environ.get("OKO_NFS_IP", "192.168.52.150")
-NAND_IP = os.environ.get("OKO_NAND_HOST", "192.168.52.97")
+NAND_IP = os.environ.get("OKO_NAND_HOST", "192.168.52.33")
 SERVER_IP = os.environ.get("OKO_TFTP_HOST", "192.168.52.200")
 GATEWAY = os.environ.get("OKO_GATEWAY", "192.168.52.254")
 NETMASK = "255.255.255.0"

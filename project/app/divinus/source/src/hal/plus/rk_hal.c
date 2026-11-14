@@ -1,5 +1,6 @@
 #if defined(__ARM_PCS_VFP)
 
+#include <pthread.h>
 #include <stdint.h>
 
 #include "rk_hal.h"
@@ -18,6 +19,24 @@ rk_mb_impl      rk_mb;
 rk_rgn_impl     rk_rgn;
 rk_rknn_impl    rk_rknn;
 rk_rknn_impl    rk_rknn2;
+
+/* RK_MPI_RGN is not safe for concurrent calls.  The YOLO and IVS threads both
+ * paint 2BPP canvases on the same VENC channel, and creating/updating a region
+ * from one thread while the other is between GetCanvasInfo and UpdateCanvas
+ * crashes the vendor encoder (mpp get fd / CHECK_GE).  Every create/destroy is
+ * serialized here; a paint cycle additionally holds the same mutex across
+ * begin..commit through the exported lock helpers. */
+static pthread_mutex_t rk_box_mtx = PTHREAD_MUTEX_INITIALIZER;
+
+void rk_region_overlay_lock(void)
+{
+    pthread_mutex_lock(&rk_box_mtx);
+}
+
+void rk_region_overlay_unlock(void)
+{
+    pthread_mutex_unlock(&rk_box_mtx);
+}
 
 rk_rknn_impl *rk_rknn_for_runtime(int runtime) {
     if (runtime == 2)
@@ -552,7 +571,7 @@ static void rk_region_anchor(short *px, short *py, int channel,
     }
 }
 
-int rk_region_create2(char handle, hal_rect rect, short opacity,
+static int rk_region_create2_locked(char handle, hal_rect rect, short opacity,
     int module, int device, int channel)
 {
     int ret;
@@ -620,7 +639,19 @@ int rk_region_create2(char handle, hal_rect rect, short opacity,
     return ret;
 }
 
-int rk_region_create(char handle, hal_rect rect, short opacity)
+int rk_region_create2(char handle, hal_rect rect, short opacity,
+    int module, int device, int channel)
+{
+    int ret;
+
+    pthread_mutex_lock(&rk_box_mtx);
+    ret = rk_region_create2_locked(handle, rect, opacity, module, device,
+        channel);
+    pthread_mutex_unlock(&rk_box_mtx);
+    return ret;
+}
+
+static int rk_region_create_locked(char handle, hal_rect rect, short opacity)
 {
     int ret, count;
     char targets[3] = {0};
@@ -665,36 +696,62 @@ int rk_region_create(char handle, hal_rect rect, short opacity)
     }
 
     for (int i = 0; i < count; i++)
-        rk_region_create2(handle, rect, opacity, RK_SYS_MOD_VENC,
+        rk_region_create2_locked(handle, rect, opacity, RK_SYS_MOD_VENC,
             _rk_venc_dev, targets[i]);
 
     return EXIT_SUCCESS;
 }
 
+int rk_region_create(char handle, hal_rect rect, short opacity)
+{
+    int ret;
+
+    pthread_mutex_lock(&rk_box_mtx);
+    ret = rk_region_create_locked(handle, rect, opacity);
+    pthread_mutex_unlock(&rk_box_mtx);
+    return ret;
+}
+
 void rk_region_destroy(char handle)
 {
+    pthread_mutex_lock(&rk_box_mtx);
     for (int i = 0; i < RK_VENC_CHN_NUM; i++) {
         rk_sys_bind target = { .module = RK_SYS_MOD_VENC,
             .device = _rk_venc_dev, .channel = i };
         rk_rgn.fnDetachChannel(handle, &target);
     }
     rk_rgn.fnDestroyRegion(handle);
+    pthread_mutex_unlock(&rk_box_mtx);
 }
 
 /* -------------------------------------------------------------------------
- * NN overlay region (detector bounding boxes)
+ * 2BPP overlay regions (detector boxes and IVS rectangles)
  *
  * The vendor rkipc draws RockIVA boxes into an overlay region in 2BPP and
  * repaints it with RK_MPI_RGN_GetCanvasInfo/UpdateCanvas: one byte holds four
  * pixels and only two palette entries are available, which keeps the whole
  * 1080p canvas at ~518 KiB instead of the ~4.1 MiB a BGRA5551 canvas needs.
- * The region is created by the YOLO capture thread and is not part of osds[].
+ * Handle 12 belongs to the YOLO detector, handle 13 to IVS; both stay outside
+ * the text OSD range (0..MAX_OSD-1) and are not part of osds[].
  * ---------------------------------------------------------------------- */
 
-static int rk_nn_ready;
-static int rk_nn_width, rk_nn_height;
-static int rk_nn_layer = -1;
-static unsigned int rk_nn_lut0, rk_nn_lut1;
+#define RK_RGN_BOX_SLOTS 2
+
+typedef struct {
+    int ready;
+    int width, height;
+    int layer;
+    unsigned int lut0, lut1;
+} rk_rgn_box_state;
+
+static rk_rgn_box_state rk_box[RK_RGN_BOX_SLOTS];
+
+static int rk_rgn_box_slot(char handle)
+{
+    if (handle == RK_RGN_NN_HANDLE) return 0;
+    if (handle == RK_RGN_IVS_HANDLE) return 1;
+    return -1;
+}
 
 int rk_region_nn_supported(void)
 {
@@ -702,37 +759,54 @@ int rk_region_nn_supported(void)
     int supported = rk_rgn.fnGetCanvasInfo && rk_rgn.fnUpdateCanvas;
 
     if (!supported && !warned) {
-        HAL_WARNING("rk_rgn", "NN overlay is unavailable: "
+        HAL_WARNING("rk_rgn", "2BPP overlay is unavailable: "
             "RK_MPI_RGN_GetCanvasInfo/UpdateCanvas is missing\n");
         warned = 1;
     }
     return supported ? 1 : 0;
 }
 
-void rk_region_nn_destroy(void)
+int rk_region_ivs_supported(void)
 {
-    if (!rk_nn_ready) return;
+    return rk_region_nn_supported();
+}
+
+static void rk_region_box_destroy_locked(char handle)
+{
+    int slot = rk_rgn_box_slot(handle);
+
+    if (slot < 0 || !rk_box[slot].ready) return;
 
     for (int i = 0; i < RK_VENC_CHN_NUM; i++) {
         rk_sys_bind target = { .module = RK_SYS_MOD_VENC,
             .device = _rk_venc_dev, .channel = i };
-        rk_rgn.fnDetachChannel(RK_RGN_NN_HANDLE, &target);
+        rk_rgn.fnDetachChannel(handle, &target);
     }
-    rk_rgn.fnDestroyRegion(RK_RGN_NN_HANDLE);
+    rk_rgn.fnDestroyRegion(handle);
 
-    rk_nn_ready = 0;
-    rk_nn_layer = -1;
+    rk_box[slot].ready = 0;
+    rk_box[slot].layer = -1;
 }
 
-int rk_region_nn_create(int width, int height, int layer,
+static void rk_region_box_destroy(char handle)
+{
+    pthread_mutex_lock(&rk_box_mtx);
+    rk_region_box_destroy_locked(handle);
+    pthread_mutex_unlock(&rk_box_mtx);
+}
+
+static int rk_region_box_create_locked(char handle, int width, int height,
+    int layer,
     unsigned int lut0, unsigned int lut1)
 {
     char targets[3] = {0};
     rk_rgn_cnf region;
     rk_rgn_chn attrib;
     unsigned int pw, ph;
-    int ret, count;
+    int ret, count, slot;
 
+    slot = rk_rgn_box_slot(handle);
+    if (slot < 0) return EXIT_FAILURE;
     if (!rk_region_nn_supported()) return EXIT_FAILURE;
     if (width < 16 || height < 16 || layer < 0 || layer > 7)
         return EXIT_FAILURE;
@@ -741,12 +815,12 @@ int rk_region_nn_create(int width, int height, int layer,
     ph = rk_rgn_pad16((unsigned int)height);
     if (pw > 8192 || ph > 8192) return EXIT_FAILURE;
 
-    if (rk_nn_ready && rk_nn_width == (int)pw &&
-        rk_nn_height == (int)ph && rk_nn_layer == layer &&
-        rk_nn_lut0 == lut0 && rk_nn_lut1 == lut1)
+    if (rk_box[slot].ready && rk_box[slot].width == (int)pw &&
+        rk_box[slot].height == (int)ph && rk_box[slot].layer == layer &&
+        rk_box[slot].lut0 == lut0 && rk_box[slot].lut1 == lut1)
         return EXIT_SUCCESS;
 
-    rk_region_nn_destroy();
+    rk_region_box_destroy_locked(handle);
 
     count = rk_region_targets(targets, sizeof(targets));
     if (count < 1) return EXIT_FAILURE;
@@ -760,13 +834,12 @@ int rk_region_nn_create(int width, int height, int layer,
      * keep showing the previous frame until the next UpdateCanvas. */
     region.overlay.canvas = 1;
 
-    if (ret = rk_rgn.fnCreateRegion(RK_RGN_NN_HANDLE, &region)) {
-        HAL_DANGER("rk_rgn", "Creating the NN overlay region %d "
-            "(%ux%u, 2BPP) failed with %#x!\n", RK_RGN_NN_HANDLE,
-            pw, ph, ret);
+    if (ret = rk_rgn.fnCreateRegion(handle, &region)) {
+        HAL_DANGER("rk_rgn", "Creating the 2BPP overlay region %d "
+            "(%ux%u) failed with %#x!\n", handle, pw, ph, ret);
         return ret;
     }
-    rk_nn_ready = 1;
+    rk_box[slot].ready = 1;
 
     memset(&attrib, 0, sizeof(attrib));
     attrib.show = 1;
@@ -783,36 +856,47 @@ int rk_region_nn_create(int width, int height, int layer,
         rk_sys_bind target = { .module = RK_SYS_MOD_VENC,
             .device = _rk_venc_dev, .channel = targets[i] };
 
-        ret = rk_rgn.fnAttachChannel(RK_RGN_NN_HANDLE, &target, &attrib);
+        ret = rk_rgn.fnAttachChannel(handle, &target, &attrib);
         if (ret) {
-            HAL_DANGER("rk_rgn", "Attaching the NN overlay region %d to "
-                "channel %d failed with %#x!\n", RK_RGN_NN_HANDLE,
-                targets[i], ret);
-            rk_region_nn_destroy();
+            HAL_DANGER("rk_rgn", "Attaching the 2BPP overlay region %d to "
+                "channel %d failed with %#x!\n", handle, targets[i], ret);
+            rk_region_box_destroy_locked(handle);
             return ret;
         }
     }
 
-    rk_nn_width = (int)pw;
-    rk_nn_height = (int)ph;
-    rk_nn_layer = layer;
-    rk_nn_lut0 = lut0;
-    rk_nn_lut1 = lut1;
+    rk_box[slot].width = (int)pw;
+    rk_box[slot].height = (int)ph;
+    rk_box[slot].layer = layer;
+    rk_box[slot].lut0 = lut0;
+    rk_box[slot].lut1 = lut1;
 
-    HAL_INFO("rk_rgn", "NN overlay region %d created: %ux%u 2BPP on %d "
-        "channel(s), layer %d\n", RK_RGN_NN_HANDLE, pw, ph, count, layer);
+    HAL_INFO("rk_rgn", "2BPP overlay region %d created: %ux%u on %d "
+        "channel(s), layer %d\n", handle, pw, ph, count, layer);
     return EXIT_SUCCESS;
 }
 
-int rk_region_nn_begin(void **addr, unsigned int *stridePx,
-    unsigned int *width, unsigned int *height)
+static int rk_region_box_create(char handle, int width, int height, int layer,
+    unsigned int lut0, unsigned int lut1)
+{
+    int ret;
+
+    pthread_mutex_lock(&rk_box_mtx);
+    ret = rk_region_box_create_locked(handle, width, height, layer, lut0, lut1);
+    pthread_mutex_unlock(&rk_box_mtx);
+    return ret;
+}
+
+static int rk_region_box_begin(char handle, void **addr,
+    unsigned int *stridePx, unsigned int *width, unsigned int *height)
 {
     char targets[3] = {0};
     rk_rgn_canvas cv;
     unsigned int stride;
-    int count, attached = 0;
+    int count, attached = 0, slot = rk_rgn_box_slot(handle);
 
-    if (!rk_nn_ready || !addr || !stridePx || !width || !height)
+    if (slot < 0 || !rk_box[slot].ready || !addr || !stridePx ||
+        !width || !height)
         return EXIT_FAILURE;
 
     /* A VENC channel may have been recreated without the process restarting;
@@ -826,13 +910,13 @@ int rk_region_nn_begin(void **addr, unsigned int *stridePx,
         rk_rgn_chn config;
 
         memset(&config, 0, sizeof(config));
-        if (!rk_rgn.fnGetChannelConfig(RK_RGN_NN_HANDLE, &target, &config))
+        if (!rk_rgn.fnGetChannelConfig(handle, &target, &config))
             attached++;
     }
     if (!attached) return EXIT_FAILURE;
 
     memset(&cv, 0, sizeof(cv));
-    if (rk_rgn.fnGetCanvasInfo(RK_RGN_NN_HANDLE, &cv))
+    if (rk_rgn.fnGetCanvasInfo(handle, &cv))
         return EXIT_FAILURE;
 
     /* Never cache the pointer: the region may have been recreated or the
@@ -841,8 +925,8 @@ int rk_region_nn_begin(void **addr, unsigned int *stridePx,
     stride = cv.virWidth ? cv.virWidth : cv.size.width;
     if (cv.pixFmt != RK_PIXFMT_2BPP || !cv.virAddr || !cv.virHeight ||
         cv.size.width < 16 || cv.size.height < 16 ||
-        cv.size.width != (unsigned int)rk_nn_width ||
-        cv.size.height != (unsigned int)rk_nn_height ||
+        cv.size.width != (unsigned int)rk_box[slot].width ||
+        cv.size.height != (unsigned int)rk_box[slot].height ||
         stride < cv.size.width || stride > 8192 || (stride & 3))
         return EXIT_FAILURE;
 
@@ -853,20 +937,80 @@ int rk_region_nn_begin(void **addr, unsigned int *stridePx,
     return EXIT_SUCCESS;
 }
 
-int rk_region_nn_commit(void)
+static int rk_region_box_commit(char handle)
 {
-    int tries = 0, ret;
+    int tries = 0, ret, slot = rk_rgn_box_slot(handle);
 
-    if (!rk_nn_ready) return EXIT_FAILURE;
+    if (slot < 0 || !rk_box[slot].ready) return EXIT_FAILURE;
 
     do {
-        ret = rk_rgn.fnUpdateCanvas(RK_RGN_NN_HANDLE);
+        ret = rk_rgn.fnUpdateCanvas(handle);
     } while (ret == RK_NOTICE_RGN_BUFFER_CHANGE && ++tries < 2);
 
     return ret ? EXIT_FAILURE : EXIT_SUCCESS;
 }
 
+void rk_region_nn_destroy(void)
+{
+    rk_region_box_destroy(RK_RGN_NN_HANDLE);
+}
+
+int rk_region_nn_create(int width, int height, int layer,
+    unsigned int lut0, unsigned int lut1)
+{
+    return rk_region_box_create(RK_RGN_NN_HANDLE, width, height, layer,
+        lut0, lut1);
+}
+
+int rk_region_nn_begin(void **addr, unsigned int *stridePx,
+    unsigned int *width, unsigned int *height)
+{
+    return rk_region_box_begin(RK_RGN_NN_HANDLE, addr, stridePx,
+        width, height);
+}
+
+int rk_region_nn_commit(void)
+{
+    return rk_region_box_commit(RK_RGN_NN_HANDLE);
+}
+
+void rk_region_ivs_destroy(void)
+{
+    rk_region_box_destroy(RK_RGN_IVS_HANDLE);
+}
+
+int rk_region_ivs_create(int width, int height, int layer,
+    unsigned int lut0, unsigned int lut1)
+{
+    return rk_region_box_create(RK_RGN_IVS_HANDLE, width, height, layer,
+        lut0, lut1);
+}
+
+int rk_region_ivs_begin(void **addr, unsigned int *stridePx,
+    unsigned int *width, unsigned int *height)
+{
+    return rk_region_box_begin(RK_RGN_IVS_HANDLE, addr, stridePx,
+        width, height);
+}
+
+int rk_region_ivs_commit(void)
+{
+    return rk_region_box_commit(RK_RGN_IVS_HANDLE);
+}
+
+static int rk_region_setbitmap_locked(int handle, hal_bitmap *bitmap);
+
 int rk_region_setbitmap(int handle, hal_bitmap *bitmap)
+{
+    int ret;
+
+    pthread_mutex_lock(&rk_box_mtx);
+    ret = rk_region_setbitmap_locked(handle, bitmap);
+    pthread_mutex_unlock(&rk_box_mtx);
+    return ret;
+}
+
+static int rk_region_setbitmap_locked(int handle, hal_bitmap *bitmap)
 {
     // OKO: RV1106 RGN accepts BGRA5551. The alpha bit position differs between
     // librockit builds (bit 0 vs bit 15), so set both; this keeps non-white

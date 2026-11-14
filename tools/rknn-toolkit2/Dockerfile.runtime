@@ -10,7 +10,11 @@
 #   docker run --rm oko-rknn-runtime2 > output/rknn/runtime2/librknnmrt2.so
 FROM ubuntu:22.04 AS runtime
 
-ARG RKNN_TAG=v2.3.2
+ARG RKNN_TAG=v2.5.0
+# SHA-256 of the unmodified vendor blob at RKNN_TAG.  The download is
+# rejected when the tag is re-pointed, so the shipped library always has a
+# known provenance.
+ARG RKNN_SHA256=632d0e505ca9c9d3da7037107a7cbc6a593b9b36007cdce600377c529484947e
 ARG RKNN_URL=https://raw.githubusercontent.com/airockchip/rknn-toolkit2/${RKNN_TAG}/rknpu2/runtime/Linux/librknn_api/armhf-uclibc/librknnmrt.so
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -18,6 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL -o /librknnmrt2.so "${RKNN_URL}" \
+    && echo "${RKNN_SHA256}  /librknnmrt2.so" | sha256sum -c - \
     && patchelf --set-soname librknnmrt2.so /librknnmrt2.so
 
 FROM scratch

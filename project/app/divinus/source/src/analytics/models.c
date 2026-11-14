@@ -29,6 +29,7 @@ typedef struct {
     int width;
     int height;
     int runtime;        /* 0 = unknown, 1 = RKNN 1.x, 2 = RKNN 2.x */
+    int arch;           /* 0 = unknown, 1 = YOLOv5, 2 = YOLO11 */
 } model_meta;
 
 /* yolo.model_dir may be changed in the config; the compiled default is used
@@ -266,7 +267,7 @@ static void models_json_load(void)
         char name[96] = {0};
         char hash[65] = {0};
         unsigned long long size = 0;
-        int classes = 0, width = 0, height = 0, runtime = 0;
+        int classes = 0, width = 0, height = 0, runtime = 0, arch = 0;
         char *end;
 
         cursor += strlen("{\"name\":\"");
@@ -300,6 +301,8 @@ static void models_json_load(void)
             height = (int)strtol(end + strlen("\"height\":"), NULL, 10);
         if ((end = strstr(cursor, "\"runtime\":")))
             runtime = (int)strtol(end + strlen("\"runtime\":"), NULL, 10);
+        if ((end = strstr(cursor, "\"arch\":")))
+            arch = (int)strtol(end + strlen("\"arch\":"), NULL, 10);
 
         entry->size = size;
         snprintf(entry->sha, sizeof(entry->sha), "%s", hash);
@@ -307,6 +310,7 @@ static void models_json_load(void)
         entry->width = width;
         entry->height = height;
         entry->runtime = runtime;
+        entry->arch = arch;
         cursor++;
     }
 
@@ -326,9 +330,11 @@ static void models_json_save(void)
     for (int i = 0; i < metadataCount; i++) {
         model_meta *entry = &metadata[i];
         fprintf(file, "%s{\"name\":\"%s\",\"size\":%llu,\"sha256\":\"%s\","
-            "\"classes\":%d,\"width\":%d,\"height\":%d,\"runtime\":%d}",
+            "\"classes\":%d,\"width\":%d,\"height\":%d,\"runtime\":%d,"
+            "\"arch\":%d}",
             i ? "," : "", entry->name, entry->size, entry->sha,
-            entry->classes, entry->width, entry->height, entry->runtime);
+            entry->classes, entry->width, entry->height, entry->runtime,
+            entry->arch);
     }
     fprintf(file, "]}\n");
     fflush(file);
@@ -451,12 +457,12 @@ size_t models_list_json(char *out, size_t size)
         models_append(out, size, &used,
             "%s{\"name\":\"%s\",\"size\":%llu,\"sha256\":\"%s\","
             "\"classes\":%d,\"width\":%d,\"height\":%d,\"runtime\":%d,"
-            "\"active\":%s}",
+            "\"arch\":%d,\"active\":%s}",
             i ? "," : "", escaped,
             (unsigned long long)(S_ISREG(st.st_mode) ? st.st_size : 0),
             meta ? meta->sha : "", meta ? meta->classes : 0,
             meta ? meta->width : 0, meta ? meta->height : 0,
-            meta ? meta->runtime : 0,
+            meta ? meta->runtime : 0, meta ? meta->arch : 0,
             !strcmp(names[i], active) ? "true" : "false");
     }
 
@@ -484,7 +490,8 @@ int models_upload(const char *filename, const char *data, size_t length,
     }
     if (length > MODELS_QUOTA) {
         snprintf(error, errorSize,
-            "the model is larger than the 3 MiB upload limit");
+            "the model is larger than the %.1f MiB upload limit",
+            (double)MODELS_QUOTA / (1024.0 * 1024.0));
         return EXIT_FAILURE;
     }
     if (models_free_bytes(&freeBytes)) {
@@ -537,7 +544,7 @@ int models_upload(const char *filename, const char *data, size_t length,
             entry->runtime = 0;     /* detected on the next activation */
             models_sha256(data, length, entry->sha);
             if (strcmp(filename, models_active_name()))
-                entry->classes = entry->width = entry->height = 0;
+                entry->classes = entry->width = entry->height = entry->arch = 0;
             models_json_save();
         }
     }
@@ -583,6 +590,13 @@ int models_activate(const char *name, char *error, size_t errorSize)
     /* models.json records the runtime that last loaded this file; a model
      * converted by toolkit 2.x must not be handed to the 1.6.0 runtime. */
     entry = models_find(name);
+    if (entry && entry->arch == YOLO_ARCH_11 &&
+        (int)app_config.yolo_runtime != 2) {
+        snprintf(error, errorSize,
+            "YOLO11 models require RKNN runtime 2; set yolo.runtime=2 "
+            "and retry");
+        return EXIT_FAILURE;
+    }
     if (entry && entry->runtime &&
         entry->runtime != (int)app_config.yolo_runtime) {
         snprintf(error, errorSize,
@@ -603,6 +617,7 @@ int models_activate(const char *name, char *error, size_t errorSize)
         info.height = (int)app_config.yolo_input_height;
         info.classes = (int)app_config.yolo_classes;
         info.runtime = (int)app_config.yolo_runtime;
+        info.arch = yolo_active_arch();
     } else if (yolo_model_probe(path, &info, error, errorSize)) {
         models_explain_runtime(path, error, errorSize);
         return EXIT_FAILURE;
@@ -623,12 +638,14 @@ int models_activate(const char *name, char *error, size_t errorSize)
         entry->classes = info.classes;
         entry->runtime = info.runtime ? info.runtime :
             (int)app_config.yolo_runtime;
+        entry->arch = info.arch;
         if (!stat(path, &st)) entry->size = (unsigned long long)st.st_size;
         models_json_save();
     }
 
-    HAL_INFO("models", "Activated %s (%dx%d, %d classes, runtime %s)\n",
+    HAL_INFO("models", "Activated %s (%dx%d, %d classes, %s, runtime %s)\n",
         name, info.width, info.height, info.classes,
+        info.arch == YOLO_ARCH_11 ? "yolo11" : "yolov5",
         info.sdk[0] ? info.sdk : "unknown");
     return EXIT_SUCCESS;
 }

@@ -148,6 +148,18 @@ http_post:
   interval: 60
   login: none
   password: none
+  # WebUI link to the event receiver; empty builds it from host:8090
+  receiver_url: ""
+
+# Event clips: the encoded main H.265 stream is kept in a RAM ring and turned
+# into an fMP4 for [pre_seconds .. event .. post_seconds]; the clip is sent to
+# http_post.host with PUT <url with "frame" -> "clip">.
+# Requires [mp4] enable. Failed deliveries spool to /mnt/sdcard/oko-outbox.
+event_clip:
+  enable: false
+  pre_seconds: 5     # 0..15; ring = (pre + post + 2) seconds at mp4.bitrate
+  post_seconds: 10   # 1..30
+  max_bytes: 16777216
 
 audio:
   enable: false
@@ -239,9 +251,11 @@ mjpeg:
 #   act_osd: false
 #   record_seconds: 15
 #   record_source: main
+#   boxes: false          # рамки срабатываний IVS на главном потоке
 #
 # yolo:
 #   enable: false
+#   runtime: 2            # 1 = RKNN 1.6.0; 2 = RKNN 2.5.0 (YOLO11 and RKOPT)
 #   source: vpss3         # vpss3 (default) | vi1 | vi0; vi1 hung a board in M0
 #   boxes: false          # demo overlay: detection boxes on the main stream
 #   model: /userdata/models/yolov5n.rknn

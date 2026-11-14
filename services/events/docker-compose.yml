@@ -1,0 +1,18 @@
+name: oko-events
+
+services:
+  oko-events:
+    build: .
+    image: oko-events:latest
+    container_name: oko-events
+    # Same host-network convention as services/stream: the camera pushes to
+    # 192.168.52.200:8090 and the operator opens http://192.168.52.200:8090/.
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      EVENTS_DIR: /data
+      EVENTS_MAX_GB: ${EVENTS_MAX_GB:-2}
+      # Optional shared secret; when set the camera must send X-OKO-Token.
+      OKO_EVENTS_TOKEN: ${OKO_EVENTS_TOKEN:-}
+    volumes:
+      - ../../output/srv/events:/data

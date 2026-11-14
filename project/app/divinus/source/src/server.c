@@ -22,10 +22,12 @@
 #include "wifi.h"
 #include "analytics/models.h"
 #include "analytics/yolo.h"
+#include "analytics/yolo_history.h"
+#include "record_clip.h"
 
 #define HTTP_MAX_CLIENTS 50
 #define HTTP_MIN_BUF_SIZE 4096
-#define HTTP_MAX_BUF_SIZE (4 * 1024 * 1024)
+#define HTTP_MAX_BUF_SIZE (10 * 1024 * 1024)
 
 IMPORT_STR(.rodata, "../res/index.html", indexhtml);
 extern const char indexhtml[];
@@ -107,12 +109,14 @@ static bool is_local_address(const char *client_ip) {
  * instead of being copied into that path. */
 static bool ip_whitelisted(const char *client_ip)
 {
+    int count = (int)(sizeof(app_config.web_whitelist) /
+        sizeof(app_config.web_whitelist[0]));
+
     if (EMPTY(*app_config.web_whitelist))
         return true;
     if (!client_ip)
         return false;
-    for (int i = 0; app_config.web_whitelist[i] &&
-         *app_config.web_whitelist[i]; i++)
+    for (int i = 0; i < count && *app_config.web_whitelist[i]; i++)
         if (ip_in_cidr(client_ip, app_config.web_whitelist[i]))
             return true;
     return false;
@@ -1256,6 +1260,74 @@ static void gating_block(http_request_t *req, gating_result gate)
     send_and_close(req->clntFd, response, len);
 }
 
+/* OKO: [stream] destination validation.  Only the forms media_start() accepts
+ * are allowed: udp://host[:port] (numeric IPv4) or rtmp://host...; an empty
+ * string clears the slot. */
+static int stream_dest_valid(const char *dest)
+{
+    const char *rest, *colon, *end;
+
+    if (!dest || !*dest) return 1;
+    if (STARTS_WITH(dest, "udp://")) rest = dest + 6;
+    else if (STARTS_WITH(dest, "rtmp://")) {
+        /* media_start()/rtmp_init() only need a non-empty URL. */
+        return dest[7] != 0;
+    } else
+        return 0;
+
+    if (!*rest) return 0;
+    colon = strchr(rest, ':');
+    end = colon ? colon : rest + strlen(rest);
+    if (end == rest) return 0;
+    for (const char *p = rest; p < end; p++)
+        if (!((*p >= '0' && *p <= '9') || *p == '.'))
+            return 0;
+    if (colon) {
+        long port;
+        if (!parse_ranged(colon + 1, 1, 65535, &port)) return 0;
+    }
+    return 1;
+}
+
+/* The multicast flag is the first host octet, exactly like media_start(). */
+static int stream_dest_multicast(const char *dest)
+{
+    long first;
+    char *end;
+
+    if (!dest || !STARTS_WITH(dest, "udp://")) return 0;
+    first = strtol(dest + 6, &end, 10);
+    return end != dest + 6 && first >= 224 && first <= 239;
+}
+
+/* host or host:port, plus the factory sentinel "none". */
+static int http_post_host_valid(const char *host)
+{
+    if (!host || !*host || EQUALS_CASE(host, "none")) return 1;
+    for (const char *p = host; *p; p++) {
+        char c = *p;
+
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || c == '.' || c == '-' || c == '_' ||
+            c == ':')
+            continue;
+        return 0;
+    }
+    return 1;
+}
+
+/* Absolute path with optional strftime tokens; no whitespace or controls. */
+static int http_post_url_valid(const char *url)
+{
+    if (!url || url[0] != '/') return 0;
+    for (const char *p = url; *p; p++) {
+        unsigned char c = (unsigned char)*p;
+
+        if (c <= ' ' || c == 0x7f) return 0;
+    }
+    return 1;
+}
+
 /* Extracts a plain text field from a multipart/form-data body.  The VPN
  * import uses it for the OpenVPN "user" and "pass" fields. */
 static int multipart_field(const char *payload, int body_len,
@@ -1301,6 +1373,18 @@ static int multipart_field(const char *payload, int body_len,
         cursor = next;
     }
     return -1;
+}
+
+/* Human-readable names used by /api/yolo and its detection history. */
+static const char *yolo_source_name(unsigned int source)
+{
+    return source == 2 ? "vi0" : (source == 1 ? "vpss3" : "vi1");
+}
+
+static const char *aiisp_mode_name(unsigned int mode)
+{
+    return mode == HAL_AIISP_OFF ? "off" :
+        (mode == HAL_AIISP_AUTO ? "auto" : "on");
 }
 
 void respond_request(http_request_t *req) {
@@ -1917,7 +2001,7 @@ void respond_request(http_request_t *req) {
                 if (models_upload(filename, start, uploaded_len, error,
                         sizeof(error))) {
                     reply_error(req->clntFd, "blocked", error,
-                        "the limit is 3 MiB and the model must be .rknn");
+                        "the limit is 4.3 MiB and the model must be .rknn");
                     return;
                 }
 
@@ -3041,6 +3125,165 @@ void respond_request(http_request_t *req) {
         return;
     }
 
+    /* OKO: [stream] UDP/RTP/RTMP destinations.  Scalars dest0..dest3 match the
+     * flat WebUI group model; empty slots are compacted so media_start() always
+     * sees a contiguous list. */
+    if (EQUALS(req->uri, "/api/stream")) {
+        bool enable = app_config.stream_enable;
+        unsigned short srcport = app_config.stream_udp_srcport;
+        char dests[5][256];
+        const char *note = "stream updated";
+
+        for (int i = 0; i < 5; i++)
+            snprintf(dests[i], sizeof(dests[i]), "%s", app_config.stream_dests[i]);
+
+        if (req->query) {
+            bool wasEnabled = app_config.stream_enable;
+            int changed = 0;
+
+            while (req->query) {
+                char *value = split(&req->query, "&");
+                char *key;
+
+                if (!value || !*value) continue;
+                key = split(&value, "=");
+                if (!key || !*key) continue;
+
+                if (STARTS_WITH(key, "dest") && key[4] >= '0' && key[4] <= '3' &&
+                    !key[5]) {
+                    int slot = key[4] - '0';
+                    const char *v;
+
+                    if (!value || strlen(value) > sizeof(dests[slot]) - 1) {
+                        if (value) {
+                            reply_bad_request(req->clntFd,
+                                "stream destination is too long",
+                                "use udp://host:port, at most 255 characters");
+                            return;
+                        }
+                        dests[slot][0] = 0;
+                        continue;
+                    }
+                    unescape_uri(value);
+                    v = value;
+                    snprintf(dests[slot], sizeof(dests[slot]), "%s", v);
+                    continue;
+                }
+
+                if (!value || !*value) continue;
+                unescape_uri(value);
+                if (EQUALS(key, "enable")) {
+                    enable = query_bool(value) ? true : false;
+                } else if (EQUALS(key, "udp_srcport")) {
+                    long v;
+                    if (!parse_ranged(value, 0, 65535, &v)) {
+                        reply_bad_request(req->clntFd,
+                            "invalid stream.udp_srcport",
+                            "use 0..65535; 0 means the default port");
+                        return;
+                    }
+                    srcport = (unsigned short)v;
+                }
+            }
+
+            /* Compact the four editable slots; a cleared middle slot must not
+             * leave an orphaned destination after it. */
+            {
+                char compact[5][256];
+                int count = 0;
+
+                memset(compact, 0, sizeof(compact));
+                for (int i = 0; i < 4; i++)
+                    if (dests[i][0])
+                        snprintf(compact[count++], sizeof(compact[0]), "%s",
+                            dests[i]);
+                memcpy(dests, compact, sizeof(dests));
+            }
+
+            {
+                int destChanged = 0;
+
+                for (int i = 0; i < 5; i++)
+                    if (strcmp(dests[i], app_config.stream_dests[i]))
+                        destChanged = 1;
+
+                /* Validate only what is about to be used or changed: a legacy
+                 * yaml that violates KI-052 must still be stoppable. */
+                if (destChanged || (enable && !wasEnabled)) {
+                    for (int i = 0; i < 4 && dests[i][0]; i++) {
+                        if (!stream_dest_valid(dests[i])) {
+                            reply_bad_request(req->clntFd,
+                                "invalid stream destination",
+                                "use udp://host:port or rtmp://host/app");
+                            return;
+                        }
+                    }
+                    /* KI-052: the multicast flag is taken from the first
+                     * address, so a multicast first destination corrupts RTP
+                     * for the unicast ones. */
+                    if (dests[0][0] && dests[1][0] &&
+                        stream_dest_multicast(dests[0])) {
+                        reply_bad_request(req->clntFd,
+                            "a multicast destination cannot be first",
+                            "put the unicast destination first (KI-052)");
+                        return;
+                    }
+                }
+
+                changed = destChanged ||
+                    enable != app_config.stream_enable ||
+                    srcport != app_config.stream_udp_srcport;
+            }
+
+            app_config.stream_enable = enable;
+            app_config.stream_udp_srcport = srcport;
+            memcpy(app_config.stream_dests, dests, sizeof(dests));
+
+            if (!enable) {
+                if (media_stream_active()) media_stop();
+                note = "stream stopped";
+            } else if (!wasEnabled) {
+                media_start();
+                note = dests[0][0] ? "stream started" : "dest not set";
+            } else if (changed) {
+                /* Recreate the clients so a changed address cannot linger in
+                 * the socket table. */
+                media_stop();
+                media_start();
+                note = dests[0][0] ? "destinations applied" : "dest not set";
+            } else if (!dests[0][0]) {
+                note = "dest not set";
+            }
+            if (enable && dests[0][0] && !media_stream_active())
+                note = "stream could not be started";
+
+            app_config_save();
+        }
+
+        {
+            char esc0[256 * 6 + 1], esc1[256 * 6 + 1];
+            char esc2[256 * 6 + 1], esc3[256 * 6 + 1];
+
+            escape_json(esc0, app_config.stream_dests[0], sizeof(esc0));
+            escape_json(esc1, app_config.stream_dests[1], sizeof(esc1));
+            escape_json(esc2, app_config.stream_dests[2], sizeof(esc2));
+            escape_json(esc3, app_config.stream_dests[3], sizeof(esc3));
+            respLen = sprintf(response,
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: application/json;charset=UTF-8\r\n"
+                "Connection: close\r\n"
+                "\r\n"
+                "{\"enable\":%s,\"udp_srcport\":%d,\"dest0\":\"%s\","
+                "\"dest1\":\"%s\",\"dest2\":\"%s\",\"dest3\":\"%s\","
+                "\"running\":%s,\"note\":\"%s\"}",
+                app_config.stream_enable ? "true" : "false",
+                app_config.stream_udp_srcport, esc0, esc1, esc2, esc3,
+                media_stream_active() ? "true" : "false", note);
+        }
+        send_and_close(req->clntFd, response, respLen);
+        return;
+    }
+
     if (EQUALS(req->uri, "/api/aiisp")) {
         if (req->query) {
             int enableReq = -1;
@@ -3091,9 +3334,490 @@ void respond_request(http_request_t *req) {
         return;
     }
 
+    /* OKO: event-clip state and the synthetic test event used by
+     * bench/event_check.py. */
+    if (EQUALS(req->uri, "/api/clip")) {
+        if (EQUALS(req->method, "POST")) {
+            int test = 0, enableReq = -1, paramsTouched = 0;
+            int pre = (int)app_config.event_clip_pre_seconds;
+            int post = (int)app_config.event_clip_post_seconds;
+            unsigned long long maxBytes = app_config.event_clip_max_bytes;
+            const char *note = "";
+
+            while (req->query) {
+                char *value = split(&req->query, "&");
+                char *key;
+
+                if (!value || !*value) continue;
+                key = split(&value, "=");
+                if (!key || !*key || !value || !*value) continue;
+                unescape_uri(value);
+                if (EQUALS(key, "test")) {
+                    test = query_bool(value);
+                } else if (EQUALS(key, "enable")) {
+                    enableReq = query_bool(value);
+                } else if (EQUALS(key, "pre_seconds")) {
+                    long v;
+                    if (!parse_ranged(value, 0, 15, &v)) {
+                        reply_bad_request(req->clntFd,
+                            "invalid event_clip.pre_seconds",
+                            "use 0..15 seconds");
+                        return;
+                    }
+                    pre = (int)v;
+                    paramsTouched = 1;
+                } else if (EQUALS(key, "post_seconds")) {
+                    long v;
+                    if (!parse_ranged(value, 1, 30, &v)) {
+                        reply_bad_request(req->clntFd,
+                            "invalid event_clip.post_seconds",
+                            "use 1..30 seconds");
+                        return;
+                    }
+                    post = (int)v;
+                    paramsTouched = 1;
+                } else if (EQUALS(key, "max_bytes")) {
+                    long v;
+                    if (!parse_ranged(value, 0, INT_MAX, &v)) {
+                        reply_bad_request(req->clntFd,
+                            "invalid event_clip.max_bytes",
+                            "use 0 (unlimited) or a byte count");
+                        return;
+                    }
+                    maxBytes = (unsigned long long)v;
+                    paramsTouched = 1;
+                }
+            }
+
+            if (!test && enableReq < 0 && !paramsTouched) {
+                reply_bad_request(req->clntFd,
+                    "no clip action requested",
+                    "POST /api/clip?test=1, enable=0|1, pre_seconds, "
+                    "post_seconds or max_bytes");
+                return;
+            }
+
+            if (enableReq == 1) {
+                gating_result gate = gating_check("event_clip");
+                if (!gate.ok) { gating_block(req, gate); return; }
+            }
+
+            {
+                int paramsChanged =
+                    pre != (int)app_config.event_clip_pre_seconds ||
+                    post != (int)app_config.event_clip_post_seconds ||
+                    maxBytes != app_config.event_clip_max_bytes;
+                bool wasEnabled = app_config.event_clip_enable;
+
+                if (enableReq >= 0)
+                    app_config.event_clip_enable = enableReq ? true : false;
+                app_config.event_clip_pre_seconds = (unsigned int)pre;
+                app_config.event_clip_post_seconds = (unsigned int)post;
+                app_config.event_clip_max_bytes = maxBytes;
+
+                if (!app_config.event_clip_enable) {
+                    if (wasEnabled) record_clip_stop();
+                    if (wasEnabled || enableReq == 0)
+                        note = "event clips disabled";
+                } else {
+                    /* The ring has to be rebuilt when the window changes; a
+                     * plain enable is idempotent and also retries a start
+                     * that failed earlier (record_clip_start() is a no-op
+                     * while the collector already runs). */
+                    if (wasEnabled && paramsChanged) record_clip_stop();
+                    if (record_clip_start()) {
+                        /* A ring that does not fit the RAM budget must not
+                         * leave the feature half-enabled after a restart. */
+                        app_config.event_clip_enable = false;
+                        app_config_save();
+                        reply_error(req->clntFd, "blocked",
+                            record_clip_unavailable() ? record_clip_unavailable() :
+                                "the clip ring could not be allocated",
+                            "lower pre_seconds/post_seconds or the main "
+                            "bitrate");
+                        return;
+                    }
+                    note = wasEnabled && paramsChanged ?
+                        "clip ring rebuilt; current clips were dropped" :
+                        (wasEnabled ? "event clips enabled" :
+                            "clip collector started");
+                }
+            }
+            app_config_save();
+
+            if (test) {
+                if (!app_config.event_clip_enable) {
+                    reply_error(req->clntFd, "blocked",
+                        "event clips are disabled",
+                        "enable the clip collector first");
+                    return;
+                }
+                if (record_clip_unavailable()) {
+                    reply_error(req->clntFd, "blocked", record_clip_unavailable(),
+                        "the clip taps the encoded main stream");
+                    return;
+                }
+                if (!app_config.yolo_enable || !yolo_running()) {
+                    reply_error(req->clntFd, "blocked",
+                        "the detector is not running",
+                        "the test event needs a running model to share its id "
+                        "with the JPEG bundle");
+                    return;
+                }
+                if (yolo_event_test()) {
+                    reply_error(req->clntFd, "busy",
+                        "the test event could not be queued",
+                        "wait for the current event to finish and retry");
+                    return;
+                }
+                respLen = sprintf(response,
+                    "HTTP/1.1 200 OK\r\n"
+                    "Content-Type: application/json;charset=UTF-8\r\n"
+                    "Connection: close\r\n"
+                    "\r\n"
+                    "{\"test\":true,\"event\":\"started\",\"note\":\"%s\"}",
+                    note);
+                send_and_close(req->clntFd, response, respLen);
+                return;
+            }
+
+            {
+                char status[1024];
+
+                record_clip_status_json(status, sizeof(status));
+                respLen = sprintf(response,
+                    "HTTP/1.1 200 OK\r\n"
+                    "Content-Type: application/json;charset=UTF-8\r\n"
+                    "Connection: close\r\n"
+                    "\r\n"
+                    "{%s,\"note\":\"%s\"}", status, note);
+                send_and_close(req->clntFd, response, respLen);
+                return;
+            }
+        }
+
+        {
+            char status[1024];
+
+            record_clip_status_json(status, sizeof(status));
+            respLen = sprintf(response,
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: application/json;charset=UTF-8\r\n"
+                "Connection: close\r\n"
+                "\r\n"
+                "{%s}", status);
+            send_and_close(req->clntFd, response, respLen);
+            return;
+        }
+    }
+
+    /* OKO: [http_post] and [event_clip] receiver settings.  The sender thread
+     * reads the configuration on every send, so only an enable transition
+     * needs start/stop; no SIGHUP and no stream restart. */
+    if (EQUALS(req->uri, "/api/http_post")) {
+        const char *note = "http_post settings applied";
+
+        if (req->query) {
+            char host[sizeof(app_config.http_post_host)];
+            char url[sizeof(app_config.http_post_url)];
+            char login[sizeof(app_config.http_post_login)];
+            char password[sizeof(app_config.http_post_password)];
+            char receiver[sizeof(app_config.http_post_receiver_url)];
+            unsigned int width = app_config.http_post_width;
+            unsigned int height = app_config.http_post_height;
+            unsigned int interval = app_config.http_post_interval;
+            unsigned int qfactor = app_config.http_post_qfactor;
+            bool enable = app_config.http_post_enable;
+            bool wasEnabled = app_config.http_post_enable;
+
+            snprintf(host, sizeof(host), "%s", app_config.http_post_host);
+            snprintf(url, sizeof(url), "%s", app_config.http_post_url);
+            snprintf(login, sizeof(login), "%s", app_config.http_post_login);
+            snprintf(password, sizeof(password), "%s",
+                app_config.http_post_password);
+            snprintf(receiver, sizeof(receiver), "%s",
+                app_config.http_post_receiver_url);
+
+            while (req->query) {
+                char *value = split(&req->query, "&");
+                char *key;
+
+                if (!value || !*value) continue;
+                key = split(&value, "=");
+                if (!key || !*key) continue;
+                if (value) unescape_uri(value);
+
+                if (EQUALS(key, "enable")) {
+                    enable = query_bool(value) ? true : false;
+                } else if (EQUALS(key, "host")) {
+                    if (strlen(value ? value : "") >= sizeof(host)) {
+                        reply_bad_request(req->clntFd,
+                            "http_post.host is too long", "shorten the host");
+                        return;
+                    }
+                    snprintf(host, sizeof(host), "%s", value ? value : "");
+                } else if (EQUALS(key, "url")) {
+                    if (strlen(value ? value : "") >= sizeof(url)) {
+                        reply_bad_request(req->clntFd,
+                            "http_post.url is too long", "shorten the URL");
+                        return;
+                    }
+                    snprintf(url, sizeof(url), "%s", value ? value : "");
+                } else if (EQUALS(key, "login")) {
+                    if (strlen(value ? value : "") >= sizeof(login)) {
+                        reply_bad_request(req->clntFd,
+                            "http_post.login is too long", "shorten the login");
+                        return;
+                    }
+                    snprintf(login, sizeof(login), "%s", value ? value : "");
+                } else if (EQUALS(key, "password")) {
+                    /* The WebUI never reads the password back; an empty field
+                     * means "keep the stored value". */
+                    if (strlen(value ? value : "") >= sizeof(password)) {
+                        reply_bad_request(req->clntFd,
+                            "http_post.password is too long",
+                            "shorten the password");
+                        return;
+                    }
+                    if (value && *value)
+                        snprintf(password, sizeof(password), "%s", value);
+                } else if (EQUALS(key, "width")) {
+                    long v;
+                    if (!value || !parse_ranged(value, 160, INT_MAX, &v)) {
+                        reply_bad_request(req->clntFd,
+                            "invalid http_post.width", "use 160..INT_MAX");
+                        return;
+                    }
+                    width = (unsigned int)v;
+                } else if (EQUALS(key, "height")) {
+                    long v;
+                    if (!value || !parse_ranged(value, 120, INT_MAX, &v)) {
+                        reply_bad_request(req->clntFd,
+                            "invalid http_post.height", "use 120..INT_MAX");
+                        return;
+                    }
+                    height = (unsigned int)v;
+                } else if (EQUALS(key, "interval")) {
+                    long v;
+                    if (!value || !parse_ranged(value, 1, INT_MAX, &v)) {
+                        reply_bad_request(req->clntFd,
+                            "invalid http_post.interval",
+                            "use 1..INT_MAX seconds");
+                        return;
+                    }
+                    interval = (unsigned int)v;
+                } else if (EQUALS(key, "qfactor")) {
+                    long v;
+                    if (!value || !parse_ranged(value, 1, 99, &v)) {
+                        reply_bad_request(req->clntFd,
+                            "invalid http_post.qfactor", "use 1..99");
+                        return;
+                    }
+                    qfactor = (unsigned int)v;
+                } else if (EQUALS(key, "receiver_url")) {
+                    if (strlen(value ? value : "") >= sizeof(receiver)) {
+                        reply_bad_request(req->clntFd,
+                            "http_post.receiver_url is too long",
+                            "shorten the receiver URL");
+                        return;
+                    }
+                    snprintf(receiver, sizeof(receiver), "%s",
+                        value ? value : "");
+                }
+            }
+
+            if (strlen(host) >= sizeof(app_config.http_post_host) ||
+                strlen(url) >= sizeof(app_config.http_post_url) ||
+                strlen(login) >= sizeof(app_config.http_post_login) ||
+                strlen(password) >= sizeof(app_config.http_post_password) ||
+                strlen(receiver) >= sizeof(app_config.http_post_receiver_url)) {
+                reply_bad_request(req->clntFd,
+                    "http_post value is too long", "shorten host/url/login");
+                return;
+            }
+            if (!http_post_host_valid(host)) {
+                reply_bad_request(req->clntFd,
+                    "invalid http_post.host",
+                    "use host or host:port, or none to disable");
+                return;
+            }
+            if (!http_post_url_valid(url)) {
+                reply_bad_request(req->clntFd,
+                    "invalid http_post.url",
+                    "the URL must start with / and may use strftime tokens");
+                return;
+            }
+            if (receiver[0] && !STARTS_WITH(receiver, "http://") &&
+                !STARTS_WITH(receiver, "https://")) {
+                reply_bad_request(req->clntFd,
+                    "invalid http_post.receiver_url",
+                    "use an empty value or an http(s):// URL");
+                return;
+            }
+            if (enable && (!host[0] || EQUALS_CASE(host, "none"))) {
+                reply_bad_request(req->clntFd,
+                    "http_post.host is not set",
+                    "set the receiver host before enabling the sender");
+                return;
+            }
+
+            snprintf(app_config.http_post_host,
+                sizeof(app_config.http_post_host), "%s", host);
+            snprintf(app_config.http_post_url,
+                sizeof(app_config.http_post_url), "%s", url);
+            snprintf(app_config.http_post_login,
+                sizeof(app_config.http_post_login), "%s", login);
+            snprintf(app_config.http_post_password,
+                sizeof(app_config.http_post_password), "%s", password);
+            snprintf(app_config.http_post_receiver_url,
+                sizeof(app_config.http_post_receiver_url), "%s", receiver);
+            app_config.http_post_width = width;
+            app_config.http_post_height = height;
+            app_config.http_post_interval = interval;
+            app_config.http_post_qfactor = qfactor;
+            app_config.http_post_enable = enable;
+
+            if (!enable) {
+                if (wasEnabled) http_post_stop();
+                note = "snapshot sender stopped";
+            } else if (!wasEnabled) {
+                http_post_start();
+                note = "snapshot sender started";
+            }
+
+            app_config_save();
+        }
+
+        {
+            char escHost[sizeof(app_config.http_post_host) * 6 + 1];
+            char escUrl[sizeof(app_config.http_post_url) * 6 + 1];
+            char escLogin[sizeof(app_config.http_post_login) * 6 + 1];
+            char escReceiver[sizeof(app_config.http_post_receiver_url) * 6 + 1];
+            bool passwordSet = app_config.http_post_password[0] &&
+                !EQUALS_CASE(app_config.http_post_password, "none");
+
+            escape_json(escHost, app_config.http_post_host, sizeof(escHost));
+            escape_json(escUrl, app_config.http_post_url, sizeof(escUrl));
+            escape_json(escLogin, app_config.http_post_login, sizeof(escLogin));
+            escape_json(escReceiver, app_config.http_post_receiver_url,
+                sizeof(escReceiver));
+            respLen = sprintf(response,
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: application/json;charset=UTF-8\r\n"
+                "Connection: close\r\n"
+                "\r\n"
+                "{\"enable\":%s,\"host\":\"%s\",\"url\":\"%s\","
+                "\"login\":\"%s\",\"width\":%d,\"height\":%d,"
+                "\"interval\":%d,\"qfactor\":%d,\"receiver_url\":\"%s\","
+                "\"password\":%s,\"note\":\"%s\"}",
+                app_config.http_post_enable ? "true" : "false", escHost, escUrl,
+                escLogin, app_config.http_post_width, app_config.http_post_height,
+                app_config.http_post_interval, app_config.http_post_qfactor,
+                escReceiver, passwordSet ? "true" : "false", note);
+        }
+        send_and_close(req->clntFd, response, respLen);
+        return;
+    }
+
     if (EQUALS(req->uri, "/api/yolo")) {
         int restartNeeded = 0;
         int liveOk = 1;
+
+        /* OKO: read-only inference history for the KI-005 night A/B run.
+         * The query is parsed from a copy because the settings loop below
+         * consumes req->query destructively; `detections` must never touch
+         * the configuration. */
+        if (EQUALS(req->method, "GET") && req->query) {
+            char queryCopy[256];
+            char *cursor;
+            unsigned int since = 0;
+            int detections = 0, sinceGiven = 0, sinceValid = 1;
+
+            snprintf(queryCopy, sizeof(queryCopy), "%s", req->query);
+            cursor = queryCopy;
+            while (cursor) {
+                char *value = split(&cursor, "&");
+                char *key;
+
+                if (!value || !*value) continue;
+                key = split(&value, "=");
+                if (!key || !*key) continue;
+                if (EQUALS(key, "detections")) {
+                    detections = query_bool(value ? value : "");
+                } else if (EQUALS(key, "since")) {
+                    char *end = NULL;
+                    unsigned long long v;
+
+                    sinceGiven = 1;
+                    if (!value || !*value) {
+                        sinceValid = 0;
+                        continue;
+                    }
+                    v = strtoull(value, &end, 10);
+                    if (!end || end == value || *end ||
+                        v > 0xffffffffull)
+                        sinceValid = 0;
+                    else
+                        since = (unsigned int)v;
+                }
+            }
+
+            if (detections) {
+                static yolo_history_record records[YOLO_HISTORY_RECORDS];
+                unsigned int last = since;
+                int count = 0, guard = (int)sizeof(response) - 512;
+                int i, j;
+
+                if (sinceValid && app_config.yolo_enable && yolo_running())
+                    count = yolo_history_copy(since, records,
+                        YOLO_HISTORY_RECORDS, &last);
+                else
+                    last = 0;
+
+                respLen = sprintf(response,
+                    "HTTP/1.1 200 OK\r\n"
+                    "Content-Type: application/json;charset=UTF-8\r\n"
+                    "Connection: close\r\n"
+                    "\r\n"
+                    "{\"enable\":%s,\"source\":\"%s\",\"aiisp\":\"%s\","
+                    "\"conf_threshold\":%.2f,\"since\":%u,\"last\":%u,"
+                    "\"detections\":[",
+                    app_config.yolo_enable ? "true" : "false",
+                    yolo_source_name(app_config.yolo_source),
+                    aiisp_mode_name(app_config.aiisp_enable),
+                    app_config.yolo_conf_threshold,
+                    sinceGiven ? since : 0, last);
+
+                /* Stop at the byte budget instead of overflowing the 8 KiB
+                 * buffer; `last` then points at the final record that made
+                 * it in, so the caller keeps polling without a gap. */
+                for (i = 0; i < count; i++) {
+                    yolo_history_record *r = &records[i];
+
+                    if (respLen + 700 > guard) break;
+                    respLen += sprintf(response + respLen,
+                        "%s{\"seq\":%u,\"ts\":%llu,\"source\":\"%s\","
+                        "\"aiisp\":\"%s\",\"count\":%u,\"dets\":[",
+                        i ? "," : "", r->seq, (unsigned long long)r->ts,
+                        yolo_source_name(r->source),
+                        aiisp_mode_name(r->aiisp), (unsigned)r->count);
+                    for (j = 0; j < r->count; j++) {
+                        respLen += sprintf(response + respLen,
+                            "%s{\"cls\":%d,\"score\":%.3f,\"x\":%u,\"y\":%u,"
+                            "\"w\":%u,\"h\":%u}",
+                            j ? "," : "", r->det[j].cls,
+                            r->det[j].score / 65535.0,
+                            (unsigned)r->det[j].x, (unsigned)r->det[j].y,
+                            (unsigned)r->det[j].w, (unsigned)r->det[j].h);
+                    }
+                    respLen += sprintf(response + respLen, "]}");
+                    last = r->seq;
+                }
+                respLen += sprintf(response + respLen, "]}");
+                send_and_close(req->clntFd, response, respLen);
+                return;
+            }
+        }
 
         if (req->query) {
             int enableReq = -1;
@@ -3274,6 +3998,7 @@ void respond_request(http_request_t *req) {
             "Connection: close\r\n"
             "\r\n"
             "{\"enable\":%s,\"source\":\"%s\",\"runtime\":%d,"
+            "\"arch\":\"%s\","
             "\"convert\":\"%s\",\"boxes\":%s,\"model_dir\":\"%s\","
             "\"model\":\"%s\","
             "\"input_width\":%d,\"input_height\":%d,\"fps\":%d,"
@@ -3284,6 +4009,8 @@ void respond_request(http_request_t *req) {
             app_config.yolo_source == 2 ? "vi0" :
                 (app_config.yolo_source == 1 ? "vpss3" : "vi1"),
             app_config.yolo_runtime,
+            yolo_active_arch() == YOLO_ARCH_11 ? "yolo11" :
+                (yolo_active_arch() == YOLO_ARCH_V5 ? "yolov5" : "none"),
             app_config.yolo_convert ? "rga" : "cpu",
             app_config.yolo_boxes ? "true" : "false",
             app_config.yolo_model_dir, app_config.yolo_model,
@@ -4081,6 +4808,7 @@ void respond_request(http_request_t *req) {
     if (EQUALS(req->uri, "/api/ivs")) {
         if (req->query) {
             int enableReq = -1;
+            int changed = 0;
             while (req->query) {
                 char *value = split(&req->query, "&");
                 if (!value || !*value) continue;
@@ -4089,52 +4817,105 @@ void respond_request(http_request_t *req) {
                 unescape_uri(value);
                 if (EQUALS(key, "enable")) {
                     enableReq = query_bool(value);
+                } else if (EQUALS(key, "boxes")) {
+                    int want = query_bool(value);
+#if defined(__ARM_PCS_VFP)
+                    if (want) {
+                        reply_bad_request(req->clntFd,
+                            "IVS boxes are blocked: enabling them hangs the "
+                            "board (KI-063)",
+                            "use ivs.act_osd or IVS detection without boxes");
+                        return;
+                    }
+#endif
+                    app_config.ivs_boxes = false;
+                    /* Never enable the overlay; only report the blocked state. */
+                    ivs_boxes_request(0);
                 } else if (EQUALS(key, "mode")) {
-                    if (EQUALS_CASE(value, "md")) app_config.ivs_mode = HAL_IVS_MD;
-                    else if (EQUALS_CASE(value, "od")) app_config.ivs_mode = HAL_IVS_OD;
-                    else if (EQUALS_CASE(value, "md_od")) app_config.ivs_mode = HAL_IVS_MD_OD;
+                    unsigned int mode = app_config.ivs_mode;
+                    if (EQUALS_CASE(value, "md")) mode = HAL_IVS_MD;
+                    else if (EQUALS_CASE(value, "od")) mode = HAL_IVS_OD;
+                    else if (EQUALS_CASE(value, "md_od")) mode = HAL_IVS_MD_OD;
+                    if (mode != app_config.ivs_mode) {
+                        app_config.ivs_mode = mode;
+                        changed = 1;
+                    }
                 } else if (EQUALS(key, "width")) {
-                    long v; if (parse_ranged(value, 160, 1920, &v)) app_config.ivs_width = (unsigned int)v;
+                    long v; if (parse_ranged(value, 160, 1920, &v) &&
+                        (unsigned int)v != app_config.ivs_width) {
+                        app_config.ivs_width = (unsigned int)v; changed = 1;
+                    }
                 } else if (EQUALS(key, "height")) {
-                    long v; if (parse_ranged(value, 120, 1080, &v)) app_config.ivs_height = (unsigned int)v;
+                    long v; if (parse_ranged(value, 120, 1080, &v) &&
+                        (unsigned int)v != app_config.ivs_height) {
+                        app_config.ivs_height = (unsigned int)v; changed = 1;
+                    }
                 } else if (EQUALS(key, "sensitivity")) {
-                    long v; if (parse_ranged(value, 1, 3, &v)) app_config.ivs_sensitivity = (unsigned int)v;
+                    long v; if (parse_ranged(value, 1, 3, &v) &&
+                        (unsigned int)v != app_config.ivs_sensitivity) {
+                        app_config.ivs_sensitivity = (unsigned int)v; changed = 1;
+                    }
                 } else if (EQUALS(key, "md_interval")) {
-                    long v; if (parse_ranged(value, 1, 100, &v)) app_config.ivs_md_interval = (unsigned int)v;
+                    long v; if (parse_ranged(value, 1, 100, &v) &&
+                        (unsigned int)v != app_config.ivs_md_interval) {
+                        app_config.ivs_md_interval = (unsigned int)v; changed = 1;
+                    }
                 } else if (EQUALS(key, "od_interval")) {
-                    long v; if (parse_ranged(value, 1, 100, &v)) app_config.ivs_od_interval = (unsigned int)v;
+                    long v; if (parse_ranged(value, 1, 100, &v) &&
+                        (unsigned int)v != app_config.ivs_od_interval) {
+                        app_config.ivs_od_interval = (unsigned int)v; changed = 1;
+                    }
                 } else if (EQUALS(key, "od_percent")) {
-                    long v; if (parse_ranged(value, 5, 8, &v)) app_config.ivs_od_percent = (unsigned int)v;
+                    long v; if (parse_ranged(value, 5, 8, &v) &&
+                        (unsigned int)v != app_config.ivs_od_percent) {
+                        app_config.ivs_od_percent = (unsigned int)v; changed = 1;
+                    }
                 } else if (EQUALS(key, "act_http_post")) {
-                    app_config.ivs_act_http_post = query_bool(value);
+                    bool v = query_bool(value) ? true : false;
+                    if (v != app_config.ivs_act_http_post) {
+                        app_config.ivs_act_http_post = v; changed = 1;
+                    }
                 } else if (EQUALS(key, "act_record")) {
-                    if (query_bool(value)) {
+                    bool v = query_bool(value) ? true : false;
+                    if (v && !app_config.ivs_act_record) {
                         gating_result gate = gating_check("record");
                         if (!gate.ok) { gating_block(req, gate); return; }
                     }
-                    app_config.ivs_act_record = query_bool(value);
+                    if (v != app_config.ivs_act_record) {
+                        app_config.ivs_act_record = v; changed = 1;
+                    }
                 } else if (EQUALS(key, "act_osd")) {
-                    app_config.ivs_act_osd = query_bool(value);
+                    bool v = query_bool(value) ? true : false;
+                    if (v != app_config.ivs_act_osd) {
+                        app_config.ivs_act_osd = v; changed = 1;
+                    }
                 } else if (EQUALS(key, "record_seconds")) {
-                    long v; if (parse_ranged(value, 1, 600, &v)) app_config.ivs_record_seconds = (unsigned int)v;
+                    long v; if (parse_ranged(value, 1, 600, &v) &&
+                        (unsigned int)v != app_config.ivs_record_seconds) {
+                        app_config.ivs_record_seconds = (unsigned int)v; changed = 1;
+                    }
                 } else if (EQUALS(key, "record_source")) {
-                    app_config.ivs_record_sub = EQUALS(value, "sub");
+                    bool v = EQUALS(value, "sub");
+                    if (v != app_config.ivs_record_sub) {
+                        app_config.ivs_record_sub = v; changed = 1;
+                    }
                 }
             }
+
+            if (enableReq == 1 && !app_config.ivs_enable) changed = 1;
+            if (enableReq == 0 && app_config.ivs_enable) changed = 1;
 
             if (enableReq == 1) {
                 gating_result gate = gating_check("ivs");
                 if (!gate.ok) { gating_block(req, gate); return; }
-            }
-
-            ivs_events_stop();
-            if (enableReq == 1) {
                 app_config.ivs_enable = true;
-                ivs_events_start();
             } else if (enableReq == 0) {
                 app_config.ivs_enable = false;
-            } else if (app_config.ivs_enable) {
-                ivs_events_start();
+            }
+
+            if (changed) {
+                ivs_events_stop();
+                if (app_config.ivs_enable) ivs_events_start();
             }
         }
 
@@ -4149,7 +4930,7 @@ void respond_request(http_request_t *req) {
             "\"sensitivity\":%d,\"md_interval\":%d,\"od_interval\":%d,"
             "\"od_percent\":%d,\"act_http_post\":%s,\"act_record\":%s,"
             "\"act_osd\":%s,\"record_seconds\":%d,\"record_source\":\"%s\","
-            "\"events\":%s}",
+            "\"boxes\":%s,\"events\":%s}",
             app_config.ivs_enable ? "true" : "false",
             app_config.ivs_mode == HAL_IVS_OD ? "od" :
                 (app_config.ivs_mode == HAL_IVS_MD_OD ? "md_od" : "md"),
@@ -4160,7 +4941,8 @@ void respond_request(http_request_t *req) {
             app_config.ivs_act_record ? "true" : "false",
             app_config.ivs_act_osd ? "true" : "false",
             app_config.ivs_record_seconds,
-            app_config.ivs_record_sub ? "sub" : "main", events);
+            app_config.ivs_record_sub ? "sub" : "main",
+            app_config.ivs_boxes ? "true" : "false", events);
         send_and_close(req->clntFd, response, respLen);
         return;
     }
@@ -5394,7 +6176,7 @@ if (EQUALS(req->uri, "/api/storage")) {
             "\"ip\":\"%s\",\"sd_free_mb\":%llu,\"sd_total_mb\":%llu,"
             "\"features\":{\"eptz\":%s,\"rotate\":%s,\"substream\":%s,"
             "\"aiisp\":%s,\"ivs\":%s,\"hdr\":%s,\"sd\":%s,"
-            "\"yolo\":%s,\"vpn\":%s}}",
+            "\"yolo\":%s,\"clip\":%s,\"vpn\":%s}}",
             chip, si.loads[0] / 65536.0, si.loads[1] / 65536.0, si.loads[2] / 65536.0,
             memory, sensor, hal_temperature_read(), uptime,
             ipaddr,
@@ -5408,6 +6190,8 @@ if (EQUALS(req->uri, "/api/storage")) {
             app_config.hdr_mode ? "true" : "false",
             gating_sd_mounted() ? "true" : "false",
             (halCapabilities & HAL_CAP_RKNN) ? "true" : "false",
+            (app_config.event_clip_enable && record_clip_unavailable() == NULL)
+                ? "true" : "false",
             vpn_available() ? "true" : "false");
         send_and_close(req->clntFd, response, respLen);
         return;
@@ -5830,6 +6614,16 @@ int server_start() {
         size_t stacksize;
         pthread_attr_getstacksize(&thread_attr, &stacksize);
         size_t new_stacksize = app_config.web_server_thread_stack_size;
+        /* The request handler now carries ~31 KiB of locals (stream/event
+         * settings); send_file()/send_stream_file() add another 6-8 KiB on
+         * top of the server_thread frame.  A configured 64 KiB stack
+         * overflows on the file-send paths (SIGSEGV in send_file), so keep a
+         * safe floor even for an old yaml. */
+        if (new_stacksize < 128 * 1024) {
+            HAL_WARNING("server", "web_server_thread_stack_size=%zu is too "
+                "small; using 128 KiB\n", new_stacksize);
+            new_stacksize = 128 * 1024;
+        }
         if (pthread_attr_setstacksize(&thread_attr, new_stacksize))
             HAL_WARNING("server", "Can't set stack size %zu\n", new_stacksize);
         if (pthread_create(

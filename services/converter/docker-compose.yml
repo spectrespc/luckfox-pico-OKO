@@ -1,0 +1,23 @@
+name: oko-converter
+
+services:
+  oko-converter:
+    build: .
+    image: oko-converter:latest
+    container_name: oko-converter
+    # Host networking matches the rest of the stand: the operator opens
+    # http://192.168.52.200:8091/ directly, without a port mapping.
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      CONVERTER_DATA_DIR: /data
+      # Retention limit for finished jobs and the per-upload cap.
+      CONVERTER_MAX_GB: ${CONVERTER_MAX_GB:-2}
+      CONVERTER_MAX_UPLOAD_MIB: ${CONVERTER_MAX_UPLOAD_MIB:-256}
+      CONVERTER_MAX_QUEUED: ${CONVERTER_MAX_QUEUED:-10}
+      # Hard stop for one conversion child (seconds); toolkit peaks at 2-3 GB.
+      CONVERTER_JOB_TIMEOUT: ${CONVERTER_JOB_TIMEOUT:-900}
+      # Optional shared secret: when set every API request needs X-OKO-Token.
+      OKO_CONVERTER_TOKEN: ${OKO_CONVERTER_TOKEN:-}
+    volumes:
+      - ../../output/srv/converter:/data

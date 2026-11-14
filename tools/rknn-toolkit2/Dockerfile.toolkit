@@ -6,10 +6,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Official rknn-toolkit2 1.6.0 wheel from the airockchip repository.
+# Keep the original wheel filename: pip >= 20 rejects a renamed local wheel.
 ARG RKNN_WHEEL_URL=https://raw.githubusercontent.com/airockchip/rknn-toolkit2/v1.6.0/rknn-toolkit2/docker/docker_file/ubuntu_20_04_cp38/rknn_toolkit2-1.6.0+81f21f4d-cp38-cp38-linux_x86_64.whl
-RUN curl -fsSL -o /tmp/rknn-toolkit2.whl "$RKNN_WHEEL_URL" \
-    && pip install --no-cache-dir --no-deps /tmp/rknn-toolkit2.whl \
-    && rm -f /tmp/rknn-toolkit2.whl
+RUN curl -fsSL -o "/tmp/rknn_toolkit2-1.6.0+81f21f4d-cp38-cp38-linux_x86_64.whl" "$RKNN_WHEEL_URL" \
+    && pip install --no-cache-dir --no-deps "/tmp/rknn_toolkit2-1.6.0+81f21f4d-cp38-cp38-linux_x86_64.whl" \
+    && rm -f "/tmp/rknn_toolkit2-1.6.0+81f21f4d-cp38-cp38-linux_x86_64.whl"
 
 # The wheel declares tensorflow/torch deps that ONNX->RKNN conversion does not
 # use. Install only what the converter and the ONNX path need.

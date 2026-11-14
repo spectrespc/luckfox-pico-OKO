@@ -34,7 +34,7 @@ import av
 from PIL import Image, ImageChops, ImageStat
 
 ROOT = Path(__file__).resolve().parents[1]
-HOST = os.environ.get("OKO_DUT_HOST", "192.168.52.97")
+HOST = os.environ.get("OKO_DUT_HOST", "192.168.52.33")
 USER = os.environ.get("OKO_RTSP_USER", "admin")
 PASSWORD = os.environ.get("OKO_RTSP_PASS", "oko-change-me")
 OUT = Path(os.environ.get("OKO_GEOMETRY_OUT", ROOT / "output" / "bench" / "geometry"))

@@ -7,6 +7,8 @@
 #include <time.h>
 
 #include "app_config.h"
+#include "analytics/box_draw.h"
+#include "analytics/nn_geom.h"
 #include "hal/globals.h"
 #include "hal/support.h"
 #include "http_post.h"
@@ -95,6 +97,236 @@ static void ivs_record_event(time_t when, const hal_ivs_result *result)
     ivs_trigger_actions(when);
 }
 
+/* -------------------------------------------------------------------------
+ * IVS rectangles on the main stream
+ *
+ * The rectangles arrive in pixels of the analytical frame (ivs.width x
+ * ivs.height); they are normalized to 0..10000 and mapped through the same
+ * ePTZ/rotation geometry the detector boxes use.  The region has its own RGN
+ * handle and palette so it can be toggled without touching the YOLO overlay.
+ * ---------------------------------------------------------------------- */
+
+#if defined(__ARM_PCS_VFP)
+static volatile int boxesWanted;
+static int boxesReady;
+static int boxesWarned;
+static int boxesDrawn;
+static int boxesWidth, boxesHeight;
+static unsigned long long boxesRetryMs;
+
+static unsigned long long ivs_now_ms(void)
+{
+    struct timespec ts;
+
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (unsigned long long)ts.tv_sec * 1000ull +
+        (unsigned long long)ts.tv_nsec / 1000000ull;
+}
+
+/* The rectangles cover the encoded main stream.  A 90/270 rotation of the main
+ * stream swaps the encoded picture size, like the detector overlay. */
+static void ivs_boxes_geometry(int *width, int *height)
+{
+    int w = (int)app_config.mp4_width;
+    int h = (int)app_config.mp4_height;
+
+    if (app_config.rotate_enable && !app_config.rotate_stream &&
+        (app_config.rotate_angle == 90 || app_config.rotate_angle == 270)) {
+        int swap = w;
+
+        w = h;
+        h = swap;
+    }
+    *width = w;
+    *height = h;
+}
+
+static void ivs_boxes_mapping(nn_geom *g)
+{
+    memset(g, 0, sizeof(*g));
+    g->src_w = app_config.mp4_width ? (int)app_config.mp4_width : 1920;
+    g->src_h = app_config.mp4_height ? (int)app_config.mp4_height : 1080;
+
+    if (app_config.eptz_enable && !app_config.eptz_stream) {
+        g->crop_enable = 1;
+        g->cx = app_config.eptz_x;
+        g->cy = app_config.eptz_y;
+        g->cw = app_config.eptz_w;
+        g->ch = app_config.eptz_h;
+    }
+    if (app_config.rotate_enable && !app_config.rotate_stream)
+        g->angle = app_config.rotate_angle;
+}
+
+static void ivs_boxes_sync(void)
+{
+    int width, height;
+
+    if (!boxesWanted || !boxesReady) return;
+
+    ivs_boxes_geometry(&width, &height);
+    if (width == boxesWidth && height == boxesHeight) return;
+
+    /* The stream was recreated with another size; the canvas no longer
+     * matches and has to be rebuilt. */
+    rk_region_ivs_destroy();
+    boxesReady = 0;
+    boxesDrawn = 0;
+}
+
+/* Creates the region lazily on the first result: the IVS pipeline only emits
+ * results when motion/OD fires, so an idle camera with the switch on does not
+ * reserve the extra 2BPP canvas. */
+static void ivs_boxes_ensure(void)
+{
+    int width, height;
+
+    if (!boxesWanted || boxesReady) return;
+    if (!rk_region_ivs_supported()) {
+        /* One warning is emitted by the HAL; the setting is kept so a restart
+         * with a fixed library enables the boxes again. */
+        boxesWanted = 0;
+        return;
+    }
+    if (ivs_now_ms() < boxesRetryMs) return;
+
+    ivs_boxes_geometry(&width, &height);
+    if (width < 16 || height < 16) return;
+
+    if (rk_region_ivs_create(width, height, RK_RGN_IVS_LAYER,
+            RK_RGN_IVS_LUT_MOTION, RK_RGN_IVS_LUT_OD)) {
+        boxesRetryMs = ivs_now_ms() + 10000;
+        if (!boxesWarned) {
+            HAL_WARNING("ivs", "Motion boxes could not be enabled\n");
+            boxesWarned = 1;
+        }
+        return;
+    }
+
+    boxesReady = 1;
+    boxesWidth = width;
+    boxesHeight = height;
+    boxesDrawn = 0;
+}
+
+/* Aligns a mapped rectangle to the 2BPP line granularity and clamps it to the
+ * canvas.  Mirrors the detector overlay so both regions behave the same. */
+static int ivs_boxes_fit(int *x, int *y, int *w, int *h)
+{
+    *x &= ~3;
+    *y &= ~3;
+    *w = (*w + 3) & ~3;
+    *h = (*h + 3) & ~3;
+    if (*x < 0) *x = 0;
+    if (*y < 0) *y = 0;
+    if (*x >= boxesWidth || *y >= boxesHeight) return 0;
+    /* The right edge byte sits just past the rectangle, so leave room for
+     * it (the vendor requires x + w + line < width). */
+    if (*x + *w + 4 > boxesWidth) *w = (boxesWidth - *x - 4) & ~3;
+    if (*y + *h > boxesHeight) *h = (boxesHeight - *y) & ~3;
+    return *w >= 4 && *h >= 4;
+}
+
+static void ivs_boxes_render(const hal_ivs_result *result)
+{
+    void *addr;
+    unsigned int stride, canvasW, canvasH;
+    nn_geom geom;
+    static int commitWarned;
+    int drawn = 0;
+
+    if (!boxesReady) return;
+
+    /* Shared with the detector overlay: the vendor RGN calls are not
+     * reentrant, so the lock spans begin..paint..commit. */
+    rk_region_overlay_lock();
+    if (rk_region_ivs_begin(&addr, &stride, &canvasW, &canvasH)) {
+        rk_region_overlay_unlock();
+        /* The canvas no longer matches (stream recreated): rebuild next tick. */
+        rk_region_ivs_destroy();
+        boxesReady = 0;
+        boxesDrawn = 0;
+        return;
+    }
+
+    /* Always clear the full canvas: without it the last rectangles stay
+     * visible after the motion stops. */
+    memset(addr, 0, (size_t)stride * canvasH / 4);
+    ivs_boxes_mapping(&geom);
+
+    for (unsigned int i = 0; i < result->rectCount; i++) {
+        const hal_ivs_rect *r = &result->rect[i];
+        int nx, ny, nw, nh, x, y, w, h;
+
+        box_normalize_rect(r->x, r->y, r->width, r->height,
+            (int)app_config.ivs_width, (int)app_config.ivs_height,
+            &nx, &ny, &nw, &nh);
+        if (nw <= 0 || nh <= 0) continue;
+        if (!nn_map_rect(&geom, nx, ny, nw, nh, &x, &y, &w, &h)) continue;
+        if (!ivs_boxes_fit(&x, &y, &w, &h)) continue;
+
+        box_draw_rect_2bpp(addr, stride, canvasH, x, y, w, h, 2, 0);
+        drawn++;
+    }
+
+    /* The vendor OD API has no object rectangle, only a flag; on a pure
+     * OD hit draw a fixed marker in the centre instead of nothing. */
+    if (result->rectCount == 0) {
+        int x, y, w, h;
+
+        if (nn_map_rect(&geom, 4000, 4000, 2000, 2000, &x, &y, &w, &h) &&
+            ivs_boxes_fit(&x, &y, &w, &h)) {
+            box_draw_rect_2bpp(addr, stride, canvasH, x, y, w, h, 3, 1);
+            drawn++;
+        }
+    }
+
+    {
+        int failed = rk_region_ivs_commit();
+
+        rk_region_overlay_unlock();
+        if (failed && !commitWarned) {
+            HAL_WARNING("ivs", "Updating the motion-box canvas failed\n");
+            commitWarned = 1;
+        }
+    }
+    boxesDrawn = drawn > 0 ? 1 : 0;
+}
+
+/* Clears the canvas once after the last result so the rectangles do not stay
+ * frozen on the video until the next motion event. */
+static void ivs_boxes_clear(void)
+{
+    void *addr;
+    unsigned int stride, canvasW, canvasH;
+
+    if (!boxesReady || !boxesDrawn) return;
+
+    rk_region_overlay_lock();
+    if (rk_region_ivs_begin(&addr, &stride, &canvasW, &canvasH)) {
+        rk_region_overlay_unlock();
+        rk_region_ivs_destroy();
+        boxesReady = 0;
+        boxesDrawn = 0;
+        return;
+    }
+    memset(addr, 0, (size_t)stride * canvasH / 4);
+    rk_region_ivs_commit();
+    rk_region_overlay_unlock();
+    boxesDrawn = 0;
+}
+#endif /* __ARM_PCS_VFP */
+
+void ivs_boxes_request(int enable)
+{
+#if defined(__ARM_PCS_VFP)
+    boxesWanted = enable ? 1 : 0;
+    if (!enable) boxesRetryMs = 0;
+#else
+    (void)enable;
+#endif
+}
+
 static void *ivs_thread(void *arg)
 {
     hal_ivs_config config;
@@ -114,6 +346,9 @@ static void *ivs_thread(void *arg)
         HAL_WARNING("ivs", "Could not start analytics\n");
         return NULL;
     }
+    /* KI-063: the 2BPP IVS overlay hangs the MPP/VENC path.  Keep the
+     * configured flag for the API report, but never attach the region. */
+    ivs_boxes_request(0);
 #else
     (void)config;
     HAL_WARNING("ivs", "Analytics is only implemented for RK\n");
@@ -133,15 +368,35 @@ static void *ivs_thread(void *arg)
         }
 
 #if defined(__ARM_PCS_VFP)
+        /* The switch may change while the thread runs; the region is torn
+         * down here instead of waiting for the next motion event. */
+        if (!boxesWanted && boxesReady) {
+            rk_region_ivs_destroy();
+            boxesReady = 0;
+            boxesDrawn = 0;
+        }
+
         if (!rk_ivs_get_results(&result, 500)) {
+            if (boxesWanted) {
+                ivs_boxes_sync();
+                ivs_boxes_ensure();
+                ivs_boxes_render(&result);
+            }
             ivs_record_event(now, &result);
             rk_ivs_release_results();
+        } else {
+            ivs_boxes_clear();
         }
 #endif
     }
 
 #if defined(__ARM_PCS_VFP)
-    if (plat == HAL_PLATFORM_RK) rk_ivs_destroy();
+    if (plat == HAL_PLATFORM_RK) {
+        rk_region_ivs_destroy();
+        boxesReady = 0;
+        boxesDrawn = 0;
+        rk_ivs_destroy();
+    }
 #endif
     if (app_config.ivs_act_osd) ivs_osd_indicator(0, time(NULL));
     return NULL;

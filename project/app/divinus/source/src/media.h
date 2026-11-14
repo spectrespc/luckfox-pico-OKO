@@ -31,6 +31,8 @@ int sdk_stop(void);
 
 int media_start(void);
 void media_stop(void);
+/* True when at least one streaming destination (UDP or RTMP) is active. */
+int media_stream_active(void);
 
 void request_idr(int index);
 void set_grayscale(bool active);

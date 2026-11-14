@@ -19,5 +19,10 @@ int http_post_send(hal_jpegdata *jpeg);
 int http_post_event(hal_jpegdata *jpeg, const char *eventId, int index,
     int total, unsigned long long timestampMs, const char *cause,
     const char *model);
+/* Sends one event clip as a PUT body with the X-Event-* headers.  The path is
+ * derived from http_post.url (last segment "frame" becomes "clip"). */
+int http_post_clip(const char *path, const char *eventId, const char *cause,
+    const char *model, unsigned long long timestampMs,
+    unsigned long long durationMs);
 void http_post_start();
 void http_post_stop();

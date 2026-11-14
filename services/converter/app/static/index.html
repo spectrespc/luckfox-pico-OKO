@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OKO · RKNN конвертер</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 14px/1.45 system-ui, sans-serif; margin: 0; padding: 24px;
+         max-width: 1080px; margin-inline: auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { opacity: .7; margin-bottom: 18px; }
+  .card { border: 1px solid #8884; border-radius: 10px; padding: 16px;
+          margin-bottom: 16px; }
+  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .drop { border: 2px dashed #8887; border-radius: 10px; padding: 22px;
+          text-align: center; cursor: pointer; transition: .15s; }
+  .drop.over { border-color: #3b82f6; background: #3b82f611; }
+  .drop small { display: block; opacity: .65; margin-top: 6px; }
+  input[type=file] { display: none; }
+  input[type=text], select { padding: 6px 8px; border-radius: 6px;
+          border: 1px solid #8886; background: transparent; color: inherit; }
+  button { padding: 7px 14px; border-radius: 6px; border: 1px solid #8886;
+           background: #3b82f6; color: #fff; cursor: pointer; font: inherit; }
+  button.secondary { background: transparent; color: inherit; }
+  button:disabled { opacity: .45; cursor: default; }
+  .files { margin-top: 10px; font-size: 13px; opacity: .8; word-break: break-all; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 7px 6px; border-bottom: 1px solid #8883;
+           vertical-align: top; }
+  th { font-weight: 600; font-size: 12px; text-transform: uppercase;
+       letter-spacing: .04em; opacity: .7; }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 999px;
+           font-size: 12px; border: 1px solid currentColor; }
+  .queued { color: #b45309; } .running { color: #2563eb; }
+  .done { color: #15803d; } .failed { color: #b91c1c; }
+  .canceled, .interrupted { color: #6b7280; }
+  .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .actions button { padding: 4px 9px; font-size: 12px; }
+  pre { background: #8881; padding: 12px; border-radius: 8px; overflow: auto;
+        max-height: 420px; font: 12px/1.4 ui-monospace, monospace;
+        white-space: pre-wrap; word-break: break-word; }
+  .muted { opacity: .6; }
+  .error { color: #b91c1c; margin-top: 8px; white-space: pre-wrap; }
+  .progress { height: 6px; background: #8883; border-radius: 3px;
+              overflow: hidden; margin-top: 10px; display: none; }
+  .progress > div { height: 100%; width: 0; background: #3b82f6; }
+  .notice { font-size: 13px; border-left: 3px solid #b45309; padding-left: 10px;
+            opacity: .85; margin-top: 12px; }
+</style>
+</head>
+<body>
+<h1>OKO · RKNN конвертер</h1>
+<div class="sub">
+  Цель — <b>rv1106</b>, вход <b>640×384</b>, rknn-toolkit2
+  <span id="toolkit">…</span>. Один слот конверсии, очередь до 10 задач.
+</div>
+
+<div class="card">
+  <div class="row" style="justify-content: space-between">
+    <div class="row">
+      <label>Токен <input id="token" type="text" placeholder="X-OKO-Token (если задан)" size="28"></label>
+      <button class="secondary" id="save-token" type="button">Сохранить</button>
+    </div>
+    <div class="muted" id="health">проверка…</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="row" style="justify-content: space-between; margin-bottom: 12px">
+    <b>Новая задача</b>
+    <span class="muted">Режим: <b>INT8</b> — rv1106 поддерживает только квантование</span>
+  </div>
+
+  <div class="drop" id="drop-model">
+    <b>ONNX-модель</b>
+    <small>перетащите файл сюда или нажмите; вход [1,3,384,640] или [1,384,640,3]</small>
+  </div>
+  <input type="file" id="model" accept=".onnx,application/octet-stream">
+
+  <div class="drop" id="drop-images" style="margin-top: 10px">
+    <b>Калибровочные JPEG (0–200)</b>
+    <small>20–200 кадров с рабочей сцены: без них квантование запрещено</small>
+  </div>
+  <input type="file" id="images" accept=".jpg,.jpeg,image/jpeg" multiple>
+
+  <div class="files" id="selected"></div>
+  <div class="progress" id="progress"><div></div></div>
+  <div class="error" id="upload-error"></div>
+
+  <div class="row" style="margin-top: 14px">
+    <button id="submit" disabled>Конвертировать</button>
+    <span class="muted" id="queue-state"></span>
+  </div>
+  <div class="notice">
+    Модель собирается rknn-toolkit2 <b>2.5.0</b> и требует такой же мини-рантайм
+    <code>librknnmrt.so</code> 2.5.0 на борту. Проверка на rv1106 этим сервисом
+    <b>не выполняется</b>; текущая плата несёт рантаймы 1.6.0/2.3.2.
+  </div>
+</div>
+
+<div class="card">
+  <div class="row" style="justify-content: space-between">
+    <b>Задачи</b>
+    <button class="secondary" id="refresh" type="button">Обновить</button>
+  </div>
+  <table>
+    <thead><tr>
+      <th>Создана</th><th>Модель</th><th>Режим</th><th>Статус</th>
+      <th>Размер</th><th>Действия</th>
+    </tr></thead>
+    <tbody id="jobs"><tr><td colspan="6" class="muted">загрузка…</td></tr></tbody>
+  </table>
+</div>
+
+<div class="card" id="log-card" hidden>
+  <div class="row" style="justify-content: space-between">
+    <b id="log-title">Лог</b>
+    <button class="secondary" id="log-close" type="button">Закрыть</button>
+  </div>
+  <pre id="log"></pre>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const tokenEl = $('token');
+tokenEl.value = localStorage.getItem('okoConverterToken') || '';
+$('save-token').onclick = () => {
+  localStorage.setItem('okoConverterToken', tokenEl.value.trim());
+  refresh();
+};
+
+function headers(extra) {
+  const h = Object.assign({}, extra || {});
+  const token = tokenEl.value.trim();
+  if (token) h['X-OKO-Token'] = token;
+  return h;
+}
+
+async function api(path, options) {
+  const opts = Object.assign({headers: headers()}, options || {});
+  const res = await fetch(path, opts);
+  if (!res.ok) {
+    let message = res.status + ' ' + res.statusText;
+    try {
+      const body = await res.json();
+      if (body.detail) message = typeof body.detail === 'string'
+        ? body.detail : JSON.stringify(body.detail);
+    } catch (e) { /* not json */ }
+    throw new Error(message);
+  }
+  return res.status === 204 ? null : res.json();
+}
+
+function esc(value) {
+  return String(value == null ? '' : value).replace(/[&<>"']/g,
+    (ch) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+}
+
+function human(bytes) {
+  if (!bytes) return '—';
+  const units = ['Б', 'КиБ', 'МиБ', 'ГиБ'];
+  let value = Number(bytes), index = 0;
+  while (value >= 1024 && index < units.length - 1) { value /= 1024; index++; }
+  return value.toFixed(value >= 10 || index === 0 ? 0 : 1) + ' ' + units[index];
+}
+
+let modelFile = null;
+let imageFiles = [];
+
+function showSelected() {
+  const parts = [];
+  parts.push(modelFile ? 'ONNX: <b>' + esc(modelFile.name) + '</b> (' +
+             human(modelFile.size) + ')' : '<span class="muted">ONNX не выбран</span>');
+  parts.push(imageFiles.length
+    ? 'JPEG: ' + imageFiles.length + ' файл(ов)'
+    : '<span class="muted">JPEG не выбраны</span>');
+  $('selected').innerHTML = parts.join('<br>');
+  $('submit').disabled = !modelFile;
+}
+
+function wireDrop(dropId, inputId, onFiles) {
+  const drop = $(dropId), input = $(inputId);
+  drop.onclick = () => input.click();
+  input.onchange = () => { onFiles(Array.from(input.files)); input.value = ''; };
+  ['dragenter', 'dragover'].forEach((name) => drop.addEventListener(name,
+    (e) => { e.preventDefault(); drop.classList.add('over'); }));
+  ['dragleave', 'drop'].forEach((name) => drop.addEventListener(name,
+    (e) => { e.preventDefault(); drop.classList.remove('over'); }));
+  drop.addEventListener('drop', (e) => onFiles(Array.from(e.dataTransfer.files)));
+}
+
+wireDrop('drop-model', 'model', (files) => {
+  modelFile = files.find((f) => f.name.toLowerCase().endsWith('.onnx')) || files[0] || null;
+  showSelected();
+});
+wireDrop('drop-images', 'images', (files) => {
+  imageFiles = files.filter((f) => /\.jpe?g$/i.test(f.name));
+  showSelected();
+});
+showSelected();
+
+function setProgress(value) {
+  const box = $('progress');
+  if (value == null) { box.style.display = 'none'; return; }
+  box.style.display = 'block';
+  box.firstElementChild.style.width = Math.round(value * 100) + '%';
+}
+
+$('submit').onclick = () => {
+  if (!modelFile) return;
+  if (imageFiles.length < 20 || imageFiles.length > 200) {
+    $('upload-error').textContent = 'Нужно 20–200 JPEG (сейчас ' +
+      imageFiles.length + ').';
+    return;
+  }
+  const form = new FormData();
+  form.append('model', modelFile, modelFile.name);
+  imageFiles.forEach((file) => form.append('images', file, file.name));
+  form.append('dtype', 'int8');
+
+  const xhr = new XMLHttpRequest();
+  $('submit').disabled = true;
+  $('upload-error').textContent = '';
+  setProgress(0);
+  xhr.open('POST', '/api/jobs');
+  const token = tokenEl.value.trim();
+  if (token) xhr.setRequestHeader('X-OKO-Token', token);
+  xhr.upload.onprogress = (e) => {
+    if (e.lengthComputable) setProgress(e.loaded / e.total);
+  };
+  xhr.onload = () => {
+    setProgress(null);
+    $('submit').disabled = false;
+    if (xhr.status === 201) {
+      modelFile = null; imageFiles = []; showSelected();
+      refresh();
+    } else {
+      let detail = xhr.status + ' ' + xhr.statusText;
+      try {
+        const body = JSON.parse(xhr.responseText);
+        if (body.detail) detail = typeof body.detail === 'string'
+          ? body.detail : JSON.stringify(body.detail);
+      } catch (e) { /* not json */ }
+      $('upload-error').textContent = detail;
+    }
+  };
+  xhr.onerror = () => {
+    setProgress(null); $('submit').disabled = false;
+    $('upload-error').textContent = 'сетевая ошибка загрузки';
+  };
+  xhr.send(form);
+};
+
+const STATUS_RU = {queued: 'в очереди', running: 'конверсия', done: 'готово',
+  failed: 'ошибка', canceled: 'отменена', interrupted: 'прервана'};
+
+function jobRow(job) {
+  const status = job.status || 'unknown';
+  const when = (job.created_at || '').replace('T', ' ').replace('+00:00', '');
+  const size = job.rknn_bytes ? human(job.rknn_bytes) : human(job.onnx_bytes) + ' ONNX';
+  const actions = [];
+  actions.push('<button class="secondary" data-action="log" data-id="' +
+    esc(job.id) + '">Лог</button>');
+  if (job.status === 'done') {
+    actions.push('<button data-action="download" data-id="' + esc(job.id) +
+      '">Скачать</button>');
+  }
+  if (job.status === 'queued' || job.status === 'running') {
+    actions.push('<button class="secondary" data-action="cancel" data-id="' +
+      esc(job.id) + '">Отменить</button>');
+  } else {
+    actions.push('<button class="secondary" data-action="delete" data-id="' +
+      esc(job.id) + '">Удалить</button>');
+  }
+  const error = job.error ? '<div class="error">' + esc(job.error) + '</div>' : '';
+  return '<tr><td class="muted">' + esc(when) + '</td><td>' + esc(job.name) +
+    '<div class="muted">' + esc((job.input && job.input.shape || []).join('×')) +
+    ' ' + esc(job.input && job.input.layout || '') + '</div></td><td>' +
+    esc(job.dtype) + '</td><td><span class="badge ' + esc(status) + '">' +
+    esc(STATUS_RU[status] || status) + '</span>' + error + '</td><td>' +
+    esc(size) + '</td><td><div class="actions">' + actions.join('') +
+    '</div></td></tr>';
+}
+
+let lastJobs = [];
+async function refresh() {
+  try {
+    const health = await api('/healthz');
+    $('toolkit').textContent = health.toolkit;
+    $('health').textContent = health.ok ? 'сервис работает' : 'нет связи';
+    const data = await api('/api/jobs');
+    lastJobs = data.jobs;
+    $('queue-state').textContent = 'в очереди: ' + (data.counts.queued || 0) +
+      ', идёт: ' + (data.counts.running || 0);
+    $('jobs').innerHTML = data.jobs.length
+      ? data.jobs.map(jobRow).join('')
+      : '<tr><td colspan="6" class="muted">задач пока нет</td></tr>';
+  } catch (err) {
+    $('health').textContent = 'ошибка: ' + err.message;
+  }
+}
+
+async function openLog(jobId) {
+  try {
+    const job = await api('/api/jobs/' + encodeURIComponent(jobId));
+    $('log-title').textContent = 'Лог · ' + job.name + ' · ' + job.status;
+    $('log').textContent = job.log || '(лог пуст)';
+    $('log-card').hidden = false;
+    $('log-card').scrollIntoView({behavior: 'smooth'});
+  } catch (err) { alert(err.message); }
+}
+
+$('jobs').addEventListener('click', async (event) => {
+  const button = event.target.closest('button[data-action]');
+  if (!button) return;
+  const jobId = button.dataset.id;
+  const action = button.dataset.action;
+  try {
+    if (action === 'log') return openLog(jobId);
+    if (action === 'download') return downloadJob(jobId);
+    if (action === 'cancel') await api('/api/jobs/' + encodeURIComponent(jobId) + '/cancel', {method: 'POST'});
+    if (action === 'delete') await api('/api/jobs/' + encodeURIComponent(jobId), {method: 'DELETE'});
+    refresh();
+  } catch (err) { alert(err.message); }
+});
+
+// Downloads need the token header too; fetch + blob keeps the URL simple.
+async function downloadJob(jobId) {
+  try {
+    const url = '/api/jobs/' + encodeURIComponent(jobId) + '/download';
+    const res = await fetch(url, {headers: headers()});
+    if (!res.ok) throw new Error(res.status + ' ' + res.statusText);
+    const blob = await res.blob();
+    const name = (lastJobs.find((job) => job.id === jobId) || {}).output_name ||
+      'model.rknn';
+    const objectUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = objectUrl; anchor.download = name; anchor.click();
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+  } catch (err) { alert(err.message); }
+}
+
+$('refresh').onclick = refresh;
+$('log-close').onclick = () => { $('log-card').hidden = true; };
+refresh();
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>

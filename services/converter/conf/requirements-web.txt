@@ -1,0 +1,14 @@
+# Web layer for the RKNN converter.
+#
+# The image is Python 3.8 because the vendor supplies only a cp38 wheel for
+# rknn-toolkit2 2.5.0.  Every pin below is the last release that still
+# publishes cp38 wheels / allows Python 3.8; a "latest" pin would silently
+# require 3.9+ and break the build.
+fastapi==0.115.6
+starlette==0.41.3
+pydantic==2.10.6
+uvicorn==0.32.1
+python-multipart==0.0.20
+anyio==4.6.2
+click==8.1.8
+h11==0.14.0

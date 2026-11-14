@@ -13,7 +13,7 @@ import sys
 
 from playwright.sync_api import sync_playwright
 
-HOST = os.environ.get("OKO_DUT_HOST", "192.168.52.97")
+HOST = os.environ.get("OKO_DUT_HOST", "192.168.52.33")
 USER = os.environ.get("OKO_RTSP_USER", "admin")
 PASSWORD = os.environ.get("OKO_DUT_PASSWORD", "oko-change-me")
 SHOTS = os.path.join("output", "bench", "ui")
@@ -397,6 +397,18 @@ def main():
         elif total_text != "–":
             failures.append("an unmounted card must render a dash, got %r" % total_text)
 
+        # Streams: the UDP/RTP card is rendered and its destination inputs
+        # carry the values returned by GET /api/stream.
+        page.click('#sidebar button[data-sec="streams"]')
+        page.wait_for_timeout(1200)
+        for selector in ("#stream_enable", "#stream_udp_srcport",
+                         "#stream_dest0", "#stream_dest3"):
+            if page.locator(selector).count() == 0:
+                failures.append("stream card element %s is missing" % selector)
+        print("stream dest0:", repr(page.input_value("#stream_dest0")))
+        page.screenshot(path=os.path.join(SHOTS, "streams-udp.png"),
+                        full_page=True)
+
         # Events: the NPU settings card and the model table are rendered.
         page.click('#sidebar button[data-sec="events"]')
         page.wait_for_timeout(1500)
@@ -412,6 +424,41 @@ def main():
         else:
             print("models table text:", page.inner_text("#models_table")[:100].replace("\n", " "))
         page.screenshot(path=os.path.join(SHOTS, "events-models.png"), full_page=True)
+
+        # Events: separate IVS box switch, the event-upload card, the receiver
+        # link and the built-in API description.
+        for selector in ("#ivs_boxes", "#http_post_host", "#http_post_url",
+                         "#http_post_receiver_url", "#http_post_link",
+                         "#clip_enable", "#clip_pre_seconds",
+                         "#clip_post_seconds", "#clip_max_bytes",
+                         "#clip_running", "#clip_sent"):
+            if page.locator(selector).count() == 0:
+                failures.append("events card element %s is missing" % selector)
+        if page.locator("button[onclick='clipTest()']").count() == 0:
+            failures.append("the clip test-event button is missing")
+        if page.locator("#sec-events details").count() == 0:
+            failures.append("the event API description is missing")
+        else:
+            api_text = page.text_content("#sec-events details pre") or ""
+            if "X-Event-Id" not in api_text or "/ingest/clip" not in api_text:
+                failures.append("the event API description is incomplete")
+        href = page.evaluate(
+            "() => { updateHttpPostLink({host: '192.168.52.200:8090',"
+            " receiver_url: ''});"
+            " return document.getElementById('http_post_link').href; }")
+        print("event receiver link:", href)
+        if not href.startswith("http://192.168.52.200:8090/"):
+            failures.append("the receiver link is not built from host:8090: %r"
+                            % href)
+        hidden = page.evaluate(
+            "() => { updateHttpPostLink({host: 'none', receiver_url: ''});"
+            " return document.getElementById('http_post_link').style.display; }")
+        if hidden != "none":
+            failures.append("the receiver link is visible for host=none")
+        page.evaluate("() => apiRead('http_post')")
+        page.wait_for_timeout(600)
+        page.screenshot(path=os.path.join(SHOTS, "events-upload.png"),
+                        full_page=True)
 
         # Model upload/activate/delete through the UI.  The synthetic file is
         # stored but cannot be loaded by rknn_init: the error toast must show

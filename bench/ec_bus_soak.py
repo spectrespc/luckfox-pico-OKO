@@ -44,7 +44,7 @@ import paramiko
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = Path(os.environ.get("OKO_BENCH_OUT", ROOT / "output" / "bench"))
-DEFAULT_HOST = os.environ.get("OKO_DUT_HOST", "192.168.52.97")
+DEFAULT_HOST = os.environ.get("OKO_DUT_HOST", "192.168.52.33")
 DEFAULT_USER = os.environ.get("OKO_DUT_USER", "root")
 DEFAULT_PASSWORD = os.environ.get("OKO_DUT_PASSWORD", "luckfox")
 EC_ADDR = "0x42"

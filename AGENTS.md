@@ -97,6 +97,17 @@ SDK. Это read-only файлы: **никогда не редактироват
   обёртка сама поднимает venv в `output/bench/venv`.
 - Логи, кадры и прочие артефакты — в `output/bench/` (gitignore), пути вида
   `/tmp/...` для скриптов и логов не использовать.
+- Лог UART RV1106 пишет ESP32-мост `192.168.52.17`; скачивать с хоста:
+  ```bash
+  curl -s -c /tmp/c -X POST http://192.168.52.17/auth/login \
+    -H 'Content-Type: application/json' \
+    -d '{"username":"admin","password":"admin"}'
+  curl -b /tmp/c -o output/bench/uar0.log \
+    'http://192.168.52.17/sd/download?path=uar0.log'
+  ```
+  `uar0.log` — артефакт в `output/bench/`; cookie-файл `/tmp/c` живёт одну
+  сессию. Живая консоль — `telnet://192.168.52.17:23`
+  (`bench/serial_exec.py`), подробности в `TESTBENCH.md §8`.
 - `/tmp` допустим только для файлов одной сессии: черновики, распаковка, временные
   образы, компиляция хост-тестов.
 - Если в `/tmp` найден рабочий скрипт, который понадобился повторно, его нужно
