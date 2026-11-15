@@ -1,6 +1,6 @@
 # Известные ошибки и ограничения OKO
 
-Обновлено: `2026-11-12`. В файле — открытые проблемы, подтверждённые
+Обновлено: `2026-11-15`. В файле — открытые проблемы, подтверждённые
 ограничения и недавно закрытые записи (KI-036). Проверенные функции и доказательства — в `VERIFIED_FUNCTIONS.md`,
 состав и статус функционала — в `FEATURES_VERIFIED.md` / `FEATURES_UNVERIFIED.md`,
 процедуры стенда — в `TESTBENCH.md`.
@@ -253,36 +253,89 @@
   kernel/`ip=`. Это защита стенда, а не режим продукта.
   Статус: **принятое ограничение (by design)**.
 
-- **KI-063. Рамки IVS вешают MPP/VENC на RV1106.**
-  2026-11-14 на стенде: после включения `ivs.boxes` (MD, регион 13,
-  1920x1088) в логе `mpp: dup mClientFd failed!`,
-  `ma_encode_get_fd: mpp get fd failed`, `getFd: CHECK_GE failed`, затем
-  `SIGSEGV`; плата зависает целиком (SSH/HTTP/ARP недоступны, нужен power
-  cycle). Воспроизводится и с работающим YOLO, и **без него** (YOLO
-  остановлен, IVS включён отдельно) — значит, блокирует сам 2BPP-регион
-  поверх IVS-потока, а не только комбинация с детектором. Общий мьютекс RGN
-  (`rk_region_overlay_lock`) убрал гонку отрисовки, но не зависание
-  MPP/VENC. Обход: не включать `ivs.boxes`; IVS-детекция без рамок и
-  индикатор `act_osd` работают. В сборке ключ принудительно заблокирован:
-  `/api/ivs?boxes=1` возвращает 400, `gating_check("ivs")` не стартует IVS
-  при `boxes: true`, поток IVS всегда вызывает `ivs_boxes_request(0)`.
-  После этих прогонов стенд перешёл в деградацию SPI NAND
-  (`rockchip-sfc ... timeout`, `UBIFS ... error -5/-30`, `Fatal exception
-  in interrupt`, см. `TESTBENCH.md §8`), поэтому часть последующих
-  зависаний могла быть вызвана отказом флеша, а не IVS. Вывод о
-  несовместимости не окончательный; до проверки на здоровой плате ключ
-  остаётся жёстко отключённым.
-  Статус: **открыто, функция отключена; нужен здоровый DUT и разбор
-  vendor RGN/VENC**.
-  2026-11-14, тестовая сборка без блокировки: IVS **без YOLO `vi0`**
-  кадров не получает (`getResults` таймаут); с YOLO `vi0` регион 13
-  создаётся, IVS-события идут (16 событий), но после `boxes=0` → `boxes=1`
-  (destroy/recreate) в логе `mpp: dup mClientFd failed`, `getFd CHECK_GE`,
-  SIGSEGV; процесс остаётся в D-state, HTTP пропадает, нужен `reboot -f`.
-  При завершении такого процесса ядро также падало в `dma_buf_release`
-  (`Oops - BUG`, `Fixing recursive fault but reboot is needed`) — вендорный
-  баг жизненного цикла MPP/DMA-buf. Блокировка остаётся: живой тумблер
-  неизбежно пересоздаёт регион. Тестовая сборка с платы убрана.
+- **KI-063. Рамки IVS на 2BPP-регионе (handle 13, слой 5).**
+  История 2026-11-14: включение `ivs.boxes` давало `mpp: dup mClientFd
+  failed`, `ma_encode_get_fd: mpp get fd failed`, `getFd: CHECK_GE failed` →
+  SIGSEGV и D-state; при выходе процесса — oops `dma_buf_release`. В те же
+  дни деградировал SPI NAND, поэтому часть зависаний могла быть отказом
+  флеша, а не 2BPP-регионом.
+  Переследование 2026-11-15 на восстановленном NAND (33-мин baseline: 0
+  `rockchip-sfc` timeout, 0 UBIFS error, запись в `/oem` проходит):
+  * YOLO-рамки (handle 12, слой 6, тот же код `rk_region_box_*`) выдержали
+    **200** A/B-циклов destroy/recreate: fd 116↔117 без тренда, VmRSS
+    20,0 МиБ без изменений, 0 ошибок ядра. Разрушение и пересоздание
+    2BPP-региона само по себе не является триггером; гипотеза об утечке
+    `MB_BLK`/fd на каждом `GetCanvasInfo` не подтвердилась.
+  * IVS-рамки, созданные **один раз за процесс** (`ivs.boxes: true`,
+    `ivs.boxes_mode: restart`), стабильны 30 мин на NAND и 30 мин на
+    NFS-netboot: регион 13 создаётся один раз, fd 90→90 (NAND) и
+    104→104 (NFS), VmRSS 12580→12588 КиБ и 21044 КиБ без тренда, HTTP 200,
+    0 счётчиков ядра; прямоугольники видны в `/live/0`.
+  * IVS-рамки **и** YOLO-рамки одновременно стабильны 30 мин, когда YOLO
+    на `vpss3`, а IVS на своём VI-канале 2: регионы 12 и 13 создаются по
+    одному разу, fd 132–134, VmRSS 19,9 МиБ, 0 ошибок.
+  * 20 graceful-рестартов (SIGHUP) с привязанными регионами 12/13 прошли
+    без oops (fd 113–116, 0 счётчиков ядра): регион уничтожается в
+    `ivs_events_stop()` до `sdk_stop()`, а дескрипторы закрываются по
+    `FD_CLOEXEC` перед `execvp()` (KI-069). Ранее именно выход процесса с
+    привязанным 2BPP-регионом давал `dma_buf_release`/`valloc_release`.
+  * Живой тумблер (`ivs.boxes_mode: live`) проверен выборочно: destroy
+    региона по `boxes=0` и create по `boxes=1` подтверждены в консоли
+    (`2BPP overlay region 13 destroyed/created`), падений нет. Полные 200
+    циклов живым тумблером прогнать не удалось: регион создаётся только
+    на первый результат IVS после включения, а сцена на стенде статична
+    и IVS выдаёт результаты редкими пачками (3 реальных пары
+    create/destroy за 51 окно). Поэтому живой режим оставлен opt-in.
+  Причина исходного SIGSEGV по коду не доказана: цепочка `dup mClientFd`
+  (librockchip_mpp) → `ma_encode_get_fd`/`getFd`/`CHECK_GE` (librockit)
+  живёт в предсобранных библиотеках без исходников; на здоровом NAND
+  destroy/recreate больше не воспроизводится.
+  Решение: ключ `ivs.boxes` возвращён. Регион создаётся один раз за
+  процесс, по умолчанию `ivs.boxes_mode: restart` — `POST
+  /api/ivs?boxes=0|1` сохраняет конфиг, отвечает `applied:false` и делает
+  SIGHUP; `live` — opt-in для стенда. Hard block снят из `gating.c`,
+  `ivs_events.c`, `/api/ivs` и WebUI.
+  Статус: **закрыто (2026-11-15) для режима `restart`**; живой тумблер —
+  принятое ограничение (не soak-тест 200 циклов).
+
+- **KI-068. YOLO-рамки при `yolo.source: vi0` пересоздают 2BPP-регион
+  каждую секунду.**
+  2026-11-15, NAND, `ivs.boxes=1` + `yolo.boxes=1`, `yolo.source: vi0`:
+  регион 12 создаётся заново ~18 раз за 60 с (`2BPP overlay region 12
+  created` в консоли), на каждый кадр `runtimeGetCanvasIn:954 rgn [12]
+  sync failed`, `[rk_venc] Main stream loop timed out!` и отказы
+  `SetBitmap`/канвы у текстовых регионов 0–5. Причина: vi0 — selfpath,
+  общий с main-потоком; после старта YOLO на vi0 канал пересобирается,
+  `RK_MPI_RGN_GetCanvasInfo` для региона 12 возвращает ошибку,
+  `yolo_boxes_render()` уничтожает регион, а `yolo_boxes_sync()` создаёт
+  его снова — цикл. Отключение `yolo.boxes` останавливает цикл сразу.
+  С `yolo.source: vpss3` тот же набор (IVS на VI chn2 + YOLO на vpss3 +
+  оба 2BPP-региона) стабилен 30 мин, 90 с без единого пересоздания.
+  Обход: держать `yolo.source: vpss3` (заводской дефолт); IVS больше не
+  занимает VPSS-канал, поэтому конфликта нет — устаревшие проверки
+  «vpss3 занят IVS» убраны из `gating.c` и `main.c`.
+  Дополнительно: если во время такого цикла приходит SIGHUP, на выходе
+  процесса возможно ядро-oops `valloc_release [rockit]` из `__fput`
+  (наблюдалось 2026-11-15); процесс остаётся зомби, divinus не
+  поднимается, нужен `reboot`.
+  Статус: **открыто, обход — `yolo.source: vpss3`**.
+
+- **KI-069. SIGHUP-рестарт утекал дескрипторами и CMA.**
+  2026-11-15: каждый `kill -HUP` / `POST /api/cmd?restart` оставлял в новом
+  процессе ~5 дескрипторов `/dmabuf:vmpi` и 1–2 `/dev/rga` при включённом IVS
+  (~2 без IVS): fd рос 124→132→138 за два рестарта, за ~20 рестартов
+  накопилось 235 `/dmabuf:vmpi`, CMA 44,2→57,7 МиБ (0,3–0,7 МиБ за рестарт,
+  точное значение зависит от набора буферов). Причина: вендорский
+  медиастек закрывает не все буферы к моменту `execvp()`, а `execvp`
+  наследует дескрипторы без `FD_CLOEXEC`. До исправления помогал только
+  `reboot`; серия рестартов приближала исчерпание fd и CMA — вероятный
+  механизм исторических отказов MPP (`dup mClientFd`, `CHECK_GE`) после
+  многих перезапусков приложения. Исправление: перед `execvp()` все
+  дескрипторы с 3 помечаются `FD_CLOEXEC`, ядро закрывает их в новом образе,
+  в консоль печатается число помеченных. Стенд: 5 рестартов — fd 116→115
+  (113–116), CMA 44 160 КиБ без изменений; 20 рестартов — по нулю ошибок и
+  без роста fd (TESTBENCH §8).
+  Статус: **закрыто (2026-11-15)**.
 
 - **KI-064. `GET /api/update` роняет/подвешивает divinus.**
   2026-11-14: и старая сборка 0.3.0 (`/userdata/divinus.old`), и новая
@@ -292,6 +345,58 @@
   SPI NAND (запись/чтение разделов в этот момент работают). Обход: не
   опрашивать `/api/update`; `bench/api_check.py` исключает его из smoke-теста
   до разбора `update_json()`/`gating_sd_space()`. Статус: **открыто**.
+
+- **KI-065. IVS: ложные события при отсутствии движения (нет порога площади).**
+  До 0.3.x HAL не пробрасывал площадь движения (`md.u32Square`): событием
+  считался любой результат с `rectNum > 0` или `od.flag`, поэтому шумовые
+  блоки, пыль и мелкая разница пикселей давали «Event при отсутствии
+  движения» (журнал, снимок `act_http_post`, клип, OSD). Введён `ivs.min_area`
+  (процент кадра, по умолчанию `2`, `0` — фильтр выключен): MD-результаты ниже
+  порога не пишутся и не запускают действия, OD-события порог не скрывает.
+  В событие добавлены `area` (промилле кадра) и `cause` (`md`/`od`), в
+  консоль (`HAL_INFO`) печатаются и `area`, и сырой `mdSquare`.
+  Стенд 2026-11-15: причина «нет событий» найдена — IVS был привязан к выходу
+  VPSS, что на этой librockit не отдаёт кадров. IVS переведён на выделенный
+  VI-канал 2 (`ivs.width`×`ivs.height`); `mdSquare` реальный (12k–230k из
+  640×360), события идут. `min_area=50` — 10 событий за 60 с, все `area`
+  ≥ 644‰; `min_area=0` — 276 событий, включая 40–80‰; порог фильтрует.
+  Попутно найден и исправлен дефект освобождения: результат без
+  `rectNum`/`od.flag` не освобождался, и процесс уходил в OOM (153 МиБ) за
+  минуты; после освобождения RSS стабилен 12,4 МиБ при 91 событии за 2 мин.
+  Рестарт IVS (`md_interval`, смена размера) — 0,2 с; смена на 480×270 даёт
+  `area` по кадру 480×270; `act_osd` пишет `MOTION HH:MM:SS`; `api_check` —
+  127 проверок, 0 ошибок.
+  Дополнительно проверено 2026-11-15: статичная сцена 45 с при `min_area=2` —
+  0 событий, OSD пуст; `act_http_post` — `PUT /ingest/frame` 200 на каждое
+  событие; `act_record` — клип 15,03 с HEVC 1920×1080 (7,5 МБ); 15-мин soak
+  без роста памяти (система `used` 37 МиБ, RSS 12,4→15,8 МиБ за 40 мин);
+  `POST /api/cmd?save` + SIGHUP сохраняет `min_area`; UI-поле 0–50 показывает
+  значение из API (`ui_check` зелёный); IVS и YOLO `vi0` работают вместе
+  (RSS 23,6 МиБ). OD проверить не удалось: в кадре не было объекта, в режиме
+  `od`/`md_od` новых событий и `cause:"od"` не появилось.
+  Статус: **исправлено (2026-11-15)**; OD остаётся непроверенным.
+
+- **KI-066. Паника ядра `rga2_reg: irq handler err` при старте IVS сразу после остановки YOLO.**
+  2026-11-15 на стенде: `POST /api/yolo?enable=false` (MPP-каналы 4/1/0
+  уничтожены штатно), затем `POST /api/ivs?enable=true` — через ~0.1 с
+  `rga_mm: Only get buffer 348160 byte ..., but current image required 368640
+  byte`, `rga_mm_map_buffer map dma_buf error!`, `rga2_reg: irq handler err!`,
+  `Unable to handle kernel paging request`, `Kernel panic - not syncing:
+  Fatal exception in interrupt`. Буфер 640×384 — вход YOLO: при сносе каналов
+  остался незавершённый RGA/DVBM-буфер. Наблюдалось до перевода IVS на
+  отдельный VI-канал (2026-11-15), после перевода не перепроверялось; RGA/MPP
+  в коде IVS не используются, это вендорный баг жизненного цикла, родственник
+  KI-063. Импульс `POST /ext/reset` моста плату не поднял,
+  помог полный цикл питания `POST /ext/power` (off, 3–4 с, on). Обход: не
+  включать IVS сразу после остановки YOLO — сначала полный цикл питания, затем
+  старт IVS без запущенного детектора или с `yolo.source: vi0` с загрузки.
+  Перепроверено 2026-11-15 после перевода IVS на VI chn2: при работающем
+  детекторе `yolo.source: vpss3` остановили YOLO (`POST /api/yolo?enable=false`)
+  и сразу включили IVS — паники нет, канал поднялся на VI-канале 2, события
+  идут, RSS 12,4 МиБ. В консоли видны только штатные сообщения `rga_job`
+  о сносе задач завершившегося процесса. Прямая зависимость от привязки IVS
+  не подтверждена, поэтому запись оставлена на случай регрессии.
+  Статус: **не воспроизводится (2026-11-15)**.
 
 - **KI-024. Полный `update.img` затирает U-Boot env.**
   MAC восстанавливается из serial, но статические сетевые настройки
@@ -388,6 +493,26 @@
   OTA-цикл с прошивкой из U-Boot (KI-049). Блокеров мержа нет; слияние в
   `main` не выполнялось и остаётся отдельным действием.
   Статус: **гейт пройден, мерж не выполнен**.
+
+- **KI-067. mDNS: announce-only без probing и один multicast-интерфейс.**
+  `tinysvcmdns` не реализует probing/protection по RFC 6762 §8.1: responder
+  только анонсирует записи, конфликт имён не разрешается. Коллизий не ждём —
+  имя строится из MAC `eth0` (`oko-<4 hex>`), а не из общего `/etc/hostname`.
+  Ответы идут одним сокетом с `IP_ADD_MEMBERSHIP(INADDR_ANY)` на интерфейс
+  multicast-маршрута: discovery работает в сети основного аплинка, но SoftAP
+  `192.168.43.0/24` и VPN-туннели не обслуживаются. Адрес SoftAP
+  (`wlan0` `192.168.43.1`) при этом попадает в A-записи как обычный локальный
+  IPv4, хотя из основной сети он недоступен: клиент должен выбирать адрес по
+  маршруту, а не первый из ответа. Набор адресов сверяется
+  раз в 10 с, поэтому после DHCP-renew или failover eth↔wlan клиент может
+  получить старый адрес до ~11 с (запись в его кэше живёт до TTL 120 с).
+  Смена адресов пересоздаёт responder: `mdnsd_set_hostname()` нельзя звать
+  дважды на живом инстансе (`assert`). После OTA старый
+  `/userdata/divinus.yaml` с `mdns.enable: false` оставляет публикацию
+  выключенной до первого переключения в WebUI/`/api/mdns`; заводской шаблон
+  `true` действует только при создании файла. Обходов нет; будущая опция —
+  сокет на каждый интерфейс и service-записи (`_http._tcp`, `_rtsp._tcp`).
+  Статус: **принятое ограничение**.
 
 ### VPN
 
@@ -790,36 +915,90 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   installed. This is a bench safeguard, not a product mode.
   Status: **accepted limitation (by design)**.
 
-- **KI-063. IVS boxes hang MPP/VENC on RV1106.**
-  On the bench on 2026-11-14, after enabling `ivs.boxes` (MD, region 13,
-  1920x1088) the log shows `mpp: dup mClientFd failed!`,
-  `ma_encode_get_fd: mpp get fd failed`, `getFd: CHECK_GE failed`, then
-  `SIGSEGV`; the whole board hangs (SSH/HTTP/ARP unreachable, power cycle
-  required). It reproduces with YOLO running and **without it** (YOLO
-  stopped, IVS enabled alone), so the 2BPP region over the IVS pipeline is
-  the trigger, not the detector combination. The shared RGN mutex
-  (`rk_region_overlay_lock`) removed the paint race but not the MPP/VENC
-  hang. Workaround: do not enable `ivs.boxes`; IVS detection without boxes
-  and the `act_osd` indicator work. The build hard-blocks the key:
-  `/api/ivs?boxes=1` returns 400, `gating_check("ivs")` refuses to start IVS
-  with `boxes: true`, and the IVS thread always calls
-  `ivs_boxes_request(0)`. After these runs the stand developed SPI NAND
-  degradation (`rockchip-sfc ... timeout`, `UBIFS ... error -5/-30`, `Fatal
-  exception in interrupt`, see `TESTBENCH.md §8`), so some of the later hangs
-  may have been caused by the flash failure rather than IVS. The
-  incompatibility conclusion is not final; the key stays hard-disabled until
-  it is retested on a healthy board. Status: **open, feature disabled; needs
-  a healthy DUT and a vendor RGN/VENC investigation**.
-  On 2026-11-14 a test build without the block: IVS **without YOLO `vi0`**
-  receives no frames (`getResults` timeout); with YOLO `vi0` region 13 is
-  created and IVS events flow (16 events), but after `boxes=0` → `boxes=1`
-  (destroy/recreate) the log shows `mpp: dup mClientFd failed`,
-  `getFd CHECK_GE`, SIGSEGV; the process stays in D-state, HTTP disappears
-  and `reboot -f` is required. On such a process exit the kernel also hit
-  `dma_buf_release` (`Oops - BUG`, `Fixing recursive fault but reboot is
-  needed`) — a vendor MPP/DMA-buf lifecycle bug. The block stays because the
-  live switch inevitably recreates the region. The test build was removed
-  from the board.
+- **KI-063. IVS boxes on the 2BPP region (handle 13, layer 5).**
+  History, 2026-11-14: enabling `ivs.boxes` produced `mpp: dup mClientFd
+  failed`, `ma_encode_get_fd: mpp get fd failed`, `getFd: CHECK_GE failed` →
+  SIGSEGV and D-state; the process exit hit a `dma_buf_release` oops. The SPI
+  NAND degraded on the same days, so some hangs may have been flash failures
+  rather than the 2BPP region.
+  Re-investigated on 2026-11-15 with the NAND restored (33 min baseline: no
+  `rockchip-sfc` timeouts, no UBIFS errors, `/oem` write probe passes):
+  * YOLO boxes (handle 12, layer 6, the same `rk_region_box_*` code)
+    survived **200** A/B destroy/recreate cycles: fd 116↔117 with no trend,
+    VmRSS steady at 20.0 MiB, no kernel errors. Rebuilding a 2BPP region is
+    not a trigger by itself, and the suspected `MB_BLK`/fd leak per
+    `GetCanvasInfo` did not reproduce.
+  * IVS boxes created **once per process** (`ivs.boxes: true`,
+    `ivs.boxes_mode: restart`) were stable for 30 min on NAND and 30 min on
+    NFS netboot: region 13 created once, fd 90→90 (NAND) and 104→104 (NFS),
+    VmRSS 12580→12588 KiB and 21044 KiB with no trend, HTTP 200, zero kernel
+    counters; the rectangles are visible in `/live/0`.
+  * IVS boxes **and** YOLO boxes together were stable for 30 min with YOLO on
+    `vpss3` and IVS on its own VI channel 2: regions 12/13 created once each,
+    fd 132–134, VmRSS 19.9 MiB, no errors.
+  * 20 graceful SIGHUP restarts with regions 12/13 attached passed without an
+    oops (fd 113–116, zero kernel counters): the region is destroyed in
+    `ivs_events_stop()` before `sdk_stop()` and descriptors are closed via
+    `FD_CLOEXEC` before `execvp()` (KI-069). Previously exactly that exit path
+    produced `dma_buf_release`/`valloc_release`.
+  * The live switch (`ivs.boxes_mode: live`) was spot-checked: `boxes=0`
+    destroys the region and `boxes=1` creates it again (console shows
+    `2BPP overlay region 13 destroyed/created`) with no crash. The full 200
+    cycles could not be run live: the region is only created on the first IVS
+    result after enabling, and the bench scene is static, so IVS emits results
+    in rare bursts (3 real create/destroy pairs over 51 windows). Live mode
+    therefore stays opt-in.
+  The original SIGSEGV is not explained in code: the `dup mClientFd`
+  (librockchip_mpp) → `ma_encode_get_fd`/`getFd`/`CHECK_GE` (librockit) chain
+  lives in prebuilt libraries without sources, and destroy/recreate no longer
+  reproduces on healthy NAND.
+  Resolution: `ivs.boxes` is back. The region is created once per process and
+  `ivs.boxes_mode: restart` is the default — `POST /api/ivs?boxes=0|1` saves
+  the configuration, replies `"applied":false` and sends SIGHUP; `live` is an
+  opt-in bench mode. The hard block is removed from `gating.c`,
+  `ivs_events.c`, `/api/ivs` and the WebUI.
+  Status: **closed (2026-11-15) for `restart` mode**; the live switch is an
+  accepted limitation (no 200-cycle soak).
+
+- **KI-068. YOLO boxes with `yolo.source: vi0` rebuild the 2BPP region every
+  second.**
+  2026-11-15, NAND, `ivs.boxes=1` + `yolo.boxes=1`, `yolo.source: vi0`:
+  region 12 is recreated about 18 times per 60 s (`2BPP overlay region 12
+  created` on the console), every frame logs `runtimeGetCanvasIn:954 rgn [12]
+  sync failed`, followed by `[rk_venc] Main stream loop timed out!` and failed
+  `SetBitmap`/canvas updates for text regions 0–5. Cause: vi0 is the selfpath
+  shared with the main stream; after YOLO starts on vi0 the channel is
+  rebuilt, `RK_MPI_RGN_GetCanvasInfo` fails for region 12,
+  `yolo_boxes_render()` destroys the region and `yolo_boxes_sync()` creates it
+  again — a loop. Turning `yolo.boxes` off stops it immediately. With
+  `yolo.source: vpss3` the same set (IVS on VI chn2 + YOLO on vpss3 + both
+  2BPP regions) is stable for 30 min and shows no re-creation in 90 s.
+  Workaround: keep `yolo.source: vpss3` (factory default); IVS no longer
+  occupies a VPSS channel, so the stale "vpss3 is taken by IVS" checks were
+  removed from `gating.c` and `main.c`.
+  Note: if a SIGHUP arrives during that loop, the process exit can hit a
+  kernel oops `valloc_release [rockit]` from `__fput` (observed 2026-11-15);
+  the process stays a zombie, divinus is not respawned and a `reboot` is
+  required.
+  Status: **open, workaround is `yolo.source: vpss3`**.
+
+- **KI-069. A SIGHUP restart leaked descriptors and CMA.**
+  2026-11-15: every `kill -HUP` / `POST /api/cmd?restart` left about five
+  `/dmabuf:vmpi` descriptors and one or two `/dev/rga` descriptors in the new
+  process with IVS enabled (about two without IVS): fd grew 124→132→138 over
+  two restarts and about 20 restarts accumulated 235 `/dmabuf:vmpi` descriptors
+  with CMA going from 44.2 to 57.7 MiB (0.3–0.7 MiB per restart, depending on
+  the buffer set). The vendor media stack does not close
+  every buffer before `execvp()`, and `execvp` inherits descriptors that lack
+  `FD_CLOEXEC`. Before the fix only a `reboot` helped, and a long series of
+  restarts pushed the process towards fd and CMA exhaustion — the likely
+  mechanism behind the historical MPP failures (`dup mClientFd`, `CHECK_GE`)
+  after many application restarts. Fix: before `execvp()` every descriptor
+  from 3 is marked `FD_CLOEXEC`, so the kernel closes it in the new image; the
+  console prints how many were marked. Bench: 5 restarts — fd 116→115
+  (113–116), CMA 44,160 KiB unchanged; 20 restarts — zero errors and no fd
+  growth (TESTBENCH §8).
+  Status: **closed (2026-11-15)**.
 
 - **KI-064. `GET /api/update` hangs/kills divinus.**
   On 2026-11-14 both the previous 0.3.0 binary (`/userdata/divinus.old`) and
@@ -830,6 +1009,58 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   reads/writes work at that moment). Workaround: do not poll `/api/update`;
   `bench/api_check.py` excludes it from the smoke test until
   `update_json()`/`gating_sd_space()` is investigated. Status: **open**.
+
+- **KI-065. IVS: false events without motion (no area threshold).**
+  Before 0.3.x the HAL did not propagate the motion area (`md.u32Square`): any
+  result with `rectNum > 0` or `od.flag` counted as an event, so noise blocks,
+  dust and small pixel differences produced "Event without motion" (journal,
+  `act_http_post` snapshot, clip, OSD). `ivs.min_area` was added (percent of the
+  frame, default `2`, `0` disables the filter): MD results below the threshold
+  are neither recorded nor acted on, while OD hits are never hidden by it. The
+  event now carries `area` (permille of the frame) and `cause` (`md`/`od`), and
+  `HAL_INFO` prints both `area` and the raw `mdSquare` to the console.
+  Bench on 2026-11-15: the "no events" root cause was found — IVS was bound to
+  a VPSS output, which delivers no frames on this librockit. IVS now uses a
+  dedicated VI channel 2 (`ivs.width`×`ivs.height`); `mdSquare` is real
+  (12k–230k of 640×360) and events flow. `min_area=50` — 10 events in 60 s,
+  all `area` ≥ 644‰; `min_area=0` — 276 events including 40–80‰, so the
+  threshold filters. A release defect was found and fixed along the way: a
+  result with no `rectNum`/`od.flag` was never released and the process hit
+  OOM (153 MiB) within minutes; after the fix RSS stays at 12.4 MiB with 91
+  events over 2 minutes. An IVS restart (`md_interval`, size change) takes
+  0.2 s; a 480×270 size change reports `area` for the 480×270 frame; `act_osd`
+  writes `MOTION HH:MM:SS`; `api_check` — 127 checks, 0 failures.
+  Also verified on 2026-11-15: a 45 s static scene with `min_area=2` produced
+  0 events and an empty OSD; `act_http_post` — `PUT /ingest/frame` 200 per
+  event; `act_record` — a 15.03 s HEVC 1920×1080 clip (7.5 MB); a 15 min soak
+  without memory growth (system `used` 37 MiB, RSS 12.4→15.8 MiB over 40 min);
+  `POST /api/cmd?save` plus SIGHUP preserves `min_area`; the UI field (0–50)
+  shows the API value (`ui_check` green); IVS and YOLO `vi0` run together
+  (RSS 23.6 MiB). OD could not be checked: no object was in the frame, and
+  `od`/`md_od` produced no new events and no `cause:"od"`.
+  Status: **fixed (2026-11-15)**; OD remains unverified.
+
+- **KI-066. Kernel panic `rga2_reg: irq handler err` when IVS starts right after YOLO stops.**
+  On 2026-11-15: `POST /api/yolo?enable=false` (MPP channels 4/1/0 destroyed
+  cleanly), then `POST /api/ivs?enable=true` — ~0.1 s later
+  `rga_mm: Only get buffer 348160 byte ..., but current image required 368640
+  byte`, `rga_mm_map_buffer map dma_buf error!`, `rga2_reg: irq handler err!`,
+  `Unable to handle kernel paging request`, `Kernel panic - not syncing: Fatal
+  exception in interrupt`. The 640×384 buffer is the YOLO input: an unfinished
+  RGA/DVBM buffer was left when the channels were torn down. It was observed before IVS moved
+  to a dedicated VI channel (2026-11-15) and was not retested afterwards; the
+  IVS code does not use RGA/MPP, so this is a vendor lifecycle bug related to
+  KI-063. The bridge `POST /ext/reset` pulse did not
+  revive the board; a full `POST /ext/power` cycle (off, 3–4 s, on) did.
+  Workaround: do not start IVS immediately after stopping YOLO — power-cycle
+  first, then start IVS either with the detector off or with `yolo.source: vi0`
+  Retested on 2026-11-15 after IVS moved to VI chn2: with the detector running
+  on `vpss3`, YOLO was stopped (`POST /api/yolo?enable=false`) and IVS was
+  started immediately — no panic, the channel came up on VI channel 2, events
+  flowed and RSS stayed at 12.4 MiB. The console only showed the normal
+  `rga_job` teardown messages of the exited process. A direct dependency on the
+  IVS binding was not proven, so the entry is kept for regression tracking.
+  Status: **not reproducible (2026-11-15)**.
 
 - **KI-024. A full `update.img` wipes the U-Boot env.** The MAC is re-derived
   from the serial number, but static network settings
@@ -916,6 +1147,27 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   OTA cycle with a U-Boot flash (KI-049). There are no merge blockers; the
   merge into `main` was not performed and remains a separate action.
   Status: **gate passed, not merged**.
+
+- **KI-067. mDNS: announce-only without probing, one multicast interface.**
+  `tinysvcmdns` does not implement RFC 6762 §8.1 probing/protection: the
+  responder only announces records, so a name conflict is not resolved.
+  Conflicts are not expected — the name comes from the `eth0` MAC
+  (`oko-<4 hex>`), not from the shared `/etc/hostname`. Replies go through one
+  socket with `IP_ADD_MEMBERSHIP(INADDR_ANY)` on the multicast-route interface:
+  discovery works on the main uplink, but the SoftAP subnet
+  `192.168.43.0/24` and VPN tunnels are not served. The SoftAP address
+  (`wlan0` `192.168.43.1`) is still advertised as an ordinary local IPv4 even
+  though it is unreachable from the main LAN: a client must pick the address by
+  route, not the first answer. The address set is
+  reconciled every 10 s, so after a DHCP renew or an eth↔wlan failover a client
+  may see the old address for up to ~11 s (its cache keeps the record up to the
+  120 s TTL). An address change recreates the responder because
+  `mdnsd_set_hostname()` must not be called twice on a live instance
+  (`assert`). After an OTA an old `/userdata/divinus.yaml` with
+  `mdns.enable: false` keeps publication off until the first toggle in the
+  WebUI/`/api/mdns`; the factory `true` applies only when the file is created.
+  No workaround; future options are a per-interface socket and service records
+  (`_http._tcp`, `_rtsp._tcp`). Status: **accepted limitation**.
 
 ### VPN
 

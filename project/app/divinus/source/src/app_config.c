@@ -279,12 +279,18 @@ void app_config_dump(FILE *file) {
     fprintf(file, "  sensitivity: %d\n  md_interval: %d\n  od_interval: %d\n  od_percent: %d\n",
         app_config.ivs_sensitivity, app_config.ivs_md_interval,
         app_config.ivs_od_interval, app_config.ivs_od_percent);
+    fprintf(file, "  min_area: %d\n", app_config.ivs_min_area);
     fprintf(file, "  act_http_post: %s\n", app_config.ivs_act_http_post ? "true" : "false");
     fprintf(file, "  act_record: %s\n", app_config.ivs_act_record ? "true" : "false");
     fprintf(file, "  act_osd: %s\n", app_config.ivs_act_osd ? "true" : "false");
     fprintf(file, "  record_seconds: %d\n", app_config.ivs_record_seconds);
     fprintf(file, "  record_source: %s\n", app_config.ivs_record_sub ? "sub" : "main");
     fprintf(file, "  boxes: %s\n", app_config.ivs_boxes ? "true" : "false");
+    /* The 2BPP region is created once per process: switching it under a live
+     * encoder is what crashes the vendor MPP/RGN path (KI-063), so the
+     * default is a restart-applied switch. */
+    fprintf(file, "  boxes_mode: %s\n",
+        app_config.ivs_boxes_live ? "live" : "restart");
 
     fprintf(file, "yolo:\n");
     fprintf(file, "  enable: %s\n", app_config.yolo_enable ? "true" : "false");
@@ -455,7 +461,7 @@ enum ConfigError app_config_parse(void) {
     app_config.ntp_server[0] = '\0';
     strcpy(app_config.tz, "Europe/Moscow");
 
-    app_config.mdns_enable = false;
+    app_config.mdns_enable = true;
 
     app_config.osd_enable = false;
 
@@ -526,11 +532,14 @@ enum ConfigError app_config_parse(void) {
     app_config.ivs_md_interval = 5;
     app_config.ivs_od_interval = 1;
     app_config.ivs_od_percent = 7;
+    app_config.ivs_min_area = 2;
     app_config.ivs_act_http_post = false;
     app_config.ivs_act_record = false;
     app_config.ivs_act_osd = false;
     app_config.ivs_record_seconds = 15;
     app_config.ivs_record_sub = false;
+    app_config.ivs_boxes = false;
+    app_config.ivs_boxes_live = false;  /* restart-applied switch by default */
 
     app_config.yolo_enable = false;
     app_config.yolo_source = 1;   /* vpss3: VI selfpath hung the board in M0 */
@@ -965,6 +974,16 @@ enum ConfigError app_config_parse(void) {
      * replace the configured values with defaults. */
     parse_bool(&ini, "ivs", "boxes", &app_config.ivs_boxes);
     {
+        char mode[16] = {0};
+        if (parse_param_value_n(&ini, "ivs", "boxes_mode", mode,
+                sizeof(mode)) == CONFIG_OK) {
+            if (EQUALS_CASE(mode, "live") || EQUALS(mode, "1"))
+                app_config.ivs_boxes_live = true;
+            else if (EQUALS_CASE(mode, "restart") || EQUALS(mode, "0"))
+                app_config.ivs_boxes_live = false;
+        }
+    }
+    {
         char val[16] = {0};
         int mode = app_config.ivs_mode;
         parse_int(&ini, "ivs", "mode", 1, 3, &mode);
@@ -980,6 +999,7 @@ enum ConfigError app_config_parse(void) {
             int md = (int)app_config.ivs_md_interval;
             int od = (int)app_config.ivs_od_interval;
             int pct = (int)app_config.ivs_od_percent;
+            int area = (int)app_config.ivs_min_area;
             int sec = (int)app_config.ivs_record_seconds;
             parse_int(&ini, "ivs", "width", 160, INT_MAX, &w);
             parse_int(&ini, "ivs", "height", 120, INT_MAX, &h);
@@ -987,6 +1007,7 @@ enum ConfigError app_config_parse(void) {
             parse_int(&ini, "ivs", "md_interval", 1, 100, &md);
             parse_int(&ini, "ivs", "od_interval", 1, 100, &od);
             parse_int(&ini, "ivs", "od_percent", 5, 8, &pct);
+            parse_int(&ini, "ivs", "min_area", 0, 50, &area);
             parse_int(&ini, "ivs", "record_seconds", 1, 600, &sec);
             app_config.ivs_width = (unsigned int)w;
             app_config.ivs_height = (unsigned int)h;
@@ -994,6 +1015,7 @@ enum ConfigError app_config_parse(void) {
             app_config.ivs_md_interval = (unsigned int)md;
             app_config.ivs_od_interval = (unsigned int)od;
             app_config.ivs_od_percent = (unsigned int)pct;
+            app_config.ivs_min_area = (unsigned int)area;
             app_config.ivs_record_seconds = (unsigned int)sec;
         }
         parse_bool(&ini, "ivs", "act_http_post", &app_config.ivs_act_http_post);

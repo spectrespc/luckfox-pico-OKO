@@ -4,7 +4,7 @@
 (RV1106, SPI NAND, Buildroot) с сенсором SC230AI: паспорт платформы, индекс по
 файлам статусов проверки и краткие команды проверки.
 
-Статус на 2026-11-12. Пометки: **работает** — проверено на стенде;
+Статус на 2026-11-15. Пометки: **работает** — проверено на стенде;
 **ограничено** — работает с оговоркой; **заблокировано** — отказ с причиной.
 
 | Файл | Содержание |
@@ -104,6 +104,13 @@ bench/run.sh dut.py --host 192.168.52.97 'cat /proc/device-tree/usbdrd/usb@ffb00
   wlan0 `.44/24` в одной подсети — параллельный ping 20/20 на каждый адрес,
   ARP 1 IP = 1 MAC, HTTP/RTSP 200 на обоих адресах, static+static 10/10,
   failover и возврат, 3 цикла link down/up (`FEATURES_VERIFIED.md`).
+- mDNS: `divinus` публикует `oko-<4 hex MAC eth0>.local` встроенным
+  `tinysvcmdns` без Avahi; A-записи — по всем не-loopback IPv4 (до трёх),
+  набор сверяется раз в 10 с, запуск отложен до появления адреса (старт
+  раньше DHCP). Управление — `[mdns] enable` (по умолчанию `true`),
+  `GET/POST /api/mdns`, WebUI **Сеть → mDNS**; discovery работает на
+  интерфейсе multicast-маршрута, SoftAP и VPN не обслуживаются (KI-067).
+  Service-записей (`_http._tcp`, `_rtsp._tcp`) нет.
 - VPN: WireGuard (`type=wg`, встроенный модуль ядра), AmneziaWG (`type=awg`,
   out-of-tree `amneziawg.ko`, `RK_ENABLE_AWG=y`) и OpenVPN-клиент (`type=ovpn`,
   пакет `openvpn 2.5.7` + `CONFIG_TUN=y`) применяются своим POSIX-хелпером
@@ -153,7 +160,7 @@ Entry point for OKO capabilities on the Luckfox Pico Pro Max (RV1106, SPI NAND,
 Buildroot) with the SC230AI sensor: platform passport, an index of the
 verification-status files and short verification commands.
 
-Status as of 2026-11-12. Markers: **works**, **limited**, **blocked**.
+Status as of 2026-11-15. Markers: **works**, **limited**, **blocked**.
 
 | File | Content |
 |---|---|
@@ -196,6 +203,15 @@ an uplink; under `root=/dev/nfs` the eth route and
 resolv are left untouched. Equal metrics are separated (Wi-Fi gets +1) because
 the kernel stores one default per metric. A VPN tunnel is re-established on the
 new uplink after a failover; per-VPN interface pinning is not supported.
+
+mDNS is served by the built-in `tinysvcmdns` (no avahi): the camera publishes
+`oko-<last four hex of the eth0 MAC>.local` with A records for every
+non-loopback IPv4 address (up to three). Publication waits for the first
+address (`divinus` starts before DHCP) and the set is reconciled every 10 s.
+`[mdns] enable` defaults to `true`; `GET/POST /api/mdns` and the WebUI
+**Network → mDNS discovery** control it. Discovery works on the
+multicast-route interface only — the SoftAP subnet and VPN tunnels are not
+served, and there are no service records (KI-067).
 
 The USB port is pinned to host mode (`dr_mode = "host"`): a hub and its devices
 work without role switching, while the gadget (`usb0`/RNDIS) and adb are

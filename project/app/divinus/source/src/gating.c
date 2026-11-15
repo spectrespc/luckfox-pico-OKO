@@ -116,15 +116,14 @@ gating_result gating_check(const char *feature)
         if (chnState[HAL_CHN_IVS].enable)
             return blocked("no free VPSS channel for analytics",
                 "disable MJPEG and restart the stream");
-        if (app_config.yolo_enable && app_config.yolo_source == 1)
-            return blocked("VPSS channel 3 is reserved by YOLO",
-                "set yolo.source to vi0 or disable YOLO first");
-        /* KI-063: the 2BPP IVS overlay hangs the MPP/VENC path on this image,
-         * even without the detector.  Analytics itself works without boxes. */
-        if (app_config.ivs_boxes)
-            return blocked("IVS boxes hang the board on this MPP build (KI-063)",
-                "set ivs.boxes to false; IVS detection without the overlay "
-                "works");
+        /* IVS runs on its own VI channel 2, so it does not compete with
+         * yolo.source=vpss3 for VPSS channel 3. */
+        /* The motion rectangles need the region canvas interface; analytics
+         * itself works without the overlay, so the setting is only reported
+         * as unavailable when it is actually on. */
+        if (app_config.ivs_boxes && !rk_region_ivs_supported())
+            return blocked("RK_MPI_RGN_GetCanvasInfo/UpdateCanvas is not "
+                "available", "set ivs.boxes to false");
         return allowed;
     }
 
@@ -142,13 +141,13 @@ gating_result gating_check(const char *feature)
         if (app_config.yolo_source == 0)
             return blocked("VI selfpath (vi1) hangs the board on RV1106",
                 "set yolo.source to vpss3");
-        /* VPSS has four output channels.  Channel 3 is the last one, so any
-         * fourth stream, IVS or another detector user owns it on RV1106. */
+        /* VPSS has four output channels.  Channel 3 is the last one, so a
+         * fourth stream or MJPEG owns it on RV1106; IVS does not: it takes
+         * frames from its own VI channel 2. */
         if (app_config.yolo_source == 1 &&
-            (app_config.ivs_enable || app_config.mjpeg_enable ||
-             chnState[HAL_CHN_IVS].enable))
+            (app_config.mjpeg_enable || chnState[HAL_CHN_IVS].enable))
             return blocked("VPSS channel 3 is already used",
-                "set yolo.source to vi0 or disable IVS/MJPEG");
+                "disable MJPEG or the fourth stream, or set yolo.source to vi0");
         /* The boxes need the region canvas interface; without it the detector
          * itself still works, so the setting can stay on and is only reported
          * as unavailable when the detector is started. */

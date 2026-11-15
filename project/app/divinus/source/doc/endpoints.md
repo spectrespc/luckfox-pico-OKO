@@ -632,14 +632,25 @@ throttles the encoder to `fps_enabled`/`fps_disabled`.
 | GET | `mode` | `md`/`od`/`md_od` |
 | GET | `width`, `height`, `sensitivity` | Analytics input |
 | GET | `md_interval`, `od_interval`, `od_percent` | Detection tuning |
+| GET | `min_area` | Motion area threshold in percent of the frame, `0`-`50` (OKO); `0` disables the filter. Applied live, no IVS restart |
 | GET | `act_http_post`, `act_record`, `act_osd` | Motion actions |
 | GET | `record_seconds`, `record_source` | Clip settings |
-| GET/POST | `boxes` | `0`/`1`: draw blue motion rectangles on the main stream (OKO); an object hit without a vendor rectangle shows a centre marker. Applied by the IVS thread, no restart |
+| GET/POST | `boxes` | `0`/`1`: draw the motion rectangles on the main stream (OKO); an OD hit without a vendor rectangle shows a centre marker. Rejected with HTTP 400 when `RK_MPI_RGN_GetCanvasInfo/UpdateCanvas` is unavailable. Applied according to `boxes_mode` |
+| GET/POST | `boxes_mode` | `restart` (default) or `live`. `restart` saves the setting, replies `"applied":false` and restarts the application (the 2BPP region is created once per process, KI-063); `live` repaints the region through the running IVS thread |
+
+In `restart` mode the `boxes` switch is applied by the restart announced in
+`note`; the process re-reads the yaml and creates the region on the first
+motion result. If the configuration cannot be saved (read-only or full
+`/userdata`), the switch is left unchanged, nothing restarts, and the reply
+carries `"applied":false` with a note. The response also contains
+`boxes_mode`, `applied` and `note`.
 
 The response also contains `boxes` and `events`, the last 16 detections:
 ```json
-{"events":[{"time":"2026-11-04T09:15:00Z","frame":1234,"rects":1,"bbox":[100,80,200,300]}]}
+{"events":[{"time":"2026-11-04T09:15:00Z","frame":1234,"rects":1,"area":213,"cause":"md","bbox":[100,80,200,300]}]}
 ```
+`area` is the motion area in permille of the analytics frame and `cause` is
+`md` or `od`; OD hits always pass the `min_area` filter.
 
 #### `/api/yolo`
 
@@ -1092,6 +1103,39 @@ reset. The MAC is derived once from `/proc/device-tree/serial-number`; DHCP
 uses the MAC as client ID (no DUID), which keeps the lease stable across
 firmware updates. Static mode returns after the response has been sent; the
 browser may need to reconnect to the new address.
+
+#### `/api/mdns`
+
+Reads and toggles the mDNS publication. The name is derived from the `eth0`
+MAC (`oko-<last four hex digits>`, lower case; `wlan0` is a fallback), so a
+firmware update or a USB Wi-Fi adapter swap keeps it. The WebUI calls this
+endpoint from **Network → mDNS discovery**.
+
+| Method | Parameters | Description |
+|--------|------------|-------------|
+| GET | none | Configured switch, live state, name and the published addresses |
+| POST | `enable=0`, `enable=1` | Turn publication off/on immediately and save `divinus.yaml` |
+
+`enable` also accepts `true`/`false` and `on`/`off`; any other value is refused
+with HTTP 400 `{"error":"invalid"}`. The toggle applies at once — no restart and
+no SIGHUP. Without an IPv4 address `running` is false; the responder starts
+within 11 s after an address appears (the 10 s reconciliation tick plus boot).
+
+**Response**
+
+```json
+{
+  "enable": true,
+  "running": true,
+  "name": "oko-e80e",
+  "addresses": ["192.168.52.33"]
+}
+```
+
+`name` has no `.local` suffix; the WebUI appends it. `addresses` are the A
+records published right now (up to three non-loopback IPv4 addresses). The
+responder listens on UDP 5353 on the multicast-route interface only: the SoftAP
+subnet and VPN tunnels are not served, and no service records are published.
 
 #### `/api/wifi`
 

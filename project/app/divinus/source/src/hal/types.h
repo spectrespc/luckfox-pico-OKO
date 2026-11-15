@@ -207,4 +207,7 @@ typedef struct {
     unsigned int rectCount;
     hal_ivs_rect rect[8];
     unsigned int odPercent;
+    unsigned int mdSquare;          /* vendor md.u32Square: motion area, pixels */
+    unsigned char odFlag;           /* vendor od.flag: object detected */
+    unsigned short width, height;   /* IVS input frame, motion coordinates */
 } hal_ivs_result;

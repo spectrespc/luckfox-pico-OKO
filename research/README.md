@@ -39,3 +39,4 @@
 |---|---|
 | [`buildroot-2026-08/`](buildroot-2026-08/README.md) | миграция rootfs на upstream Buildroot 2026.08.1: вендорская дельта, пакетные патчи под uClibc/gcc 8, версии пакетов |
 | [`rockchip-npu-mainline/`](rockchip-npu-mainline/README.md) | mainline-драйвер NPU Rockchip `drivers/accel/rocket`; применимость к RV1106 и сопоставление с вендорским `rknpu` |
+| [`rgn-mpp-lifecycle/`](rgn-mpp-lifecycle/README.md) | 2BPP overlay-регионы `RK_MPI_RGN_*`: вендорский цикл `GetCanvasInfo`/`UpdateCanvas`, переносимость destroy/recreate под живым энкодером, дефект KI-063 |

@@ -39,7 +39,23 @@ This document describes the fields that can be found within a configuration file
 
 ## mDNS section
 
-- **enable**: Boolean to turn on mDNS announcer, lets LAN users access the device by a domain name, its configured hostname followed by .local (default: `false`).
+- **enable**: Boolean to publish the device over mDNS (default: `true`). The name
+  is `oko-<xxxx>.local`, where `xxxx` are the last four hex digits of the `eth0`
+  MAC in lower case (`wlan0` is a fallback when `eth0` is missing), so the name
+  survives firmware updates and a USB Wi-Fi adapter swap. The responder announces
+  an A record for every local IPv4 address and answers queries on the interface
+  of the multicast route only: the SoftAP subnet and VPN tunnels are not served.
+  There are no service (`_http._tcp`, `_rtsp._tcp`) records.
+- The address set is reconciled every 10 s: publication starts when the first
+  IPv4 appears (at boot `divinus` runs before DHCP), a changed set or a lost
+  address restarts or stops the responder. A failed start (no MAC, no
+  multicast interface, descriptors exhausted) is retried up to five times with
+  a 60 s pause; after that the next attempt waits for a new address set or a
+  switch change, so a permanent failure neither floods the log nor leaks
+  descriptors. The process keeps running.
+- An old `/userdata/divinus.yaml` with `enable: false` keeps publication off
+  after an OTA until the switch is turned on in the WebUI or through
+  `/api/mdns`.
 
 ## ONVIF section
 
@@ -120,17 +136,23 @@ restart so re-enabling is instant.
 
 - **enable**: Boolean to start motion/object analytics (default: `false`).
 - **mode**: `md`, `od` or `md_od` (default: `md`).
-- **width**, **height**: Analytics input size (default `640x360`).
+- **width**, **height**: Size of the dedicated VI channel that feeds IVS (default `640x360`). Changing it restarts analytics; the MD rectangles and `area` use this frame.
 - **sensitivity**: MD sensitivity 1-3 (default: `2`).
 - **md_interval**, **od_interval**: Detection intervals (defaults `5`, `1`).
 - **od_percent**: OD confidence threshold 5-8 (default: `7`).
+- **min_area**: Minimum motion area as a percentage of the analytics frame, 0-50 (default: `2`). MD results below it are dropped before the journal, snapshot, clip and OSD; `0` disables the filter. OD hits are never filtered. Applied live, no restart.
 - **act_http_post**: Upload a JPEG snapshot on motion (default: `false`).
 - **act_record**: Write a short clip on motion (default: `false`).
 - **act_osd**: Show `MOTION HH:MM:SS` in the OSD for 10 s (default: `false`).
 - **record_seconds**: Clip length (default: `15`).
 - **record_source**: `main` or `sub` (default: `main`).
+- **boxes**: Boolean, draw the motion rectangles on the main stream (default: `false`). The rectangles come from the vendor MD/OD result; an OD hit without a vendor rectangle shows a centre marker. Requires `RK_MPI_RGN_GetCanvasInfo/UpdateCanvas`; analytics itself keeps working when the overlay is unavailable.
+- **boxes_mode**: How a `boxes` switch is applied: `restart` (default) or `live`. In `restart` mode `POST /api/ivs?boxes=0|1` saves the configuration, replies `"applied":false` with a note and restarts the application, so the 2BPP region is created exactly once per process. `live` rebuilds the region under the running encoder through the IVS thread; the historical MPP/VENC crash (KI-063) was reported with live switching on a degraded NAND and has not reproduced since, but the 200-cycle live soak has not been completed (a static scene creates the region only on the first IVS result). Keep `restart` unless the live path has been re-verified on the current board.
 
-IVS uses the last VPSS channel (index 3). It cannot run together with MJPEG.
+IVS takes frames from its own VI channel (2), not from a VPSS output: on this
+rockit build a VPSS→IVS bind creates the channel but delivers no results. The
+stream allocator still keeps VPSS channel 3 free while `ivs.enable` is on, so
+the stream budget is unchanged.
 
 ## IQ section
 

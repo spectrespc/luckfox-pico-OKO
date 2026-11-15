@@ -35,11 +35,13 @@ bench/run.sh ec_bus_soak.py --mode hold-scl   # нужна сборка -DEC_DEB
 | `osd_check.py` | захват кадров RTSP (`--path`, по умолчанию `/live/0`), попарный диф боксов OSD-регионов, сохранение полных кадров и кропов |
 | `stream_check.py` | сквозная проверка UDP/RTP-раздачи камеры и приёмника MediaMTX: чтение `stream`/`mp4` из `/userdata/divinus.yaml` по SSH, опрос `/v3/paths/list`, декодирование `rtsp://<host>:8554/cam` через PyAV, fps и отклонение от `mp4.fps`, `--compare-dut` — сверка с собственным RTSP камеры, `--latency` — задержка ретрансляции по совпадению кадров; при `--compare-dut` эталоном fps служит сама камера, иначе `mp4.fps`; JSON и CSV в `output/bench/stream` (учётные данные в артефакты не пишутся), код 1 — отклонение, код 2 — метрика не снята |
 | `geometry_check.py` | геометрия оверлеев и ePTZ: `--what zoom` — кроп на main/sub, `/mjpeg`/`/image.jpg`, критерий — нормированная корреляция с ожидаемым центром (mean\|diff\| печатается для справки); рестарт MP4 — отдельный opt-in `OKO_GEOMETRY_MP4_TESTS=1` (после смены кропа он ненадёжен); `--what boxes`/`--what osd` (opt-in `OKO_GEOMETRY_TESTS=1`) — совмещение NN-рамок и OSD-текста на 0/90/180/270; артефакты — `output/bench/geometry` |
-| `api_check.py` | матрица HTTP API: GET всех эндпоинтов, POST no-op, экспорт конфига и журнала, негативные проверки (статика, имена файлов, NTP); opt-in `OKO_FOCUS_MOTOR_TESTS=1`/`OKO_FOCUS_AF_TESTS=1` — движение моторов и автофокус (`af=1` full/ROI и micro-fine `af=fine`) с записью AF-кривых |
-| `ui_check.py` | WebUI в headless Chromium: восемь разделов, EN/RU, Apply/dirty-state, автозапуск предпросмотра, двухшаговый выбор ROI и строка автофокуса в «Видео», несохранённый выбор «Включить» переживает опрос, кнопка «Автофокус» (`af=fine`), сводка SD-карты в «Система → Статус» (сверка с `window.lastStatus`, работает и без карты), раскладка под окно на 1440×900 и мобильная 390×844 (нижний навбар 4×2), скриншоты (нужен Playwright) |
+| `api_check.py` | матрица HTTP API: GET всех эндпоинтов, POST no-op, экспорт конфига и журнала, негативные проверки (статика, имена файлов, NTP), переключение mDNS `enable=0/1` и 400 на неверное значение; opt-in `OKO_FOCUS_MOTOR_TESTS=1`/`OKO_FOCUS_AF_TESTS=1` — движение моторов и автофокус (`af=1` full/ROI и micro-fine `af=fine`) с записью AF-кривых |
+| `ui_check.py` | WebUI в headless Chromium: восемь разделов, EN/RU, Apply/dirty-state, автозапуск предпросмотра, двухшаговый выбор ROI и строка автофокуса в «Видео», несохранённый выбор «Включить» переживает опрос, кнопка «Автофокус» (`af=fine`), сводка SD-карты в «Система → Статус» (сверка с `window.lastStatus`, работает и без карты), карточка mDNS в «Сети» (имя `oko-xxxx.local` и живое переключение), раскладка под окно на 1440×900 и мобильная 390×844 (нижний навбар 4×2), скриншоты (нужен Playwright) |
+| `mdns_check.py` | проверка mDNS-публикации: запрос A-записи `<имя>.local` на `224.0.0.251:5353` сырым UDP-сокетом, разбор ответа (включая компрессию имён) и сверка адреса с `GET /api/mdns`; `--absent` — публикации быть не должно (после `POST ?enable=0`); avahi/nss-mdns на хосте не нужны |
 | `event_check.py` | сквозная проверка событий: поднимает `services/events`, `POST /api/clip?test=1` на DUT, ждёт JPEG-пачку и клип, сверяет длительность `pre+post ±2 с` и кодеки (hevc → h264-копия) через ffprobe; `--retry` — остановка/запуск приёмника и доставка повтором, `--outbox` — вытеснение в outbox на microSD, `--require-detection` — живая детекция YOLO11; отчёт `output/bench/events/report.json` |
 | `clip_soak.py` | soak детектора и событий: опрос `/api/clip` и `services/events`, тестовое событие при простое, отчёт с `sent/lost/outbox/ring_dropped` и `MemFree`; `--minutes` (по умолчанию 120), `--interval`, `--event-every`; JSON — `output/bench/events/soak-*.json` |
 | `deploy_divinus.py` | копирование свежесобранного `divinus` в `/oem/usr/bin` по SSH и graceful restart (быстрая итерация, не замена прошивке) |
+| `rgn_boxes_check.py` | soak 2BPP-рамок (KI-063): `--mode observe` — сэмплы fd/VmRSS/потоков и счётчиков ядра (`sfc`, `UBIFS`, `dup mClientFd`/`CHECK_GE`, oops, `rga2_reg`) каждые 10 с; `--mode cycle --target yolo\|ivs` — A/B тумблер через API; `--mode restart` — SIGHUP-рестарты с привязанным регионом (`--settle` секунд перед сэмплом, критерий — стабильный fd); `--mode config --target ivs --value true` — правка `boxes` в `/userdata/divinus.yaml` (бэкап `.oko-rgn-boxes.bak`) с рестартом; `--mode steady` — включить рамки и держать; JSON-отчёт в `output/bench/rgn`, код 1 при росте fd, VmRSS или счётчика ядра |
 | `yolo_night.py` | KI-005: ночная точность YOLO по матрице `{vpss3, vi0} × {AIISP off, on}` (C1–C4). Правка `/userdata/divinus.yaml` по SSH + graceful restart на каждую конфигурацию (vi0 иначе не применяется), `night`-сцена вручную через `/api/night`, сбор истории `/api/yolo?detections=1`, метрики recall / mean best score / FP per frame по `--gt` (IoU ≥ `--iou`), день C1/C4 — контроль методики; `--repeat`, `--seconds`, `--snapshots`, `--capture-gt`, `--deploy`, `--dry-run`, `--keep-config`; `report.json`/`report.csv` и `raw-*.json` в `output/bench/yolo_night` |
 | `uplink_soak.py` | 20-минутный soak двух аплинков: проверяет `active_default`, HTTP на eth/wlan-адресах и живой `divinus`, по фазам выдёргивает eth-линк и роняет шлюз временной Wi-Fi-точки (iptables в контейнере `oko-services`); `--seconds`, `--interval`, `--no-eth-toggle`, `--no-ap-toggle`; подготовка AP — `TESTBENCH.md` §9 |
 | `focus_check.py` | `/api/focus`: статус AF-метрики, ROI, мотор; `--enable`, `--roi x,y,w,h`, `--move`, `--seconds/--interval/--snapshot/--strict`, CSV в `--out` (по умолчанию `output/bench/focus`); код 2 — API жив, но снимок не снят, код 1 — метрика нулевая |
@@ -78,7 +80,7 @@ bench/run.sh geometry_check.py --what zoom
 OKO_GEOMETRY_TESTS=1 bench/run.sh geometry_check.py --what boxes
 OKO_GEOMETRY_TESTS=1 bench/run.sh geometry_check.py --what osd
 
-# API: 103 проверки, код возврата 1 при ошибке
+# API: 133 проверки, код возврата 1 при ошибке
 bench/run.sh api_check.py
 # движение моторов и реальный автофокус — только по явному разрешению:
 # OKO_FOCUS_MOTOR_TESTS=1 (home/zero, шаги, скорости)
@@ -86,6 +88,12 @@ bench/run.sh api_check.py
 # output/bench/af_curve_*.csv; для full/ROI нужна контрастная сцена, иначе
 # job честно вернёт "peak not found"; af=fine всегда завершается done)
 OKO_FOCUS_MOTOR_TESTS=1 OKO_FOCUS_AF_TESTS=1 bench/run.sh api_check.py
+
+# mDNS: имя и адрес берутся из GET /api/mdns; ответ ждём 5 с
+bench/run.sh mdns_check.py
+bench/run.sh mdns_check.py oko-e80e --ip 192.168.52.33 --timeout 10
+# после POST /api/mdns?enable=0 ответов быть не должно (код 0)
+bench/run.sh mdns_check.py --absent
 
 # помощь фокусировке: 20 отсчётов, CSV и снимок; --strict падает на статичной метрике
 bench/run.sh focus_check.py --enable --seconds 20 --interval 1 --snapshot
@@ -148,6 +156,36 @@ cd /tmp/kilo && apt-get download libasound2t64
 mkdir -p libasound && dpkg-deb -x libasound2t64_*.deb libasound
 LD_LIBRARY_PATH=/tmp/kilo/libasound/usr/lib/x86_64-linux-gnu bench/run.sh ui_check.py
 ```
+
+## Soak 2BPP-рамок (KI-063)
+
+`rgn_boxes_check.py` проверяет жизненный цикл overlay-регионов: YOLO (handle
+12, слой 6) и IVS (handle 13, слой 5). Раньше включение IVS-рамок вешало
+MPP/VENC, поэтому скрипт снимает fd, `VmRSS`, число потоков и счётчики
+`dmesg` (`rockchip-sfc`, `UBIFS error`, `dup mClientFd`/`CHECK_GE`, oops,
+`rga2_reg`) и печатает отчёт с пределом роста fd (+8) и VmRSS (±2 МиБ).
+
+```sh
+# 30-минутный baseline: IVS без рамок, main RTSP + OSD
+bench/run.sh rgn_boxes_check.py --mode observe --target ivs --seconds 1800
+
+# A/B-цикл 200 раз: включить/выключить рамки YOLO через API
+bench/run.sh rgn_boxes_check.py --mode cycle --target yolo --count 200
+
+# 20 graceful-рестартов с привязанным регионом (утечки fd/CMA не должно быть)
+bench/run.sh rgn_boxes_check.py --mode restart --target ivs --count 20
+
+# включить ivs.boxes в конфиге и перезапустить приложение (режим restart)
+bench/run.sh rgn_boxes_check.py --mode config --target ivs --value true
+bench/run.sh rgn_boxes_check.py --mode steady --target ivs --seconds 1800
+```
+
+`--mode config` правит ключ `boxes` в секции цели, сохраняет копию в
+`/userdata/divinus.yaml.oko-rgn-boxes.bak`, затем делает SIGHUP; `--restore`
+возвращает копию. Живой тумблер IVS (`--mode cycle --target ivs`) допустим
+только при `ivs.boxes_mode: live` и только на NFS-netboot: ошибка MPP
+уводит плату в D-state и требует `reboot -f`. Отчёты — `output/bench/rgn/`,
+консоль UART (с сообщениями MPP) снимать отдельно.
 
 ## Ночная точность YOLO (KI-005)
 

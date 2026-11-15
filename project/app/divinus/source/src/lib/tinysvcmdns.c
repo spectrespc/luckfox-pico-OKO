@@ -1143,6 +1143,9 @@ struct mdns_service {
 
 /////////////////////////////////
 
+// defined below; the failure paths here must not leak the descriptor
+int close_pipe(int s);
+
 static int create_recv_sock() {
   int sd = socket(AF_INET, SOCK_DGRAM, 0);
   if (sd < 0) {
@@ -1155,6 +1158,7 @@ static int create_recv_sock() {
   int on = 1;
   if ((r = setsockopt(sd, SOL_SOCKET, SO_REUSEADDR, (char *)&on, sizeof(on))) < 0) {
     log_message(LOG_ERR, "recv setsockopt(SO_REUSEADDR): %m");
+    close_pipe(sd);
     return r;
   }
 
@@ -1166,6 +1170,8 @@ static int create_recv_sock() {
   serveraddr.sin_addr.s_addr = htonl(INADDR_ANY); /* receive multicast */
   if ((r = bind(sd, (struct sockaddr *)&serveraddr, sizeof(serveraddr))) < 0) {
     log_message(LOG_ERR, "recv bind(): %m");
+    close_pipe(sd);
+    return r;
   }
 
   // add membership to receiving socket
@@ -1175,18 +1181,21 @@ static int create_recv_sock() {
   mreq.imr_multiaddr.s_addr = inet_addr(MDNS_ADDR);
   if ((r = setsockopt(sd, IPPROTO_IP, IP_ADD_MEMBERSHIP, (char *)&mreq, sizeof(mreq))) < 0) {
     log_message(LOG_ERR, "recv setsockopt(IP_ADD_MEMBERSHIP): %m");
+    close_pipe(sd);
     return r;
   }
 
   // enable loopback in case someone else needs the data
   if ((r = setsockopt(sd, IPPROTO_IP, IP_MULTICAST_LOOP, (char *)&on, sizeof(on))) < 0) {
     log_message(LOG_ERR, "recv setsockopt(IP_MULTICAST_LOOP): %m");
+    close_pipe(sd);
     return r;
   }
 
 #ifdef IP_PKTINFO
   if ((r = setsockopt(sd, SOL_IP, IP_PKTINFO, (char *)&on, sizeof(on))) < 0) {
     log_message(LOG_ERR, "recv setsockopt(IP_PKTINFO): %m");
+    close_pipe(sd);
     return r;
   }
 #endif
@@ -1688,6 +1697,8 @@ struct mdnsd *mdnsd_start() {
   server->sockfd = create_recv_sock();
   if (server->sockfd < 0) {
     log_message(LOG_ERR, "unable to create recv socket");
+    close_pipe(server->notify_pipe[0]);
+    close_pipe(server->notify_pipe[1]);
     free(server);
     return NULL;
   }
@@ -1700,6 +1711,9 @@ struct mdnsd *mdnsd_start() {
 
   if (pthread_create(&tid, &attr, (void *(*)(void *)) & main_loop, (void *)server) != 0) {
     pthread_mutex_destroy(&server->data_lock);
+    close_pipe(server->sockfd);
+    close_pipe(server->notify_pipe[0]);
+    close_pipe(server->notify_pipe[1]);
     free(server);
     return NULL;
   }

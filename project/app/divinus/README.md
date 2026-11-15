@@ -165,6 +165,7 @@ canvas не совпал с выровненным растром, остаёт�
 | HDR2/HDR3 | заблокировано: prepare падает на SC230AI | `/api/hdr`, `[hdr]` |
 | OSD на main+sub+JPEG | заблокировано: multi-attach не прошёл G4 | `[osd] scope` |
 | Ethernet: DHCP/static | MAC и IPv4-настройки в env-разделе U-Boot, проверено | `/api/network`, `oko-net`, `fw_setenv` |
+| mDNS-имя `oko-<MAC>.local` | работает (2026-11-15): встроенный `tinysvcmdns`, A-записи по всем IPv4, reconcile ≤11 с | `/api/mdns`, `[mdns]` |
 | microSD, формат и квота записей | формат FAT32/MBR, mount/unmount, запись и hotplug проверены на стенде 2026-11-04 | `/api/storage`, `oko-sdcard`, `[record]` |
 
 Ключевые технические решения:
@@ -240,6 +241,20 @@ canvas не совпал с выровненным растром, остаёт�
   `/proc/device-tree/serial-number` и не теряется вместе с `/userdata`.
   `S41dhcpcd` заменён заглушкой; единственный DHCP-клиент — `dhcpcd` с client
   ID по MAC (без DUID), поэтому адрес не меняется после перепрошивки.
+- **mDNS.** `network.c` публикует `oko-<4 hex MAC eth0>.local` встроенным
+  `tinysvcmdns` (без Avahi): имя не зависит от `/etc/hostname`, поэтому две
+  платы в одной сети не конфликтуют, а `wlan0` — только fallback при
+  отсутствии `eth0`. Старт отложен до появления IPv4 (`divinus` поднимается
+  в `S21appinit` раньше DHCP), набор адресов сверяется раз в 10 с; при смене
+  адресов responder пересоздаётся, потому что `mdnsd_set_hostname()` нельзя
+  звать дважды на живом инстансе. Неудачный старт повторяется не более пяти
+  раз с паузой 60 с, а error-пути `tinysvcmdns` закрывают сокет и pipe —
+  серия неудач не утекает дескрипторами. Один multicast-сокет с
+  `IP_ADD_MEMBERSHIP(INADDR_ANY)` — discovery работает на интерфейсе
+  multicast-маршрута, SoftAP `192.168.43.0/24` и VPN не обслуживаются
+  (KI-067). Управление: `/api/mdns` и WebUI **Network → mDNS discovery**,
+  `[mdns] enable` по умолчанию `true`; старые `/userdata/divinus.yaml`
+  остаются с `false` до первого переключения.
 - **Образ.** Для активной SC230AI-платы собирается только `sc230ai.ko` и один
   IQ-файл; из oem удалены `sample_*`/`simple_*` и сенсорные модули других плат
   (`sc3336`, `mis5001`, `imx415`, `mia1321` и другие). Диагностические

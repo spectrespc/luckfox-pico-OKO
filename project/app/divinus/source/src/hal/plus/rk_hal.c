@@ -784,6 +784,8 @@ static void rk_region_box_destroy_locked(char handle)
     }
     rk_rgn.fnDestroyRegion(handle);
 
+    HAL_INFO("rk_rgn", "2BPP overlay region %d destroyed (layer %d)\n",
+        (int)handle, rk_box[slot].layer);
     rk_box[slot].ready = 0;
     rk_box[slot].layer = -1;
 }
@@ -2070,34 +2072,51 @@ int rk_aiq_set_work_mode(int mode)
 
 static char ivsCreated;
 static rk_ivs_result_info ivsResultInfo;
+static unsigned short ivsFrameWidth, ivsFrameHeight;
+
+/* Dedicated VI channel used only by IVS.  Channel 0 feeds the VPSS group and
+ * is already bound there; IVS must be bound from VI (binding it to a VPSS
+ * output channel creates the channel but delivers no frames on this rockit
+ * build), and its picture size has to match the VI frame, so the analytic
+ * size gets its own scaled channel as in rkipc's video.2. */
+#define RK_IVS_VI_CHN 2
 
 int rk_ivs_create(hal_ivs_config *config)
 {
     int ret;
+    unsigned short ivsW, ivsH;
 
     if (!rk_ivs.fnCreateChn) return EXIT_FAILURE;
     if (ivsCreated) return EXIT_SUCCESS;
 
+    ivsW = config->width ? (unsigned short)config->width : 640;
+    ivsH = config->height ? (unsigned short)config->height : 360;
+
     {
-        rk_vpss_chn channel;
+        rk_vi_chn channel;
         memset(&channel, 0, sizeof(channel));
-        channel.chnMode = RK_VPSS_CMODE_AUTO;
-        channel.dest.width = config->width;
-        channel.dest.height = config->height;
+        channel.size.width = ivsW;
+        channel.size.height = ivsH;
         channel.pixFmt = RK_PIXFMT_YUV420SP;
-        channel.hdr = RK_HDR_SDR8;
+        channel.compress = RK_COMPR_NONE;
+        channel.depth = 0;
         channel.srcFps = -1;
         channel.dstFps = -1;
-        channel.depth = 1;
-        channel.privFrmBufCnt = 1;
-        if (ret = rk_vpss.fnSetChannelConfig(_rk_vpss_grp, HAL_CHN_IVS, &channel)) {
-            HAL_DANGER("rk_ivs", "Configuring VPSS channel %d failed with %#x!\n",
-                HAL_CHN_IVS, ret);
+        channel.ispOpts.bufCount = 2;
+        channel.ispOpts.bufSize = ivsW * ivsH * 3 / 2;
+        channel.ispOpts.maxSize.width = ivsW;
+        channel.ispOpts.maxSize.height = ivsH;
+        channel.ispOpts.vidCap = RK_VI_VCAP_VIDEO_MPLANE;
+        channel.ispOpts.vidMem = RK_VI_VMEM_DMABUF;
+        if (ret = rk_vi.fnSetChannelConfig(_rk_vi_pipe, RK_IVS_VI_CHN,
+                &channel)) {
+            HAL_DANGER("rk_ivs", "Configuring VI channel %d failed with %#x!\n",
+                RK_IVS_VI_CHN, ret);
             return ret;
         }
-        if (ret = rk_vpss.fnEnableChannel(_rk_vpss_grp, HAL_CHN_IVS)) {
-            HAL_DANGER("rk_ivs", "Enabling VPSS channel %d failed with %#x!\n",
-                HAL_CHN_IVS, ret);
+        if (ret = rk_vi.fnEnableChannel(_rk_vi_pipe, RK_IVS_VI_CHN)) {
+            HAL_DANGER("rk_ivs", "Enabling VI channel %d failed with %#x!\n",
+                RK_IVS_VI_CHN, ret);
             return ret;
         }
     }
@@ -2106,8 +2125,8 @@ int rk_ivs_create(hal_ivs_config *config)
         rk_ivs_chn_attr attr;
         memset(&attr, 0, sizeof(attr));
         attr.mode = (int)config->mode;
-        attr.width = config->width;
-        attr.height = config->height;
+        attr.width = ivsW;
+        attr.height = ivsH;
         attr.pixFmt = 0;        /* RK_FMT_YUV420SP */
         attr.gop = 30;
         attr.mdEnable = (config->mode & HAL_IVS_MD) ? 1 : 0;
@@ -2117,33 +2136,36 @@ int rk_ivs_create(hal_ivs_config *config)
         attr.odEnable = (config->mode & HAL_IVS_OD) ? 1 : 0;
         attr.odInterval = config->odInterval ? config->odInterval : 1;
         attr.odPercent = config->odPercent ? config->odPercent : 7;
-        attr.maxWidth = config->width;
-        attr.maxHeight = config->height;
+        attr.maxWidth = ivsW;
+        attr.maxHeight = ivsH;
 
         if (ret = rk_ivs.fnCreateChn(0, &attr)) {
             HAL_DANGER("rk_ivs", "Creating IVS channel failed with %#x!\n", ret);
-            rk_vpss.fnDisableChannel(_rk_vpss_grp, HAL_CHN_IVS);
+            rk_vi.fnDisableChannel(_rk_vi_pipe, RK_IVS_VI_CHN);
             return ret;
         }
     }
 
     {
-        rk_sys_bind source = { .module = RK_SYS_MOD_VPSS,
-            .device = _rk_vpss_grp, .channel = HAL_CHN_IVS };
+        rk_sys_bind source = { .module = RK_SYS_MOD_VI,
+            .device = _rk_vi_dev, .channel = RK_IVS_VI_CHN };
         rk_sys_bind dest = { .module = RK_SYS_MOD_IVS,
             .device = 0, .channel = 0 };
         if (ret = rk_sys.fnBind(&source, &dest)) {
-            HAL_DANGER("rk_ivs", "Binding VPSS to IVS failed with %#x!\n", ret);
+            HAL_DANGER("rk_ivs", "Binding VI channel %d to IVS failed with %#x!\n",
+                RK_IVS_VI_CHN, ret);
             rk_ivs.fnDestroyChn(0);
-            rk_vpss.fnDisableChannel(_rk_vpss_grp, HAL_CHN_IVS);
+            rk_vi.fnDisableChannel(_rk_vi_pipe, RK_IVS_VI_CHN);
             return ret;
         }
     }
 
+    ivsFrameWidth = ivsW;
+    ivsFrameHeight = ivsH;
     ivsCreated = 1;
-    HAL_INFO("rk_ivs", "IVS enabled (%s) on VPSS channel %d\n",
+    HAL_INFO("rk_ivs", "IVS enabled (%s) on VI channel %d (%ux%u)\n",
         config->mode == HAL_IVS_MD ? "MD" :
-        config->mode == HAL_IVS_OD ? "OD" : "MD+OD", HAL_CHN_IVS);
+        config->mode == HAL_IVS_OD ? "OD" : "MD+OD", RK_IVS_VI_CHN, ivsW, ivsH);
     return EXIT_SUCCESS;
 }
 
@@ -2195,8 +2217,20 @@ int rk_ivs_get_results(hal_ivs_result *result, int timeoutMs)
         result->rect[i].height = r->height;
     }
     result->odPercent = ivsResultInfo.results[0].od.pixSum;
+    result->mdSquare = ivsResultInfo.results[0].md.square;
+    result->odFlag = ivsResultInfo.results[0].od.flag ? 1 : 0;
+    result->width = ivsFrameWidth;
+    result->height = ivsFrameHeight;
     count = result->rectCount + (ivsResultInfo.results[0].od.flag ? 1 : 0);
-    return count > 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+    if (count <= 0) {
+        /* The vendor delivered a result (typically an MD frame without
+         * motion); its buffers must be released even though the caller sees
+         * no event.  Skipping this leaks one MD buffer per result and OOMs
+         * the process within minutes. */
+        rk_ivs_release_results();
+        return EXIT_FAILURE;
+    }
+    return EXIT_SUCCESS;
 }
 
 void rk_ivs_release_results(void)
@@ -2211,16 +2245,18 @@ void rk_ivs_destroy(void)
     if (!ivsCreated) return;
 
     {
-        rk_sys_bind source = { .module = RK_SYS_MOD_VPSS,
-            .device = _rk_vpss_grp, .channel = HAL_CHN_IVS };
+        rk_sys_bind source = { .module = RK_SYS_MOD_VI,
+            .device = _rk_vi_dev, .channel = RK_IVS_VI_CHN };
         rk_sys_bind dest = { .module = RK_SYS_MOD_IVS,
             .device = 0, .channel = 0 };
         rk_sys.fnUnbind(&source, &dest);
     }
     rk_ivs.fnDestroyChn(0);
-    rk_vpss.fnDisableChannel(_rk_vpss_grp, HAL_CHN_IVS);
+    rk_vi.fnDisableChannel(_rk_vi_pipe, RK_IVS_VI_CHN);
     if (rk_sys.fnWaitFreeMB) rk_sys.fnWaitFreeMB();
 
+    ivsFrameWidth = 0;
+    ivsFrameHeight = 0;
     ivsCreated = 0;
     HAL_INFO("rk_ivs", "IVS disabled\n");
 }

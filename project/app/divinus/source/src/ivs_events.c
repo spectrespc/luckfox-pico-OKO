@@ -22,6 +22,8 @@ typedef struct {
     time_t when;
     unsigned int frameId;
     unsigned int rectCount;
+    unsigned int area;              /* motion area, permille of the frame */
+    char cause[4];                  /* "md" or "od" */
     unsigned short x, y, w, h;
 } ivs_event;
 
@@ -76,7 +78,8 @@ static void ivs_trigger_actions(time_t when)
             app_config.ivs_record_sub);
 }
 
-static void ivs_record_event(time_t when, const hal_ivs_result *result)
+static void ivs_record_event(time_t when, const hal_ivs_result *result,
+    unsigned int area, const char *cause)
 {
     pthread_mutex_lock(&ivsMtx);
     ivs_event *event = &ivsEvents[ivsEventCount % IVS_EVENT_RING];
@@ -84,6 +87,8 @@ static void ivs_record_event(time_t when, const hal_ivs_result *result)
     event->when = when;
     event->frameId = result->frameId;
     event->rectCount = result->rectCount;
+    event->area = area;
+    snprintf(event->cause, sizeof(event->cause), "%s", cause);
     if (result->rectCount) {
         event->x = result->rect[0].x;
         event->y = result->rect[0].y;
@@ -93,8 +98,36 @@ static void ivs_record_event(time_t when, const hal_ivs_result *result)
     ivsEventCount++;
     pthread_mutex_unlock(&ivsMtx);
 
-    HAL_INFO("ivs", "Motion event: %u rect(s)\n", result->rectCount);
+    /* Both numbers are logged so a field report can validate the metric even
+     * when the vendor never fills md.u32Square. */
+    HAL_INFO("ivs", "Motion event: %u rect(s), cause %s, area %u permille, "
+        "mdSquare %u of %ux%u\n", result->rectCount, cause, area,
+        result->mdSquare, result->width, result->height);
     ivs_trigger_actions(when);
+}
+
+/* Motion area of a result as a share of the analytic frame in permille.
+ * The vendor reports it in pixels of the IVS frame; when librockit leaves
+ * u32Square at zero, fall back to the largest MD rectangle (the HAL mirrors
+ * only the first 8 rectangles). */
+static unsigned int ivs_area_permille(const hal_ivs_result *result)
+{
+    unsigned long long square = result->mdSquare;
+    unsigned int frameW = result->width ? result->width : app_config.ivs_width;
+    unsigned int frameH = result->height ? result->height : app_config.ivs_height;
+    unsigned long long frame = (unsigned long long)frameW * frameH;
+
+    if (!square) {
+        for (unsigned int i = 0; i < result->rectCount; i++) {
+            unsigned long long rect =
+                (unsigned long long)result->rect[i].width *
+                result->rect[i].height;
+            if (rect > square) square = rect;
+        }
+    }
+    if (!frame) return 0;
+    if (square > frame) square = frame;
+    return (unsigned int)(1000ull * square / frame);
 }
 
 /* -------------------------------------------------------------------------
@@ -185,6 +218,7 @@ static void ivs_boxes_ensure(void)
     if (!rk_region_ivs_supported()) {
         /* One warning is emitted by the HAL; the setting is kept so a restart
          * with a fixed library enables the boxes again. */
+        HAL_WARNING("ivs", "Motion boxes unsupported; switch cleared\n");
         boxesWanted = 0;
         return;
     }
@@ -259,7 +293,8 @@ static void ivs_boxes_render(const hal_ivs_result *result)
         int nx, ny, nw, nh, x, y, w, h;
 
         box_normalize_rect(r->x, r->y, r->width, r->height,
-            (int)app_config.ivs_width, (int)app_config.ivs_height,
+            result->width ? (int)result->width : (int)app_config.ivs_width,
+            result->height ? (int)result->height : (int)app_config.ivs_height,
             &nx, &ny, &nw, &nh);
         if (nw <= 0 || nh <= 0) continue;
         if (!nn_map_rect(&geom, nx, ny, nw, nh, &x, &y, &w, &h)) continue;
@@ -322,6 +357,7 @@ void ivs_boxes_request(int enable)
 #if defined(__ARM_PCS_VFP)
     boxesWanted = enable ? 1 : 0;
     if (!enable) boxesRetryMs = 0;
+    HAL_INFO("ivs", "Motion boxes requested: %s\n", enable ? "on" : "off");
 #else
     (void)enable;
 #endif
@@ -346,9 +382,10 @@ static void *ivs_thread(void *arg)
         HAL_WARNING("ivs", "Could not start analytics\n");
         return NULL;
     }
-    /* KI-063: the 2BPP IVS overlay hangs the MPP/VENC path.  Keep the
-     * configured flag for the API report, but never attach the region. */
-    ivs_boxes_request(0);
+    /* KI-063: the 2BPP overlay is created once per analytics run and only
+     * destroyed on shutdown, so a live switch cannot rebuild it under the
+     * running encoder. */
+    ivs_boxes_request(app_config.ivs_boxes);
 #else
     (void)config;
     HAL_WARNING("ivs", "Analytics is only implemented for RK\n");
@@ -377,12 +414,25 @@ static void *ivs_thread(void *arg)
         }
 
         if (!rk_ivs_get_results(&result, 500)) {
-            if (boxesWanted) {
-                ivs_boxes_sync();
-                ivs_boxes_ensure();
-                ivs_boxes_render(&result);
+            unsigned int area = ivs_area_permille(&result);
+            const char *cause = result.rectCount > 0 ? "md" : "od";
+            /* min_area is a percentage, area is permille.  OD hits are never
+             * hidden by the threshold: they have no rectangle to measure. */
+            int below = app_config.ivs_min_area > 0 &&
+                area < app_config.ivs_min_area * 10;
+
+            if (below && result.odFlag) cause = "od";
+            if (below && !result.odFlag) {
+                /* Noise-sized motion: no journal entry and no actions. */
+                ivs_boxes_clear();
+            } else {
+                if (boxesWanted) {
+                    ivs_boxes_sync();
+                    ivs_boxes_ensure();
+                    ivs_boxes_render(&result);
+                }
+                ivs_record_event(now, &result, area, cause);
             }
-            ivs_record_event(now, &result);
             rk_ivs_release_results();
         } else {
             ivs_boxes_clear();
@@ -431,6 +481,16 @@ void ivs_events_stop(void)
     /* The polling call has a 500 ms timeout; the loop exits afterwards. */
     pthread_join(ivsThread, NULL);
     ivsThreadStarted = 0;
+#if defined(__ARM_PCS_VFP)
+    /* The overlay has to be detached and destroyed before sdk_stop() tears the
+     * MPP channels down: a 2BPP canvas still attached to VENC when the process
+     * exits makes the kernel oops in dma_buf_release (KI-063 history). */
+    if (boxesReady) {
+        rk_region_ivs_destroy();
+        boxesReady = 0;
+        boxesDrawn = 0;
+    }
+#endif
 }
 
 size_t ivs_events_json(char *out, size_t size)
@@ -446,7 +506,7 @@ size_t ivs_events_json(char *out, size_t size)
     if (total > IVS_EVENT_RING) first = total - IVS_EVENT_RING;
 
     used += snprintf(out + used, size > used ? size - used : 0, "[");
-    for (unsigned int i = first; i < total && used + 96 < size; i++) {
+    for (unsigned int i = first; i < total && used + 128 < size; i++) {
         ivs_event *event = &ivsEvents[i % IVS_EVENT_RING];
         char stamp[32] = "";
         struct tm tm_buf, *tm_info = localtime_r(&event->when, &tm_buf);
@@ -455,8 +515,10 @@ size_t ivs_events_json(char *out, size_t size)
 
         used += snprintf(out + used, size - used,
             "%s{\"time\":\"%s\",\"frame\":%u,\"rects\":%u,"
+            "\"area\":%u,\"cause\":\"%s\","
             "\"bbox\":[%u,%u,%u,%u]}",
             i == first ? "" : ",", stamp, event->frameId, event->rectCount,
+            event->area, event->cause[0] ? event->cause : "md",
             event->x, event->y, event->w, event->h);
     }
     pthread_mutex_unlock(&ivsMtx);

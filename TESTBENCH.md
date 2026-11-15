@@ -8,7 +8,7 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
 
 | Поле | Значение |
 |---|---|
-| Дата обновления | `2026-11-14` |
+| Дата обновления | `2026-11-15` |
 | Ответственный | `<ФИО>` |
 | Статус | активен |
 | Назначение | сборка прошивки и прошивка SPI NAND для отладки IPC |
@@ -830,6 +830,128 @@ Fixing recursive fault but reboot is needed!
 power cycle; затем убедиться, что остался ровно один `divinus`
 (`pidof divinus`) и что `/live/0` отдаёт кадры. Не запускать второй
 экземпляр вручную при живом init-процессе.
+
+### 2026-11-15: panic `rga2_reg: irq handler err` после остановки YOLO и старта IVS
+
+Остановили YOLO через `POST /api/yolo?enable=false` (каналы MPP 4/1/0
+уничтожились штатно), затем `POST /api/ivs?enable=true` — через ~0.1 с ядро
+падает:
+
+```
+rga_mm: Only get buffer 348160 byte from dma_buf_ptr = ..., but current image required 368640 byte
+rga_mm: rga_mm_map_buffer map dma_buf error!
+rga2_reg: irq handler err! INTR[0x701], HW_STATUS[0x0], CMD_STATUS[0x1]
+rga2_reg: RGA bus error intr, please check your configuration and buffer.
+rga: rga_mpi_commit, commit mpi job failed
+Unable to handle kernel paging request at virtual address 8e828e82
+Kernel panic - not syncing: Fatal exception in interrupt
+```
+
+Буфер 640×384 — вход YOLO: в момент сноса каналов остался незавершённый
+RGA/DVBM-буфер, и следующий старт IVS добивает его. Это вендорный баг
+жизненного цикла MPP/RGA (родственник `dma_buf_release`, KI-063), не правка
+порога IVS. После panic DUT не отвечает по сети и по UART; импульс
+`POST /ext/reset` моста не помогает, помогает только полный цикл питания
+`POST /ext/power {"on":false}`, пауза 3–4 с, `{"on":true}` (восстановление
+~40–60 с).
+
+IVS с 2026-11-15 берёт кадры с отдельного VI-канала 2; привязка к выходу
+VPSS давала непрерывные `RKMpiIvsChannel ... {getResults :718} get result
+timeout` каждые 500 мс и ни одного события. Если таймауты вернулись — проверять
+привязку `VI chn2 → IVS` и размер `ivs.width`×`ivs.height`, а не VPSS.
+
+Повторная проверка KI-066 на новой топологии (2026-11-15): `yolo.source:
+vpss3` работает, затем `POST /api/yolo?enable=false` и сразу
+`POST /api/ivs?enable=true` — паники нет, IVS поднимается на VI chn2, события
+идут, RSS 12,4 МиБ. Проверка действий: `act_http_post` виден в приёмнике
+(`PUT /ingest/frame` 200), `act_record` кладёт клип в `/mnt/sdcard/recordings`
+(`ffprobe`: hevc 1920×1080, `ivs.record_seconds`). Память: `grep VmRSS
+/proc/$(pidof divinus)/status` — 12–16 МиБ с IVS, ~23 МиБ с YOLO `vi0`.
+
+Симптом утечки IVS в консоли и `dmesg`: `ANALYZER:E:no free item for sofInfo!`,
+затем OOM (`Killed process ... anon-rss:153236kB`) за минуты; RSS divinus рос
+~340 КБ/с. Причина — результат без `rectNum`/`od.flag` не освобождался
+(исправлено в `rk_ivs_get_results`). Для проверки: `grep VmRSS
+/proc/$(pidof divinus)/status` должен стоять на ~12,4 МиБ.
+
+`logread` в rootfs нет — сообщения `HAL_INFO`/вендорных библиотек смотреть на
+консоли (`bench/run.sh serial_exec.py`, telnet-мост); `divinus.log` может
+остаться от прошлой загрузки. Ручной запуск для отладки требует
+`LD_LIBRARY_PATH=/oem/usr/lib` и cwd `/userdata`, иначе `[rk_sys] Failed to
+load library!`.
+
+Если после цикла питания мост перестал принимать telnet (`:23` закрыт),
+перезагрузить ESP32 (`POST /system/reboot`) и повторить логин.
+
+### 2026-11-15: 2BPP-рамки IVS (KI-063) — процедура и результаты
+
+Рамки YOLO (handle 12, layer 6) и IVS (handle 13, layer 5) идут через один код
+`rk_region_box_create/begin/commit/destroy` в `hal/plus/rk_hal.c`. Наблюдение
+ведёт `bench/rgn_boxes_check.py`: сэмплы fd (`/proc/<pid>/fd`), `VmRSS` и
+счётчиков ядра (`rockchip-sfc`, `UBIFS error`, `dup mClientFd`/`CHECK_GE`,
+oops, `rga2_reg`) каждые 10 с, JSON в `output/bench/rgn/`.
+
+```sh
+# здоровье NAND перед экспериментом (гейт: 0 sfc timeout, 0 UBIFS error)
+bench/run.sh dut.py --host 192.168.52.33 'dmesg -l err -l warn' 'uptime'
+bench/run.sh dut.py --host 192.168.52.33 'touch /oem/probe' 'sync'
+
+# baseline 30 мин: main + OSD + IVS без рамок
+bench/run.sh rgn_boxes_check.py --mode observe --target ivs --seconds 1800
+
+# A/B-цикл рамок YOLO (живой тумблер, 200 раз)
+bench/run.sh rgn_boxes_check.py --mode cycle --target yolo --count 200
+
+# IVS-рамки: create-once, применяется рестартом приложения
+bench/run.sh rgn_boxes_check.py --mode config --target ivs --value true
+curl -s -u admin:oko-change-me -X POST 'http://<dut>/api/ivs?enable=1'
+bench/run.sh rgn_boxes_check.py --mode observe --target ivs --seconds 1800
+
+# 20 graceful-рестартов с привязанным регионом 13
+bench/run.sh rgn_boxes_check.py --mode restart --target ivs --count 20
+```
+
+Что смотреть на консоли (мост ESP32, `output/bench/uart-*.log`):
+
+- `[rk_rgn] 2BPP overlay region 13 created ... layer 5` — регион создан **один
+  раз за процесс**; повторные `created` при неизменном конфиге — дефект
+  (пересоздание региона);
+- `[rk_rgn] 2BPP overlay region 13 destroyed (layer 5)` — destroy: только при
+  выходе/остановке IVS;
+- `runtimeGetCanvasIn ... sync failed`, `[rk_venc] Main stream loop timed out!`,
+  `dup mClientFd`, `getFd: CHECK_GE` — отказ RGN/MPP, немедленно снимать
+  конфигурацию и разбирать;
+- `[ivs] Motion event: ... area ... mdSquare ...` — результаты IVS идут.
+
+Результаты 2026-11-15 (NAND восстановлен, 33-мин baseline чистый):
+
+| Прогон | Длительность | fd | VmRSS | Ядро | Итог |
+|---|---|---|---|---|---|
+| baseline IVS без рамок | 33 мин | 79→79 | 12,9 МиБ | 0 | ок |
+| YOLO-рамки, 200 A/B | 3,3 мин | 116↔117 | 20,0 МиБ | 0 | ок |
+| IVS-рамки create-once | 30 мин | 90→90 | 12,58→12,59 МиБ | 0 | ок |
+| IVS+YOLO (`vpss3`) | 30 мин | 132–134 | 19,9 МиБ | 0 | ок |
+| NFS: IVS+YOLO | 30 мин | 104→104 | 21,0 МиБ | 0 | ок |
+| 20 SIGHUP с регионами 12/13 | 7,2 мин | 113–116 | 12,7/19,9 МиБ (модель) | 0 | ок, без oops |
+
+Ловушки:
+
+- `yolo.source: vi0` с включёнными YOLO-рамками пересоздаёт регион 12 каждую
+  секунду и ломает OSD (`Main stream loop timed out!`); для рамок держать
+  `vpss3` (KI-068). IVS теперь на VI chn2 и с `vpss3` не конфликтует.
+- Регион создаётся на **первый результат IVS** после включения, а статичная
+  сцена даёт результаты редкими пачками. Для живого тумблера это значит:
+  `boxes=1` может не дать рамок до первого события; для проверки живого
+  режима надо двигать сцену или включать `md_interval=1`/OD.
+- Смена `ivs.mode`/`sensitivity`/`md_interval`/размера перезапускает IVS
+  внутри процесса; после такого перезапуска события на стенде 2026-11-15
+  шли пачкой и замирали — для чистого замера делать SIGHUP приложения.
+- До 2026-11-15 каждый SIGHUP-рестарт оставлял ~5 `dmabuf`-дескрипторов
+  (`/dmabuf:vmpi`) и 1–2 `/dev/rga` в новом процессе: fd рос на 6–7 за
+  рестарт, CMA — на 0,3–0,7 МиБ (KI-069). Исправлено пометкой всех дескрипторов
+  `FD_CLOEXEC` перед `execvp()`; в консоли `[main] restart: N descriptor(s)
+  closed on exec`. Контроль: `ls /proc/$(pidof divinus)/fd | wc -l` до и
+  после серии рестартов должен стоять на 113–116.
 
 ## 9. Известные особенности
 

@@ -4806,9 +4806,12 @@ void respond_request(http_request_t *req) {
     }
 
     if (EQUALS(req->uri, "/api/ivs")) {
+        int boxesRestart = 0;
+        int boxesSaved = 1;
         if (req->query) {
             int enableReq = -1;
             int changed = 0;
+            int boxesChanged = 0;
             while (req->query) {
                 char *value = split(&req->query, "&");
                 if (!value || !*value) continue;
@@ -4818,19 +4821,28 @@ void respond_request(http_request_t *req) {
                 if (EQUALS(key, "enable")) {
                     enableReq = query_bool(value);
                 } else if (EQUALS(key, "boxes")) {
-                    int want = query_bool(value);
-#if defined(__ARM_PCS_VFP)
-                    if (want) {
+                    int want = query_bool(value) ? 1 : 0;
+                    if (want && !rk_region_ivs_supported()) {
                         reply_bad_request(req->clntFd,
-                            "IVS boxes are blocked: enabling them hangs the "
-                            "board (KI-063)",
-                            "use ivs.act_osd or IVS detection without boxes");
+                            "the motion overlay needs "
+                            "RK_MPI_RGN_GetCanvasInfo/UpdateCanvas",
+                            "set ivs.boxes to false; analytics without the "
+                            "overlay still works");
                         return;
                     }
-#endif
-                    app_config.ivs_boxes = false;
-                    /* Never enable the overlay; only report the blocked state. */
-                    ivs_boxes_request(0);
+                    if ((want ? true : false) != app_config.ivs_boxes) {
+                        app_config.ivs_boxes = want ? true : false;
+                        boxesChanged = 1;
+                    }
+                    /* The switch is applied after the whole query is parsed:
+                     * boxes and boxes_mode may arrive in the same request. */
+                } else if (EQUALS(key, "boxes_mode")) {
+                    /* Only affects how the next switch is applied; persisted by
+                     * the regular Save action, so no restart is necessary. */
+                    if (EQUALS_CASE(value, "live"))
+                        app_config.ivs_boxes_live = true;
+                    else if (EQUALS_CASE(value, "restart"))
+                        app_config.ivs_boxes_live = false;
                 } else if (EQUALS(key, "mode")) {
                     unsigned int mode = app_config.ivs_mode;
                     if (EQUALS_CASE(value, "md")) mode = HAL_IVS_MD;
@@ -4870,6 +4882,11 @@ void respond_request(http_request_t *req) {
                         (unsigned int)v != app_config.ivs_od_percent) {
                         app_config.ivs_od_percent = (unsigned int)v; changed = 1;
                     }
+                } else if (EQUALS(key, "min_area")) {
+                    /* App-layer filter read on every event: no IVS restart. */
+                    long v;
+                    if (parse_ranged(value, 0, 50, &v))
+                        app_config.ivs_min_area = (unsigned int)v;
                 } else if (EQUALS(key, "act_http_post")) {
                     bool v = query_bool(value) ? true : false;
                     if (v != app_config.ivs_act_http_post) {
@@ -4917,9 +4934,32 @@ void respond_request(http_request_t *req) {
                 ivs_events_stop();
                 if (app_config.ivs_enable) ivs_events_start();
             }
+            if (boxesChanged) {
+                if (app_config.ivs_boxes_live) {
+                    /* Repaint the region the IVS thread owns right away. */
+                    ivs_boxes_request(app_config.ivs_boxes ? 1 : 0);
+                } else if (app_config_save() == 0) {
+                    /* The 2BPP region is only rebuilt by a fresh process:
+                     * persist the switch and announce the restart below. */
+                    boxesRestart = 1;
+                    HAL_INFO("server", "IVS boxes set to %s; restarting to apply\n",
+                        app_config.ivs_boxes ? "true" : "false");
+                } else {
+                    /* A restart would discard the in-memory value, so keep the
+                     * previous setting and report the failure instead. */
+                    app_config.ivs_boxes = !app_config.ivs_boxes;
+                    boxesSaved = 0;
+                    HAL_WARNING("server", "IVS boxes change was not saved\n");
+                }
+            }
         }
 
         char events[2048];
+        const char *boxesNote = "";
+        if (boxesRestart)
+            boxesNote = "motion boxes applied; configuration saved, restarting the application";
+        else if (!boxesSaved)
+            boxesNote = "motion boxes were not changed: the configuration could not be saved";
         ivs_events_json(events, sizeof(events));
         respLen = sprintf(response,
             "HTTP/1.1 200 OK\r\n"
@@ -4928,22 +4968,28 @@ void respond_request(http_request_t *req) {
             "\r\n"
             "{\"enable\":%s,\"mode\":\"%s\",\"width\":%d,\"height\":%d,"
             "\"sensitivity\":%d,\"md_interval\":%d,\"od_interval\":%d,"
-            "\"od_percent\":%d,\"act_http_post\":%s,\"act_record\":%s,"
+            "\"od_percent\":%d,\"min_area\":%d,\"act_http_post\":%s,\"act_record\":%s,"
             "\"act_osd\":%s,\"record_seconds\":%d,\"record_source\":\"%s\","
-            "\"boxes\":%s,\"events\":%s}",
+            "\"boxes\":%s,\"boxes_mode\":\"%s\",\"applied\":%s,\"note\":\"%s\","
+            "\"events\":%s}",
             app_config.ivs_enable ? "true" : "false",
             app_config.ivs_mode == HAL_IVS_OD ? "od" :
                 (app_config.ivs_mode == HAL_IVS_MD_OD ? "md_od" : "md"),
             app_config.ivs_width, app_config.ivs_height,
             app_config.ivs_sensitivity, app_config.ivs_md_interval,
             app_config.ivs_od_interval, app_config.ivs_od_percent,
+            app_config.ivs_min_area,
             app_config.ivs_act_http_post ? "true" : "false",
             app_config.ivs_act_record ? "true" : "false",
             app_config.ivs_act_osd ? "true" : "false",
             app_config.ivs_record_seconds,
             app_config.ivs_record_sub ? "sub" : "main",
-            app_config.ivs_boxes ? "true" : "false", events);
+            app_config.ivs_boxes ? "true" : "false",
+            app_config.ivs_boxes_live ? "live" : "restart",
+            boxesRestart || !boxesSaved ? "false" : "true", boxesNote, events);
         send_and_close(req->clntFd, response, respLen);
+        if (boxesRestart)
+            kill(getpid(), SIGHUP);
         return;
     }
 
@@ -5287,6 +5333,75 @@ void respond_request(http_request_t *req) {
             system("(sleep 1; /usr/bin/oko-net apply) >/dev/null 2>&1 &");
         else if (haveMetric)
             system("(sleep 1; /usr/bin/oko-route once) >/dev/null 2>&1 &");
+        return;
+    }
+
+    /* OKO: mDNS publication of oko-<MAC>.local.
+     *   GET  /api/mdns             — configured switch, live state, name, addresses
+     *   POST /api/mdns?enable=0|1  — live toggle, persisted in divinus.yaml */
+    if (EQUALS(req->uri, "/api/mdns")) {
+        static char body[512];
+        bool haveEnable = false, enable = false;
+        MdnsState state;
+        int i, len;
+
+        if (req->query) {
+            while (req->query) {
+                char *value = split(&req->query, "&");
+                char *key;
+
+                if (!value || !*value) continue;
+                key = split(&value, "=");
+                if (!key || !*key || !value) continue;
+                unescape_uri(value);
+                if (EQUALS(key, "enable")) {
+                    if (EQUALS(value, "1") || EQUALS_CASE(value, "true") ||
+                        EQUALS_CASE(value, "on"))
+                        enable = true;
+                    else if (EQUALS(value, "0") || EQUALS_CASE(value, "false") ||
+                        EQUALS_CASE(value, "off"))
+                        enable = false;
+                    else {
+                        reply_bad_request(req->clntFd, "enable must be 1 or 0",
+                            "use enable=1 or enable=0");
+                        return;
+                    }
+                    haveEnable = true;
+                }
+            }
+        }
+
+        if (haveEnable && EQUALS(req->method, "POST")) {
+            mdns_set_enabled(enable);
+            if (app_config_save()) {
+                reply_error(req->clntFd, "failed",
+                    "the mDNS switch was applied but could not be saved",
+                    "check /userdata and try again");
+                return;
+            }
+        }
+
+        mdns_get_state(&state);
+        len = snprintf(body, sizeof(body),
+            "{\"enable\":%s,\"running\":%s,\"name\":\"%s\",\"addresses\":[",
+            state.enabled ? "true" : "false",
+            state.running ? "true" : "false", state.name);
+        for (i = 0; i < state.count && len > 0 && (size_t)len < sizeof(body); i++) {
+            int written = snprintf(body + len, sizeof(body) - (size_t)len,
+                "%s\"%s\"", i ? "," : "", state.addresses[i]);
+            if (written < 0) break;
+            len += written;
+        }
+        if (len > 0 && (size_t)len < sizeof(body)) {
+            int written = snprintf(body + len, sizeof(body) - (size_t)len, "]}");
+            if (written > 0) len += written;
+        }
+        if (len <= 0 || (size_t)len >= sizeof(body)) {
+            reply_error(req->clntFd, "failed",
+                "the mDNS state does not fit the response", "");
+            return;
+        }
+        reply_json(req->clntFd, body, (size_t)len);
         return;
     }
 

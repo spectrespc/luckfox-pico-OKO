@@ -26,6 +26,114 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Добавлено
 
+- **`bench/rgn_boxes_check.py` — soak 2BPP-рамок (KI-063).** Скрипт снимает
+  fd, `VmRSS`, число потоков и счётчики ядра (`rockchip-sfc`, `UBIFS error`,
+  `dup mClientFd`/`CHECK_GE`, oops, `rga2_reg`) каждые 10 с и пишет JSON в
+  `output/bench/rgn/`. Режимы: `observe` (baseline), `cycle` (A/B тумблер
+  рамок через API), `restart` (SIGHUP-рестарты с привязанным регионом),
+  `config` (правка `boxes` в `/userdata/divinus.yaml` с бэкапом и
+  рестартом), `steady`. Код 1 — рост fd/VmRSS или новый счётчик ядра.
+- **`bench/rgn_boxes_check.py` — 2BPP box soak (KI-063).** The script samples
+  fd, `VmRSS`, thread count and kernel counters (`rockchip-sfc`,
+  `UBIFS error`, `dup mClientFd`/`CHECK_GE`, oops, `rga2_reg`) every 10 s and
+  writes JSON to `output/bench/rgn/`. Modes: `observe` (baseline), `cycle`
+  (A/B box toggling via the API), `restart` (SIGHUP restarts with the region
+  attached), `config` (edit `boxes` in `/userdata/divinus.yaml` with a backup
+  and a restart) and `steady`. Exit code 1 means fd/VmRSS growth or a new
+  kernel counter.
+- **Тема `research/rgn-mpp-lifecycle/`.** Разбор вендорского цикла
+  `RK_MPI_RGN_*` для 2BPP-рамок: пример `test_mpi_rgn.cpp`, реальный
+  потребитель `rkipc`, переносимость destroy/recreate под живым энкодером и
+  отсутствие вендорского освобождения `canvasBlk`. Снимки не снимаются —
+  источники уже в дереве; фиксируются пути, sha256 и pin.
+- **Topic `research/rgn-mpp-lifecycle/`.** Analysis of the vendor
+  `RK_MPI_RGN_*` lifecycle for 2BPP boxes: the `test_mpi_rgn.cpp` sample, the
+  real `rkipc` consumer, portability of destroy/recreate under a running
+  encoder, and the missing vendor release of `canvasBlk`. No snapshots are
+  taken because the sources are already in the tree; paths, sha256 and the pin
+  are recorded instead.
+- **mDNS-публикация `oko-<MAC>.local`.** `divinus` публикует имя
+  `oko-<4 hex MAC eth0>.local` встроенным `tinysvcmdns` (без Avahi, новых
+  пакетов и демонов) и отвечает A-записями по всем не-loopback IPv4 (до трёх).
+  Управление живое: `GET /api/mdns` (`enable`, `running`, `name`,
+  `addresses`) и `POST /api/mdns?enable=0|1` (400 на неверное значение,
+  сохранение в `divinus.yaml`), карточка **Сеть → mDNS discovery** в WebUI с
+  именем, списком адресов и переключателем. `[mdns] enable` по умолчанию
+  теперь `true` — на всех устройствах после OTA открывается UDP 5353 и идёт
+  фоновый multicast-трафик. Имя выводится из MAC `eth0` (`wlan0` — только
+  fallback), поэтому две платы в одной сети не конфликтуют, а имя переживает
+  обновление прошивки и замену USB Wi-Fi. Responder стартует только при
+  наличии IPv4 (на boot-race `divinus` поднимается в `S21appinit` раньше
+  DHCP), набор адресов сверяется раз в 10 с и при изменении пересоздаётся
+  (`mdnsd_set_hostname()` нельзя звать дважды на живом инстансе); без
+  адреса публикация останавливается, занятый порт 5353 не роняет процесс.
+  Неудачный старт повторяется до пяти раз с паузой 60 с, затем попытка ждёт
+  нового набора адресов или переключения; на error-путях `tinysvcmdns`
+  (`create_recv_sock`/`mdnsd_start`) закрываются сокет и pipe, поэтому серия
+  неудач не утекает дескрипторами (проверено: 15 неудачных стартов при занятом
+  порту, fd 111→111).
+  Исправлены порядок байт в A-записях (`ip_to_int()` давал обратный порядок —
+  ответы были неверными) и переполнение буфера имени. Проверено на стенде
+  2026-11-15: `bench/mdns_check.py` получает A `192.168.52.33` и
+  `192.168.43.1`, `enable=0` → ответов нет, reconcile нового адреса ≤13 с,
+  20 циклов stop/start без роста RSS, `api_check` 133/0, `ui_check` зелёный.
+  Ограничения — KI-067; после OTA старый `/userdata/divinus.yaml` с
+  `enable: false` оставляет публикацию выключенной до первого переключения
+  (заводской шаблон `true` применяется только при создании файла).
+- **mDNS publication `oko-<MAC>.local`.** `divinus` publishes
+  `oko-<last four hex of the eth0 MAC>.local` with the built-in
+  `tinysvcmdns` (no avahi, no new packages or daemons) and answers A records
+  for every non-loopback IPv4 address (up to three). Control is live:
+  `GET /api/mdns` (`enable`, `running`, `name`, `addresses`) and
+  `POST /api/mdns?enable=0|1` (400 on a bad value, saved in `divinus.yaml`),
+  plus a **Network → mDNS discovery** WebUI card with the name, the published
+  addresses and a switch. `[mdns] enable` now defaults to `true`, so every
+  device opens UDP 5353 and sends background multicast traffic after an OTA.
+  The name comes from the `eth0` MAC (`wlan0` is a fallback only), so two
+  boards on one LAN do not collide and the name survives a firmware update or
+  a USB Wi-Fi swap. The responder starts only when an IPv4 address exists
+  (`divinus` runs in `S21appinit`, before DHCP), the address set is reconciled
+  every 10 s and recreated on a change (`mdnsd_set_hostname()` must not be
+  called twice on a live instance); without an address publication stops, and
+  a busy port 5353 does not kill the process. A failed start is retried up to
+  five times with a 60 s pause, then the next attempt waits for a new address
+  set or a switch change; the `tinysvcmdns` error paths
+  (`create_recv_sock`/`mdnsd_start`) now close the socket and the pipe, so a
+  series of failures does not leak descriptors (verified: 15 failed starts with
+  the port held, fd 111→111). Fixed the A-record byte order
+  (`ip_to_int()` returned the opposite order, so answers were wrong) and a
+  hostname buffer overflow. Bench-verified on 2026-11-15: `bench/mdns_check.py`
+  returns A `192.168.52.33` and `192.168.43.1`, `enable=0` gives no answers, a
+  new address is reconciled within 13 s, 20 stop/start cycles keep RSS flat,
+  `api_check` 133/0, `ui_check` passed. Limitations — KI-067; after an OTA an
+  old `/userdata/divinus.yaml` with `enable: false` keeps publication off
+  until the first toggle (the factory `true` applies only when the file is
+  created).
+
+- **Порог площади движения IVS `ivs.min_area`.** Ключ `[ivs]` в процентах
+  кадра, `0`–`50`, по умолчанию `2`; `0` отключает фильтр. Применяется живым:
+  `POST /api/ivs?min_area=N` не перезапускает IVS-канал, значение читается на
+  каждое событие. В WebUI добавлено поле «Порог площади движения (%)», в
+  `GET /api/ivs` — ключ `min_area`, в ответе `events` — `area`/`cause`, в
+  строке журнала — причина и площадь. `bench/api_check.py` проверяет наличие
+  `min_area` в GET, эхо `POST min_area=3` и поля `area`/`cause` у событий;
+  прогон на стенде 2026-11-15 — 127 проверок, 0 ошибок. Живое применение
+  подтверждено: `min_area` меняется без пар `IVS disabled`/`enabled` в консоли;
+  порог проверен дифференциально: `min_area=50` — 10 событий за 60 с (все
+  `area` ≥ 644‰), `min_area=0` — 276 событий за 60 с (включая 40–80‰).
+- **IVS motion-area threshold `ivs.min_area`.** An `[ivs]` key in percent of the
+  frame, `0`–`50`, default `2`; `0` disables the filter. Applied live:
+  `POST /api/ivs?min_area=N` does not restart the IVS channel and the value is
+  read per event. The WebUI has a "Motion area threshold (%)" field,
+  `GET /api/ivs` returns `min_area`, every `events` entry has `area`/`cause`,
+  and the journal row shows the cause and the area. `bench/api_check.py` now
+  checks `min_area` in GET, the `POST min_area=3` echo and the `area`/`cause`
+  event fields; the bench run on 2026-11-15 reported 127 checks, 0 failures.
+  Live application is confirmed: `min_area` changes with no `IVS disabled`/
+  `enabled` pairs on the console; the threshold was verified differentially:
+  `min_area=50` — 10 events in 60 s (all `area` ≥ 644‰), `min_area=0` — 276
+  events in 60 s (including 40–80‰).
+
 - **Web-конвертер RKNN (`services/converter/`).** Отдельный профиль
   `oko-converter` (порт 8091, host-сеть) с браузерным UI и FastAPI: принимает
   ONNX с статическим входом 640×384 (NCHW `[1,3,384,640]` или NHWC
@@ -117,6 +225,83 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Исправлено
 
+- **IVS: ложные события при отсутствии движения.** HAL не пробрасывал площадь
+  движения, поэтому любой прямоугольник MD или флаг OD давал событие, и шум,
+  пыль и мелкая разница пикселей запускали журнал, снимок, клип и OSD.
+  `hal_ivs_result` получил `mdSquare`/`odFlag`, а `ivs_events` — порог
+  `ivs.min_area`: MD-результаты ниже него не записываются и не запускают
+  действия, OD-события порог не скрывает. В событие добавлены `area`
+  (промилле кадра) и `cause` (`md`/`od`); `HAL_INFO` выводит в консоль `area`
+  и сырой `mdSquare` (KI-065). Стенд 2026-11-15: `min_area=50` — 10 событий за
+  60 с, все `area` ≥ 644‰; `min_area=0` — 276 событий, включая 40–80‰; смена
+  `min_area` не рестартит канал. Гарантированно статичной сцены на стенде нет,
+  порог проверен дифференциально. OD отдельно не проверялся.
+- **IVS: false events without motion.** The HAL did not propagate the motion
+  area, so any MD rectangle or OD flag counted as an event and noise, dust and
+  small pixel differences triggered the journal, snapshot, clip and OSD.
+  `hal_ivs_result` gained `mdSquare`/`odFlag` and `ivs_events` gained the
+  `ivs.min_area` threshold: MD results below it are neither recorded nor acted
+  on, while OD hits are never hidden by it. Events now carry `area` (permille of
+  the frame) and `cause` (`md`/`od`); `HAL_INFO` prints `area` and the raw
+  `mdSquare` to the console (KI-065). Bench on 2026-11-15: `min_area=50` — 10
+  events in 60 s, all `area` ≥ 644‰; `min_area=0` — 276 events including
+  40–80‰; changing `min_area` does not restart the channel. The bench has no
+  guaranteed static scene, so the threshold was verified differentially. OD was
+  not verified separately.
+
+- **IVS получал кадры через VPSS, а результат без движения не освобождался.**
+  Привязка `VPSS chn3 → IVS` создавала канал, но `RK_MPI_IVS_GetResults` всегда
+  возвращал таймаут, поэтому событий не было вообще. IVS переведён на
+  выделенный VI-канал 2 (`ivs.width`×`ivs.height`, как `video.2` в rkipc),
+  `rk_ivs_get_results` отдаёт реальный `mdSquare`, рестарт канала занимает
+  0,2 с. Второй дефект: результат с `rectNum == 0` и без `od.flag` не
+  освобождался, и один MD-буфер на результат утекал — процесс доходил до OOM
+  (153 МиБ) за минуты; освобождение добавлено в ветку «нет события», RSS
+  стабилен 12,4 МиБ (91 событие за 2 мин). KI-065 закрыт.
+  Проверено дополнительно: статичная сцена 45 с при `min_area=2` — 0 событий;
+  `act_http_post` — `PUT /ingest/frame` 200; `act_record` — клип 15,03 с HEVC
+  1920×1080; 15-мин soak без роста памяти (RSS 12,4→15,8 МиБ за 40 мин);
+  `min_area` переживает `POST /api/cmd?save` и SIGHUP; UI-поле 0–50
+  проверяется в `bench/ui_check.py`; IVS и YOLO `vi0` работают вместе
+  (RSS 23,6 МиБ). KI-066 после смены топологии не воспроизводится; OD не
+  проверен — в кадре не было объекта.
+- **IVS received frames through VPSS and never released motion-less results.**
+  The `VPSS chn3 → IVS` bind created the channel but `RK_MPI_IVS_GetResults`
+  always timed out, so no events were produced at all. IVS now uses a dedicated
+  VI channel 2 (`ivs.width`×`ivs.height`, like rkipc's `video.2`),
+  `rk_ivs_get_results` reports a real `mdSquare`, and a channel restart takes
+  0.2 s. A second defect: a result with `rectNum == 0` and no `od.flag` was
+  never released, leaking one MD buffer per result and driving the process to
+  OOM (153 MiB) within minutes; the release was added to the "no event" branch
+  and RSS now stays at 12.4 MiB (91 events over 2 min). KI-065 is closed.
+  Verified additionally: a 45 s static scene with `min_area=2` produced
+  0 events; `act_http_post` — `PUT /ingest/frame` 200; `act_record` — a
+  15.03 s HEVC 1920×1080 clip; a 15 min soak without memory growth (RSS
+  12.4→15.8 MiB over 40 min); `min_area` survives `POST /api/cmd?save` and
+  SIGHUP; the 0–50 UI field is checked by `bench/ui_check.py`; IVS and YOLO
+  `vi0` run together (RSS 23.6 MiB). KI-066 is not reproducible after the
+  topology change; OD is unverified — no object was in the frame.
+
+- **SIGHUP-рестарт больше не утекает дескрипторами и CMA.** Вендорский
+  медиастек не закрывает часть буферов к моменту `execvp()`, а `execvp`
+  наследует дескрипторы без `FD_CLOEXEC`: каждый рестарт оставлял ~5
+  `/dmabuf:vmpi` и 1–2 `/dev/rga` (при включённом IVS), ~2 без IVS. За ~40
+  рестартов накопилось 235 `dmabuf`-дескрипторов, CMA выросла с 44,2 до
+  57,7 МиБ — путь к исчерпанию fd/CMA и вероятная причина исторических
+  отказов MPP после серии перезапусков. Перед `execvp()` все дескрипторы с 3
+  помечаются `FD_CLOEXEC`, в консоль печатается их число (KI-069). Стенд:
+  5 рестартов — fd 116→115, CMA без изменений; 20 рестартов — без роста fd и
+  ошибок ядра.
+- **A SIGHUP restart no longer leaks descriptors or CMA.** The vendor media
+  stack does not close some buffers before `execvp()`, and `execvp` inherits
+  descriptors without `FD_CLOEXEC`: every restart left about five
+  `/dmabuf:vmpi` and one or two `/dev/rga` descriptors with IVS enabled (about
+  two without IVS). About 40 restarts accumulated 235 dmabuf descriptors and
+  CMA grew from 44.2 to 57.7 MiB — a path to fd/CMA exhaustion and the likely
+  cause of the historical MPP failures after a series of application restarts.
+  Before `execvp()` every descriptor from 3 is marked `FD_CLOEXEC` and the
+  count is printed to the console (KI-069). Bench: 5 restarts — fd 116→115,
+  CMA unchanged; 20 restarts — no fd growth and no kernel errors.
 - **Живое выключение `http_post` больше не вешает сервер.** Поток отправки
   крутился на `while (keepRunning)`, а `http_post_stop()` делал `join`, поэтому
   `enable=false` из WebUI блокировал обработчик навсегда; добавлен флаг
@@ -141,6 +326,54 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   raises the stack to 128 KiB and warns about a too-small value.
 
 ### Изменено
+
+- **Рамки IVS возвращены: регион 2BPP создаётся один раз за процесс.**
+  Переследование KI-063 на восстановленном NAND показало, что destroy/recreate
+  2BPP-региона сам по себе не вешает MPP: YOLO-рамки (тот же код
+  `rk_region_box_*`) выдержали 200 A/B-циклов (fd 116↔117, VmRSS 20,0 МиБ,
+  0 ошибок ядра), а IVS-рамки в режиме create-once стабильны 30 мин на NAND и
+  30 мин на NFS (fd 90→90 и 104→104, 0 счётчиков ядра). Hard block снят из
+  `gating.c`, `ivs_events.c` (`ivs_boxes_request(0)` больше не форсируется),
+  `/api/ivs` и WebUI; регион уничтожается в `ivs_events_stop()` до `sdk_stop()`,
+  поэтому выход процесса и SIGHUP больше не дают oops `dma_buf_release`
+  (20 рестартов с привязанным регионом 13 — без oops). Новый ключ
+  `ivs.boxes_mode` (`restart` по умолчанию, `live` — opt-in): в `restart`
+  режиме `POST /api/ivs?boxes=0|1` сохраняет конфиг, отвечает
+  `"applied":false` с `note` и делает SIGHUP; WebUI показывает это в
+  примечании. Если конфиг сохранить не удалось, тумблер не меняется и
+  приложение не перезапускается (`applied:false` + примечание); `boxes` и
+  `boxes_mode` в одном запросе применяются согласованно. Заодно сняты устаревшие проверки «vpss3 занят IVS» в
+  `gating.c` и `main.c`: IVS работает на своём VI-канале 2, поэтому
+  IVS-рамки и YOLO `vpss3` живут вместе (30 мин, fd 132–134). Документация —
+  `KNOWN_ISSUES.md` KI-063/KI-068, `FEATURES_VERIFIED.md`,
+  `TESTBENCH.md §8`, `research/rgn-mpp-lifecycle/`.
+- **IVS boxes are back: the 2BPP region is created once per process.** The
+  KI-063 re-investigation on the restored NAND showed that destroy/recreate of
+  a 2BPP region does not hang MPP by itself: YOLO boxes (the same
+  `rk_region_box_*` code) survived 200 A/B cycles (fd 116↔117, VmRSS steady at
+  20.0 MiB, no kernel errors), and IVS boxes in create-once mode were stable
+  for 30 min on NAND and 30 min on NFS (fd 90→90 and 104→104, zero kernel
+  counters). The hard block is removed from `gating.c`, `ivs_events.c`
+  (`ivs_boxes_request(0)` is no longer forced), `/api/ivs` and the WebUI; the
+  region is destroyed in `ivs_events_stop()` before `sdk_stop()`, so a process
+  exit or SIGHUP no longer oopses in `dma_buf_release` (20 restarts with
+  region 13 attached produced no oops). A new `ivs.boxes_mode` key (`restart`
+  by default, `live` opt-in): in `restart` mode `POST /api/ivs?boxes=0|1`
+  saves the configuration, replies `"applied":false` with a `note` and sends
+  SIGHUP; the WebUI note explains it. When the configuration cannot be saved
+  the switch is left unchanged and nothing restarts (`applied:false` plus a
+  note); `boxes` and `boxes_mode` in one request are applied together. The stale "vpss3 is taken by IVS"
+  checks were removed from `gating.c` and `main.c`: IVS uses its own VI
+  channel 2, so IVS boxes and YOLO `vpss3` run together (30 min, fd 132–134).
+  Docs — `KNOWN_ISSUES.md` KI-063/KI-068, `FEATURES_VERIFIED.md`,
+  `TESTBENCH.md §8`, `research/rgn-mpp-lifecycle/`.
+- **`bench/ui_check.py` проверяет поле порога площади IVS.** Добавлена проверка
+  `#ivs_min_area` в карточке Events: поле есть, `min=0`, `max=50`, значение
+  приходит из `GET /api/ivs`; в выводе печатаются границы и текущее значение.
+- **`bench/ui_check.py` checks the IVS motion-area field.** Added an
+  `#ivs_min_area` check in the Events card: the field exists, `min=0`,
+  `max=50`, and the value comes from `GET /api/ivs`; the report prints the
+  bounds and the current value.
 
 - **Адрес DUT в стендовых скриптах и TESTBENCH.** DHCP-адрес камеры в режиме
   NAND — `192.168.52.33` вместо `192.168.52.97`: обновлены значения по

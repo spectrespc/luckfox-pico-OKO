@@ -95,7 +95,7 @@ osd:
   reg5_posy: 240
 
 mdns:
-  enable: false
+  enable: true            # publish oko-<MAC>.local, get/post /api/mdns
 
 onvif:
   enable: false
@@ -246,12 +246,14 @@ mjpeg:
 #   md_interval: 5
 #   od_interval: 1
 #   od_percent: 7
+#   min_area: 2           # порог площади движения, % кадра; 0 — выкл
 #   act_http_post: false
 #   act_record: false
 #   act_osd: false
 #   record_seconds: 15
 #   record_source: main
 #   boxes: false          # рамки срабатываний IVS на главном потоке
+#   boxes_mode: restart   # restart — применяется рестартом приложения; live — на лету
 #
 # yolo:
 #   enable: false

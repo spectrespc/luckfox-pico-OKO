@@ -126,12 +126,14 @@ struct AppConfig {
     unsigned int ivs_md_interval;
     unsigned int ivs_od_interval;
     unsigned int ivs_od_percent;
+    unsigned int ivs_min_area;          /* motion area threshold, % of frame; 0 = off */
     bool ivs_act_http_post;
     bool ivs_act_record;
     bool ivs_act_osd;
     unsigned int ivs_record_seconds;
     bool ivs_record_sub;
     bool ivs_boxes;                     /* motion/OD rectangles on the stream */
+    bool ivs_boxes_live;                /* false = the switch is applied by a restart */
 
     // [yolo]
     bool yolo_enable;

@@ -12,6 +12,7 @@ import base64
 import csv
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -28,6 +29,7 @@ GET_JSON = [
     "/api/time",
     "/api/telemetry",
     "/api/network",
+    "/api/mdns",
     "/api/isp",
     "/api/night",
     "/api/aiisp",
@@ -82,6 +84,7 @@ POST_NOOP = [
     "/api/models",
     "/api/focus",
     "/api/network",
+    "/api/mdns",
     "/api/storage",
     "/api/time",
     "/api/stream",
@@ -533,26 +536,116 @@ def feature_checks(failures, checks):
         if status != 200:
             failures.append("POST /api/stream restore: HTTP %s" % status)
 
-    # IVS boxes: live switch; 400 only when the RGN canvas is unavailable.
+    # IVS boxes: 400 only when the RGN canvas is unavailable.  In the default
+    # restart mode a real 0/1 switch saves the config and restarts the app, so
+    # the smoke test re-applies the current value and only checks the shape.
     _status, _headers, body = request("/api/ivs")
     try:
-        ivs_before = json.loads(body.decode()).get("boxes")
+        ivs_json = json.loads(body.decode())
     except Exception:                              # noqa: BLE001
-        ivs_before = None
+        ivs_json = {}
+    ivs_before = ivs_json.get("boxes")
+    ivs_restart = ivs_json.get("boxes_mode") == "restart"
     checks += 1
-    status, _headers, body = request("/api/ivs?boxes=1", "POST", b"")
+    value = int(bool(ivs_before)) if ivs_restart else 1
+    status, _headers, body = request("/api/ivs?boxes=%d" % value, "POST", b"")
     try:
         dec = json.loads(body.decode())
     except Exception:                              # noqa: BLE001
         dec = {}
-    if status == 200 and dec.get("boxes") is not True:
-        failures.append("POST /api/ivs boxes=1: %r" % dec)
+    if status == 200 and dec.get("boxes") is not bool(value):
+        failures.append("POST /api/ivs boxes=%d: %r" % (value, dec))
+    elif status == 200 and ivs_restart and "applied" not in dec:
+        failures.append("POST /api/ivs boxes: no applied field %r" % dec)
     elif status != 200 and dec.get("error") != "invalid":
-        failures.append("POST /api/ivs boxes=1: HTTP %s %r" % (status, dec))
-    print("POST %-18s %s boxes=%s" % ("/api/ivs boxes", status,
-                                      dec.get("boxes")))
-    if ivs_before is not None:
+        failures.append("POST /api/ivs boxes=%d: HTTP %s %r"
+                        % (value, status, dec))
+    print("POST %-18s %s boxes=%s applied=%s" % (
+        "/api/ivs boxes", status, dec.get("boxes"), dec.get("applied")))
+    if not ivs_restart and ivs_before is not None:
         request("/api/ivs?boxes=%d" % (1 if ivs_before else 0), "POST", b"")
+
+    # IVS motion-area threshold: reported by GET and applied live (no IVS
+    # restart, so the events ring must survive).
+    checks += 1
+    status, _headers, body = request("/api/ivs")
+    try:
+        dec = json.loads(body.decode())
+    except Exception:                              # noqa: BLE001
+        dec = {}
+    ivs_area_before = dec.get("min_area")
+    if status != 200 or not isinstance(ivs_area_before, int):
+        failures.append("GET /api/ivs min_area: HTTP %s %r" % (status, dec))
+    for event in dec.get("events") or []:
+        if "area" not in event or "cause" not in event:
+            failures.append("GET /api/ivs event fields: %r" % event)
+            break
+    print("GET  %-18s %s min_area=%r" % ("/api/ivs", status, ivs_area_before))
+
+    checks += 1
+    status, _headers, body = request("/api/ivs?min_area=3", "POST", b"")
+    try:
+        dec = json.loads(body.decode())
+    except Exception:                              # noqa: BLE001
+        dec = {}
+    if status != 200 or dec.get("min_area") != 3:
+        failures.append("POST /api/ivs min_area=3: HTTP %s %r" % (status, dec))
+    print("POST %-18s %s min_area=%r" % ("/api/ivs min_area", status,
+                                         dec.get("min_area")))
+    if isinstance(ivs_area_before, int):
+        request("/api/ivs?min_area=%d" % ivs_area_before, "POST", b"")
+
+    # mDNS: the endpoint reports the MAC-derived name and the live state; the
+    # toggle is reversible, a bad value is a 400.  The responder itself is
+    # covered by mdns_check.py.
+    checks += 1
+    status, _headers, body = request("/api/mdns")
+    try:
+        mdns = json.loads(body.decode())
+    except Exception:                              # noqa: BLE001
+        mdns = {}
+    if status != 200 or not all(k in mdns for k in
+            ("enable", "running", "name", "addresses")):
+        failures.append("GET /api/mdns: HTTP %s %r" % (status, mdns))
+    elif mdns.get("name") and not re.match(r"^oko-[0-9a-f]{4}$",
+                                           mdns["name"]):
+        failures.append("GET /api/mdns name is not oko-xxxx: %r" %
+                        mdns.get("name"))
+    elif not isinstance(mdns.get("addresses"), list):
+        failures.append("GET /api/mdns addresses: %r" % mdns.get("addresses"))
+    print("GET  %-18s %s name=%r running=%s addresses=%s" %
+          ("/api/mdns", status, mdns.get("name"), mdns.get("running"),
+           mdns.get("addresses")))
+
+    if mdns:
+        enabled_before = mdns.get("enable")
+        for value in ("0", "1"):
+            checks += 1
+            status, _headers, body = request("/api/mdns?enable=" + value,
+                                             "POST", b"")
+            try:
+                dec = json.loads(body.decode())
+            except Exception:                      # noqa: BLE001
+                dec = {}
+            if status != 200 or dec.get("enable") is not (value == "1"):
+                failures.append("POST /api/mdns enable=%s: HTTP %s %r" %
+                                (value, status, dec))
+            print("POST %-18s %s enable=%s running=%s" %
+                  ("/api/mdns " + value, status, dec.get("enable"),
+                   dec.get("running")))
+        checks += 1
+        status, _headers, body = request("/api/mdns?enable=abc", "POST", b"")
+        try:
+            dec = json.loads(body.decode())
+        except Exception:                          # noqa: BLE001
+            dec = {}
+        if status != 400 or dec.get("error") != "invalid":
+            failures.append("POST /api/mdns enable=abc: expected 400, got "
+                            "%s %r" % (status, dec))
+        print("POST %-18s %s %s" % ("/api/mdns bad value", status,
+                                    dec.get("error", "?")))
+        if enabled_before is False:
+            request("/api/mdns?enable=0", "POST", b"")
 
     # Event upload: read-only GET and URL validation; the sender is not
     # enabled here, so the camera keeps sending nothing.

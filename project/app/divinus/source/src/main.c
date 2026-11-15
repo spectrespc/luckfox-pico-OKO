@@ -18,6 +18,9 @@
 #include "analytics/models.h"
 #include "analytics/yolo.h"
 
+#include <fcntl.h>
+#include <sys/resource.h>
+
 #include <getopt.h>
 #include <signal.h>
 #include <stdio.h>
@@ -107,11 +110,12 @@ int main(int argc, char *argv[]) {
             "falling back to vpss3\n");
         app_config.yolo_source = 1;
     }
-    /* VPSS channel 3 is shared by IVS and yolo.source=vpss3; a hand-edited
-     * YAML must not leave the analytics without a frame source. */
+    /* VPSS channel 3 is shared by MJPEG and yolo.source=vpss3; IVS is on its
+     * own VI channel 2 and does not compete.  A hand-edited YAML must not
+     * leave the analytics without a frame source. */
     if (app_config.yolo_enable && app_config.yolo_source == 1 &&
-        (app_config.ivs_enable || app_config.mjpeg_enable)) {
-        HAL_WARNING("hal", "yolo.source=vpss3 conflicts with IVS/MJPEG; "
+        app_config.mjpeg_enable) {
+        HAL_WARNING("hal", "yolo.source=vpss3 conflicts with MJPEG; "
             "falling back to vi0\n");
         app_config.yolo_source = 2;
     }
@@ -213,6 +217,7 @@ int main(int argc, char *argv[]) {
 
     while (keepRunning) {
         if (app_config.rtsp_enable) rtsp_tick(rtspHandle);
+        network_tick();
         watchdog_reset();
         sleep(1);
     }
@@ -261,7 +266,24 @@ int main(int argc, char *argv[]) {
         app_config_restore();
 
     if (graceful) {
+        struct rlimit rl;
+        int fd, marked = 0;
+        int limit = 1024;               /* current bench ulimit -n */
+
+        if (getrlimit(RLIMIT_NOFILE, &rl) == 0 &&
+            rl.rlim_cur != RLIM_INFINITY && rl.rlim_cur < 65536)
+            limit = (int)rl.rlim_cur;
+
         fprintf(stderr, "Restarting...\n");
+        /* The vendor media stack keeps a few dmabuf and RGA descriptors open
+         * at exit, and execvp() would inherit them, so every SIGHUP restart
+         * leaked descriptors and CMA (KI-069).  Mark the rest close-on-exec
+         * and let the kernel release them in the new image. */
+        for (fd = 3; fd < limit; fd++) {
+            if (fcntl(fd, F_SETFD, FD_CLOEXEC) != -1)
+                marked++;
+        }
+        HAL_INFO("main", "restart: %d descriptor(s) closed on exec\n", marked);
         execvp(argv[0], argv);
     }
 

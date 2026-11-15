@@ -5,7 +5,7 @@
 в `FEATURES_VERIFIED.md`; паспорт платформы, общие примечания и команды
 проверки — в `FEATURES.md`; открытые дефекты и обходы — в `KNOWN_ISSUES.md`.
 
-Статус на 2026-11-12. Пометки: **ограничено** — работает с оговоркой;
+Статус на 2026-11-15. Пометки: **ограничено** — работает с оговоркой;
 **заблокировано** — отказ с причиной.
 
 ## Русский
@@ -15,8 +15,8 @@
 | Группа | Функционал | Описание | Управление (API, секция YAML) | Что добавлено (OKO vs вендорский V1.4) | Статус |
 |---|---|---|---|---|---|
 | Видео и стриминг | SmartP | Настройка GOP | `/api/venc`, `[venc]` | SmartP stage `divinus` | **ограничено** — применяется со следующего старта, не перепроверялся |
-| Видео и стриминг | IVS | Детекция движения/объектов, снимок, клип, OSD | `/api/ivs`, `[ivs]` | IVS stage `divinus` + `gating.c` | **ограничено** — MD проверен; OD и событие на статичной сцене не подтверждены |
-| Видео и стриминг | Рамки IVS на потоке | Синие прямоугольники движения и зелёный маркер OD поверх main-потока | `/api/ivs?boxes=0\|1`, `[ivs] boxes`, WebUI «Рамки движения на потоке» | регион RGN 13 (2BPP, layer 5), `analytics/box_draw.*`, `ivs_events.c` | **заблокировано (2026-11-14)** — регион 13 создаётся и прямоугольники видны в кадре, но `ivs.boxes` даёт `dup mClientFd failed` → `getFd CHECK_GE` → SIGSEGV (KI-063). После холодной загрузки IVS **без рамок** стабилен 2 мин, с `act_osd=1` — 20 с, значит блокирует именно 2BPP-регион; часть прежних зависаний могла быть следствием транзиентного сбоя SPI NAND. Ключ отключён в API/потоке/UI. Тестовая сборка без блокировки (2026-11-14): с YOLO `vi0` регион 13 создаётся и IVS-события идут, но `boxes=0`→`boxes=1` (destroy/recreate) даёт `mpp: dup mClientFd failed` → SIGSEGV и D-state процесса; при выходе — kernel oops `dma_buf_release` (KI-063). Hard block восстановлен. Mirror/rotate и CMA +512 КиБ не проверялись |
+| Видео и стриминг | IVS | Детекция движения/объектов, снимок, клип, OSD | `/api/ivs`, `[ivs]` | IVS stage `divinus` + `gating.c`; выделенный VI-канал 2 и `ivs.min_area` (2026-11-15) | **ограничено** — MD, `min_area`, OSD, снимок/клип и 15-мин soak подтверждены 2026-11-15 (`FEATURES_VERIFIED.md`); статичная сцена 45 с при `min_area=2` — 0 событий; OD не проверен: в кадре не было объекта (пустая сцена), `cause:"od"` на стенде не наблюдался |
+| Видео и стриминг | Рамки IVS: живое переключение | `ivs.boxes_mode: live` — регион 13 уничтожается и создаётся в работающем IVS-потоке без рестарта приложения | `/api/ivs?boxes=0\|1` при `boxes_mode: live`, `[ivs] boxes_mode` | `ivs_events.c` (`ivs_boxes_request`, create/destroy в потоке) | **ограничено (2026-11-15)** — create и destroy подтверждены в консоли (`2BPP overlay region 13 destroyed/created`), падений и ошибок ядра нет; полные 200 циклов не прогнаны: регион создаётся только на первый результат IVS после включения, а статичная сцена даёт результаты редкими пачками (3 реальные пары за 51 окно). По умолчанию режим `restart`; историю SIGSEGV см. KI-063 |
 | Видео и стриминг | Runtime IQ | `switch_scene`, `updateIq` | `/api/iq`, `[iq]` | runtime IQ stage `divinus` | **ограничено** — сцена принята; `updateIq` не проверялся |
 | Видео и стриминг | HDR2/HDR3 | HDR на SC230AI | `/api/hdr` | HDR API + `gating.c`; экспериментальный HDR_X2 выключен | **заблокировано** — `librkaiq` не поддерживает SC230AI |
 | Видео и стриминг | OSD на всех потоках | `osd.scope=all` (main+sub+JPEG) | конфиг `[osd]`, гейт G4 | `gating.c` | **заблокировано** — multi-attach RGN не прошёл проверку |
@@ -126,13 +126,13 @@ reason (**blocked**) or not yet verified. Confirmed features are in
 commands are in `FEATURES.md`; open defects and workarounds are in
 `KNOWN_ISSUES.md`.
 
-Status as of 2026-11-12.
+Status as of 2026-11-15.
 
 | Group | Feature | Description | Control (API, YAML section) | What was added (OKO vs vendor V1.4) | Status |
 |---|---|---|---|---|---|
 | Video and streaming | SmartP | GOP change | `/api/venc`, `[venc]` | SmartP stage in `divinus` | **limited** — applies on next start, not re-verified |
-| Video and streaming | IVS | Motion/object detection, snapshot, clip, OSD | `/api/ivs`, `[ivs]` | IVS stage in `divinus` + `gating.c` | **limited** — MD verified; OD and static-scene events unconfirmed |
-| Video and streaming | IVS boxes on the stream | Blue motion rectangles and a green OD marker over the main stream | `/api/ivs?boxes=0\|1`, `[ivs] boxes`, WebUI "Motion boxes on the stream" | RGN 13 (2BPP, layer 5), `analytics/box_draw.*`, `ivs_events.c` | **blocked (2026-11-14)** — region 13 is created and the rectangles are visible in the frame, but `ivs.boxes` produces `dup mClientFd failed` → `getFd CHECK_GE` → SIGSEGV (KI-063). After a cold boot IVS **without boxes** was stable for 2 minutes and with `act_osd=1` for 20 s, so the 2BPP region itself is the trigger; some earlier hangs may have been the transient SPI NAND failure. The key is disabled in the API/thread/UI. A test build without the block (2026-11-14): with YOLO `vi0` region 13 is created and IVS events flow, but `boxes=0`→`boxes=1` (destroy/recreate) produces `mpp: dup mClientFd failed` → SIGSEGV and a D-state process; on exit the kernel hits `dma_buf_release` (KI-063). The hard block was restored. Mirror/rotate and the +512 KiB CMA delta were not checked |
+| Video and streaming | IVS | Motion/object detection, snapshot, clip, OSD | `/api/ivs`, `[ivs]` | IVS stage in `divinus` + `gating.c`; dedicated VI channel 2 and `ivs.min_area` (2026-11-15) | **limited** — MD, `min_area`, OSD, snapshot/clip actions and a 15 min soak verified on 2026-11-15 (`FEATURES_VERIFIED.md`); a 45 s static scene with `min_area=2` produced 0 events; OD not verified: no object was in the frame (empty scene), `cause:"od"` was never observed on the bench |
+| Video and streaming | IVS boxes: live switch | `ivs.boxes_mode: live` — region 13 is destroyed and created inside the running IVS thread without an application restart | `/api/ivs?boxes=0\|1` with `boxes_mode: live`, `[ivs] boxes_mode` | `ivs_events.c` (`ivs_boxes_request`, create/destroy in the thread) | **limited (2026-11-15)** — create and destroy are confirmed on the console (`2BPP overlay region 13 destroyed/created`), no crashes and no kernel errors; the full 200 cycles were not run: the region is only created on the first IVS result after enabling, and a static scene produces results in rare bursts (3 real pairs over 51 windows). The default mode is `restart`; for the SIGSEGV history see KI-063 |
 | Video and streaming | Runtime IQ | `switch_scene`, `updateIq` | `/api/iq`, `[iq]` | runtime IQ stage in `divinus` | **limited** — scene switch accepted, `updateIq` untested |
 | Video and streaming | HDR2/HDR3 | HDR on SC230AI | `/api/hdr` | HDR API + `gating.c`; experimental HDR_X2 disabled | **blocked** — `librkaiq` does not support SC230AI |
 | Video and streaming | OSD on all streams | `osd.scope=all` (main+sub+JPEG) | `[osd]` config, gate G4 | `gating.c` | **blocked** — multi-attach RGN failed verification |

@@ -427,13 +427,33 @@ def main():
 
         # Events: separate IVS box switch, the event-upload card, the receiver
         # link and the built-in API description.
-        for selector in ("#ivs_boxes", "#http_post_host", "#http_post_url",
+        for selector in ("#ivs_boxes", "#ivs_min_area", "#http_post_host",
+                         "#http_post_url",
                          "#http_post_receiver_url", "#http_post_link",
                          "#clip_enable", "#clip_pre_seconds",
                          "#clip_post_seconds", "#clip_max_bytes",
                          "#clip_running", "#clip_sent"):
             if page.locator(selector).count() == 0:
                 failures.append("events card element %s is missing" % selector)
+        area_field = page.evaluate(
+            "() => {const el = document.querySelector('#ivs_min_area');"
+            " return el ? [el.min, el.max, el.value] : null;}")
+        if not area_field or area_field[0] != "0" or area_field[1] != "50" or \
+                not area_field[2].isdigit():
+            failures.append("the IVS motion-area field is wrong: %r" % (area_field,))
+        else:
+            print("IVS motion-area field: min %s max %s value %s" % tuple(area_field))
+        boxes = page.evaluate(
+            "() => {const el = document.querySelector('#ivs_boxes');"
+            " if (!el) return null; const note ="
+            " document.querySelector('[data-i18n=\"ivs_boxes_note\"]');"
+            " return [el.disabled, el.options.length, note ?"
+            " note.textContent.trim().length : 0];}")
+        if not boxes or boxes[0] or boxes[1] < 2 or boxes[2] < 40:
+            failures.append("the IVS box switch is wrong: %r" % (boxes,))
+        else:
+            print("IVS boxes switch: enabled, %d options, note %d chars"
+                  % (boxes[1], boxes[2]))
         if page.locator("button[onclick='clipTest()']").count() == 0:
             failures.append("the clip test-event button is missing")
         if page.locator("#sec-events details").count() == 0:
@@ -605,6 +625,40 @@ def main():
         if not page.is_visible("#vpn-card"):
             failures.append("VPN card is not visible in Network")
         page.screenshot(path=os.path.join(SHOTS, "network-vpn.png"), full_page=True)
+
+        # Network: the mDNS card shows the published name and toggles through
+        # the shared Apply model.
+        for selector in ("#mdns_enable", "#mdns_name", "#mdns_addresses",
+                         "#mdns-badge"):
+            if page.locator(selector).count() == 0:
+                failures.append("mDNS element %s is missing" % selector)
+        mdns_state = page.evaluate(
+            "() => fetch('/api/mdns').then(r => r.json())")
+        name_text = (page.text_content("#mdns_name") or "").strip()
+        print("mDNS name in UI:", name_text, "API:", mdns_state.get("name"))
+        if mdns_state.get("name"):
+            expected_name = mdns_state["name"] + ".local"
+            if name_text != expected_name:
+                failures.append("mDNS name mismatch: %r != %r" %
+                                (name_text, expected_name))
+        current = page.input_value("#mdns_enable")
+        if current not in ("true", "false"):
+            failures.append("unexpected mDNS switch value: %r" % current)
+        target = "false" if current == "true" else "true"
+        page.select_option("#mdns_enable", target)
+        page.wait_for_timeout(300)
+        if page.locator('[data-apply="mdns"]').is_disabled():
+            failures.append("mDNS Apply stayed disabled after an edit")
+        page.click('[data-apply="mdns"]')
+        page.wait_for_timeout(1500)
+        after = page.evaluate("() => fetch('/api/mdns').then(r => r.json())")
+        if after.get("enable") is not (target == "true"):
+            failures.append("mDNS switch was not applied: %r" % after)
+        page.select_option("#mdns_enable", current)
+        page.click('[data-apply="mdns"]')
+        page.wait_for_timeout(1200)
+        page.screenshot(path=os.path.join(SHOTS, "network-mdns.png"),
+                        full_page=True)
 
         # Archive and storage fields are populated.
         page.click('#sidebar button[data-sec="storage"]')
