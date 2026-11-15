@@ -82,9 +82,11 @@
   `tools/rknn-toolkit2/` и в образ не входит — после прошивки её загружают через
   `/api/models`. Кадры кольца — 640×384 NV12, `max_frames` — жёсткий потолок
   пакета; квота загрузки 3 МиБ. `source: vpss3` занимает последний VPSS-канал и
-  потому несовместим с IVS/MJPEG/четвёртым потоком — санитайзер переводит на
-  `vi0`. `source: vi1` (selfpath) на этой сборке привёл к зависанию платы и
-  заблокирован — см. `FEATURES_UNVERIFIED.md`. Ящики в поток/JPEG не рисуются.
+  потому несовместим с MJPEG/четвёртым потоком — санитайзер переводит на
+  `vi0` (рамки на `vi0` — KI-068). `source: vi1` (selfpath) на этой сборке
+  привёл к зависанию платы и заблокирован — см. `FEATURES_UNVERIFIED.md`.
+  Рамки рисуются на main-потоке (`yolo.boxes`, см. строку YOLO выше), снимки
+  событий остаются чистыми JPEG.
   AIISP и YOLO на `vpss3` работают одновременно (стенд, демо 640×640:
   main 30–33 fps, NPU 28%, без пропусков).
 - Второй рантайм RKNN **2.5.0** (`librknnmrt2.so`, SONAME изменён): включается
@@ -186,8 +188,9 @@ Status as of 2026-11-15.
   of the image and is uploaded via `/api/models` after flashing. Ring frames are
   640×384 NV12, `max_frames` is a hard package cap, and the upload quota is
   3 MiB. `source: vpss3` takes the last VPSS channel and is therefore
-  incompatible with IVS/MJPEG/a fourth stream, so the sanitizer falls back to
-  `vi0`. `source: vi1` (selfpath) hangs this board and is blocked — see
+  incompatible with MJPEG/a fourth stream, so the sanitizer falls back to
+  `vi0` (boxes on `vi0` — KI-068). `source: vi1` (selfpath) hangs this board
+  and is blocked — see
   `FEATURES_UNVERIFIED.md`. With `yolo.boxes=1` a 2BPP overlay region draws
   detection boxes on the main stream only (two colours, 4-pixel line
   alignment); the

@@ -1,7 +1,7 @@
 # Известные ошибки и ограничения OKO
 
 Обновлено: `2026-11-15`. В файле — открытые проблемы, подтверждённые
-ограничения и недавно закрытые записи (KI-036). Проверенные функции и доказательства — в `VERIFIED_FUNCTIONS.md`,
+ограничения и архив закрытых записей (§Архив). Проверенные функции и доказательства — в `VERIFIED_FUNCTIONS.md`,
 состав и статус функционала — в `FEATURES_VERIFIED.md` / `FEATURES_UNVERIFIED.md`,
 процедуры стенда — в `TESTBENCH.md`.
 
@@ -13,17 +13,19 @@
   Включение VI selfpath (chn1) через librockit приводит к зависанию RV1106 —
   нужна перезагрузка или перепрошивка. Значение заблокировано в `gating.c`,
   `/api/yolo` (HTTP 400) и WebUI, сохранённый `vi1` при старте заменяется на
-  `vpss3`. Обход: `vpss3`, при конфликте с IVS/MJPEG — `vi0`.
+  `vpss3`. Обход: `vpss3`; конфликт теперь только с MJPEG или четвёртым
+  потоком. Переход на `vi0` при включённых рамках ведёт к KI-068.
   Статус: **заблокировано по дизайну**.
 
 - **KI-002. RGA: im2d fd-путь работает, легаси blit — нет.**
-  На `rknpu` 0.9.8 im2d `importbuffer_fd` импортирует MMZ- и dma-heap-
-  дескрипторы (проверено `rgaImDemo --copy` и отдельным тестом MMZ
-  NV12→RGB888). `yolo.convert: rga` снижает CPU `divinus` с ~35.6% до ~29.4%
-  при 5 fps 640×384 без потери fps; при ошибке RGA один раз пишет
-  предупреждение и откатывается на CPU. Легаси `c_RkRgaBlit` и блит по
-  `malloc`-памяти по-прежнему не используются (SIGSEGV/зависания).
-  Статус: **закрыто для im2d fd-пути**, легаси API — принятое ограничение.
+  im2d `importbuffer_fd` импортирует MMZ- и dma-heap-дескрипторы (`rknpu`
+  0.9.8, проверено `rgaImDemo --copy` и тестом MMZ NV12→RGB888),
+  `yolo.convert: rga` снижает CPU `divinus` с ~35,6% до ~29,4% при 5 fps
+  640×384 без потери fps, при ошибке RGA откатывается на CPU. Легаси
+  `c_RkRgaBlit` и блит по `malloc`-памяти не используются
+  (SIGSEGV/зависания) — принятая легаси-API; im2d fd-путь подтверждён в
+  `FEATURES_VERIFIED.md`.
+  Статус: **принятое ограничение (легаси-API), im2d fd-путь работает**.
 
 - **KI-003. Модель 640×384 не входит в образ.**
   Модель собрана Docker-пайплайном (`tools/rknn-toolkit2/`, 2.6 МиБ) и
@@ -80,10 +82,10 @@
   отклоняется при активации. Обход: reshape выходов в 4D в toolkit.
   Статус: **по дизайну**.
 
-- **KI-010. Рамки детекции не рисуются.**
-  YOLO не наносит bounding boxes на RTSP/JPEG; событие — это индикатор OSD и
-  пачка чистых JPEG. Рисование рамок — вне объёма текущей реализации.
-  Статус: **вне объёма**.
+- **KI-010. Рамки детекции рисуются только на main-потоке.**
+  С 2026-11-15 `yolo.boxes` и `ivs.boxes` рисуют 2BPP-регионы на VENC main;
+  на JPEG-канале и субпотоке рамок нет (гейт G4, KI-013), снимки событий —
+  чистые JPEG. Статус: **принятое ограничение (топология main)**.
 
 - **KI-011. HDR2/HDR3 не поддерживается на SC230AI.**
   `rk_aiq_uapi_sysctl_prepare(mode=HDR2/HDR3)` завершается ошибкой, приложение
@@ -107,8 +109,8 @@
 
 - **KI-015. IVS подтверждён частично.**
   Проверена детекция движения (MD); OD и событие на статичной сцене не
-  подтверждены. Комбинация `sub + MJPEG + IVS` не проверялась, каналов VPSS
-  всего четыре. Неподтверждённые комбинации отклоняет `gating.c`.
+  подтверждены. IVS работает на VI chn2 (KI-065); комбинация всех четырёх
+  потоков вместе с IVS не проверялась — KI-070.
   Статус: **ограничено**.
 
 - **KI-016. Часть настроек VENC проверена не полностью.**
@@ -137,21 +139,9 @@
   поэтому ток/мощность могут быть нулевыми. Канал выбирается `--ina-channel`.
   Статус: **особенность стенда**.
 
-- **KI-021. `motor.ko` удалён из форка (2026-11-07).**
-  Драйвер 28BYJ-48 для pan/tilt не использовался; удалены каталог
-  `sysdrv/drv_ko/motor`, строка `__insmod motor.ko`, `M_DIRS` и
-  `CONFIG_SYSDRV_ENABLE_MOTOR`. Привод фокуса/зума — STM8 по I2C.
-  Статус: **закрыто (2026-11-07)**.
-
 - **KI-022. `post_chk` использует `rkipc-300w.ini` для SC230AI.**
   Шаблон рассчитан на сенсор 3 МП; при некорректной геометрии кадра ini нужно
   подбирать отдельно. Статус: **риск, проверить при смене сценария**.
-
-- **KI-023. `IMAGE/` — устаревший артефакт RV1103 Pico Mini.**
-  Артефакт не соответствовал активной конфигурации RV1106 Pro Max + SC230AI;
-  удалён 2026-11-08, в `IMAGE/` остаётся только релиз под активную плату.
-  Для прошивки использовать `output/image/update.img`.
-  Статус: **закрыто (2026-11-08)**.
 
 - **KI-048. Время ONVIF/ivs с суффиксом `Z` при поясе ≠ UTC.**
   Строки `"%Y-%m-%dT%H:%M:%SZ"` формируются через `localtime` (`server.c`,
@@ -205,25 +195,6 @@
   подключались.
   Статус: **частично проверено; хаб — работает, HID/USB-сеть/BT — untested**.
 
-- **KI-055. `usb0` в режиме `otg` — закрыто (2026-11-10); в host-режиме не применимо.**
-  Раньше `S99usb0config` смотрел строку `dr_mode` в DTS и при `"otg"` не
-  назначал `172.32.0.93`. Скрипт переписан на определение роли через
-  `/sys/class/extcon/*/state`; в device-роли он ставит адрес и следит за
-  сменой роли, а при возврате в device заново биндит configfs-gadget.
-  Логика сохранена для возврата к `dr_mode = "otg"`, а при `"host"` скрипт
-  выходит сразу (UDC нет).
-  Статус: **закрыто**.
-
-- **KI-056. Legacy `g_mass_storage` ломал gadget — закрыто (2026-11-10).**
-  Вендорский defconfig собирал `CONFIG_USB_MASS_STORAGE=y` (legacy
-  `g_mass_storage`). Драйвер захватывал UDC при старте, падал с `-EINVAL`
-  (нет backing-файла) и обрывал инициализацию peripheral у DWC3:
-  `failed to add gadget` / `failed to initialize peripheral`,
-  `/sys/class/udc` оставался пустым, adb/RNDIS не поднимались. Символ выключен
-  во фрагменте `rv1106-usb-host.config`; gadget управляется через configfs
-  (`USB_CONFIGFS_MASS_STORAGE` при необходимости включается в `S50usbdevice`).
-  Статус: **закрыто**.
-
 - **KI-057. В host-режиме недоступны gadget, `usb0`/RNDIS и adb.**
   Порт закреплён в `dr_mode = "host"`: DWC3 не регистрирует UDC, поэтому
   `S50usbdevice` и `S99usb0config` выходят по `dr_mode` (иначе они писали бы
@@ -253,51 +224,6 @@
   kernel/`ip=`. Это защита стенда, а не режим продукта.
   Статус: **принятое ограничение (by design)**.
 
-- **KI-063. Рамки IVS на 2BPP-регионе (handle 13, слой 5).**
-  История 2026-11-14: включение `ivs.boxes` давало `mpp: dup mClientFd
-  failed`, `ma_encode_get_fd: mpp get fd failed`, `getFd: CHECK_GE failed` →
-  SIGSEGV и D-state; при выходе процесса — oops `dma_buf_release`. В те же
-  дни деградировал SPI NAND, поэтому часть зависаний могла быть отказом
-  флеша, а не 2BPP-регионом.
-  Переследование 2026-11-15 на восстановленном NAND (33-мин baseline: 0
-  `rockchip-sfc` timeout, 0 UBIFS error, запись в `/oem` проходит):
-  * YOLO-рамки (handle 12, слой 6, тот же код `rk_region_box_*`) выдержали
-    **200** A/B-циклов destroy/recreate: fd 116↔117 без тренда, VmRSS
-    20,0 МиБ без изменений, 0 ошибок ядра. Разрушение и пересоздание
-    2BPP-региона само по себе не является триггером; гипотеза об утечке
-    `MB_BLK`/fd на каждом `GetCanvasInfo` не подтвердилась.
-  * IVS-рамки, созданные **один раз за процесс** (`ivs.boxes: true`,
-    `ivs.boxes_mode: restart`), стабильны 30 мин на NAND и 30 мин на
-    NFS-netboot: регион 13 создаётся один раз, fd 90→90 (NAND) и
-    104→104 (NFS), VmRSS 12580→12588 КиБ и 21044 КиБ без тренда, HTTP 200,
-    0 счётчиков ядра; прямоугольники видны в `/live/0`.
-  * IVS-рамки **и** YOLO-рамки одновременно стабильны 30 мин, когда YOLO
-    на `vpss3`, а IVS на своём VI-канале 2: регионы 12 и 13 создаются по
-    одному разу, fd 132–134, VmRSS 19,9 МиБ, 0 ошибок.
-  * 20 graceful-рестартов (SIGHUP) с привязанными регионами 12/13 прошли
-    без oops (fd 113–116, 0 счётчиков ядра): регион уничтожается в
-    `ivs_events_stop()` до `sdk_stop()`, а дескрипторы закрываются по
-    `FD_CLOEXEC` перед `execvp()` (KI-069). Ранее именно выход процесса с
-    привязанным 2BPP-регионом давал `dma_buf_release`/`valloc_release`.
-  * Живой тумблер (`ivs.boxes_mode: live`) проверен выборочно: destroy
-    региона по `boxes=0` и create по `boxes=1` подтверждены в консоли
-    (`2BPP overlay region 13 destroyed/created`), падений нет. Полные 200
-    циклов живым тумблером прогнать не удалось: регион создаётся только
-    на первый результат IVS после включения, а сцена на стенде статична
-    и IVS выдаёт результаты редкими пачками (3 реальных пары
-    create/destroy за 51 окно). Поэтому живой режим оставлен opt-in.
-  Причина исходного SIGSEGV по коду не доказана: цепочка `dup mClientFd`
-  (librockchip_mpp) → `ma_encode_get_fd`/`getFd`/`CHECK_GE` (librockit)
-  живёт в предсобранных библиотеках без исходников; на здоровом NAND
-  destroy/recreate больше не воспроизводится.
-  Решение: ключ `ivs.boxes` возвращён. Регион создаётся один раз за
-  процесс, по умолчанию `ivs.boxes_mode: restart` — `POST
-  /api/ivs?boxes=0|1` сохраняет конфиг, отвечает `applied:false` и делает
-  SIGHUP; `live` — opt-in для стенда. Hard block снят из `gating.c`,
-  `ivs_events.c`, `/api/ivs` и WebUI.
-  Статус: **закрыто (2026-11-15) для режима `restart`**; живой тумблер —
-  принятое ограничение (не soak-тест 200 циклов).
-
 - **KI-068. YOLO-рамки при `yolo.source: vi0` пересоздают 2BPP-регион
   каждую секунду.**
   2026-11-15, NAND, `ivs.boxes=1` + `yolo.boxes=1`, `yolo.source: vi0`:
@@ -320,22 +246,16 @@
   поднимается, нужен `reboot`.
   Статус: **открыто, обход — `yolo.source: vpss3`**.
 
-- **KI-069. SIGHUP-рестарт утекал дескрипторами и CMA.**
-  2026-11-15: каждый `kill -HUP` / `POST /api/cmd?restart` оставлял в новом
-  процессе ~5 дескрипторов `/dmabuf:vmpi` и 1–2 `/dev/rga` при включённом IVS
-  (~2 без IVS): fd рос 124→132→138 за два рестарта, за ~20 рестартов
-  накопилось 235 `/dmabuf:vmpi`, CMA 44,2→57,7 МиБ (0,3–0,7 МиБ за рестарт,
-  точное значение зависит от набора буферов). Причина: вендорский
-  медиастек закрывает не все буферы к моменту `execvp()`, а `execvp`
-  наследует дескрипторы без `FD_CLOEXEC`. До исправления помогал только
-  `reboot`; серия рестартов приближала исчерпание fd и CMA — вероятный
-  механизм исторических отказов MPP (`dup mClientFd`, `CHECK_GE`) после
-  многих перезапусков приложения. Исправление: перед `execvp()` все
-  дескрипторы с 3 помечаются `FD_CLOEXEC`, ядро закрывает их в новом образе,
-  в консоль печатается число помеченных. Стенд: 5 рестартов — fd 116→115
-  (113–116), CMA 44 160 КиБ без изменений; 20 рестартов — по нулю ошибок и
-  без роста fd (TESTBENCH §8).
-  Статус: **закрыто (2026-11-15)**.
+- **KI-070. Учёт VPSS-канала 3 не обновлён после переноса IVS на VI chn2.**
+  IVS больше не занимает VPSS-канал 3 (`RK_IVS_VI_CHN 2`, `rk_hal.c:2082`), но
+  гейты и аллокатор остались на старой топологии: `gating.c:116` отказывает
+  IVS, если поток уже занял chn3, а `media.c:462-467` продолжает резервировать
+  слот 3 при `ivs.enable`. При полном пуле (main + sub + MJPEG + JPEG вместе с
+  IVS) `take_next_free_channel()` возвращает −1, и `media.c:750-754` (MJPEG) и
+  `jpeg.c:24-29` (JPEG) не выходят, а пишут в `chnState[-1]` — запись за
+  границу массива вместо отказа. Обход: не включать все четыре VENC-потока
+  вместе с IVS. Статус: **открыто (P2)**; лечение — правка кода отдельной
+  задачей.
 
 - **KI-064. `GET /api/update` роняет/подвешивает divinus.**
   2026-11-14: и старая сборка 0.3.0 (`/userdata/divinus.old`), и новая
@@ -345,58 +265,6 @@
   SPI NAND (запись/чтение разделов в этот момент работают). Обход: не
   опрашивать `/api/update`; `bench/api_check.py` исключает его из smoke-теста
   до разбора `update_json()`/`gating_sd_space()`. Статус: **открыто**.
-
-- **KI-065. IVS: ложные события при отсутствии движения (нет порога площади).**
-  До 0.3.x HAL не пробрасывал площадь движения (`md.u32Square`): событием
-  считался любой результат с `rectNum > 0` или `od.flag`, поэтому шумовые
-  блоки, пыль и мелкая разница пикселей давали «Event при отсутствии
-  движения» (журнал, снимок `act_http_post`, клип, OSD). Введён `ivs.min_area`
-  (процент кадра, по умолчанию `2`, `0` — фильтр выключен): MD-результаты ниже
-  порога не пишутся и не запускают действия, OD-события порог не скрывает.
-  В событие добавлены `area` (промилле кадра) и `cause` (`md`/`od`), в
-  консоль (`HAL_INFO`) печатаются и `area`, и сырой `mdSquare`.
-  Стенд 2026-11-15: причина «нет событий» найдена — IVS был привязан к выходу
-  VPSS, что на этой librockit не отдаёт кадров. IVS переведён на выделенный
-  VI-канал 2 (`ivs.width`×`ivs.height`); `mdSquare` реальный (12k–230k из
-  640×360), события идут. `min_area=50` — 10 событий за 60 с, все `area`
-  ≥ 644‰; `min_area=0` — 276 событий, включая 40–80‰; порог фильтрует.
-  Попутно найден и исправлен дефект освобождения: результат без
-  `rectNum`/`od.flag` не освобождался, и процесс уходил в OOM (153 МиБ) за
-  минуты; после освобождения RSS стабилен 12,4 МиБ при 91 событии за 2 мин.
-  Рестарт IVS (`md_interval`, смена размера) — 0,2 с; смена на 480×270 даёт
-  `area` по кадру 480×270; `act_osd` пишет `MOTION HH:MM:SS`; `api_check` —
-  127 проверок, 0 ошибок.
-  Дополнительно проверено 2026-11-15: статичная сцена 45 с при `min_area=2` —
-  0 событий, OSD пуст; `act_http_post` — `PUT /ingest/frame` 200 на каждое
-  событие; `act_record` — клип 15,03 с HEVC 1920×1080 (7,5 МБ); 15-мин soak
-  без роста памяти (система `used` 37 МиБ, RSS 12,4→15,8 МиБ за 40 мин);
-  `POST /api/cmd?save` + SIGHUP сохраняет `min_area`; UI-поле 0–50 показывает
-  значение из API (`ui_check` зелёный); IVS и YOLO `vi0` работают вместе
-  (RSS 23,6 МиБ). OD проверить не удалось: в кадре не было объекта, в режиме
-  `od`/`md_od` новых событий и `cause:"od"` не появилось.
-  Статус: **исправлено (2026-11-15)**; OD остаётся непроверенным.
-
-- **KI-066. Паника ядра `rga2_reg: irq handler err` при старте IVS сразу после остановки YOLO.**
-  2026-11-15 на стенде: `POST /api/yolo?enable=false` (MPP-каналы 4/1/0
-  уничтожены штатно), затем `POST /api/ivs?enable=true` — через ~0.1 с
-  `rga_mm: Only get buffer 348160 byte ..., but current image required 368640
-  byte`, `rga_mm_map_buffer map dma_buf error!`, `rga2_reg: irq handler err!`,
-  `Unable to handle kernel paging request`, `Kernel panic - not syncing:
-  Fatal exception in interrupt`. Буфер 640×384 — вход YOLO: при сносе каналов
-  остался незавершённый RGA/DVBM-буфер. Наблюдалось до перевода IVS на
-  отдельный VI-канал (2026-11-15), после перевода не перепроверялось; RGA/MPP
-  в коде IVS не используются, это вендорный баг жизненного цикла, родственник
-  KI-063. Импульс `POST /ext/reset` моста плату не поднял,
-  помог полный цикл питания `POST /ext/power` (off, 3–4 с, on). Обход: не
-  включать IVS сразу после остановки YOLO — сначала полный цикл питания, затем
-  старт IVS без запущенного детектора или с `yolo.source: vi0` с загрузки.
-  Перепроверено 2026-11-15 после перевода IVS на VI chn2: при работающем
-  детекторе `yolo.source: vpss3` остановили YOLO (`POST /api/yolo?enable=false`)
-  и сразу включили IVS — паники нет, канал поднялся на VI-канале 2, события
-  идут, RSS 12,4 МиБ. В консоли видны только штатные сообщения `rga_job`
-  о сносе задач завершившегося процесса. Прямая зависимость от привязки IVS
-  не подтверждена, поэтому запись оставлена на случай регрессии.
-  Статус: **не воспроизводится (2026-11-15)**.
 
 - **KI-024. Полный `update.img` затирает U-Boot env.**
   MAC восстанавливается из serial, но статические сетевые настройки
@@ -461,39 +329,6 @@
   (`CONFIG_ROCKCHIP_RKNPU_PROC_FS=y`). Четвёртая строка OSD не добавляется:
   регион `reg4_posy=960` обрезается. Статус: **по дизайну**.
 
-- **KI-036. Реальная прошивка STM32 через WebUI — закрыто (2026-11-06).**
-  Установленный MCU — CBT6 (128 КиБ, слот 120 КиБ), а не C8T6: загрузчик
-  принимает 60 КиБ, а C8T6-сборка приложения даёт `img_size=0` (метаданные
-  читаются из страниц C8T6). Рабочие образы собраны с `-DMCU=CBT6`:
-  `output/bench/stm32/app-1.0.0.bin` (`4bb4f433…`) и `app-1.0.1.bin`
-  (`cb1f8e6e…`). Проверено: CLI `1.0.1` → `Application started`,
-  `version=0x00010001`, `img_size=2324`; WebUI `/api/flash`
-  `app-1.0.1.bin` → job `done`, `/api/firmware` показывает `1.0.1` точечно;
-  затем rollback `app-1.0.0.bin` → `1.0.0`; телеметрия и `flags=0`; после
-  power-cycle — app 1.0.0. Негативные проверки — 9/9. Осталось непроверенным
-  только полное отключение питания в момент стирания. Статус: **закрыто**.
-
-- **KI-049. Обновление ПО через WebUI (OTA) проверено на стенде (закрыто).**
-  На стенде 2026-11-10 пройден полный цикл: `.okp` собран из
-  `boot`/`oem`/`rootfs`, загружен через `/api/update/upload`, подготовлен на
-  microSD (`oko-update stage`, размеры через `wc -c`), применён с токеном.
-  U-Boot увидел `oko_update` (ключ добавлен в `CONFIG_ENVF_LIST`, вместе с
-  `oko_mac`/`oko_net_*`), `sd_update` прочитал `sd_update.txt` с `mmc 1`,
-  стёр и записал `boot`/`oem`/`rootfs`, снял флаг и сохранил env.
-  `S20oko-update` записал `ok=1`, версия и ожидаемая 0.3.0 совпали, карта
-  очищена; `/oem` после полного стирания смонтировался, divinus стартовал.
-  HTTPS (`curl https://example.com`) работает. Найденные и исправленные по
-  пути дефекты: отсутствие `stat`, неверный порядок выдачи apply-токена,
-  белый список `ENVF`. Статус: **закрыто (2026-11-10)**.
-
-- **KI-050. Ветка `feature/slim-image`: гейт мержа пройден.**
-  Пройдено на DUT 2026-11-09–10: полная прошивка `update.img`, старт
-  `divinus`, OSD, RTSP, ONVIF, `api_check` 105/105, `ui_check`, `osd_check`,
-  `check_image_contents.sh` (22 обязательных / 61 запрещённый путь) и полный
-  OTA-цикл с прошивкой из U-Boot (KI-049). Блокеров мержа нет; слияние в
-  `main` не выполнялось и остаётся отдельным действием.
-  Статус: **гейт пройден, мерж не выполнен**.
-
 - **KI-067. mDNS: announce-only без probing и один multicast-интерфейс.**
   `tinysvcmdns` не реализует probing/protection по RFC 6762 §8.1: responder
   только анонсирует записи, конфликт имён не разрешается. Коллизий не ждём —
@@ -527,22 +362,6 @@
   (`program` + `flash write_image erase meta.bin 0x08007800`) или
   отправить `COMMIT` вручную после `BEGIN`+`VERIFY`. Статус: **открыто,
   требует отдельного разбора `oko-ec`/тайминга COMMIT**.
-
-- **KI-061. STM32 EC удерживал SCL, пока RV1106 перезагружался.**
-  `rk3x-i2c ff460000.i2c: timeout, ipd: 0x80` + `SCL hold by slave`:
-  если мастер исчезал между ADDR(read) и первым тактом, slave-transmitter
-  держал SCL, пока TXDR не заполнен; STOPF/NACKF уже не приходили, и EC
-  оставался в этом состоянии до NRST. Причина усиливалась тем, что
-  `RCC->CCIPR.I2C1SEL` был `00` (PCLK): в Stop I2C не тактировался,
-  `WUPEN` не будил ядро, а `tTIMEOUT` был ~60 мс вместо 15. Исправлено в
-  прошивке EC: `I2C1SEL=10` (HSIKER), `TIMEOUTR` (~10 мс) + bus-watchdog
-  (15 мс), настоящий `i2c_pause()` в приложении; хост повторяет запись.
-  Обход для старой прошивки: NRST/снятие always-on 3.3 В; при зависании в
-  Stop SWD не подключается (`init mode failed`). Проверено на стенде
-  2026-11-13: hold-scl отпускается за ~10 мс (`timeout_fires=4`), Stop→wake
-  после 5 с работает, 40 ребутов (30 `read-window`) без `SCL hold by slave`.
-  Полные 300 ребутов не прогонялись. Статус: **исправлено и проверено на
-  стенде (частичный soak 40/300)**.
 
 - **KI-037. `resolvconf` в образе нет.**
   `wg-quick`-логика с `DNS=` не может обновлять системный resolver через
@@ -588,32 +407,6 @@
   `SET_POS(0)`, не читая отрицательную позицию; ручное управление ограничено
   `min_pos = 0`, а `home`/`zero` отклоняют заведомо битые значения. Статус:
   **открыто, обход встроен**.
-
-- **KI-043. Включение AF-метрики больше не зависит от STM8 (закрыто).**
-  Кнопка «Применить» по-прежнему отправляет `motor=1`, но сервер применяет
-  `enable`/`mode`/`fps`/ROI **до** взведения привода (`server.c`, блок
-  `motor` перенесён после `focus_start`/`focus_configure`). При отсутствующем,
-  занятом или находящемся в бутлоадере контроллере метрика включается, ответ
-  остаётся 200, а `motor.enabled=false`/`motor.status` показывают причину;
-  ошибки `blocked`/409/502 остаются только у чистых моторных запросов и
-  `af=1|fine` (им по-прежнему нужен взведённый драйвер). Проверено на стенде
-  2026-11-07: `POST /api/focus?enable=1` без `motor` → `status=running`,
-  `enable=0` → `idle`. Статус: **закрыто (2026-11-07)**.
-
-- **KI-044. ePTZ: кроп/поворот применяются при старте канала (закрыто).**
-  Замеры 2026-11-07: включение канала сбрасывает `SetChnCrop` и
-  `SetChnRotation` — вызов до `RK_MPI_VPSS_EnableChn` возвращает `0`, но
-  картинку не меняет; вызов сразу после `EnableChn` работает (кроп 960x540:
-  mean|diff| 4.26 к центру кадра 1x против 53.85 к полному кадру). Поэтому
-  `rk_channel_bind()` применяет сохранённые настройки после `EnableChn`, а
-  смена зума/поворота на работающем канале только сохраняется и применяется
-  graceful-рестартом приложения (`app_config_save` + SIGHUP, как у
-  `/api/substream`; ответ `applied:false` и `note`). Повтор того же запроса
-  рестарта не вызывает, а во время AF/`home`/`zero`/прошивки запрос
-  отклоняется с `409`. После смены кропа обычный рестарт MP4 остаётся
-  ненадёжным (нет кадров) — это ограничение стенда, обходится рестартом
-  приложения. Предпросмотр Live может показывать `/mjpeg` или `/image.jpg`,
-  где кроп main не действует. Статус: **закрыто (2026-11-07)**.
 
 - **KI-045. Смена ABI rootfs: OpenSSL 3 (Python 3.14 удалён).**
   После перехода на Buildroot 2026.08.1 в rootfs нет
@@ -676,10 +469,30 @@
   `apt-get download libasound2t64`, распаковать `dpkg-deb -x` и задать
   `LD_LIBRARY_PATH` (см. `bench/README.md`). Статус: **особенность хоста**.
 
+### Архив закрытых записей
+
+Компактный список закрытых проблем; действующие остатки указаны в строке
+записи, номера не переиспользуются.
+
+- KI-021. `motor.ko` удалён из форка: драйвер 28BYJ-48 не использовался, привод фокуса/зума — STM8 по I2C. — закрыто (2026-11-07).
+- KI-023. `IMAGE/` — устаревший артефакт RV1103 Pico Mini, удалён 2026-11-08; для прошивки — `output/image/update.img`. — закрыто (2026-11-08).
+- KI-036. Прошивка STM32 через WebUI: установлен CBT6 (128 КиБ), образы собраны с `-DMCU=CBT6`, CLI/WebUI/rollback и 9/9 негативных проверок пройдены. — закрыто (2026-11-06).
+- KI-043. Включение AF-метрики больше не зависит от STM8: сервер применяет параметры до взведения привода, `motor.status` показывает причину. — закрыто (2026-11-07).
+- KI-044. ePTZ: кроп/поворот применяются после `RK_MPI_VPSS_EnableChn`, смена на живом канале — через SIGHUP (`applied:false` + `note`). — закрыто (2026-11-07).
+- KI-049. OTA из WebUI пройдено на стенде: `.okp` собран, применён из U-Boot `sd_update`, версия 0.3.0 совпала. — закрыто (2026-11-10).
+- KI-050. Ветка `feature/slim-image` смержена в `main` (0.3.0). — закрыто (2026-11-14); гейт мержа пройден 2026-11-09–10.
+- KI-055. `usb0` в режиме `otg`: `S99usb0config` определяет роль через `/sys/class/extcon/*/state`; в host-режиме не применимо. — закрыто (2026-11-10).
+- KI-056. Legacy `g_mass_storage` ломал gadget: символ выключен в `rv1106-usb-host.config`, gadget — через configfs. — закрыто (2026-11-10).
+- KI-061. STM32 EC удерживал SCL при рестарте RV1106: `I2C1SEL=10` (HSIKER), `TIMEOUTR` ~10 мс, bus-watchdog и `i2c_pause()`; 40 ребутов без повтора. — исправлено (2026-11-13); остаток: полный soak 300 ребутов не прогонялся (40/300).
+- KI-063. Рамки IVS на 2BPP-регионе (handle 13): регион создаётся один раз за процесс, hard block снят, `ivs.boxes_mode: restart` по умолчанию. — закрыто (2026-11-15); остаток: `boxes_mode: live` — opt-in без soak 200 циклов; актуальный источник — `FEATURES_UNVERIFIED.md` (строка «Рамки IVS: живое переключение»), отдельная открытая запись не заводится.
+- KI-065. IVS: ложные события без движения — введён `ivs.min_area` (площадь кадра в %), в событии `area`/`cause`, исправлена утечка MD-буфера. — исправлено (2026-11-15); остаток: OD не проверен — закрыт ссылкой на KI-015.
+- KI-066. Паника `rga2_reg: irq handler err` при старте IVS сразу после остановки YOLO: после перевода IVS на VI chn2 не воспроизводится. — закрыто (2026-11-15); regression-watch: запись в архиве, не воспроизводится на VI chn2.
+- KI-069. SIGHUP-рестарт утекал дескрипторами и CMA: перед `execvp()` все дескрипторы с 3 помечаются `FD_CLOEXEC`, 20 рестартов без роста fd. — закрыто (2026-11-15).
+
 ## English
 
-Updated: `2026-11-12`. This file lists open problems, confirmed limitations and
-recently closed entries (KI-036).
+Updated: `2026-11-15`. This file lists open problems, confirmed limitations and
+an archive of closed entries (§Archive).
 Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
 `FEATURES_VERIFIED.md` / `FEATURES_UNVERIFIED.md`, bench procedures in
 `TESTBENCH.md`.
@@ -689,17 +502,19 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
 - **KI-001. `yolo.source=vi1` hangs the board.** Enabling VI selfpath (chn1)
   locks RV1106 until a power cycle or reflash. The value is blocked in
   `gating.c`, `/api/yolo` (HTTP 400) and the WebUI; a saved `vi1` is replaced
-  with `vpss3` at startup. Workaround: `vpss3`, or `vi0` when IVS/MJPEG owns
-  channel 3. Status: **blocked by design**.
+  with `vpss3` at startup. Workaround: `vpss3`; the conflict is now only with
+  MJPEG or the fourth stream. Switching to `vi0` with boxes enabled leads to
+  KI-068. Status: **blocked by design**.
 
-- **KI-002. RGA: the im2d fd path works, the legacy blit does not.** On
-  `rknpu` 0.9.8 im2d `importbuffer_fd` imports MMZ and dma-heap descriptors
-  (verified with `rgaImDemo --copy` and a dedicated MMZ NV12→RGB888 test).
+- **KI-002. RGA: the im2d fd path works, the legacy blit does not.**
+  im2d `importbuffer_fd` imports MMZ and dma-heap descriptors (`rknpu` 0.9.8,
+  verified with `rgaImDemo --copy` and an MMZ NV12→RGB888 test).
   `yolo.convert: rga` lowers `divinus` CPU from ~35.6% to ~29.4% at 5 fps
-  640×384 without losing fps; on an RGA error it logs once and falls back to
-  the CPU path. Legacy `c_RkRgaBlit` and blits on `malloc` memory are still
-  not used (SIGSEGV/hangs). Status: **closed for the im2d fd path**; the
-  legacy API remains an accepted limitation.
+  640×384 without losing fps and falls back to the CPU path on an RGA error.
+  Legacy `c_RkRgaBlit` and blits on `malloc` memory are not used
+  (SIGSEGV/hangs) — an accepted legacy API; the im2d fd path is confirmed in
+  `FEATURES_VERIFIED.md`.
+  Status: **accepted limitation (legacy API), the im2d fd path works**.
 
 - **KI-003. The 640×384 model is not part of the image.** It is built by the
   Docker pipeline (`tools/rknn-toolkit2/`, 2.6 MiB) and activates on the DUT,
@@ -752,9 +567,10 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   filled only partially on RV1106 and is rejected at activation. Reshape the
   outputs to 4D in the toolkit. Status: **by design**.
 
-- **KI-010. Detection boxes are not drawn.** YOLO does not render bounding
-  boxes on RTSP/JPEG; an event is an OSD indicator plus clean JPEGs.
-  Status: **out of scope**.
+- **KI-010. Detection boxes are drawn on the main stream only.** Since
+  2026-11-15 `yolo.boxes` and `ivs.boxes` paint 2BPP regions on VENC main; the
+  JPEG channel and the substream have no boxes (gate G4, KI-013) and event
+  snapshots stay clean JPEG. Status: **accepted limitation (main topology)**.
 
 - **KI-011. HDR2/HDR3 is unsupported on SC230AI.** `rk_aiq_uapi_sysctl_prepare`
   fails and the stream falls back to SDR; the `hdr` gate returns `blocked`.
@@ -773,9 +589,9 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   few CJK glyphs; OSD text must be Latin. Status: **accepted limitation**.
 
 - **KI-015. IVS is only partially verified.** Motion detection is verified;
-  object detection and a static-scene event are not. `sub + MJPEG + IVS` is
-  untested, and VPSS has only four channels. `gating.c` refuses unconfirmed
-  combinations. Status: **limited**.
+  object detection and a static-scene event are not. IVS runs on VI chn2
+  (KI-065); all four streams together with IVS were not tested — KI-070.
+  Status: **limited**.
 
 - **KI-016. Some VENC settings are not fully verified.** Rotation 90° is
   verified, 180°/270° are not. SmartP applies on the next start. `updateIq` is
@@ -800,19 +616,9 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   `VIN+`/`VIN-`/`VBUS` are not wired to a load, so current/power may read zero.
   Status: **bench limitation**.
 
-- **KI-021. `motor.ko` was removed from the fork (2026-11-07).**
-  The 28BYJ-48 pan/tilt driver was unused; the `sysdrv/drv_ko/motor` tree, the
-  `__insmod motor.ko` line, `M_DIRS` and `CONFIG_SYSDRV_ENABLE_MOTOR` are gone.
-  Focus/zoom is driven by the STM8 over I2C. Status: **closed (2026-11-07)**.
-
 - **KI-022. `post_chk` uses `rkipc-300w.ini` for SC230AI.** The template
   targets a 3 MP sensor; choose another ini if the frame geometry is wrong.
   Status: **risk, verify when the scenario changes**.
-
-- **KI-023. `IMAGE/` is an outdated RV1103 Pico Mini artifact.** The artifact
-  did not match RV1106 Pro Max + SC230AI; it was removed on 2026-11-08 and
-  `IMAGE/` now holds only the release for the active board. Flash
-  `output/image/update.img` instead. Status: **closed (2026-11-08)**.
 
 - **KI-048. ONVIF/ivs timestamps carry a `Z` suffix in a non-UTC zone.**
   The `"%Y-%m-%dT%H:%M:%SZ"` strings are built with `localtime` (`server.c`,
@@ -867,25 +673,6 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   attached.
   Status: **partially verified; the hub works, HID/net/BT untested**.
 
-- **KI-055. `usb0` in `otg` mode — closed (2026-11-10); not applicable in host mode.**
-  `S99usb0config` used to read `dr_mode` from the DTS and skipped
-  `172.32.0.93` when it was `"otg"`. The script now derives the role from
-  `/sys/class/extcon/*/state`; in the device role it assigns the address and
-  watches for role changes, re-binding the configfs gadget when the port
-  becomes a device again. That logic is kept for a return to `dr_mode = "otg"`,
-  while with `"host"` the script exits immediately (there is no UDC).
-  Status: **closed**.
-
-- **KI-056. The legacy `g_mass_storage` driver broke the gadget — closed (2026-11-10).**
-  The vendor defconfig built `CONFIG_USB_MASS_STORAGE=y` (legacy
-  `g_mass_storage`). The driver grabbed the UDC at boot, failed with `-EINVAL`
-  (no backing file) and aborted the DWC3 peripheral init:
-  `failed to add gadget` / `failed to initialize peripheral`, leaving
-  `/sys/class/udc` empty so adb/RNDIS could not start. The symbol is disabled in
-  `rv1106-usb-host.config`; gadget functions are managed through configfs
-  (`USB_CONFIGFS_MASS_STORAGE` can be enabled in `S50usbdevice` when needed).
-  Status: **closed**.
-
 - **KI-057. Host mode disables the gadget, `usb0`/RNDIS and adb.**
   The port is pinned to `dr_mode = "host"`: DWC3 registers no UDC, so
   `S50usbdevice` and `S99usb0config` exit on `dr_mode` instead of writing to a
@@ -915,51 +702,6 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   installed. This is a bench safeguard, not a product mode.
   Status: **accepted limitation (by design)**.
 
-- **KI-063. IVS boxes on the 2BPP region (handle 13, layer 5).**
-  History, 2026-11-14: enabling `ivs.boxes` produced `mpp: dup mClientFd
-  failed`, `ma_encode_get_fd: mpp get fd failed`, `getFd: CHECK_GE failed` →
-  SIGSEGV and D-state; the process exit hit a `dma_buf_release` oops. The SPI
-  NAND degraded on the same days, so some hangs may have been flash failures
-  rather than the 2BPP region.
-  Re-investigated on 2026-11-15 with the NAND restored (33 min baseline: no
-  `rockchip-sfc` timeouts, no UBIFS errors, `/oem` write probe passes):
-  * YOLO boxes (handle 12, layer 6, the same `rk_region_box_*` code)
-    survived **200** A/B destroy/recreate cycles: fd 116↔117 with no trend,
-    VmRSS steady at 20.0 MiB, no kernel errors. Rebuilding a 2BPP region is
-    not a trigger by itself, and the suspected `MB_BLK`/fd leak per
-    `GetCanvasInfo` did not reproduce.
-  * IVS boxes created **once per process** (`ivs.boxes: true`,
-    `ivs.boxes_mode: restart`) were stable for 30 min on NAND and 30 min on
-    NFS netboot: region 13 created once, fd 90→90 (NAND) and 104→104 (NFS),
-    VmRSS 12580→12588 KiB and 21044 KiB with no trend, HTTP 200, zero kernel
-    counters; the rectangles are visible in `/live/0`.
-  * IVS boxes **and** YOLO boxes together were stable for 30 min with YOLO on
-    `vpss3` and IVS on its own VI channel 2: regions 12/13 created once each,
-    fd 132–134, VmRSS 19.9 MiB, no errors.
-  * 20 graceful SIGHUP restarts with regions 12/13 attached passed without an
-    oops (fd 113–116, zero kernel counters): the region is destroyed in
-    `ivs_events_stop()` before `sdk_stop()` and descriptors are closed via
-    `FD_CLOEXEC` before `execvp()` (KI-069). Previously exactly that exit path
-    produced `dma_buf_release`/`valloc_release`.
-  * The live switch (`ivs.boxes_mode: live`) was spot-checked: `boxes=0`
-    destroys the region and `boxes=1` creates it again (console shows
-    `2BPP overlay region 13 destroyed/created`) with no crash. The full 200
-    cycles could not be run live: the region is only created on the first IVS
-    result after enabling, and the bench scene is static, so IVS emits results
-    in rare bursts (3 real create/destroy pairs over 51 windows). Live mode
-    therefore stays opt-in.
-  The original SIGSEGV is not explained in code: the `dup mClientFd`
-  (librockchip_mpp) → `ma_encode_get_fd`/`getFd`/`CHECK_GE` (librockit) chain
-  lives in prebuilt libraries without sources, and destroy/recreate no longer
-  reproduces on healthy NAND.
-  Resolution: `ivs.boxes` is back. The region is created once per process and
-  `ivs.boxes_mode: restart` is the default — `POST /api/ivs?boxes=0|1` saves
-  the configuration, replies `"applied":false` and sends SIGHUP; `live` is an
-  opt-in bench mode. The hard block is removed from `gating.c`,
-  `ivs_events.c`, `/api/ivs` and the WebUI.
-  Status: **closed (2026-11-15) for `restart` mode**; the live switch is an
-  accepted limitation (no 200-cycle soak).
-
 - **KI-068. YOLO boxes with `yolo.source: vi0` rebuild the 2BPP region every
   second.**
   2026-11-15, NAND, `ivs.boxes=1` + `yolo.boxes=1`, `yolo.source: vi0`:
@@ -982,23 +724,17 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   required.
   Status: **open, workaround is `yolo.source: vpss3`**.
 
-- **KI-069. A SIGHUP restart leaked descriptors and CMA.**
-  2026-11-15: every `kill -HUP` / `POST /api/cmd?restart` left about five
-  `/dmabuf:vmpi` descriptors and one or two `/dev/rga` descriptors in the new
-  process with IVS enabled (about two without IVS): fd grew 124→132→138 over
-  two restarts and about 20 restarts accumulated 235 `/dmabuf:vmpi` descriptors
-  with CMA going from 44.2 to 57.7 MiB (0.3–0.7 MiB per restart, depending on
-  the buffer set). The vendor media stack does not close
-  every buffer before `execvp()`, and `execvp` inherits descriptors that lack
-  `FD_CLOEXEC`. Before the fix only a `reboot` helped, and a long series of
-  restarts pushed the process towards fd and CMA exhaustion — the likely
-  mechanism behind the historical MPP failures (`dup mClientFd`, `CHECK_GE`)
-  after many application restarts. Fix: before `execvp()` every descriptor
-  from 3 is marked `FD_CLOEXEC`, so the kernel closes it in the new image; the
-  console prints how many were marked. Bench: 5 restarts — fd 116→115
-  (113–116), CMA 44,160 KiB unchanged; 20 restarts — zero errors and no fd
-  growth (TESTBENCH §8).
-  Status: **closed (2026-11-15)**.
+- **KI-070. VPSS channel 3 accounting is stale after IVS moved to VI chn2.**
+  IVS no longer occupies VPSS channel 3 (`RK_IVS_VI_CHN 2`, `rk_hal.c:2082`),
+  but the gates and the allocator still follow the old topology:
+  `gating.c:116` refuses IVS when a stream already owns chn3, and
+  `media.c:462-467` keeps reserving slot 3 while `ivs.enable` is set. With a
+  full pool (main + sub + MJPEG + JPEG together with IVS)
+  `take_next_free_channel()` returns −1 and `media.c:750-754` (MJPEG) and
+  `jpeg.c:24-29` (JPEG) do not bail out but write to `chnState[-1]` — an
+  out-of-bounds write instead of a refusal. Workaround: do not run all four
+  VENC streams together with IVS. Status: **open (P2)**; the fix is a separate
+  code change.
 
 - **KI-064. `GET /api/update` hangs/kills divinus.**
   On 2026-11-14 both the previous 0.3.0 binary (`/userdata/divinus.old`) and
@@ -1009,58 +745,6 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   reads/writes work at that moment). Workaround: do not poll `/api/update`;
   `bench/api_check.py` excludes it from the smoke test until
   `update_json()`/`gating_sd_space()` is investigated. Status: **open**.
-
-- **KI-065. IVS: false events without motion (no area threshold).**
-  Before 0.3.x the HAL did not propagate the motion area (`md.u32Square`): any
-  result with `rectNum > 0` or `od.flag` counted as an event, so noise blocks,
-  dust and small pixel differences produced "Event without motion" (journal,
-  `act_http_post` snapshot, clip, OSD). `ivs.min_area` was added (percent of the
-  frame, default `2`, `0` disables the filter): MD results below the threshold
-  are neither recorded nor acted on, while OD hits are never hidden by it. The
-  event now carries `area` (permille of the frame) and `cause` (`md`/`od`), and
-  `HAL_INFO` prints both `area` and the raw `mdSquare` to the console.
-  Bench on 2026-11-15: the "no events" root cause was found — IVS was bound to
-  a VPSS output, which delivers no frames on this librockit. IVS now uses a
-  dedicated VI channel 2 (`ivs.width`×`ivs.height`); `mdSquare` is real
-  (12k–230k of 640×360) and events flow. `min_area=50` — 10 events in 60 s,
-  all `area` ≥ 644‰; `min_area=0` — 276 events including 40–80‰, so the
-  threshold filters. A release defect was found and fixed along the way: a
-  result with no `rectNum`/`od.flag` was never released and the process hit
-  OOM (153 MiB) within minutes; after the fix RSS stays at 12.4 MiB with 91
-  events over 2 minutes. An IVS restart (`md_interval`, size change) takes
-  0.2 s; a 480×270 size change reports `area` for the 480×270 frame; `act_osd`
-  writes `MOTION HH:MM:SS`; `api_check` — 127 checks, 0 failures.
-  Also verified on 2026-11-15: a 45 s static scene with `min_area=2` produced
-  0 events and an empty OSD; `act_http_post` — `PUT /ingest/frame` 200 per
-  event; `act_record` — a 15.03 s HEVC 1920×1080 clip (7.5 MB); a 15 min soak
-  without memory growth (system `used` 37 MiB, RSS 12.4→15.8 MiB over 40 min);
-  `POST /api/cmd?save` plus SIGHUP preserves `min_area`; the UI field (0–50)
-  shows the API value (`ui_check` green); IVS and YOLO `vi0` run together
-  (RSS 23.6 MiB). OD could not be checked: no object was in the frame, and
-  `od`/`md_od` produced no new events and no `cause:"od"`.
-  Status: **fixed (2026-11-15)**; OD remains unverified.
-
-- **KI-066. Kernel panic `rga2_reg: irq handler err` when IVS starts right after YOLO stops.**
-  On 2026-11-15: `POST /api/yolo?enable=false` (MPP channels 4/1/0 destroyed
-  cleanly), then `POST /api/ivs?enable=true` — ~0.1 s later
-  `rga_mm: Only get buffer 348160 byte ..., but current image required 368640
-  byte`, `rga_mm_map_buffer map dma_buf error!`, `rga2_reg: irq handler err!`,
-  `Unable to handle kernel paging request`, `Kernel panic - not syncing: Fatal
-  exception in interrupt`. The 640×384 buffer is the YOLO input: an unfinished
-  RGA/DVBM buffer was left when the channels were torn down. It was observed before IVS moved
-  to a dedicated VI channel (2026-11-15) and was not retested afterwards; the
-  IVS code does not use RGA/MPP, so this is a vendor lifecycle bug related to
-  KI-063. The bridge `POST /ext/reset` pulse did not
-  revive the board; a full `POST /ext/power` cycle (off, 3–4 s, on) did.
-  Workaround: do not start IVS immediately after stopping YOLO — power-cycle
-  first, then start IVS either with the detector off or with `yolo.source: vi0`
-  Retested on 2026-11-15 after IVS moved to VI chn2: with the detector running
-  on `vpss3`, YOLO was stopped (`POST /api/yolo?enable=false`) and IVS was
-  started immediately — no panic, the channel came up on VI channel 2, events
-  flowed and RSS stayed at 12.4 MiB. The console only showed the normal
-  `rga_job` teardown messages of the exited process. A direct dependency on the
-  IVS binding was not proven, so the entry is kept for regression tracking.
-  Status: **not reproducible (2026-11-15)**.
 
 - **KI-024. A full `update.img` wipes the U-Boot env.** The MAC is re-derived
   from the serial number, but static network settings
@@ -1115,39 +799,6 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   `/proc/rknpu/load` exists (`CONFIG_ROCKCHIP_RKNPU_PROC_FS=y`). A fourth OSD
   line is not added: the region at `reg4_posy=960` clips. Status: **by design**.
 
-- **KI-036. A real STM32 update through the WebUI — closed (2026-11-06).**
-  The installed MCU is CBT6 (128 KiB, 120 KiB app slot), not C8T6: the
-  bootloader accepts a 60 KiB image, while a C8T6 application build reports
-  `img_size=0` (it reads metadata from the C8T6 pages). Working images are
-  built with `-DMCU=CBT6`: `output/bench/stm32/app-1.0.0.bin`
-  (`4bb4f433…`) and `app-1.0.1.bin` (`cb1f8e6e…`). Verified: CLI `1.0.1` →
-  `Application started`, `version=0x00010001`, `img_size=2324`; WebUI
-  `/api/flash` `app-1.0.1.bin` → job `done`, `/api/firmware` reports `1.0.1`,
-  then rollback `app-1.0.0.bin` → `1.0.0`; telemetry and `flags=0`; after a
-  power cycle the app runs 1.0.0. Negative checks 9/9. Only a full power cut
-  during erase remains untested. Status: **closed**.
-
-- **KI-049. Software update from the WebUI (OTA) verified on the bench (closed).**
-  The full cycle passed on 2026-11-10: the `.okp` package built from
-  `boot`/`oem`/`rootfs` was uploaded through `/api/update/upload`, staged on
-  the microSD card (`oko-update stage`, sizes via `wc -c`) and applied with a
-  token. U-Boot saw `oko_update` (the key was added to `CONFIG_ENVF_LIST`
-  together with `oko_mac`/`oko_net_*`), `sd_update` read `sd_update.txt` from
-  `mmc 1`, erased and wrote `boot`/`oem`/`rootfs`, cleared the flag and saved
-  the env. `S20oko-update` recorded `ok=1` with version and expected 0.3.0
-  matching, and the card was cleaned; `/oem` mounted after the full erase and
-  divinus started. HTTPS (`curl https://example.com`) works. Defects found and
-  fixed on the way: missing `stat`, wrong apply-token issuance order, and the
-  `ENVF` allowlist. Status: **closed (2026-11-10)**.
-
-- **KI-050. `feature/slim-image` branch: merge gate passed.**
-  Passed on the DUT on 2026-11-09–10: full `update.img` flash, `divinus`
-  start, OSD, RTSP, ONVIF, `api_check` 105/105, `ui_check`, `osd_check`,
-  `check_image_contents.sh` (22 required / 61 forbidden paths) and the full
-  OTA cycle with a U-Boot flash (KI-049). There are no merge blockers; the
-  merge into `main` was not performed and remains a separate action.
-  Status: **gate passed, not merged**.
-
 - **KI-067. mDNS: announce-only without probing, one multicast interface.**
   `tinysvcmdns` does not implement RFC 6762 §8.1 probing/protection: the
   responder only announces records, so a name conflict is not resolved.
@@ -1183,23 +834,6 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   `flash write_image erase meta.bin 0x08007800`) or send `COMMIT` manually
   after `BEGIN`+`VERIFY`. Status: **open, needs a separate `oko-ec`/COMMIT
   timing investigation**.
-
-- **KI-061. The STM32 EC held SCL while the RV1106 rebooted.**
-  `rk3x-i2c ff460000.i2c: timeout, ipd: 0x80` + `SCL hold by slave`: when
-  the master disappeared between ADDR(read) and the first clock, the
-  slave-transmitter kept SCL low until TXDR was filled. STOPF/NACKF never
-  arrived, so the EC stayed in that state until NRST. The failure was made
-  worse by `RCC->CCIPR.I2C1SEL=00` (PCLK): I2C was not clocked in Stop,
-  `WUPEN` could not wake the core, and `tTIMEOUT` was ~60 ms instead of
-  15 ms. Fixed in the EC firmware: `I2C1SEL=10` (HSIKER), `TIMEOUTR`
-  (~15 ms) plus a 15 ms bus watchdog, a real `i2c_pause()` in the
-  application, and host write retries. Workaround for the old firmware:
-  NRST or removing the always-on 3.3 V; when the EC hangs in Stop, SWD
-  does not connect (`init mode failed`). Verified on the bench on
-  2026-11-13: hold-scl is released in ~10 ms (`timeout_fires=4`), Stop→wake
-  after 5 s works, and 40 reboots (30 `read-window`) produced no
-  `SCL hold by slave`. The full 300-reboot soak was not run. Status:
-  **fixed and bench-verified (partial soak 40/300)**.
 
 - **KI-037. `resolvconf` is not in the image.** The wg-quick `DNS=` path cannot
   update the system resolver through `resolvconf`. `oko-vpn` supports two
@@ -1241,33 +875,6 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   send `SET_POS(0)` after the overshoot without reading the negative position;
   manual control is bounded by `min_pos = 0`, and `home`/`zero` reject values
   that are visibly corrupted. Status: **open, workaround in place**.
-
-- **KI-043. Enabling the AF metric no longer depends on the STM8 (closed).**
-  The "Apply" button still sends `motor=1`, but the server now applies
-  `enable`/`mode`/`fps`/ROI **before** arming the driver (`server.c`, the
-  `motor` block moved after `focus_start`/`focus_configure`). With a missing,
-  busy or bootloader-stuck controller the metric still starts, the response
-  stays HTTP 200 and `motor.enabled=false`/`motor.status` show the reason;
-  `blocked`/409/502 remain only for pure motor requests and `af=1|fine`
-  (those still require the armed driver). Verified on the bench 2026-11-07:
-  `POST /api/focus?enable=1` without `motor` → `status=running`, `enable=0` →
-  `idle`. Status: **closed (2026-11-07)**.
-
-- **KI-044. ePTZ: crop/rotation are applied when a channel starts (closed).**
-  Measurements on 2026-11-07: enabling a channel resets `SetChnCrop` and
-  `SetChnRotation` — a call before `RK_MPI_VPSS_EnableChn` returns `0` but
-  leaves the picture unchanged, while a call right after `EnableChn` works (a
-  960x540 crop: mean|diff| 4.26 to the centre of the 1x frame versus 53.85 to
-  the full frame). `rk_channel_bind()` therefore applies the stored settings
-  after `EnableChn`, and a runtime zoom/rotation change is only stored and
-  applied by a graceful application restart (`app_config_save` + SIGHUP, the
-  `/api/substream` pattern; the response carries `applied:false` and a `note`).
-  Repeating the same request does not restart again, and a request during an
-  AF/`home`/`zero`/flash job is refused with `409`. After a crop change a plain
-  MP4 restart is still unreliable (no frames) — a bench limitation worked
-  around by the application restart. The Live preview may show `/mjpeg` or
-  `/image.jpg`, where the main crop has no effect.
-  Status: **closed (2026-11-07)**.
 
 - **KI-045. Rootfs ABI change: OpenSSL 3 (Python 3.14 removed).**
   After the Buildroot 2026.08.1 migration the rootfs no longer ships
@@ -1330,3 +937,23 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   it. Without root: `apt-get download libasound2t64`, unpack with `dpkg-deb -x`
   and set `LD_LIBRARY_PATH` (see `bench/README.md`).
   Status: **host environment**.
+
+### Closed entries archive
+
+A compact list of closed problems; live residuals are named inside the entry,
+and numbers are never reused.
+
+- KI-021. `motor.ko` was removed from the fork: the 28BYJ-48 driver was unused; focus/zoom is driven by the STM8 over I2C. — closed (2026-11-07).
+- KI-023. `IMAGE/` held an outdated RV1103 Pico Mini artifact, removed on 2026-11-08; flash `output/image/update.img`. — closed (2026-11-08).
+- KI-036. STM32 update through the WebUI: the installed MCU is CBT6 (128 KiB), images are built with `-DMCU=CBT6`, and the CLI/WebUI/rollback plus 9/9 negative checks passed. — closed (2026-11-06).
+- KI-043. Enabling the AF metric no longer depends on the STM8: the server applies the parameters before arming the motor and `motor.status` reports the cause. — closed (2026-11-07).
+- KI-044. ePTZ: crop/rotation are applied after `RK_MPI_VPSS_EnableChn`; a change on a live channel goes through SIGHUP (`applied:false` + `note`). — closed (2026-11-07).
+- KI-049. WebUI OTA passed on the bench: the `.okp` was built, applied by U-Boot `sd_update`, and the version matched 0.3.0. — closed (2026-11-10).
+- KI-050. The `feature/slim-image` branch was merged into `main` (0.3.0). — closed (2026-11-14); the merge gate passed on 2026-11-09–10.
+- KI-055. `usb0` in `otg` mode: `S99usb0config` detects the role through `/sys/class/extcon/*/state`; not applicable in host mode. — closed (2026-11-10).
+- KI-056. The legacy `g_mass_storage` driver broke the gadget: the symbol is off in `rv1106-usb-host.config` and the gadget uses configfs. — closed (2026-11-10).
+- KI-061. The STM32 EC held SCL when the RV1106 rebooted: `I2C1SEL=10` (HSIKER), `TIMEOUTR` ~10 ms, a bus watchdog and `i2c_pause()`; 40 reboots with no repeat. — fixed (2026-11-13); residual: the full 300-reboot soak was not run (40/300).
+- KI-063. IVS boxes on the 2BPP region (handle 13): the region is created once per process, the hard block is removed, and `ivs.boxes_mode: restart` is the default. — closed (2026-11-15); residual: `boxes_mode: live` is opt-in without a 200-cycle soak; the current source is `FEATURES_UNVERIFIED.md` (the "IVS boxes: live switching" row), and no separate open entry is filed.
+- KI-065. IVS: false events without motion — `ivs.min_area` (percent of the frame) and `area`/`cause` in the event were added, and the MD buffer leak was fixed. — fixed (2026-11-15); residual: OD is unverified and covered by KI-015.
+- KI-066. Kernel panic `rga2_reg: irq handler err` when IVS starts right after YOLO stops: not reproducible after IVS moved to VI chn2. — closed (2026-11-15); regression-watch: the entry stays in the archive and is not reproducible on VI chn2.
+- KI-069. A SIGHUP restart leaked descriptors and CMA: before `execvp()` every descriptor from 3 is marked `FD_CLOEXEC`, and 20 restarts show no fd growth. — closed (2026-11-15).

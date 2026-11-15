@@ -55,16 +55,16 @@
   (`S50usbdevice`/`S99usb0config` выходят по `dr_mode`). HID, USB-сеть и
   BT-донгл не подключались, VBUS — KI-054, gadget недоступен — KI-057.
 
-- **Бюджет каналов VPSS — 4.** Без IVS доступны main + sub + MJPEG + JPEG; с
-  включённым IVS свободных каналов меньше. Проверено 2026-11-05: IVS + MJPEG
-  (субпоток выключен) работают вместе; комбинация sub + MJPEG + IVS не
-  проверялась. Неподтверждённые комбинации `gating.c` отклоняет с причиной и
-  подсказкой.
+- **Бюджет каналов VPSS — 4.** `VPSS_MAX_CHN_NUM == 4`: без IVS доступны
+  main + sub + MJPEG + JPEG. IVS работает на VI chn2, но аллокатор
+  по-прежнему резервирует chn3 — KI-070; прежние прогоны IVS + MJPEG
+  (2026-11-05) относятся к старой топологии. Комбинации с неподтверждённой
+  топологией `gating.c` отклоняет с причиной и подсказкой.
 - **YOLO.** `source: vpss3` занимает последний VPSS-канал и потому несовместим
-  с IVS/MJPEG/четвёртым потоком — санитайзер переводит на `vi0`. Точность mAP на
-  валидационном наборе не измерена; для другой модели подбирать
-  `conf_threshold`. Основная функция YOLO подтверждена — см.
-  `FEATURES_VERIFIED.md`.
+  с MJPEG/четвёртым потоком — санитайзер переводит на `vi0` (рамки на `vi0`
+  пересоздаются — KI-068). Точность mAP на валидационном наборе не измерена;
+  для другой модели подбирать `conf_threshold`. Основная функция YOLO
+  подтверждена — см. `FEATURES_VERIFIED.md`.
 - **AIISP.** Ночная точность шумоподавки не измерялась. Совместная работа AIISP
   и YOLO на `vpss3` проверена на стенде (демо 640×640: main 30–33 fps, NPU 28%,
   без пропусков). Модель `.rknn` собрана и активирована, матрица C1–C4 в
@@ -172,15 +172,16 @@ Status as of 2026-11-15.
   (`S50usbdevice`/`S99usb0config` exit on `dr_mode`). HID, USB networking and a
   BT dongle were not attached; VBUS - KI-054, no gadget - KI-057.
 
-- **VPSS channel budget is 4.** Without IVS, main + sub + MJPEG + JPEG are
-  available; with IVS there are fewer free channels. On 2026-11-05, IVS + MJPEG
-  worked with the sub stream off; sub + MJPEG + IVS was not tested. Unsupported
-  combinations are refused by `gating.c` with a reason and a hint.
+- **VPSS channel budget is 4.** `VPSS_MAX_CHN_NUM == 4`: without IVS, main +
+  sub + MJPEG + JPEG are available. IVS runs on VI chn2, but the allocator
+  still reserves chn3 — KI-070; the earlier IVS + MJPEG runs (2026-11-05)
+  belong to the old topology. Combinations with an unverified topology are
+  refused by `gating.c` with a reason and a hint.
 - **YOLO.** `source: vpss3` takes the last VPSS channel and is therefore
-  incompatible with IVS/MJPEG/a fourth stream, so the sanitizer falls back to
-  `vi0`. mAP on a validation set is not measured; tune `conf_threshold` for a
-  different model. The main YOLO feature is confirmed — see
-  `FEATURES_VERIFIED.md`.
+  incompatible with MJPEG/a fourth stream, so the sanitizer falls back to
+  `vi0` (boxes on `vi0` are rebuilt — KI-068). mAP on a validation set is not
+  measured; tune `conf_threshold` for a different model. The main YOLO feature
+  is confirmed — see `FEATURES_VERIFIED.md`.
 - **AIISP.** Night denoise accuracy is not measured. AIISP and YOLO on `vpss3`
   were verified together on the bench (640×640 demo: main 30–33 fps, NPU 28%,
   no drops). The `.rknn` model is built and active and the C1–C4 matrix was run

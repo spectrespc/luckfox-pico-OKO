@@ -328,7 +328,8 @@ I2C, `enter-boot`/`info`/`boot-reset` и обновление `app-2.1.1.ihx` ч
 приложение стартует после power-cycle. STM32 (CBT6): реальная прошивка
 проверена — WebUI `app-1.0.1.bin` → `/api/firmware` `1.0.1`, rollback
 `app-1.0.0.bin` → `1.0.0` (точечно), `img_size=2324`, `flags=0`, телеметрия
-и reboot. Открытые пункты — `KNOWN_ISSUES.md` (KI-032…035) и
+и reboot. Открытые пункты — `KNOWN_ISSUES.md`
+(`KI-032`, `KI-033`, `KI-034`, `KI-042`, `KI-062`) и
 `FEATURES_UNVERIFIED.md`.
 
 ## Документация проекта

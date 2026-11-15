@@ -222,6 +222,20 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   outgoing frame/clip API and the `services/events` endpoints; the "Event clips"
   card drives `enable`/`pre_seconds`/`post_seconds`/`max_bytes` through the
   extended `POST /api/clip` and shows delivery counters.
+- **`KI-070` — устаревший учёт VPSS-канала 3 после переноса IVS на VI chn2.**
+  `gating.c:116` отказывает IVS при занятом chn3, `media.c:462-467` резервирует
+  chn3 при `ivs.enable`, а при полном пуле `take_next_free_channel()`
+  возвращает −1, и `media.c:750-754`/`jpeg.c:24-29` не выходят, а пишут в
+  `chnState[-1]`. IVS при этом работает на VI chn2 (`rk_hal.c:2082`), поэтому
+  резерв и гейт относятся к старой топологии. Обход — не включать все четыре
+  VENC-потока вместе с IVS; лечение — правка кода отдельной задачей.
+- **`KI-070` — stale VPSS channel 3 accounting after IVS moved to VI chn2.**
+  `gating.c:116` refuses IVS when chn3 is taken, `media.c:462-467` reserves chn3
+  with `ivs.enable`, and with a full pool `take_next_free_channel()` returns −1
+  while `media.c:750-754`/`jpeg.c:24-29` do not bail out and write to
+  `chnState[-1]`. IVS itself runs on VI chn2 (`rk_hal.c:2082`), so the
+  reservation and the gate follow the old topology. Workaround: do not run all
+  four VENC streams together with IVS; the fix is a separate code change.
 
 ### Исправлено
 
@@ -391,6 +405,30 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   `TESTBENCH.md §8` now document logging in to `192.168.52.17` and downloading
   `uar0.log` via `/sd/download`; the log is kept in `output/bench/`, the cookie
   is the session-scoped `/tmp/c`.
+- **Чистка устаревших утверждений в документации.** `KNOWN_ISSUES.md`:
+  14 закрытых записей (KI-021, KI-023, KI-036, KI-043, KI-044, KI-049, KI-050,
+  KI-055, KI-056, KI-061, KI-063, KI-065, KI-066, KI-069) перенесены в
+  компактный архив в конце RU/EN-секций с сохранением остатков; KI-002/010/015
+  переформулированы, KI-001 получил актуальный обход, заведена KI-070, даты
+  шапок RU/EN синхронизированы (2026-11-15). `FEATURES_VERIFIED.md` и
+  `FEATURES_UNVERIFIED.md`: рамки на main-потоке, `vpss3` конфликтует только с
+  MJPEG/четвёртым потоком (KI-068), бюджет VPSS и `vi0`-совет приведены к
+  текущей топологии. `project/app/divinus/README.md` (раздел «Каналы»),
+  `source/doc/README.md` (аддендум к G7/G11 и «Channel budget»),
+  `README_RU.md` (актуальный список открытых записей темы STM8/STM32),
+  `STRUCTURE.md` (в списке корневых файлов появился `TO_DO.md`).
+- **Stale claims removed from the docs.** `KNOWN_ISSUES.md`: 14 closed entries
+  (KI-021, KI-023, KI-036, KI-043, KI-044, KI-049, KI-050, KI-055, KI-056,
+  KI-061, KI-063, KI-065, KI-066, KI-069) moved to a compact archive at the end
+  of the RU/EN sections with their residuals; KI-002/010/015 reworded, KI-001
+  gained the current workaround, KI-070 filed, and the RU/EN header dates
+  synchronised (2026-11-15). `FEATURES_VERIFIED.md` and
+  `FEATURES_UNVERIFIED.md`: boxes on the main stream, `vpss3` conflicting only
+  with MJPEG/a fourth stream (KI-068), and the VPSS budget/`vi0` advice brought
+  to the current topology. `project/app/divinus/README.md` (the "Channels"
+  section), `source/doc/README.md` (an addendum to G7/G11 and "Channel budget"),
+  `README_RU.md` (the current list of open STM8/STM32 entries) and
+  `STRUCTURE.md` (the root file list now includes `TO_DO.md`).
 
 ## [0.3.0] — 2026-11-14
 

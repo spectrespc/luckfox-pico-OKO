@@ -79,6 +79,11 @@ VPSS channel with the same index, so divinus reports `chnCount = 4` and
 reserves index 3 for IVS while analytics is enabled.  Enabling IVS with MJPEG
 already running is refused; disable MJPEG first.
 
+> **2026-11-15 addendum.** IVS was moved to VI chn2 (KI-065). The G7/G11 rows
+> and the channel budget above describe the topology at the time they were
+> checked; the allocator still reserves chn3 and the `-1` return of
+> `take_next_free_channel()` is not handled — KI-070.
+
 ## Enabling
 
 * ePTZ: `POST /api/eptz?enable=true&zoom=2` or `eptz.*` in the configuration.
