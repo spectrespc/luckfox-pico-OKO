@@ -252,6 +252,13 @@ struct AppConfig {
     unsigned int event_clip_pre_seconds;
     unsigned int event_clip_post_seconds;
     unsigned long long event_clip_max_bytes;
+
+    // [sleep] — OKO camera sleep (deep suspend + PMU timeout wake)
+    bool sleep_enable;
+    unsigned int sleep_idle_timeout_s;
+    unsigned int sleep_wake_interval_s;
+    unsigned int sleep_wake_check_s;
+    unsigned int sleep_pmu_timeout_hz;  /* PMU timeout ticks per second (32) */
 };
 
 extern struct AppConfig app_config;

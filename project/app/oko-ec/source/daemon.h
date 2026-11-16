@@ -9,7 +9,8 @@
 #define SNAP_EC 1u
 #define SNAP_INA 2u
 #define SNAP_SHT 4u
-#define SNAP_ALL (SNAP_EC | SNAP_INA | SNAP_SHT)
+#define SNAP_POWER 8u
+#define SNAP_ALL (SNAP_EC | SNAP_INA | SNAP_SHT | SNAP_POWER)
 
 struct oko_snapshot
 {
@@ -32,6 +33,20 @@ struct oko_snapshot
         uint8_t status;
         uint16_t cells[3];
     } ec;
+
+    /* Ответ GET_POWER (протокол v3); ok=0 у прошивок без v3. */
+    struct
+    {
+        int ok;
+        uint8_t host_state;
+        uint8_t flags;
+        uint8_t power_request;
+        uint8_t last_event;
+        uint8_t event_count;
+        uint8_t reset_cause;
+        uint8_t last_wake_src;
+        uint8_t wake_count;
+    } power;
 
     struct
     {

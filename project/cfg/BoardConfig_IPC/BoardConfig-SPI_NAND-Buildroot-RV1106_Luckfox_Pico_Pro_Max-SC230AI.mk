@@ -90,7 +90,10 @@ export RK_KERNEL_DEFCONFIG=luckfox_rv1106_linux_defconfig
 # The usb-host fragment enables HID / USB-net / Bluetooth built-ins that the
 # shared vendor defconfig disables; the DTS runs the port in dual-role "otg"
 # mode, so these classes are only reachable through a hub in host role.
-export RK_KERNEL_DEFCONFIG_FRAGMENT="rv1106-netboot.config rv1106-sc230ai.config rv1106-usb-host.config"
+# The pmu-timeout fragment enables CONFIG_SUSPEND plus the RV1106 PMU wakeup
+# timer, which the divinus sleep policy ([sleep] section) uses for the
+# idle camera sleep: the AP suspends and the PMU timer wakes it periodically.
+export RK_KERNEL_DEFCONFIG_FRAGMENT="rv1106-netboot.config rv1106-sc230ai.config rv1106-usb-host.config rv1106-pmu-timeout.config"
 
 # Config sensor IQ files
 # RK_CAMERA_SENSOR_IQFILES format:

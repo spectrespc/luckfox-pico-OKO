@@ -14,6 +14,7 @@
 #include "http_post.h"
 #include "jpeg.h"
 #include "record.h"
+#include "sleep_policy.h"
 
 #define IVS_EVENT_RING 16
 #define IVS_TRIGGER_COOLDOWN 5
@@ -432,6 +433,9 @@ static void *ivs_thread(void *arg)
                     ivs_boxes_render(&result);
                 }
                 ivs_record_event(now, &result, area, cause);
+                /* Accepted motion (min_area already applied) postpones the
+                 * [sleep] idle timer. */
+                sleep_policy_report_motion();
             }
             rk_ivs_release_results();
         } else {

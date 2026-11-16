@@ -16,6 +16,7 @@
  *   oko-ec [опции] status
  *   oko-ec [опции] battery|cells|temp
  *   oko-ec [опции] ina226|sht21|sensors
+ *   oko-ec [опции] power [--state awake|suspending|suspended|…]
  *   oko-ec [опции] scan
  *   oko-ec [опции] flash <file.bin> <version>
  *   oko-ec [опции] enter-update
@@ -749,6 +750,145 @@ static int cmd_scan(const struct options *opt)
 }
 
 /* ========================================================================
+ * Питание хоста (протокол v3: CMD_GET_POWER / CMD_SET_POWER)
+ * ======================================================================== */
+
+static int parse_number(const char *text, unsigned long *out);
+
+static const char *host_state_name(uint8_t state)
+{
+    switch (state)
+    {
+    case EC_HOST_OFF:
+        return "off";
+    case EC_HOST_BOOTING:
+        return "booting";
+    case EC_HOST_AWAKE:
+        return "awake";
+    case EC_HOST_SUSPENDING:
+        return "suspending";
+    case EC_HOST_SUSPENDED:
+        return "suspended";
+    case EC_HOST_SHUTTING_DOWN:
+        return "shutting-down";
+    case EC_HOST_REBOOTING:
+        return "rebooting";
+    case EC_HOST_ERROR:
+        return "error";
+    default:
+        return "unknown";
+    }
+}
+
+static const char *wake_src_name(uint8_t src)
+{
+    switch (src)
+    {
+    case EC_WAKE_NONE:
+        return "none";
+    case EC_WAKE_BUTTON:
+        return "button";
+    case EC_WAKE_I2C:
+        return "i2c";
+    case EC_WAKE_LPTIM:
+        return "lptim";
+    case EC_WAKE_RESET:
+        return "reset";
+    default:
+        return "unknown";
+    }
+}
+
+/* "awake"…"error", "3", "0x03" → host_state; -1 — неизвестное значение. */
+static int parse_host_state(const char *text, unsigned long *out)
+{
+    static const char *const names[] = {"off",         "booting", "awake",
+                                        "suspending",  "suspended",
+                                        "shutting-down", "rebooting", "error"};
+    for (unsigned i = 0; i < sizeof(names) / sizeof(names[0]); i++)
+    {
+        if (strcmp(text, names[i]) == 0)
+        {
+            *out = i;
+            return 0;
+        }
+    }
+
+    unsigned long value;
+    if (parse_number(text, &value) != 0 || value > EC_HOST_ERROR)
+    {
+        return -1;
+    }
+    *out = value;
+    return 0;
+}
+
+static int cmd_power(int fd, const struct options *opt, const char *state_text)
+{
+    if (state_text)
+    {
+        unsigned long state;
+        if (parse_host_state(state_text, &state) != 0)
+        {
+            fprintf(stderr, "oko-ec: invalid host state %s\n", state_text);
+            return -1;
+        }
+        if (ec_set_power(fd, (uint8_t)state, ec_delay(opt), ec_retries(opt)) < 0)
+        {
+            return -1;
+        }
+    }
+
+    struct ec_power power;
+    if (ec_get_power(fd, &power, ec_delay(opt), ec_retries(opt)) < 0)
+    {
+        return -1;
+    }
+
+    if (opt->json)
+    {
+        printf("{\"ok\":1,\"power\":{\"host_state\":%u,\"flags\":%u,"
+               "\"power_request\":%u,\"last_event\":%u,\"event_count\":%u,"
+               "\"reset_cause\":%u,\"last_wake_src\":%u,\"wake_count\":%u}}\n",
+               (unsigned)power.host_state, (unsigned)power.flags,
+               (unsigned)power.power_request, (unsigned)power.last_event,
+               (unsigned)power.event_count, (unsigned)power.reset_cause,
+               (unsigned)power.last_wake_src, (unsigned)power.wake_count);
+        return 0;
+    }
+
+    if (opt->quiet)
+    {
+        printf("%u %u %u %u %u %u %u %u\n", (unsigned)power.host_state,
+               (unsigned)power.flags, (unsigned)power.power_request,
+               (unsigned)power.last_event, (unsigned)power.event_count,
+               (unsigned)power.reset_cause, (unsigned)power.last_wake_src,
+               (unsigned)power.wake_count);
+        return 0;
+    }
+
+    printf("host_state    : %u (%s)\n", (unsigned)power.host_state,
+           host_state_name(power.host_state));
+    printf("flags         : 0x%02X (pwr_en: %s, pwr_good: %s, host_state: %s, "
+           "link_lost: %s, boot_fail: %s, lse_ok: %s)\n",
+           (unsigned)power.flags,
+           (power.flags & 0x01) ? "yes" : "no",
+           (power.flags & 0x02) ? "yes" : "no",
+           (power.flags & 0x04) ? "yes" : "no",
+           (power.flags & 0x08) ? "yes" : "no",
+           (power.flags & 0x10) ? "yes" : "no",
+           (power.flags & 0x20) ? "yes" : "no");
+    printf("power_request : %u\n", (unsigned)power.power_request);
+    printf("last_event    : %u\n", (unsigned)power.last_event);
+    printf("event_count   : %u\n", (unsigned)power.event_count);
+    printf("reset_cause   : 0x%02X\n", (unsigned)power.reset_cause);
+    printf("last_wake_src : %u (%s)\n", (unsigned)power.last_wake_src,
+           wake_src_name(power.last_wake_src));
+    printf("wake_count    : %u\n", (unsigned)power.wake_count);
+    return 0;
+}
+
+/* ========================================================================
  * Прошивка EC (OTA)
  * ======================================================================== */
 
@@ -1359,6 +1499,9 @@ static void print_usage(const char *prog)
            "  ina226                     - INA226: bus/shunt/ток/мощность\n"
            "  sht21                      - SHT21: температура и влажность\n"
            "  sensors                    - EC + INA226 + SHT21 одним блоком\n"
+           "  power [--state <s>]        - состояние питания хоста (v3);\n"
+           "                               --state awake|suspending|suspended|…\n"
+           "                               записывает host_state через SET_POWER\n"
            "  scan                       - поиск устройств на шине\n"
            "  flash <file.bin> <version> - прошивка STM32 через загрузчик\n"
            "  enter-update               - перевод прошивки в режим обновления\n"
@@ -1888,6 +2031,35 @@ int main(int argc, char **argv)
     if (fd < 0)
     {
         return 1;
+    }
+
+    if (strcmp(command, "power") == 0)
+    {
+        const char *state_text = NULL;
+        for (int i = index + 1; i < argc; i++)
+        {
+            const char *value = NULL;
+            int matched = option_value(argc, argv, &i, argv[i], "--state", &value);
+            if (matched < 0)
+            {
+                close(fd);
+                return 1;
+            }
+            if (matched > 0)
+            {
+                state_text = value;
+                continue;
+            }
+            fprintf(stderr, "oko-ec: unknown power option %s\n", argv[i]);
+            close(fd);
+            return 1;
+        }
+
+        ec_lock_take(1);
+        int ret = cmd_power(fd, &opt, state_text);
+        ec_lock_release();
+        close(fd);
+        return (ret == 0) ? 0 : 1;
     }
 
     int ret;

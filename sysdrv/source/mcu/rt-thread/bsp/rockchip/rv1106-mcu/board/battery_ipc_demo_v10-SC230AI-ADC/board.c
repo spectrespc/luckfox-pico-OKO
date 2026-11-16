@@ -21,7 +21,7 @@
 const struct camera_board_desc camera_sc230ai[] =
 {
     {
-        .i2c_addr = 0x30,
+        .i2c_addr = 0x32,
         .rst_gpio =
         {
             .gpio_pin = GPIO_PIN_C5,

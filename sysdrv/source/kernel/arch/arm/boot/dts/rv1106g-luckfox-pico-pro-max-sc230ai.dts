@@ -11,7 +11,12 @@
 
 / {
 	model = "Luckfox Pico Pro Max SC230AI";
-	compatible = "rockchip,rv1103g-38x38-ipc-v10", "rockchip,rv1106g3";
+	/* "rockchip,rv1106" makes the kernel pick the ROCKCHIP_DT machine
+	 * descriptor instead of the generic one, which is what registers the
+	 * rv1106 suspend_ops (deep "mem" state).  The board strings stay first
+	 * so every board-specific of_machine_is_compatible() check keeps
+	 * working. */
+	compatible = "rockchip,rv1103g-38x38-ipc-v10", "rockchip,rv1106g3", "rockchip,rv1106";
 };
 
 /**********CRU**********/

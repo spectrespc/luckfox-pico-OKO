@@ -1,6 +1,6 @@
 # Известные ошибки и ограничения OKO
 
-Обновлено: `2026-11-15`. В файле — открытые проблемы, подтверждённые
+Обновлено: `2026-11-16`. В файле — открытые проблемы, подтверждённые
 ограничения и архив закрытых записей (§Архив). Проверенные функции и доказательства — в `VERIFIED_FUNCTIONS.md`,
 состав и статус функционала — в `FEATURES_VERIFIED.md` / `FEATURES_UNVERIFIED.md`,
 процедуры стенда — в `TESTBENCH.md`.
@@ -257,6 +257,21 @@
   вместе с IVS. Статус: **открыто (P2)**; лечение — правка кода отдельной
   задачей.
 
+- **KI-071. SFC/UBIFS: DMA timeout и переход rootfs/userdata в read-only.**
+  2026-11-16 после ~4,5 ч работы и 288 циклов suspend/resume (плюс серия
+  power cycle и один неудачный `echo mem` с `EINVAL`) на стенде появились
+  `rockchip-sfc ffac0000.spi: DMA wait for transfer finish timeout` и
+  `wait sfc idle timeout`, затем `ubi_io_write/read: error -5` на ubi4/ubi5 и
+  `UBIFS: make_reservation ... error -5`; `/` и `/userdata` перешли в `ro`,
+  `sync`/`reboot` отвечали `Input/output error`. Power cycle через ESP32
+  восстановил оба тома (`rw`) и обнулил счётчик ошибок; 1-часовой soak до
+  этого прошёл с 0 ошибок NAND. Причина не разделена: известная деградация
+  SPI NAND (TESTBENCH §8, 2026-11-14), незавершённый resume SFC или
+  сочетание. Обход: power cycle; при повторении — прошивка по TFTP и
+  проверка bad blocks. Статус: **открыто, требует наблюдения**; для `[sleep]`
+  рекомендуется длительный прогон с мониторингом `dmesg | grep -i sfc` после
+  каждого resume.
+
 - **KI-064. `GET /api/update` роняет/подвешивает divinus.**
   2026-11-14: и старая сборка 0.3.0 (`/userdata/divinus.old`), и новая
   отвечают на запрос зависанием: в логе `New request: (GET) /api/update`,
@@ -491,7 +506,7 @@
 
 ## English
 
-Updated: `2026-11-15`. This file lists open problems, confirmed limitations and
+Updated: `2026-11-16`. This file lists open problems, confirmed limitations and
 an archive of closed entries (§Archive).
 Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
 `FEATURES_VERIFIED.md` / `FEATURES_UNVERIFIED.md`, bench procedures in
@@ -735,6 +750,21 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   out-of-bounds write instead of a refusal. Workaround: do not run all four
   VENC streams together with IVS. Status: **open (P2)**; the fix is a separate
   code change.
+
+- **KI-071. SFC/UBIFS: DMA timeout and rootfs/userdata switch to read-only.**
+  On 2026-11-16, after ~4.5 h and 288 suspend/resume cycles (plus a series of
+  power cycles and one failed `echo mem` returning `EINVAL`), the bench showed
+  `rockchip-sfc ffac0000.spi: DMA wait for transfer finish timeout` and
+  `wait sfc idle timeout`, then `ubi_io_write/read: error -5` on ubi4/ubi5 and
+  `UBIFS: make_reservation ... error -5`; `/` and `/userdata` became `ro` and
+  `sync`/`reboot` returned `Input/output error`. A power cycle through the
+  ESP32 restored both volumes (`rw`) and cleared the error counter; the
+  1-hour soak before that had zero NAND errors. The cause is not separated:
+  the known SPI NAND degradation (TESTBENCH §8, 2026-11-14), an incomplete
+  SFC resume or a combination. Workaround: power cycle; on recurrence reflash
+  over TFTP and check bad blocks. Status: **open, needs observation**; for
+  `[sleep]` a longer run with `dmesg | grep -i sfc` after every resume is
+  recommended.
 
 - **KI-064. `GET /api/update` hangs/kills divinus.**
   On 2026-11-14 both the previous 0.3.0 binary (`/userdata/divinus.old`) and

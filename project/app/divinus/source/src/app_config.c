@@ -441,6 +441,13 @@ void app_config_dump(FILE *file) {
     fprintf(file, "  pre_seconds: %d\n", app_config.event_clip_pre_seconds);
     fprintf(file, "  post_seconds: %d\n", app_config.event_clip_post_seconds);
     fprintf(file, "  max_bytes: %llu\n", app_config.event_clip_max_bytes);
+
+    fprintf(file, "sleep:\n");
+    fprintf(file, "  enable: %s\n", app_config.sleep_enable ? "true" : "false");
+    fprintf(file, "  idle_timeout_s: %d\n", app_config.sleep_idle_timeout_s);
+    fprintf(file, "  wake_interval_s: %d\n", app_config.sleep_wake_interval_s);
+    fprintf(file, "  wake_check_s: %d\n", app_config.sleep_wake_check_s);
+    fprintf(file, "  pmu_timeout_hz: %d\n", app_config.sleep_pmu_timeout_hz);
 }
 
 enum ConfigError app_config_parse(void) {
@@ -642,6 +649,14 @@ enum ConfigError app_config_parse(void) {
     app_config.adc_device[0] = 0;
     app_config.night_lamp = HAL_LIGHT_IR;
     app_config.adc_threshold = 128;
+
+    /* [sleep]: off by default; the policy itself refuses to arm when the
+     * kernel has no deep suspend or /dev/mem is unavailable. */
+    app_config.sleep_enable = false;
+    app_config.sleep_idle_timeout_s = 600;
+    app_config.sleep_wake_interval_s = 10;
+    app_config.sleep_wake_check_s = 3;
+    app_config.sleep_pmu_timeout_hz = 32; /* measured on the bench */
 
     struct IniConfig ini;
     memset(&ini, 0, sizeof(struct IniConfig));
@@ -1357,6 +1372,17 @@ enum ConfigError app_config_parse(void) {
         app_config.event_clip_pre_seconds = (unsigned int)pre;
         app_config.event_clip_post_seconds = (unsigned int)post;
     }
+
+    parse_bool(&ini, "sleep", "enable", &app_config.sleep_enable);
+    /* Parsed even while disabled so app_config_save() keeps the tuned values. */
+    parse_int(&ini, "sleep", "idle_timeout_s", 10, 86400,
+        &app_config.sleep_idle_timeout_s);
+    parse_int(&ini, "sleep", "wake_interval_s", 1, 3600,
+        &app_config.sleep_wake_interval_s);
+    parse_int(&ini, "sleep", "wake_check_s", 1, 60,
+        &app_config.sleep_wake_check_s);
+    parse_int(&ini, "sleep", "pmu_timeout_hz", 1, 1000,
+        &app_config.sleep_pmu_timeout_hz);
 
     parse_bool(&ini, "http_post", "enable", &app_config.http_post_enable);
     /* These keys are read even while the sender is disabled: app_config_save()

@@ -8,7 +8,7 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
 
 | Поле | Значение |
 |---|---|
-| Дата обновления | `2026-11-15` |
+| Дата обновления | `2026-11-16` |
 | Ответственный | `<ФИО>` |
 | Статус | активен |
 | Назначение | сборка прошивки и прошивка SPI NAND для отладки IPC |
@@ -146,6 +146,32 @@ bench/run.sh tftp_flash.py --no-reset                 # остаться в U-Bo
 `env`, `idblock` и `uboot` не трогаются (их меняет только полный `update.img`
 через Maskrom, §7A); при обрыве питания во время `mtd write` прошивка
 повторяется тем же способом (U-Boot остаётся доступен по UART).
+
+### 7-TB. Экспериментальная thunder-boot (wakeup-IPC) линия
+
+Отдельная линия для MCU-порта `battery_ipc_demo_v10-SC230AI-ADC`: busybox
+rootfs, разметка `env/idblock/uboot/meta/boot/userdata` (без `oem`/`rootfs`),
+MCU в `idblock` (SPL `Hpmcu`), IQ в разделе `meta`.
+
+1. Переключить активный BoardConfig:
+   `ln -sfn project/cfg/BoardConfig_IPC/BoardConfig-SPI_NAND-Busybox-RV1106_Luckfox_Pico_Pro_Max-SC230AI-IPC_FASTBOOT.mk .BoardConfig.mk`.
+2. `source tools/native/env.sh && ./build.sh` → `output/image/update.img`
+   (~15,6 МБ). Проверить: `grep -ac sc230ai output/image/idblock.img` ≠ 0 и
+   `dumpimage -l output/image/boot.img` (ramdisk ≤ 20 МБ `ramdisk_r`).
+3. **`bench/tftp_flash.py` для этой линии не подходит**: он пишет только
+   продуктовые разделы `boot/oem/userdata/rootfs` и не умеет
+   `idblock/meta`, а TB-таблица несовместима с продуктовой. Прошивка —
+   только полный `update.img` (`upgrade_tool uf`/Maskrom), т.е. по §7A;
+   на стенде USB занят хабом, поэтому сначала нужно решение по доступу
+   (см. §7A и `KNOWN_ISSUES.md`).
+4. Откат: продуктовый `update.img`, собранный до переключения
+   (`output/bench/product-update.img`, 72,6 МБ), ставится тем же
+   полным способом; после загрузки — `bench/run.sh api_check` и `ui_check`.
+5. TB-образ и компоненты текущей сборки сохранены в
+   `output/bench/tb-sc230ai-wakeup/` (gitignore).
+
+Ограничение: запись полного `update.img` пересоздаёт `userdata` и `env`
+(MAC/статический IP — сохранить заранее, §7-D).
 
 ### A. SPI NAND (автономная загрузка)
 
@@ -952,6 +978,54 @@ bench/run.sh rgn_boxes_check.py --mode restart --target ivs --count 20
   `FD_CLOEXEC` перед `execvp()`; в консоли `[main] restart: N descriptor(s)
   closed on exec`. Контроль: `ls /proc/$(pidof divinus)/fd | wc -l` до и
   после серии рестартов должен стоять на 113–116.
+
+### Сон камеры `[sleep]` (deep suspend + PMU timeout) — смоук-тест
+
+Проверено 2026-11-16 на продуктовом образе. Условие: ядро собрано с
+`rv1106-pmu-timeout.config` (продуктовый BoardConfig), в root `compatible`
+DTS есть `rockchip,rv1106`, все `.ko` пересобраны `./build.sh driver`.
+
+1. Убедиться в готовности платформы (иначе политика сама откажется спать):
+   ```sh
+   cat /sys/power/mem_sleep        # должно быть "s2idle [deep]"
+   devmem 0xff3000e0 32            # 0x000007FF после инициализации PMU
+   /oem/usr/bin/oko-ec --json power # proto 3, host_state=2 (awake)
+   ```
+2. Тихое окно: отключить IVS/YOLO в `/userdata/divinus.yaml`
+   (`ivs.enable: false`, `yolo.enable: false`), иначе лабораторная сцена
+   даёт постоянное движение ~1000 ‰ и таймер простоя не истекает.
+3. В `[sleep]` поставить `enable: true`, `idle_timeout_s: 30`,
+   `wake_interval_s: 10`, `wake_check_s: 5`, `pmu_timeout_hz: 32`; SIGHUP
+   divinus (`kill -HUP $(pidof divinus)`).
+4. Наблюдение: `GET /api/status` → `sleep.state/idle_s`. Ожидаемый цикл:
+   30 с `awake` → `suspending` → ~10 с сеть/DUT недоступны (deep suspend) →
+   `probe` ~5 с → снова suspend. На консоли — `[sleep] suspended`,
+   `[sleep] resumed`, `[sleep] wake probe`.
+5. Движение: включить IVS (`ivs.enable: true`) → в окне probe событие выше
+   `ivs.min_area` отменяет сон (`[sleep] motion in the wake window`), поток
+   и RTSP продолжают работать, idle-таймер сбрасывается. Для стенда без
+   реального движения инъектор `POST /api/sleep?motion=1` работает только
+   при запуске divinus с `OKO_BENCH_API=1` (в боевом образе выключен).
+6. После серии циклов: `bench/run.sh api_check.py`, `ui_check.py`,
+   `dmesg | grep -iE "ubi.*err|sfc.*(err|time)"`, `oko-ec sensors` — должны
+   быть без ошибок; `ls /proc/$(pidof divinus)/fd | wc -l` — 113–116.
+7. Откат/выключение: `[sleep] enable: false` + SIGHUP; сон полностью
+   перестаёт вмешиваться, остальные подсистемы не меняются.
+8. Калибровка: PMU timeout считает **32 тика в секунду** (вендорский
+   `rkadk_aov.c`: `io -4 0xff300048 seconds*32`). Значение 320 = ~10 с;
+   при замене `pmu_timeout_hz` замерять фактический период по логу
+   `[sleep] suspending ... (N s)` и возврату сети.
+
+Не держать активный CSI/ISP-пайплайн через `echo mem`: на этой плате resume
+даёт шторм `mipi-csi2-hw ERR1:0x10` и AP зависает. Политика сама разбирает
+пайплайн перед сном и перезапускает divinus после wake.
+
+После длинной серии циклов (2026-11-16: ~4,5 ч, 288 циклов + серия power
+cycle и один неудачный `echo mem`) наблюдался `rockchip-sfc ... DMA wait for
+transfer finish timeout`, затем `UBIFS ... error -5` и перевод `/` и
+`/userdata` в `ro` (KI-071). Power cycle через ESP32 восстановил оба тома.
+При длительных прогонах сна проверять `dmesg | grep -i sfc` после каждого
+resume и держать резервный `output/image/update.img` для TFTP.
 
 ## 9. Известные особенности
 

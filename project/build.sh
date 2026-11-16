@@ -2545,7 +2545,9 @@ function __RUN_POST_CLEAN_FILES() {
 	# warning, so another board config still packs.
 	local _oko_prune_list _oko_line _oko_rel _oko_base _oko_match _oko_hit
 	_oko_prune_list="$(dirname "$(realpath "$BOARD_CONFIG")")/oko-prune.list"
-	if [ -f "$_oko_prune_list" ]; then
+	# Experimental lines (thunder-boot wakeup IPC) keep vendor binaries that
+	# the product prune list removes, e.g. rkipc and its ini files.
+	if [ -f "$_oko_prune_list" ] && [ "$RK_SKIP_OKO_PRUNE" != "y" ]; then
 		echo "OKO prune list: $_oko_prune_list"
 		while IFS= read -r _oko_line || [ -n "$_oko_line" ]; do
 			_oko_rel=$(printf '%s\n' "$_oko_line" |

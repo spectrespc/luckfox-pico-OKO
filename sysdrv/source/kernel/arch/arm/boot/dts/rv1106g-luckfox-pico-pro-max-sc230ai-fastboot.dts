@@ -1,0 +1,195 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * OKO: Luckfox Pico Pro Max with SC230AI, thunder-boot ("fastboot") variant.
+ *
+ * Derived from the product board description
+ * (rv1106g-luckfox-pico-pro-max-sc230ai.dts) plus the vendor thunder-boot
+ * additions from rv1106g-luckfox-pico-pro-max-fastboot.dts.  The vendor
+ * fastboot DTS is based on rv1106g-evb2-v10.dts, whose camera sits on i2c4
+ * address 0x30 (SC3338); this board has the SC230AI on the same i2c4 m2 bus
+ * at address 0x32, so the sensor description comes from the product DTS.
+ *
+ * DDR map (must match the MCU firmware, see
+ * bsp/rockchip/rv1106-mcu/board/battery_ipc_demo_v10-SC230AI-ADC/defconfig):
+ *   0x00040000  rtthread.bin (Hpmcu, loaded by SPL from idblock)
+ *   0x0007c000  mcu log / pstore
+ *   0x00800000  meta (IQ bin, sensor init, app params)
+ *   0x00860000  ISP thunder-boot raw buffer
+ */
+
+/dts-v1/;
+
+#include "rv1106.dtsi"
+#include "rv1106-evb.dtsi"
+#include "rv1106-luckfox-pico-pro-max-ipc.dtsi"
+#include "rv1106-thunder-boot-spi-nor.dtsi"
+
+/ {
+	model = "Luckfox Pico Pro Max SC230AI (thunder boot)";
+	compatible = "rockchip,rv1103g-38x38-ipc-v10", "rockchip,rv1106g3";
+
+	chosen {
+		bootargs = "loglevel=0 rootfstype=erofs rootflags=dax console=ttyFIQ0 root=/dev/rd0 snd_soc_core.prealloc_buffer_size_kbytes=16 coherent_pool=0 driver_async_probe=dwmmc_rockchip";
+	};
+
+	leds: leds {
+		compatible = "gpio-leds";
+		work_led: work {
+			gpios = <&gpio3 RK_PC6 GPIO_ACTIVE_HIGH>;
+			linux,default-trigger = "activity";
+			default-state = "on";
+		};
+	};
+};
+
+/**********FLASH**********/
+&sfc {
+	status = "okay";
+
+	flash@0 {
+		compatible = "spi-nand";
+		reg = <0>;
+		spi-max-frequency = <75000000>;
+		spi-rx-bus-width = <4>;
+		spi-tx-bus-width = <1>;
+	};
+};
+
+/**********SDMMC**********/
+&sdmmc {
+	max-freqency = <50000000>;
+	no-mmc;
+	bus-width = <4>;
+	cap-mmc-highspeed;
+	cap-sd-highspeed;
+	disable-wp;
+	no-1-8-v;
+
+	pinctrl-names = "default";
+	pinctrl-0 = <&sdmmc0_clk &sdmmc0_cmd &sdmmc0_det &sdmmc0_bus4>;
+	status = "okay";
+};
+
+/**********ETH**********/
+&gmac {
+	status = "okay";
+};
+
+/**********USB**********/
+&u2phy {
+	status = "okay";
+};
+
+&u2phy_otg {
+	rockchip,dis-u2-susphy;
+	status = "okay";
+};
+
+&usbdrd {
+	status = "okay";
+};
+
+&usbdrd_dwc3 {
+	status = "okay";
+	/* Same as the product image: the bench hub needs host mode.  The
+	 * thunder-boot rootfs does not start any gadget. */
+	dr_mode = "host";
+};
+
+/**********SPI**********/
+&spi0 {
+	status = "disabled";
+
+	spidev@0 {
+		spi-max-frequency = <50000000>;
+	};
+
+	fbtft@0 {
+		spi-max-frequency = <50000000>;
+	};
+};
+
+/**********I2C**********/
+/* I2C3_M1: bench EC/SHT21/INA3221 bus (not the camera). */
+&i2c3 {
+	status = "okay";
+	clock-frequency = <100000>;
+	pinctrl-0 = <&i2c3m1_xfer>;
+};
+
+/* I2C4_M2: camera bus.  "rockchip,amp-shared" lets the Linux i2c driver
+ * take the bus back from the MCU after the thunder-boot handshake. */
+&i2c4 {
+	rockchip,amp-shared;
+};
+
+&i2c1 {
+	status = "disabled";
+	clock-frequency = <100000>;
+};
+
+/**********UART**********/
+/* UART3_M1 */
+&uart3 {
+	status = "disabled";
+};
+
+/* UART4_M1 */
+&uart4 {
+	status = "disabled";
+};
+
+&fiq_debugger {
+	rockchip,baudrate = <115200>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart2m1_xfer>;
+};
+
+/**********RTC**********/
+&rtc {
+	status = "okay";
+};
+
+/**********CAMERA SENSORS**********/
+/* Only the SC230AI is populated on this board variant. */
+&sc3336 {
+	status = "disabled";
+};
+
+&mis5001 {
+	status = "disabled";
+};
+
+/**********THUNDER BOOT**********/
+&emmc {
+	status = "disabled";
+};
+
+/* CIF writes the raw frames into the reserved MCU buffer during handoff.
+ * The region below is sized for the Linux-side 1920x1080 raw10 capture:
+ * ceil(1920 * 10 / 8 / 256) * 256 * 1080 * 4 = 0xa8c000, rounded up to
+ * 0xf30000 like the vendor fastboot DTS.  The MCU itself only needs
+ * 0x600000 for its 640x480 fast-AE stage (CONFIG_RT_USING_ISP_DDR_SIZE). */
+&rkcif_mipi_lvds {
+	memory-region-thunderboot = <&rkisp_thunderboot>;
+};
+
+&rkisp_thunderboot {
+	/* reg's offset MUST match with RTOS */
+	reg = <0x00860000 0xf30000>;
+};
+
+&ramdisk_r {
+	reg = <0x1790000 (20 * 0x00100000)>;
+};
+
+&ramdisk_c {
+	reg = <0x2b90000 (16 * 0x00100000)>;
+};
+
+&thunder_boot_service {
+	status = "okay";
+};
+
+/* The vendor dtsi lists the I2C4 clocks here; the SC230AI lives on the same
+ * bus, so no override is needed. */

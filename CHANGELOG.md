@@ -26,6 +26,139 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Добавлено
 
+- **divinus: политика сна камеры `[sleep]` (Д2).** Новый модуль
+  `sleep_policy.{c,h}`: после `idle_timeout_s` без движения (хуки IVS с
+  `min_area` и YOLO-детекций) дивинус штатно разбирает пайплайн, пишет
+  `host_state=SUSPENDING` в EC, программирует `PMU_WAKEUP_TIMEOUT_CNT`
+  (`0xff300048`, 32 тика/с) и уходит в deep suspend. После PMU-wake процесс
+  перезапускается через существующий SIGHUP-путь (`execvp`, `FD_CLOEXEC`) с
+  `OKO_SLEEP_WAKE=1`; новый экземпляр в течение `wake_check_s` ждёт движение,
+  при активности остаётся в обычном режиме, иначе засыпает снова. Секция
+  `[sleep]` (`enable`, `idle_timeout_s=600`, `wake_interval_s=10`,
+  `wake_check_s=5`, `pmu_timeout_hz=32`) добавлена в `app_config` и
+  `divinus.yaml`; `/api/status` получил поле `sleep`, причина пробуждения
+  переживает exec в `/tmp/oko-sleep-wake`. Политика сама отключается, если
+  ядро не предлагает deep suspend или нет `/dev/mem`. Стенд 2026-11-16:
+  циклы idle→suspend→probe→suspend, два `idle_timeout_s=600`, 1-часовой
+  soak (288 циклов, pid не менялся, NAND 0 ошибок, память 33→35 МБ, поток
+  26–30 fps), после soak `api_check` 133/0, `ui_check` зелёный,
+  поток/IVS/rga2/npu/EC живы.
+- **divinus: `[sleep]` camera sleep policy (Д2).** New `sleep_policy.{c,h}`:
+  after `idle_timeout_s` without motion (IVS `min_area` and YOLO detection
+  hooks) divinus tears the pipeline down, writes `host_state=SUSPENDING` to
+  the EC, programs `PMU_WAKEUP_TIMEOUT_CNT` (`0xff300048`, 32 ticks/s) and
+  enters deep suspend. After the PMU wake the process restarts through the
+  existing SIGHUP path (`execvp`, `FD_CLOEXEC`) with `OKO_SLEEP_WAKE=1`; the
+  new instance waits `wake_check_s` for motion, stays awake on activity and
+  suspends again when the window is quiet. The `[sleep]` section (`enable`,
+  `idle_timeout_s=600`, `wake_interval_s=10`, `wake_check_s=5`,
+  `pmu_timeout_hz=32`) is part of `app_config` and `divinus.yaml`;
+  `/api/status` gained the `sleep` field, and the wake source survives the
+  exec in `/tmp/oko-sleep-wake`. The policy disables itself when the kernel
+  has no deep suspend or `/dev/mem` is missing. Bench 2026-11-16:
+  idle→suspend→probe→suspend cycles, two `idle_timeout_s=600` runs and a
+  1-hour soak (288 cycles, PID unchanged, zero NAND errors, memory
+  33→35 MB, 26–30 fps stream); after the soak `api_check` is 133/0 and
+  `ui_check` passes, the stream, IVS, rga2/npu and the EC are alive.
+- **oko-ec: протокол v3 — `power` (SET_POWER/GET_POWER) и честный
+  `host_state`.** `ec_proto` получил `EC_CMD_GET_POWER 0x20` /
+  `EC_CMD_SET_POWER 0x21`, структуру `ec_power` и функции
+  `ec_get_power()/ec_set_power()`; CLI — `oko-ec power [--state NAME]`
+  (`awake`, `suspending`, `suspended`, …) с JSON/quiet-выводом, демон пишет
+  `AWAKE` при старте, кладёт блок `power` (host_state, flags, power_request,
+  last_event, event_count, reset_cause, last_wake_src, wake_count) в
+  `/tmp/oko-ec.json` и логирует смену `last_wake_src/wake_count`. На стенде
+  прошивка STM32 отвечает `proto=3`; `last_wake_src` — источник пробуждения
+  самого EC (после I2C-обмена обычно 2), а не AP, поэтому PMU-timer и кнопку
+  по нему не различить (зафиксировано в TESTBENCH §8).
+- **oko-ec: protocol v3 `power` (SET_POWER/GET_POWER) and a real
+  `host_state`.** `ec_proto` gained `EC_CMD_GET_POWER 0x20` /
+  `EC_CMD_SET_POWER 0x21`, the `ec_power` structure and
+  `ec_get_power()/ec_set_power()`; the CLI is `oko-ec power [--state NAME]`
+  (`awake`, `suspending`, `suspended`, …) with JSON/quiet output. The daemon
+  writes `AWAKE` on start, adds the `power` block (host_state, flags,
+  power_request, last_event, event_count, reset_cause, last_wake_src,
+  wake_count) to `/tmp/oko-ec.json` and logs `last_wake_src/wake_count`
+  changes. The STM32 firmware reports `proto=3` on the bench;
+  `last_wake_src` is the EC's own wake source (usually 2 after I2C traffic),
+  not the AP's, so the PMU timer and the button cannot be told apart by it
+  (noted in TESTBENCH §8).
+- **Продуктовый образ: deep-suspend и PMU timeout wake (гейт Д1 плана сна
+  камеры).** Фрагмент `rv1106-pmu-timeout.config` добавлен в продуктовый
+  `BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI.mk`
+  (`CONFIG_SUSPEND`, `CONFIG_PM_SLEEP`, `CONFIG_PM_WAKELOCKS`,
+  `CONFIG_ROCKCHIP_SUSPEND_MODE`, `CONFIG_RV1106_PMU_WAKEUP_TIMEOUT`,
+  `CONFIG_DEVMEM`). Проверено на стенде: `echo mem` входит в **deep**, а не
+  `s2idle`; PMU-timeout (`0xff300048`) будит AP и ядро возвращается в шелл,
+  сеть/eth0, SoftAP `wlan0`, rga2/npu, I2C3 (`oko-ec sensors` — EC, INA3221,
+  SHT21) и UBIFS/SFC после resume живые. Три обязательных условия, найденных
+  на стенде: (1) в root `compatible` продукта добавлен `rockchip,rv1106`, иначе
+  ядро выбирает generic машинный дескриптор и `rv1106_suspend_ops` вообще не
+  регистрируются (`/sys/power/mem_sleep` = только `[s2idle]`); (2) после
+  включения `CONFIG_PM_SLEEP` все внешние `.ko` обязаны быть пересобраны
+  (`./build.sh driver`) — старые модули вешают загрузку на `video_rkisp`;
+  (3) PMU timeout считает **32 тика в секунду** (вендорский
+  `rkadk_aov.c`: `io -4 0xff300048 seconds*32`), а не 32 кГц: 320 = 10 с.
+  С активным CSI/ISP-пайплайном resume даёт шторм `mipi-csi2-hw ERR1:0x10`
+  и AP фактически зависает, поэтому перед suspend пайплайн надо остановить,
+  а после wake — поднять заново (перезапуск divinus проверен: поток, IVS и
+  RTSP восстанавливаются). Решение Д1: классический mem-suspend с остановкой
+  и повторным стартом пайплайна, без fallback-цепочек.
+- **Product image: deep suspend and PMU timeout wake (plan gate Д1).** The
+  `rv1106-pmu-timeout.config` fragment is now part of the product
+  `BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI.mk`
+  (`CONFIG_SUSPEND`, `CONFIG_PM_SLEEP`, `CONFIG_PM_WAKELOCKS`,
+  `CONFIG_ROCKCHIP_SUSPEND_MODE`, `CONFIG_RV1106_PMU_WAKEUP_TIMEOUT`,
+  `CONFIG_DEVMEM`). Bench result: `echo mem` enters **deep**, not `s2idle`;
+  the PMU timeout (`0xff300048`) wakes the AP and the kernel returns to a
+  shell with eth0, the `wlan0` SoftAP, rga2/npu, I2C3 (`oko-ec sensors` — EC,
+  INA3221, SHT21) and UBIFS/SFC alive after resume. Three hard requirements
+  found on the bench: (1) the product root `compatible` needs
+  `rockchip,rv1106`, otherwise the kernel picks the generic machine descriptor
+  and `rv1106_suspend_ops` are never registered (`/sys/power/mem_sleep` shows
+  only `[s2idle]`); (2) after enabling `CONFIG_PM_SLEEP` every external `.ko`
+  must be rebuilt (`./build.sh driver`) — stale modules hang the boot in
+  `video_rkisp`; (3) the PMU timeout counts **32 ticks per second** (vendor
+  `rkadk_aov.c`: `io -4 0xff300048 seconds*32`), not 32 kHz: 320 means 10 s.
+  With the CSI/ISP pipeline running, resume produces a `mipi-csi2-hw
+  ERR1:0x10` storm and the AP effectively wedges, so the pipeline must be
+  stopped before suspend and restarted after wake (a divinus restart was
+  verified to restore the stream, IVS and RTSP). Д1 decision: classic
+  mem-suspend with pipeline stop/restart, no fallback chain.
+- **Экспериментальная wakeup-IPC линия: MCU + TB-образ под SC230AI и сон
+  камеры по отсутствию движения.** MCU-борд `battery_ipc_demo_v10-SC230AI-ADC`
+  портирован под Luckfox (`i2c_addr = 0x32`, шина i2c4/m2, reset GPIO3_C5 без
+  изменений) и воспроизводимо собирается `./build.sh mcu
+  battery_ipc_demo_v10-SC230AI-ADC`. Добавлены TB-BoardConfig
+  `BoardConfig-SPI_NAND-Busybox-RV1106_Luckfox_Pico_Pro_Max-SC230AI-IPC_FASTBOOT.mk`,
+  DTS `rv1106g-luckfox-pico-pro-max-sc230ai-fastboot.dts`, фрагмент ядра
+  `rv1106-pmu-timeout.config` (suspend + PMU timeout wake) и post-скрипт
+  `oko-rv1106-tb-sc230ai-wakeup-post.sh` (rcS с `rkipc`, prune Wi-Fi/демо,
+  strip, IQ json). AP-политика в `rv1106_wakeup_ipc`: новая секция `[aov]`
+  (`sleep_timeout_s`, `wake_interval_s`, `wake_check_s`, `pmu_timeout_hz`),
+  `ivs:md_area_percent` вместо жёстких 30 % и модуль `video/aov_sleep.c`:
+  после 600 с без движения rkipc программирует `PMU_WAKEUP_TIMEOUT_CNT` и
+  уводит AP в suspend, после timeout-wake даёт окно MD и либо продолжает
+  стрим, либо засыпает снова. Статус — bench-only: прошивка и матрица
+  тестов (Э5/Э7 плана) не выполнены, см. `FEATURES_UNVERIFIED.md`.
+- **Experimental wakeup-IPC line: MCU + SC230AI thunder-boot image with
+  idle-based camera sleep.** The `battery_ipc_demo_v10-SC230AI-ADC` MCU board
+  is ported to the Luckfox hardware (`i2c_addr = 0x32`, i2c4/m2 bus, GPIO3_C5
+  reset unchanged) and builds reproducibly with `./build.sh mcu
+  battery_ipc_demo_v10-SC230AI-ADC`. Added the thunder-boot BoardConfig
+  `BoardConfig-SPI_NAND-Busybox-RV1106_Luckfox_Pico_Pro_Max-SC230AI-IPC_FASTBOOT.mk`,
+  the DTS `rv1106g-luckfox-pico-pro-max-sc230ai-fastboot.dts`, the kernel
+  fragment `rv1106-pmu-timeout.config` (suspend + PMU timeout wake) and the
+  post-build script `oko-rv1106-tb-sc230ai-wakeup-post.sh` (rcS with `rkipc`,
+  Wi-Fi/demo pruning, strip, IQ json). The AP-side policy in
+  `rv1106_wakeup_ipc` gains an `[aov]` section (`sleep_timeout_s`,
+  `wake_interval_s`, `wake_check_s`, `pmu_timeout_hz`), `ivs:md_area_percent`
+  instead of the hardcoded 30 % and the `video/aov_sleep.c` module: after
+  600 s without motion rkipc programs `PMU_WAKEUP_TIMEOUT_CNT` and suspends
+  the AP, then after a timeout wake it runs one motion-detection window and
+  either keeps streaming or suspends again. Status: bench-only, the flashing
+  and test matrix (plan E5/E7) are not executed, see
+  `FEATURES_UNVERIFIED.md`.
 - **`bench/rgn_boxes_check.py` — soak 2BPP-рамок (KI-063).** Скрипт снимает
   fd, `VmRSS`, число потоков и счётчики ядра (`rockchip-sfc`, `UBIFS error`,
   `dup mClientFd`/`CHECK_GE`, oops, `rga2_reg`) каждые 10 с и пишет JSON в
@@ -239,6 +372,24 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Исправлено
 
+- **Ревью сна камеры: состояние EC при сбое suspend и единицы TB-таймера.**
+  Если запись `mem` в `/sys/power/state` не удалась, `sleep_policy` теперь
+  возвращает EC в `AWAKE`, а не оставляет `SUSPENDING`. Демон `oko-ec`
+  выставляет признак отправленного `AWAKE` только после успешной записи
+  (до 5 попыток), чтобы сбой шины не оставлял `host_state` спящим. В
+  замороженной TB-линии `pmu_timeout_hz` исправлен с 32000 на измеренные
+  **32 тика/с** (`rkipc-300w.ini` и `aov_sleep.c`), иначе `wake_interval_s=10`
+  давал бы ~10000 с. Стендовый `POST /api/sleep?motion=1` теперь доступен
+  только при `OKO_BENCH_API=1`; GET-статус сна работает всегда.
+- **Camera-sleep review: EC state on suspend failure and TB timer units.**
+  When the `mem` write to `/sys/power/state` fails, `sleep_policy` now puts
+  the EC back to `AWAKE` instead of leaving `SUSPENDING`. The `oko-ec` daemon
+  marks the `AWAKE` write as done only after success (up to 5 attempts), so
+  a bus failure no longer leaves `host_state` sleeping. In the frozen TB line
+  `pmu_timeout_hz` is corrected from 32000 to the measured **32 ticks/s**
+  (`rkipc-300w.ini` and `aov_sleep.c`); otherwise `wake_interval_s=10` meant
+  ~10000 s. The bench `POST /api/sleep?motion=1` is now gated by
+  `OKO_BENCH_API=1`; the GET sleep status is always available.
 - **IVS: ложные события при отсутствии движения.** HAL не пробрасывал площадь
   движения, поэтому любой прямоугольник MD или флаг OD давал событие, и шум,
   пыль и мелкая разница пикселей запускали журнал, снимок, клип и OSD.
@@ -341,6 +492,40 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Изменено
 
+- **Правило проекта: вендорский код — только справочник (AGENTS.md §6).**
+  Зафиксировано, что `project/app/rkipc`, `rk_smart_door`,
+  `fastboot_client`, `component/rkadk`, `sysdrv/source/mcu` (RT-Thread) и
+  прочие унаследованные каталоги SDK Luckfox/Rockchip читаются, но не
+  правятся и не служат основой продуктовых фич. Продуктовые фичи делаются в
+  `divinus`, `oko-*`, `tools/native`, `bench/`, OKO-файлах `project/cfg`,
+  фрагментах ядра/DTS и склейках `drv_ko`. Интеграционный патч вендора
+  допускается только с обоснованием и записью в CHANGELOG; замороженные
+  экспериментальные ветки (TB/rkipc) не расширяются. Это рамка для
+  divinus-трека сна камеры (задачи Д0–Д6 плана).
+- **Project rule: vendor code is reference only (AGENTS.md §6).** It is now
+  explicit that `project/app/rkipc`, `rk_smart_door`, `fastboot_client`,
+  `component/rkadk`, `sysdrv/source/mcu` (RT-Thread) and other inherited
+  Luckfox/Rockchip SDK directories may be read but not modified and not used
+  as a base for product features. Product features live in `divinus`,
+  `oko-*`, `tools/native`, `bench/`, OKO `project/cfg` files, kernel/DTS
+  fragments and `drv_ko` glue. A vendor integration patch is allowed only with
+  a justification and a CHANGELOG entry; frozen experimental branches
+  (TB/rkipc) are not extended. This frames the divinus camera-sleep track
+  (plan tasks Д0–Д6).
+- **Сборочные послабления для wakeup-IPC линии.** `project/app/Makefile`
+  собирает vendor `rkipc` только при `RK_APP_TYPE=RKIPC_RV1106_WAKEUP_IPC`
+  (продуктовые сборки OKO по-прежнему без него), `project/build.sh` уважает
+  `RK_SKIP_OKO_PRUNE=y` для линий, которым нужны файлы из `oko-prune.list`,
+  а host-утилиты `make_meta` (`sensor_ae_awb_table`, `sensor_init`) собираются
+  без `-m32`: на Debian 13 32-битный бинарник получает мусорный `argv` и
+  падает; структуры в них — только фиксированной ширины.
+- **Build allowances for the wakeup-IPC line.** `project/app/Makefile` builds
+  the vendor `rkipc` only for `RK_APP_TYPE=RKIPC_RV1106_WAKEUP_IPC` (OKO
+  product builds still exclude it), `project/build.sh` honours
+  `RK_SKIP_OKO_PRUNE=y` for lines that need files from `oko-prune.list`, and
+  the `make_meta` host tools (`sensor_ae_awb_table`, `sensor_init`) are built
+  without `-m32`: on Debian 13 the 32-bit binary gets a garbage `argv` and
+  crashes; their structures are fixed-width only.
 - **Рамки IVS возвращены: регион 2BPP создаётся один раз за процесс.**
   Переследование KI-063 на восстановленном NAND показало, что destroy/recreate
   2BPP-региона сам по себе не вешает MPP: YOLO-рамки (тот же код

@@ -47,6 +47,39 @@ BootROM → U-Boot → ядро Linux → busybox init → init-скрипты �
 После того как корневая ФС смонтирована и запущен busybox init, инициализация
 выполняется по разделам 3–7.
 
+### 1.1 Экспериментальная thunder-boot (wakeup-IPC) линия
+
+Отдельная сборка для MCU-порта `battery_ipc_demo_v10-SC230AI-ADC`; активный
+BoardConfig переключается симлинком `.BoardConfig.mk` на
+`BoardConfig-SPI_NAND-Busybox-RV1106_Luckfox_Pico_Pro_Max-SC230AI-IPC_FASTBOOT.mk`.
+Продуктовые параметры выше при этом не действуют.
+
+| Параметр | Значение | Комментарий |
+|---|---|---|
+| `RK_APP_TYPE` | `RKIPC_RV1106_WAKEUP_IPC` | единственный тип, для которого `project/app/Makefile` собирает vendor `rkipc` |
+| `RK_KERNEL_DTS` | `rv1106g-luckfox-pico-pro-max-sc230ai-fastboot.dts` | SC230AI на i2c4 (0x32) + `rockchip,amp-shared`, TB-разметка DDR |
+| `RK_KERNEL_DEFCONFIG` | `luckfox_rv1106_linux_tb_defconfig` | TB-ядро: ISP/CIF/RGA/SFC built-in |
+| `RK_KERNEL_DEFCONFIG_FRAGMENT` | `luckfox_rv1106-tb.config rv1106-smart-door.config rv1106-nand.config rv1106-sc230ai.config rv1106-pmu-timeout.config` | последний включает `CONFIG_SUSPEND` + `CONFIG_RV1106_PMU_WAKEUP_TIMEOUT`; `CONFIG_RV1106_HPMCU_FAST_WAKEUP` намеренно выключен |
+| `RK_UBOOT_DEFCONFIG` | `luckfox_rv1106_spi_nand_tb_defconfig` | SPL грузит `Hpmcu` из idblock |
+| `RK_UBOOT_RKBIN_MCU_CFG` | `battery_ipc_demo_v10-SC230AI-ADC` | `build_uboot()` собирает MCU и подставляет его как `Hpmcu=` в `RV1106MINIALL_SPI_NAND_TB.ini` |
+| `RK_CAMERA_SENSOR_IQFILES` | `sc230ai_CMK-OT2115-PC1_30IRC-F16.bin` | IQ bin едет в `meta`; json для `librkaiq` ставит post-скрипт |
+| `RK_POST_BUILD_SCRIPT` | `oko-rv1106-tb-sc230ai-wakeup-post.sh` | rcS запускает `rkipc` после `insmod_ko.sh`, prune Wi-Fi/демо, strip, `RK_SKIP_OKO_PRUNE=y` |
+| `RK_BOOTARGS_CMA_SIZE` | `32M` | TB-раскладка DDR |
+
+Разметка TB-линии: `256K(env),1M@256K(idblock),512K(uboot),2M(meta),32M(boot),
+20M(userdata)`. `boot` — FIT (`fdt` + gzip `Image` + gzip `erofs`), который
+SPL/SFC разворачивает в `ramdisk_r` (0x1790000, 20 МБ); сжатый образ обязан
+влезть в `ramdisk_c` (0x2b90000, 16 МБ), а erofs — в 20 МБ. `meta`
+загружается в 0x800000, ISP-буфер MCU/Linux — 0x860000 + 0xf30000.
+
+Отличие boot-цепочки: до Linux SPL стартует MCU (`rtthread.bin` из idblock),
+MCU инициализирует SC230AI/ISP, делает fast-AE, переводит сенсор в 1920x1080,
+отправляет `MCU_STATUS_DONE` (0xdeadbeef) через mailbox и паркуется; ядро по
+`rockchip_thunderboot_service` сбрасывает MCU, освобождает его DDR и
+продолжает загрузку. AP-политика сна (`video/aov_sleep.c`) при простое
+программирует `PMU_WAKEUP_TIMEOUT_CNT` (0xff300048) и пишет `mem` в
+`/sys/power/state`; пробуждение — по PMU timeout, MCU в нём не участвует.
+
 ## 2. Boot-цепочка
 
 1. **BootROM** читает загрузчик из SPI NAND и передаёт управление TPL/SPL.

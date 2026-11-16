@@ -36,6 +36,7 @@
 #include <sys/mman.h>
 #include "http_post.h"
 #include "record_clip.h"
+#include "sleep_policy.h"
 
 #define YOLO_EVENT_COOLDOWN_MS 5000
 #define YOLO_MAX_OUTPUTS 9
@@ -1046,6 +1047,9 @@ static void *yolo_capture_thread(void *arg)
         yolo_boxes_render(&result);
 
         if (!result.count) continue;
+
+        /* A detection is activity for the [sleep] policy as well. */
+        sleep_policy_report_motion();
 
         pthread_mutex_lock(&eventMtx);
         if (activeEvent >= 0) {

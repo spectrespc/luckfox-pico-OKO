@@ -2,6 +2,7 @@
 
 #include <dirent.h>
 #include <net/if.h>
+#include <stdlib.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
@@ -24,6 +25,7 @@
 #include "analytics/yolo.h"
 #include "analytics/yolo_history.h"
 #include "record_clip.h"
+#include "sleep_policy.h"
 
 #define HTTP_MAX_CLIENTS 50
 #define HTTP_MIN_BUF_SIZE 4096
@@ -6264,6 +6266,35 @@ if (EQUALS(req->uri, "/api/storage")) {
         return;
     }
 
+    /* OKO: sleep state and a bench-only motion injection.  The camera cannot
+     * be moved from a test script, and a dark/noisy scene keeps IVS busy, so
+     * `?motion=1` feeds the same hook the analytics use.  The injector is
+     * gated by OKO_BENCH_API so a production image cannot keep the camera
+     * awake through it; GET /api/sleep is always available. */
+    if (EQUALS(req->uri, "/api/sleep")) {
+        if (req->method && EQUALS(req->method, "POST") && req->query &&
+            getenv("OKO_BENCH_API")) {
+            char *query = req->query;
+            while (query) {
+                char *value = split(&query, "&");
+                char *key;
+                if (!value) continue;
+                key = split(&value, "=");
+                if (!key || !*key) continue;
+                if (EQUALS(key, "motion") && value && EQUALS(value, "1")) {
+                    sleep_policy_report_motion();
+                }
+            }
+        }
+        {
+            char sleepJson[192], body[224];
+            sleep_policy_status_json(sleepJson, sizeof(sleepJson));
+            int len = snprintf(body, sizeof(body), "{%s}", sleepJson);
+            reply_json(req->clntFd, body, (size_t)len);
+        }
+        return;
+    }
+
     if (EQUALS(req->uri, "/api/status")) {
         struct sysinfo si;
         sysinfo(&si);
@@ -6281,6 +6312,8 @@ if (EQUALS(req->uri, "/api/storage")) {
             sprintf(uptime, "%ld:%02ld:%02ld", si.uptime / 3600, (si.uptime % 3600) / 60, si.uptime % 60);
         else
             sprintf(uptime, "%ld:%02ld", si.uptime / 60, si.uptime % 60);
+        char sleepJson[192];
+        sleep_policy_status_json(sleepJson, sizeof(sleepJson));
         respLen = sprintf(response,
             "HTTP/1.1 200 OK\r\n"
             "Content-Type: application/json;charset=UTF-8\r\n"
@@ -6291,7 +6324,7 @@ if (EQUALS(req->uri, "/api/storage")) {
             "\"ip\":\"%s\",\"sd_free_mb\":%llu,\"sd_total_mb\":%llu,"
             "\"features\":{\"eptz\":%s,\"rotate\":%s,\"substream\":%s,"
             "\"aiisp\":%s,\"ivs\":%s,\"hdr\":%s,\"sd\":%s,"
-            "\"yolo\":%s,\"clip\":%s,\"vpn\":%s}}",
+            "\"yolo\":%s,\"clip\":%s,\"vpn\":%s},%s}",
             chip, si.loads[0] / 65536.0, si.loads[1] / 65536.0, si.loads[2] / 65536.0,
             memory, sensor, hal_temperature_read(), uptime,
             ipaddr,
@@ -6307,7 +6340,8 @@ if (EQUALS(req->uri, "/api/storage")) {
             (halCapabilities & HAL_CAP_RKNN) ? "true" : "false",
             (app_config.event_clip_enable && record_clip_unavailable() == NULL)
                 ? "true" : "false",
-            vpn_available() ? "true" : "false");
+            vpn_available() ? "true" : "false",
+            sleepJson);
         send_and_close(req->clntFd, response, respLen);
         return;
     }

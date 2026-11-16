@@ -16,11 +16,12 @@ secondary_build:= secondary_build_target
 endif
 
 all: $(secondary_build)
-	gcc -m32 -O2 -Wall $(target_cflag) $(target) -o $(patsubst %.c,%,$(target))
+	# OKO: host tool, no -m32 (fixed-width structs, see sensor_init_info.h).
+	gcc -O2 -Wall $(target_cflag) $(target) -o $(patsubst %.c,%,$(target))
 	./$(target_bin)  $(target_bin_file)
 
 secondary_build_target:
-	gcc -m32 -O2 -Wall $(target_cflag) $(secondary_target) -o $(patsubst %.c,%,$(secondary_target))
+	gcc -O2 -Wall $(target_cflag) $(secondary_target) -o $(patsubst %.c,%,$(secondary_target))
 	./$(secondary_target_bin)  $(secondary_target_bin_file)
 
 clean:

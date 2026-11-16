@@ -248,3 +248,41 @@ int ec_get_temp(int fd, int16_t *temp_c10, unsigned delay_us, unsigned retries)
     *temp_c10 = (int16_t)get_le16(&resp[3]);
     return 0;
 }
+
+int ec_get_power(int fd, struct ec_power *out, unsigned delay_us, unsigned retries)
+{
+    uint8_t resp[64];
+    uint8_t status = 0;
+    int len = ec_exchange(fd, EC_CMD_GET_POWER, NULL, 0, resp, sizeof(resp),
+                          delay_us, retries, &status);
+    if (len < 0 || ec_check_status(status, "GET_POWER") < 0 ||
+        ec_check_len(len, 1 + EC_POWER_PAYLOAD_LEN, "GET_POWER") < 0)
+    {
+        return -1;
+    }
+
+    const uint8_t *p = &resp[3];
+    out->host_state = p[0];
+    out->flags = p[1];
+    out->power_request = p[2];
+    out->last_event = p[3];
+    out->event_count = p[4];
+    out->reset_cause = p[5];
+    out->last_wake_src = p[6];
+    out->wake_count = p[7];
+    return 0;
+}
+
+int ec_set_power(int fd, uint8_t host_state, unsigned delay_us, unsigned retries)
+{
+    uint8_t resp[64];
+    uint8_t status = 0;
+    uint8_t payload[2] = {host_state, 0};
+    int len = ec_exchange(fd, EC_CMD_SET_POWER, payload, sizeof(payload), resp,
+                          sizeof(resp), delay_us, retries, &status);
+    if (len < 0)
+    {
+        return -1;
+    }
+    return ec_check_status(status, "SET_POWER");
+}

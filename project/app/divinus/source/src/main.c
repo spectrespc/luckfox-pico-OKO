@@ -14,6 +14,7 @@
 #include "ntp.h"
 #include "rtsp/rtsp_server.h"
 #include "server.h"
+#include "sleep_policy.h"
 #include "watchdog.h"
 #include "analytics/models.h"
 #include "analytics/yolo.h"
@@ -126,6 +127,10 @@ int main(int argc, char *argv[]) {
         focus_motor_set_speed(FOCUS_MOTOR_ZOOM, app_config.focus_zoom_speed);
     }
 
+    /* OKO: read [sleep] and the OKO_SLEEP_WAKE probe flag before any media
+     * subsystem is started; the policy thread itself starts after IVS/YOLO. */
+    sleep_policy_init();
+
     models_start();
     if (app_config.watchdog)
         watchdog_start(app_config.watchdog);
@@ -215,12 +220,27 @@ int main(int argc, char *argv[]) {
     if (app_config.record_enable && app_config.record_continuous)
         record_start();
 
+    sleep_policy_start();
+
+    int sleepPending = 0;
+
     while (keepRunning) {
+        if (sleep_policy_should_suspend()) {
+            HAL_INFO("sleep", "entering the sleep cycle\n");
+            sleepPending = 1;
+            graceful = 1;
+            keepRunning = 0;
+            break;
+        }
         if (app_config.rtsp_enable) rtsp_tick(rtspHandle);
         network_tick();
         watchdog_reset();
         sleep(1);
     }
+
+    /* The policy thread owns no media state, but it must be joined before the
+     * subsystems it reports into are stopped. */
+    sleep_policy_stop();
 
     if (app_config.record_enable && app_config.record_continuous)
         record_stop();
@@ -261,6 +281,21 @@ int main(int argc, char *argv[]) {
 
     if (app_config.watchdog)
         watchdog_stop();
+
+    /* OKO: the media pipeline is down (the bench showed that a live CSI/ISP
+     * stream turns resume into a mipi-csi2 error storm), so it is safe to
+     * suspend.  After PMU wake the process restarts through the normal
+     * graceful path; OKO_SLEEP_WAKE asks the new instance for one short
+     * motion-check window before it sleeps again. */
+    if (sleepPending) {
+        int slept = sleep_policy_suspend();
+        if (slept == 0) {
+            HAL_INFO("sleep", "suspend cycle done; restarting into wake probe\n");
+            sleep_policy_mark_wake();
+        } else {
+            HAL_WARNING("sleep", "suspend cancelled or failed; restarting the process\n");
+        }
+    }
 
     if (!graceful)
         app_config_restore();

@@ -82,6 +82,21 @@ void snapshot_collect(struct oko_snapshot *snap, const char *dev, uint8_t ec_add
                 snap->ec.cells[i] = battery.cells[i];
             }
         }
+        /* Прошивки без v3 отвечают ERR_UNSUPPORTED — это не ошибка шины. */
+        struct ec_power power;
+        if (snap->ec.info_ok && info.device_type == EC_DEVICE_APP &&
+            ec_get_power(fd, &power, delay_us, retries) == 0)
+        {
+            snap->power.ok = 1;
+            snap->power.host_state = power.host_state;
+            snap->power.flags = power.flags;
+            snap->power.power_request = power.power_request;
+            snap->power.last_event = power.last_event;
+            snap->power.event_count = power.event_count;
+            snap->power.reset_cause = power.reset_cause;
+            snap->power.last_wake_src = power.last_wake_src;
+            snap->power.wake_count = power.wake_count;
+        }
         close(fd);
     }
     if (!snap->ec.ok)
@@ -183,6 +198,21 @@ void snapshot_print_json(FILE *out, const struct oko_snapshot *snap,
         fprintf(out, ",\"humidity_rh10\":");
         print_i32(out, snap->sht21.humidity_rh10);
         fprintf(out, "}");
+    }
+
+    if (parts & SNAP_POWER)
+    {
+        fprintf(out, ",\"power\":{\"ok\":%d,\"host_state\":%u,\"flags\":%u,"
+                     "\"power_request\":%u,\"last_event\":%u,"
+                     "\"event_count\":%u,\"reset_cause\":%u,"
+                     "\"last_wake_src\":%u,\"wake_count\":%u}",
+                snap->power.ok, (unsigned)snap->power.host_state,
+                (unsigned)snap->power.flags, (unsigned)snap->power.power_request,
+                (unsigned)snap->power.last_event,
+                (unsigned)snap->power.event_count,
+                (unsigned)snap->power.reset_cause,
+                (unsigned)snap->power.last_wake_src,
+                (unsigned)snap->power.wake_count);
     }
 
     fprintf(out, ",\"errors\":[");
@@ -490,6 +520,10 @@ int daemon_run(const char *dev, uint8_t ec_addr, uint8_t ina_addr, uint8_t sht_a
 {
     struct oko_snapshot snap;
     int previous[3] = {-1, -1, -1};
+    int awake_sent = 0;
+    int awake_attempts = 0;
+    int previous_wake_src = -1;
+    int previous_wake_count = -1;
 
     i2c_transport_set_verbose(0);
     ec_set_verbose(0);
@@ -522,6 +556,22 @@ int daemon_run(const char *dev, uint8_t ec_addr, uint8_t ina_addr, uint8_t sht_a
         }
         snapshot_collect(&snap, dev, ec_addr, ina_addr, sht_addr, shunt_mohm,
                          ina_channel, delay_us, retries);
+        /* Демон стартовал — сообщаем EC, что хост снова работает. Флаг ставим
+         * только после успешной записи; при сбое шины повторим (не более 5 раз),
+         * чтобы прошивки без v3 не дёргать каждые 2 секунды вечно. */
+        if (!awake_sent && snap.ec.ok && awake_attempts < 5)
+        {
+            awake_attempts++;
+            int fd = i2c_transport_open(dev, ec_addr);
+            if (fd >= 0)
+            {
+                if (ec_set_power(fd, EC_HOST_AWAKE, delay_us, retries) == 0)
+                {
+                    awake_sent = 1;
+                }
+                close(fd);
+            }
+        }
         ec_lock_release();
         if (snapshot_write_files(&snap) < 0 && !once)
         {
@@ -536,6 +586,22 @@ int daemon_run(const char *dev, uint8_t ec_addr, uint8_t ina_addr, uint8_t sht_a
             previous[0] = snap.ec.ok;
             previous[1] = snap.ina226.ok;
             previous[2] = snap.sht21.ok;
+
+            /* Причина пробуждения меняется только на resume — логируем смену. */
+            if (snap.power.ok &&
+                ((int)snap.power.last_wake_src != previous_wake_src ||
+                 (int)snap.power.wake_count != previous_wake_count))
+            {
+                printf("oko-ec: power: host_state %u, wake_src %u, "
+                       "wake_count %u, last_event %u\n",
+                       (unsigned)snap.power.host_state,
+                       (unsigned)snap.power.last_wake_src,
+                       (unsigned)snap.power.wake_count,
+                       (unsigned)snap.power.last_event);
+                fflush(stdout);
+                previous_wake_src = (int)snap.power.last_wake_src;
+                previous_wake_count = (int)snap.power.wake_count;
+            }
         }
 
         if (once)

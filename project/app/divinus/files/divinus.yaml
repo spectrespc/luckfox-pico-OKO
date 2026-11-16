@@ -314,3 +314,15 @@ mjpeg:
 # hdr:
 #   mode: normal          # normal | hdr2 | hdr3
 #   apply: restart        # auto | dyn | restart
+
+# sleep:
+#   enable: false         # idle camera sleep: AP deep suspend + PMU timeout wake
+#   idle_timeout_s: 600   # motion-free time before the first suspend, 10..86400
+#   wake_interval_s: 10   # PMU timeout between motion checks, 1..3600
+#   wake_check_s: 3       # motion-check window after resume, 1..60
+#   pmu_timeout_hz: 32    # PMU timeout ticks per second (measured on the bench)
+#
+# The camera pipeline is stopped before suspend and restarted after wake:
+# keeping CSI/ISP running across a mem cycle produces a mipi-csi2 error storm
+# on this board.  IVS accepts motion only above ivs.min_area; YOLO detections
+# also postpone the idle timer.

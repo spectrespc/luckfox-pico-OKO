@@ -17,8 +17,13 @@ include $(MAKEFILE_DIR)/Makefile.param
 app_src := $(wildcard ./*/Makefile ./component/fastboot_server/Makefile)
 app_src := $(dir $(app_src))
 # OKO: the vendor rkipc is not built any more; the application launcher moved
-# to project/app/oko-lunch.  The rkipc sources stay in the tree for reference.
+# to project/app/oko-lunch.  The rkipc sources stay in the tree for reference
+# and are built only for the experimental thunder-boot wakeup-IPC line
+# (RK_APP_TYPE=RKIPC_RV1106_WAKEUP_IPC), which has no OKO launcher.
 app_src := $(filter-out ./rkipc/,$(app_src))
+ifneq (, $(filter RKIPC_RV1106_WAKEUP_IPC,$(RK_APP_TYPE)))
+app_src += ./rkipc/
+endif
 
 all: $(pkg-build)
 	$(foreach target,$(app_src),make -C $(target)||exit -1;)

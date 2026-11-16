@@ -75,7 +75,8 @@ install(PROGRAMS RkLunch-stop.sh DESTINATION bin)
 install(FILES ${PROJECT_SOURCE_DIR}/common/osd/image.bmp DESTINATION share)
 install(FILES ${PROJECT_SOURCE_DIR}/common/osd/simsun_en.ttf DESTINATION share)
 install(FILES ${PROJECT_SOURCE_DIR}/lib/arm-rockchip830-linux-uclibcgnueabihf/libwpa_client.so DESTINATION lib)
-install(FILES rtthread.bin DESTINATION share)
-install(FILES meta.img DESTINATION share)
-install(FILES sc3338_FKO1_30IRC-F16.bin DESTINATION share)
-install(FILES resume_suspend_test.sh DESTINATION share)
+# OKO: the MCU firmware (rtthread.bin) is packed into the idblock by
+# build_uboot() via RK_UBOOT_RKBIN_MCU_CFG, the IQ bin/meta image goes to the
+# meta partition (build_meta) and the matching rkaiq json is installed by the
+# board post script.  The vendor io(1) preload artifacts of the EVB flow are
+# therefore not installed here.

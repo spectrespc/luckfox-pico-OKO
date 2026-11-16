@@ -5,6 +5,7 @@
 #include "video.h"
 #include "audio.h"
 #include "rockiva.h"
+#include "aov_sleep.h"
 
 #define HAS_VO 0
 #if HAS_VO
@@ -612,7 +613,8 @@ static void *rkipc_ivs_get_results(void *arg) {
 	int od = rk_param_get_int("ivs:od", 0);
 	int width = rk_param_get_int("video.2:width", 960);
 	int height = rk_param_get_int("video.2:height", 540);
-	int md_area_threshold = width * height * 0.3;
+	int md_area_percent = rk_param_get_int("ivs:md_area_percent", 30);
+	int md_area_threshold = width * height * md_area_percent / 100;
 
 	while (g_video_run_) {
 		ret = RK_MPI_IVS_GetResults(0, &stResults, 1000);
@@ -622,6 +624,7 @@ static void *rkipc_ivs_get_results(void *arg) {
 				if (stResults.pstResults->stMdInfo.u32Square > md_area_threshold) {
 					LOG_INFO("MD: md_area is %d, md_area_threshold is %d\n",
 					         stResults.pstResults->stMdInfo.u32Square, md_area_threshold);
+					rkipc_aov_sleep_report_motion();
 				}
 			}
 			if (od == 1) {
@@ -3155,6 +3158,7 @@ int rk_video_init() {
 	// otherwise, when the font size is switched, holes may be caused
 	if (enable_osd)
 		ret |= rkipc_osd_init();
+	rkipc_aov_sleep_init();
 	LOG_DEBUG("over\n");
 
 	return ret;
@@ -3162,6 +3166,7 @@ int rk_video_init() {
 
 int rk_video_deinit() {
 	LOG_DEBUG("%s\n", __func__);
+	rkipc_aov_sleep_deinit();
 	g_video_run_ = 0;
 	int ret = 0;
 	if (enable_npu || enable_ivs)
