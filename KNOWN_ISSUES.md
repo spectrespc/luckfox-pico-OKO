@@ -355,13 +355,18 @@
   (плотный цикл ~370 мс) — добавлен `gic_irq_clear_pending()`. Остаётся:
   подтвердить кадентность quiet-цикла (ожидается 1 цикл на
   `wake_interval_s`) и стрим после AOV-resume с сохранённым пайплайном;
-  окно mailbox можно вернуть к ~500 мс. Кадентность quiet-цикла пока не
-  подтверждена: в 45-секундном логе 128 `-h-wait-` и 75 `-h-mbox-`, то есть
-  цикл всё ещё плотный (~2.8/с) — добавлено маскирование mailbox IRQ в
-  ветке AP_SUSPEND (`gic_irq_disable`), сборка готова, прошивка/проверка
-  **не выполнены**: мост ESP32 упёрся в лимит сессий (`429 Too many active
-  sessions`, max 3) и не даёт ни логин, ни power-cycle; нужен сброс ESP32
-  или ожидание TTL сессий. Статус: **экспериментальный, не для выпуска**;
+  окно mailbox можно вернуть к ~500 мс. Кадентность quiet-цикла — плотный
+  цикл, и это отдельная нерешённая проблема: за 15–45 с в живом логе
+  38–128 `-h-wait-`/`-h-mbox-` (≈2.6–2.8 цикла/с вместо одного на
+  `wake_interval_s`). Диагностика (2026-11-17, вечер): после WFI
+  `PMU_WAKEUP_INT_ST = 0` (источника нет), а `PMU_WAKEUP_TIMEOUT_CNT`
+  остаётся `0x140` (320 тиков) — AP будит не PMU, а линия, которую WFI
+  считает прерванной. Проверены и **не помогли**: маска mailbox IRQ до и
+  после `rkpm_gicv2_dist_restore()`, `GIC_DIST_CTRL = 0` перед повторным
+  входом, перенос перезаписи `PMU_WAKEUP_TIMEOUT_CNT` перед WFI. Ядро
+  откатано к проверенному состоянию (`got` + `gic_irq_clear_pending`);
+  кандидаты — PMU-stub/DDR (`Jump to PMU_SRAM`, `PMU_WAKEUP_INT_CON`,
+  `CPU_INT_EN`) и линии CSI/ISP при `aov_keep_isp`. Статус: **экспериментальный, не для выпуска**;
   блокеры — KI-073 (патч применён), KI-074 (исправлено), маскирование IRQ
   (собрано, не проверено) и проверка стрима. Артефакты: `output/bench/aov-image-1m/`,
   `output/bench/uar0-aov-fit-boot-20261117.log`,
@@ -1013,12 +1018,19 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   added. Still open: confirm the quiet-cycle cadence (expected one cycle per
   `wake_interval_s`) and verify streaming after an AOV resume with the kept
   pipeline; the mailbox window can go back to ~500 ms. The quiet-cycle
-  cadence is not confirmed yet: a 45-second log holds 128 `-h-wait-` and 75
-  `-h-mbox-`, i.e. the loop is still tight (~2.8/s) — masking the mailbox IRQ
-  in the AP_SUSPEND branch (`gic_irq_disable`) was added and built, but
-  flashing/verification **did not run**: the ESP32 bridge hit its session
-  limit (`429 Too many active sessions`, max 3) and refuses both login and
-  power-cycle; an ESP32 reset or the session TTL is needed. Status:
+  cadence is a tight loop and remains an open problem: a 15–45 s log holds
+  38–128 `-h-wait-`/`-h-mbox-`, i.e. ~2.6–2.8 cycles/s instead of one per
+  `wake_interval_s`. Diagnosis (2026-11-17, evening): after the WFI
+  `PMU_WAKEUP_INT_ST = 0` (no source) while `PMU_WAKEUP_TIMEOUT_CNT` is
+  still `0x140` (320 ticks), so the AP is not woken by the PMU but by a line
+  that WFI treats as an interrupt. Tried and **ineffective**: masking the
+  mailbox IRQ before and after `rkpm_gicv2_dist_restore()`,
+  `GIC_DIST_CTRL = 0` before re-entry, and moving the
+  `PMU_WAKEUP_TIMEOUT_CNT` rewrite right before the WFI. The kernel was
+  rolled back to the verified state (`got` + `gic_irq_clear_pending`); next
+  candidates are the PMU-stub/DDR path (`Jump to PMU_SRAM`,
+  `PMU_WAKEUP_INT_CON`, `CPU_INT_EN`) and the CSI/ISP lines under
+  `aov_keep_isp`. Status:
   **experimental, not for release**; blockers are KI-073 (patched), KI-074
   (fixed), the IRQ masking (built, unverified) and the stream check. Artifacts: `output/bench/aov-image-1m/`,
   `output/bench/uar0-aov-fit-boot-20261117.log`,
