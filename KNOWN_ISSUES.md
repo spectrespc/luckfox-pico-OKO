@@ -355,9 +355,15 @@
   (плотный цикл ~370 мс) — добавлен `gic_irq_clear_pending()`. Остаётся:
   подтвердить кадентность quiet-цикла (ожидается 1 цикл на
   `wake_interval_s`) и стрим после AOV-resume с сохранённым пайплайном;
-  окно mailbox можно вернуть к ~500 мс. Статус: **экспериментальный, не для
-  выпуска**; блокеры — KI-073 (патч применён), KI-074 (исправлено) и
-  проверка quiet/стрима. Артефакты: `output/bench/aov-image-1m/`,
+  окно mailbox можно вернуть к ~500 мс. Кадентность quiet-цикла пока не
+  подтверждена: в 45-секундном логе 128 `-h-wait-` и 75 `-h-mbox-`, то есть
+  цикл всё ещё плотный (~2.8/с) — добавлено маскирование mailbox IRQ в
+  ветке AP_SUSPEND (`gic_irq_disable`), сборка готова, прошивка/проверка
+  **не выполнены**: мост ESP32 упёрся в лимит сессий (`429 Too many active
+  sessions`, max 3) и не даёт ни логин, ни power-cycle; нужен сброс ESP32
+  или ожидание TTL сессий. Статус: **экспериментальный, не для выпуска**;
+  блокеры — KI-073 (патч применён), KI-074 (исправлено), маскирование IRQ
+  (собрано, не проверено) и проверка стрима. Артефакты: `output/bench/aov-image-1m/`,
   `output/bench/uar0-aov-fit-boot-20261117.log`,
   `output/bench/aov-test/uar0-m2-pmu-only.log`.
 
@@ -1006,9 +1012,15 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   woke immediately (a tight ~370 ms loop) — `gic_irq_clear_pending()` was
   added. Still open: confirm the quiet-cycle cadence (expected one cycle per
   `wake_interval_s`) and verify streaming after an AOV resume with the kept
-  pipeline; the mailbox window can go back to ~500 ms. Status:
+  pipeline; the mailbox window can go back to ~500 ms. The quiet-cycle
+  cadence is not confirmed yet: a 45-second log holds 128 `-h-wait-` and 75
+  `-h-mbox-`, i.e. the loop is still tight (~2.8/s) — masking the mailbox IRQ
+  in the AP_SUSPEND branch (`gic_irq_disable`) was added and built, but
+  flashing/verification **did not run**: the ESP32 bridge hit its session
+  limit (`429 Too many active sessions`, max 3) and refuses both login and
+  power-cycle; an ESP32 reset or the session TTL is needed. Status:
   **experimental, not for release**; blockers are KI-073 (patched), KI-074
-  (fixed) and the quiet/stream verification. Artifacts: `output/bench/aov-image-1m/`,
+  (fixed), the IRQ masking (built, unverified) and the stream check. Artifacts: `output/bench/aov-image-1m/`,
   `output/bench/uar0-aov-fit-boot-20261117.log`,
   `output/bench/aov-test/uar0-m2-pmu-only.log`.
 

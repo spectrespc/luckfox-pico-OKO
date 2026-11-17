@@ -518,6 +518,13 @@ static void gic_irq_clear_pending(int irq)
 	dsb(sy);
 }
 
+static void gic_irq_disable(int irq)
+{
+	writel_relaxed(BIT(irq % 32),
+		       gicd_base + GIC_DIST_ENABLE_CLEAR + (irq >> 5 << 2));
+	dsb(sy);
+}
+
 static int is_hpmcu_mbox_int(void)
 {
 	return !!(readl(mbox_base + RV1106_MBOX_B2A_STATUS) & BIT(0));
@@ -602,6 +609,15 @@ static int hpmcu_fast_wkup(void)
 
 	cmd = readl(mbox_base + RV1106_MBOX_B2A_CMD_0);
 	if (cmd == RV1106_MBOX_CMD_AP_SUSPEND) {
+		/*
+		 * OKO (KI-072): the MCU asked the AP to stay quiet.  Mask the
+		 * mailbox IRQ before re-entering sleep, otherwise the line
+		 * (re)asserts and the AP wakes up at once, turning the quiet
+		 * cycle into a tight handshake loop instead of sleeping on the
+		 * PMU timeout.  hpmcu_start() re-enables it next cycle.
+		 */
+		gic_irq_clear_pending(RV1106_HPMCU_MBOX_IRQ_AP);
+		gic_irq_disable(RV1106_HPMCU_MBOX_IRQ_AP);
 		oko_aov_set_state(OKO_AOV_QUIET);
 		return 1;
 	}
