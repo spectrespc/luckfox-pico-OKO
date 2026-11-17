@@ -423,6 +423,30 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Исправлено
 
+- **I2C3: паника `rk3x_i2c_irq` при циклах `[sleep]` (KI-073) — патч.**
+  В вендорский `drivers/i2c/busses/i2c-rk3x.c` добавлен guard после ack
+  NAK: `rk3x_i2c_stop()` обнуляет `i2c->msg` для последнего сообщения, но
+  контроллер продолжает присылать NAK, и обработчик разыменовывал
+  `i2c->msg->flags` (NULL + 2) — `Oops - BUG: 17` в прерывании и
+  `Kernel panic` на I2C3 (`ff470000.i2c`, STM32 EC). Теперь поздний NAK
+  подтверждается и передача завершается через STOP-путь. Стенд
+  2026-11-17: три прогона suspend без паники (до патча — на первом-втором
+  цикле). Остаточное зависание resume — отдельная KI-074; на прошивке без
+  патча оно тоже воспроизводится (проверено контрольной прошивкой
+  10:02). Артефакты: `output/bench/aov-test/console-nakguard-run1.log`,
+  `console-prepatch-control.log`.
+- **I2C3: `rk3x_i2c_irq` panic during `[sleep]` cycles (KI-073) — patched.**
+  The vendor `drivers/i2c/busses/i2c-rk3x.c` now has a guard after the NAK
+  ack: `rk3x_i2c_stop()` clears `i2c->msg` for the final message while the
+  controller keeps sending NAKs, and the handler dereferenced
+  `i2c->msg->flags` (NULL + 2) — `Oops - BUG: 17` in interrupt context and a
+  `Kernel panic` on I2C3 (`ff470000.i2c`, STM32 EC). A late NAK is now
+  acknowledged and the transfer finishes through the STOP path. Bench
+  2026-11-17: three suspend runs without a panic (it hit on the first or
+  second cycle before). The remaining resume hang is a separate KI-074 and
+  reproduces on the build without the patch (checked with the 10:02 control
+  image). Artifacts: `output/bench/aov-test/console-nakguard-run1.log`,
+  `console-prepatch-control.log`.
 - **AOV: окно ядра/MCU исправлено FIT-ом `0x208000`, загрузка проверена.**
   Вендорский `textofs-$(CONFIG_RV1106_HPMCU_FAST_WAKEUP) := 0x00208000` в
   `arch/arm/Makefile` восстановлен (был закомментирован ночью 2026-11-17), а

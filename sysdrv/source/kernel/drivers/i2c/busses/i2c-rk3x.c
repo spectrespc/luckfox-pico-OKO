@@ -620,6 +620,16 @@ static irqreturn_t rk3x_i2c_irq(int irqno, void *dev_id)
 
 		ipd &= ~REG_INT_NAKRCV;
 
+		/*
+		 * OKO (KI-073): rk3x_i2c_stop() already cleared i2c->msg for
+		 * the final message while the controller keeps NAK enabled;
+		 * a late NAK then dereferenced msg->flags (NULL + 2) and
+		 * panicked in interrupt context on I2C3.  Ack the bit and let
+		 * the STOP path finish the transfer.
+		 */
+		if (!i2c->msg)
+			goto out;
+
 		if (!(i2c->msg->flags & I2C_M_IGNORE_NAK)) {
 			if (i2c->autostop_supported) {
 				i2c->error = -ENXIO;

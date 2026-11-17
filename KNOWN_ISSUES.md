@@ -301,8 +301,8 @@
   `-h-timeout-` (2000 мс): MCU не отвечает по mailbox, AP возвращается по
   таймауту, цикл повторяется. Отрицательный прогон `aov_mcu=0` (PMU-only)
   циклится штатно (`rv1106 enter/exit sleep`). Статус: **экспериментальный,
-  не для выпуска**; блокеры — handshake MCU и KI-073 (паника I2C3 в тех же
-  прогонах). Артефакты: `output/bench/aov-image-1m/`,
+  не для выпуска**; блокеры — handshake MCU, KI-073 (патч применён) и
+  KI-074 (зависание на resume). Артефакты: `output/bench/aov-image-1m/`,
   `output/bench/uar0-aov-fit-boot-20261117.log`,
   `output/bench/aov-test/uar0-m2-pmu-only.log`.
 
@@ -317,10 +317,34 @@
   suspending/awake` отвечал `failed` — шина уже была в ошибке. Падает
   вендорский обработчик `rk3x_i2c` (не разбирает состояние после
   `unexpected irq`), это не suspend-путь: риск есть и в PMU-only циклах.
-  Обход на время: `[sleep] enable: false`. Статус: **открыто (P1 для
-  sleep-линии)**; нужен интеграционный патч драйвера и/или разбор шины I2C3
-  (родственная KI-071 линия). Артефакт:
+  Обход на время: `[sleep] enable: false`. Статус: **патч применён
+  2026-11-17** — в `rk3x_i2c_irq()` после ack NAK добавлен guard
+  `if (!i2c->msg) goto out;` (интеграционный патч
+  `drivers/i2c/busses/i2c-rk3x.c`, см. CHANGELOG). После патча паника не
+  воспроизводится в трёх прогонах suspend (до патча — на первом-втором
+  цикле); без патча цикл на том же стенде теперь доходит до зависания
+  resume (KI-074), поэтому остаточный блокер — KI-074. Артефакт паники:
   `output/bench/aov-test/console-m3-panic-attempt3.log`.
+
+- **KI-074. Зависание AP на resume сразу после `rv1106 exit sleep`.**
+  2026-11-17, AOV-образ (ядро по 0x208000), `[sleep]` с `aov_mcu=0`, idle
+  30 s, `wake_interval_s=10`: первый suspend проходит штатно
+  (`PM: suspend entry` → `rv1106 enter sleep` → DDR re-init →
+  `wake up status:0x00000000` → `rv1106 exit sleep`), после чего AP
+  замолкает: нет ни `[sleep] resumed`, ни `Restarting...`, SSH/HTTP не
+  поднимаются, UART не отвечает на ввод. В одном прогоне (2026-11-17
+  10:36) тот же сценарий повторялся штатно (`resumed (EC wake src -1)` →
+  `wake probe` → следующий suspend), поэтому это гонка в resume, а не
+  детерминированный дефект. Воспроизводится и на прошивке **без** патча
+  I2C (KI-073), то есть к патчу отношения не имеет. Последние сообщения —
+  `rk_gmac-dwmac ... Link is Down` / `init for RMII`; при опущенном `eth0`
+  их нет, а зависание то же, значит стоп происходит в device-resume, а не
+  только в GMAC/PHY. Статус: **открыто (P1 для sleep-линии)**; блокирует
+  M2/M3 и весь AOV-трек. Артефакты:
+  `output/bench/aov-test/console-nakguard-run1.log`,
+  `console-ethdown-patched-run.log`, `console-prepatch-control.log`.
+  Следующие шаги: `no_console_suspend` + `initcall_debug`/`pm_test` по
+  устройствам, сверка с вендорским TB-ядром и DTS `rockchip,pmu`.
 
 - **KI-064. `GET /api/update` роняет/подвешивает divinus.**
   2026-11-14: и старая сборка 0.3.0 (`/userdata/divinus.old`), и новая
@@ -845,8 +869,8 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   `-h-timeout-` (2000 ms): the MCU does not answer the mailbox, the AP
   returns on the timeout and the cycle repeats. The `aov_mcu=0` (PMU-only)
   run cycles cleanly (`rv1106 enter/exit sleep`). Status: **experimental,
-  not for release**; blockers are the MCU handshake and KI-073 (I2C3 panic
-  in the same runs). Artifacts: `output/bench/aov-image-1m/`,
+  not for release**; blockers are the MCU handshake, KI-073 (patched) and
+  KI-074 (resume hang). Artifacts: `output/bench/aov-image-1m/`,
   `output/bench/uar0-aov-fit-boot-20261117.log`,
   `output/bench/aov-test/uar0-m2-pmu-only.log`.
 
@@ -862,10 +886,32 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   the bus was already in an error state. The vendor `rk3x_i2c` handler
   (it does not handle the state after `unexpected irq`) is what crashes, not
   the suspend path, so PMU-only cycles carry the same risk. Workaround for
-  now: `[sleep] enable: false`. Status: **open (P1 for the sleep line)**; it
-  needs an integration patch of the driver and/or an I2C3 bus investigation
-  (the KI-071 family). Artifact:
-  `output/bench/aov-test/console-m3-panic-attempt3.log`.
+  now: `[sleep] enable: false`. Status: **patched 2026-11-17** —
+  `rk3x_i2c_irq()` has an `if (!i2c->msg) goto out;` guard after the NAK ack
+  (integration patch in `drivers/i2c/busses/i2c-rk3x.c`, see CHANGELOG). The
+  panic no longer reproduces in three suspend runs (before the patch it hit
+  on the first or second cycle); without the patch the same bench now stops
+  at the resume hang (KI-074), so the remaining blocker is KI-074. Panic
+  artifact: `output/bench/aov-test/console-m3-panic-attempt3.log`.
+
+- **KI-074. AP hangs on resume right after `rv1106 exit sleep`.**
+  2026-11-17, AOV image (kernel at 0x208000), `[sleep]` with `aov_mcu=0`,
+  idle 30 s, `wake_interval_s=10`: the first suspend completes normally
+  (`PM: suspend entry` → `rv1106 enter sleep` → DDR re-init →
+  `wake up status:0x00000000` → `rv1106 exit sleep`), then the AP goes
+  silent: no `[sleep] resumed`, no `Restarting...`, SSH/HTTP never come back
+  and the UART does not answer input. In one run (2026-11-17 10:36) the same
+  scenario cycled normally (`resumed (EC wake src -1)` → `wake probe` → next
+  suspend), so this is a resume race rather than a deterministic defect. It
+  reproduces on the build **without** the I2C patch (KI-073), so it is not
+  caused by that patch. The last messages are `rk_gmac-dwmac ... Link is
+  Down` / `init for RMII`; with `eth0` down they disappear but the hang stays,
+  so the stop is in device resume, not only in GMAC/PHY. Status: **open (P1
+  for the sleep line)**; it blocks M2/M3 and the whole AOV track. Artifacts:
+  `output/bench/aov-test/console-nakguard-run1.log`,
+  `console-ethdown-patched-run.log`, `console-prepatch-control.log`.
+  Next steps: `no_console_suspend` + `initcall_debug`/`pm_test` per device,
+  compare with the vendor TB kernel and the DTS `rockchip,pmu` node.
 
 - **KI-064. `GET /api/update` hangs/kills divinus.**
   On 2026-11-14 both the previous 0.3.0 binary (`/userdata/divinus.old`) and
