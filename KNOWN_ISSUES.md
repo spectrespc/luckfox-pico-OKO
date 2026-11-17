@@ -343,8 +343,22 @@
   M2/M3 и весь AOV-трек. Артефакты:
   `output/bench/aov-test/console-nakguard-run1.log`,
   `console-ethdown-patched-run.log`, `console-prepatch-control.log`.
-  Следующие шаги: `no_console_suspend` + `initcall_debug`/`pm_test` по
-  устройствам, сверка с вендорским TB-ядром и DTS `rockchip,pmu`.
+  Дополнение 2026-11-17 (диагностика `pm_test`): ядро собрано с
+  диагностическим фрагментом `rv1106-pm-debug.config`
+  (`CONFIG_PM_DEBUG`/`CONFIG_PM_TEST_SUSPEND`), загрузка — с
+  `no_console_suspend initcall_debug ignore_loglevel`. Лестница
+  `echo {freezer|devices|platform|processors|core} > /sys/power/pm_test` +
+  `echo mem > /sys/power/state` проходит **все** уровни (RC=0, uptime
+  растёт), в том числе с политикой divinus (`pm_test=core`: циклы идут,
+  плата жива). Значит PM-ядро, teardown divinus и thaw в тестовом режиме
+  работают, а стоп даёт именно реальный вход в сон (PMU SRAM/DDR:
+  `rv1106 enter sleep` → WFI → `exit sleep`), после которого
+  `suspend_thaw_processes()` не проходит (последний вывод —
+  `OOM killer enabled.`). Замечание по методике: при `pm_test` HTTP-сервер
+  divinus закрыт во время цикла, поэтому живость проверять SSH/uptime, а не
+  `/api/sleep`. Следующие шаги: сравнить поведение на вендорском TB-ядре,
+  разобрать DDR/PMU-stub (`rv1106_pm.c`, `rkpm_*`, `Jump to PMU_SRAM`) и
+  проверить гипотезу порчи/несовместимости контекста после DDR re-init.
 
 - **KI-064. `GET /api/update` роняет/подвешивает divinus.**
   2026-11-14: и старая сборка 0.3.0 (`/userdata/divinus.old`), и новая
@@ -910,8 +924,23 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   for the sleep line)**; it blocks M2/M3 and the whole AOV track. Artifacts:
   `output/bench/aov-test/console-nakguard-run1.log`,
   `console-ethdown-patched-run.log`, `console-prepatch-control.log`.
-  Next steps: `no_console_suspend` + `initcall_debug`/`pm_test` per device,
-  compare with the vendor TB kernel and the DTS `rockchip,pmu` node.
+  Update 2026-11-17 (`pm_test` diagnosis): the kernel is built with the
+  diagnostic fragment `rv1106-pm-debug.config` (`CONFIG_PM_DEBUG`/
+  `CONFIG_PM_TEST_SUSPEND`) and booted with
+  `no_console_suspend initcall_debug ignore_loglevel`. The ladder
+  `echo {freezer|devices|platform|processors|core} > /sys/power/pm_test` +
+  `echo mem > /sys/power/state` passes **every** level (RC=0, uptime keeps
+  growing), including with the divinus policy (`pm_test=core`: the cycles
+  run and the board stays alive). So the PM core, the divinus teardown and
+  the thaw all work in test mode, and the stop comes from the real sleep
+  entry (PMU SRAM/DDR: `rv1106 enter sleep` → WFI → `exit sleep`), after
+  which `suspend_thaw_processes()` does not complete (the last output is
+  `OOM killer enabled.`). Methodology note: with `pm_test` the divinus HTTP
+  server is closed during a cycle, so liveness must be checked over SSH or
+  `/proc/uptime`, not `/api/sleep`. Next steps: compare with the vendor TB
+  kernel, inspect the DDR/PMU stub (`rv1106_pm.c`, `rkpm_*`,
+  `Jump to PMU_SRAM`) and test the context-corruption hypothesis after the
+  DDR re-init.
 
 - **KI-064. `GET /api/update` hangs/kills divinus.**
   On 2026-11-14 both the previous 0.3.0 binary (`/userdata/divinus.old`) and

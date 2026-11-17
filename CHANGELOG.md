@@ -423,6 +423,26 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Исправлено
 
+- **Диагностика resume: `pm_test` и многострочный `--uboot-command`.**
+  Добавлен невключаемый по умолчанию фрагмент ядра
+  `rv1106-pm-debug.config` (`CONFIG_PM_DEBUG`/`CONFIG_PM_TEST_SUSPEND`) — он
+  даёт `/sys/power/pm_test` для лестницы
+  freezer→devices→platform→processors→core. `bench/netboot.py` принимает
+  повторяемый `--uboot-command` и выполняет команды в одной консольной
+  сессии (нужно для `setenv`+`saveenv`+`boot` подряд). Стенд 2026-11-17:
+  лестница проходит все уровни, в том числе с политикой divinus
+  (`pm_test=core`: циклы идут, плата жива), значит стоп KI-074 — в реальном
+  входе в сон, а не в PM-ядре; детали в `KNOWN_ISSUES.md` KI-074.
+- **Resume diagnosis: `pm_test` and a multi-command `--uboot-command`.**
+  New opt-in kernel fragment `rv1106-pm-debug.config`
+  (`CONFIG_PM_DEBUG`/`CONFIG_PM_TEST_SUSPEND`) that provides
+  `/sys/power/pm_test` for the freezer→devices→platform→processors→core
+  ladder. `bench/netboot.py` now accepts a repeated `--uboot-command` and
+  runs the commands in one console session (needed for
+  `setenv`+`saveenv`+`boot` in a row). Bench 2026-11-17: every ladder level
+  passes, including with the divinus policy (`pm_test=core`: the cycles run
+  and the board stays alive), so the KI-074 stop is in the real sleep entry,
+  not in the PM core; see `KNOWN_ISSUES.md` KI-074.
 - **I2C3: паника `rk3x_i2c_irq` при циклах `[sleep]` (KI-073) — патч.**
   В вендорский `drivers/i2c/busses/i2c-rk3x.c` добавлен guard после ack
   NAK: `rk3x_i2c_stop()` обнуляет `i2c->msg` для последнего сообщения, но

@@ -207,8 +207,9 @@ def main():
                         help="seconds to wait for the U-Boot prompt")
     parser.add_argument("--boot-timeout", type=float, default=180.0,
                         help="seconds to wait for the Linux login prompt")
-    parser.add_argument("--uboot-command", default=None,
-                        help="for catch/reboot: send this one U-Boot command instead of the netboot sequence")
+    parser.add_argument("--uboot-command", action="append", default=None,
+                        help="for catch/reboot: send these U-Boot commands (repeat the "
+                             "option) instead of the netboot sequence, then stop")
     args = parser.parse_args()
 
     if args.mode == "cmd" and not args.command:
@@ -250,8 +251,9 @@ def main():
             print("U-Boot prompt not found; reset the DUT or use mode 'reboot'", file=sys.stderr)
             return 3
         if args.uboot_command:
-            print(f"U-Boot prompt detected, sending: {args.uboot_command}")
-            send_uboot_command(session, args.uboot_command)
+            for command in args.uboot_command:
+                print(f"U-Boot prompt detected, sending: {command}")
+                send_uboot_command(session, command)
             return 0
         print("U-Boot prompt detected, sending netboot commands")
         send_netboot_commands(session)

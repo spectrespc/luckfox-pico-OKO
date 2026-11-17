@@ -200,6 +200,17 @@ MCU не отвечает по mailbox, AP возвращается по тай�
 переиспользует готовую сессию (после `tftp_flash --power-cycle` cookie
 гаснет, нужен новый логин).
 
+Диагностика resume (KI-074): в `-AOV` можно собрать ядро с фрагментом
+`rv1106-pm-debug.config` (по умолчанию он не включён) — появляется
+`/sys/power/pm_test`. Загрузка для диагностики:
+`setenv sys_bootargs '... no_console_suspend initcall_debug ignore_loglevel'`
+в U-Boot, затем лестница
+`echo {freezer|devices|platform|processors|core} > /sys/power/pm_test` и
+`echo mem > /sys/power/state` (каждый уровень возвращает управление).
+Живость проверять по SSH/`/proc/uptime`: во время цикла HTTP divinus
+закрыт. После диагностики вернуть штатный `sys_bootargs`
+(`ubi.mtd=6 root=ubi0:rootfs rootfstype=ubifs rk_dma_heap_cma=66M`).
+
 Патч I2C (KI-073) входит в ядро этого профиля: в `rk3x_i2c_irq()`
 поздний NAK при `i2c->msg == NULL` подтверждается и не разыменовывается.
 Паника на I2C3 после патча не воспроизводится (3 прогона), но остаётся
