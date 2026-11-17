@@ -191,6 +191,18 @@ MCU не отвечает по mailbox, AP возвращается по тай�
 `sleep enable` держать `false`, иначе плата уходит в reset на каждом
 цикле. Профиль остаётся NO-GO (KI-072).
 
+Перед прогоном sleep на стенде проверьте конфиг приложения: если включены
+одновременно `mjpeg`, `jpeg` и `ivs`, старт падает (`[jpeg] No free
+channel for JPEG!` → `[hal] Failed to start SDK!`, это KI-069); помогает
+`mjpeg.enable: false`. Ложное движение (`min_area` по умолчанию 2) не даёт
+таймеру простоя дойти до нуля — `ivs.min_area` допустим в диапазоне [0; 50],
+ставьте 50. Отказ `RKAiChn ... ai set sound card failed` → `[hal] Failed to
+start SDK!` встречается на этом стенде при `audio.enable: true` (лечится
+`audio.enable: false`). Проверка циклов: `/api/sleep` (`idle_s` растёт),
+`dmesg | grep -E 'PM: suspend entry|Restarting tasks'`, `aov_state` в
+момент простоя должен быть `off`, а строки `-h-wait-`/`-h-timeout-` видны
+только на живом UART (печатаются мимо printk).
+
 Наблюдаемость: мост ESP32 перестаёт отдавать вывод DUT примерно через 7 с
 после старта ядра, поэтому окно suspend/resume снимается только живым
 зеркалом `bench/run.sh serial_exec.py --listen 200`, а не выгрузкой

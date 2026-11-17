@@ -308,9 +308,15 @@
   окне `rtos@40000` исчезло. Suspend с `aov_mcu=1` доходит до `-h-wait-` →
   `-h-timeout-` (2000 мс): MCU не отвечает по mailbox, AP возвращается по
   таймауту, цикл повторяется. Отрицательный прогон `aov_mcu=0` (PMU-only)
-  циклится штатно (`rv1106 enter/exit sleep`). Статус: **экспериментальный,
-  не для выпуска**; блокеры — handshake MCU, KI-073 (патч применён) и
-  KI-074 (зависание на resume). Артефакты: `output/bench/aov-image-1m/`,
+  циклится штатно (`rv1106 enter/exit sleep`). После патча KI-074
+  (`gic400_restore`) прогон 2026-11-17 15:24 с `aov_mcu=1`: политика пишет
+  `aov armed`, ядро дважды проходит `PM: suspend entry` →
+  `Restarting tasks ... done.` → `PM: suspend exit`, AP не виснет. Ответ
+  MCU по mailbox при этом не подтверждён: строки
+  `-h-wait-`/`-h-mbox-`/`-h-timeout-` печатаются `rkpm_printstr` прямо в
+  UART и в лог моста не попали. Статус: **экспериментальный, не для
+  выпуска**; блокеры — handshake MCU, KI-073 (патч применён) и
+  KI-074 (исправлено, проверено для PMU-only и AOV-armed циклов). Артефакты: `output/bench/aov-image-1m/`,
   `output/bench/uar0-aov-fit-boot-20261117.log`,
   `output/bench/aov-test/uar0-m2-pmu-only.log`.
 
@@ -358,8 +364,8 @@
   вендорском timeout-пути. Стенд: AOV-ядро (0x208000, gzip-FIT) с
   `aov_mcu=0` прошло ~15 циклов (`[sleep] resumed (EC wake src 4)`,
   `Restarting tasks ... done.`); продуктовое ядро (флаг off) циклы
-  проходило и раньше; путь `aov_mcu=1` после патча не перепроверен (на
-  стенде приложение не стартовало из-за отказа audio/SDK). Артефакты:
+  проходило и раньше; путь `aov_mcu=1` после патча проверен 2026-11-17
+  15:24 (два полных цикла в `dmesg`, см. KI-072). Артефакты:
   `output/bench/aov-test/console-nakguard-run1.log`,
   `console-ethdown-patched-run.log`, `console-prepatch-control.log`.
   Дополнение 2026-11-17 (диагностика `pm_test`): ядро собрано с
@@ -909,9 +915,16 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   overlap warning is gone. A suspend with `aov_mcu=1` reaches `-h-wait-` →
   `-h-timeout-` (2000 ms): the MCU does not answer the mailbox, the AP
   returns on the timeout and the cycle repeats. The `aov_mcu=0` (PMU-only)
-  run cycles cleanly (`rv1106 enter/exit sleep`). Status: **experimental,
-  not for release**; blockers are the MCU handshake, KI-073 (patched) and
-  KI-074 (resume hang). Artifacts: `output/bench/aov-image-1m/`,
+  run cycles cleanly (`rv1106 enter/exit sleep`). After the KI-074 patch
+  (`gic400_restore`) the 2026-11-17 15:24 run with `aov_mcu=1` shows the
+  policy arming AOV (`aov armed`) and the kernel completing
+  `PM: suspend entry` → `Restarting tasks ... done.` → `PM: suspend exit`
+  twice, so the AP no longer hangs. The MCU mailbox answer is not confirmed:
+  the `-h-wait-`/`-h-mbox-`/`-h-timeout-` strings are printed by
+  `rkpm_printstr` straight to the UART and never reached the bridge log.
+  Status: **experimental, not for release**; blockers are the MCU handshake,
+  KI-073 (patched) and KI-074 (fixed, verified for PMU-only and AOV-armed
+  cycles). Artifacts: `output/bench/aov-image-1m/`,
   `output/bench/uar0-aov-fit-boot-20261117.log`,
   `output/bench/aov-test/uar0-m2-pmu-only.log`.
 
@@ -958,8 +971,8 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   timeout path. Bench: the AOV kernel (0x208000, gzip FIT) with `aov_mcu=0`
   ran ~15 cycles (`[sleep] resumed (EC wake src 4)`, `Restarting tasks ...
   done.`); the product kernel (flag off) cycled before; the `aov_mcu=1` path
-  after the fix is not re-verified (the bench app failed to start because of
-  an audio/SDK init error). Artifacts:
+  after the fix was verified on 2026-11-17 15:24 (two full cycles in
+  `dmesg`, see KI-072). Artifacts:
   `output/bench/aov-test/console-nakguard-run1.log`,
   `console-ethdown-patched-run.log`, `console-prepatch-control.log`.
   Update 2026-11-17 (`pm_test` diagnosis): the kernel is built with the
