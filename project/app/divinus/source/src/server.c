@@ -6277,6 +6277,7 @@ if (EQUALS(req->uri, "/api/storage")) {
             bool enable = app_config.sleep_enable;
             bool pmuTimer = app_config.sleep_pmu_timer_wake;
             bool aov = app_config.sleep_aov_mcu;
+            bool aovKeepIsp = app_config.sleep_aov_keep_isp;
             unsigned int idle = app_config.sleep_idle_timeout_s;
             unsigned int interval = app_config.sleep_wake_interval_s;
             unsigned int check = app_config.sleep_wake_check_s;
@@ -6302,6 +6303,8 @@ if (EQUALS(req->uri, "/api/storage")) {
                     pmuTimer = query_bool(value); changed = true;
                 } else if (EQUALS(key, "aov_mcu")) {
                     aov = query_bool(value); changed = true;
+                } else if (EQUALS(key, "aov_keep_isp")) {
+                    aovKeepIsp = query_bool(value); changed = true;
                 } else if (EQUALS(key, "idle_timeout_s") ||
                            EQUALS(key, "wake_interval_s") ||
                            EQUALS(key, "wake_check_s")) {
@@ -6337,6 +6340,7 @@ if (EQUALS(req->uri, "/api/storage")) {
                 app_config.sleep_enable = enable;
                 app_config.sleep_pmu_timer_wake = pmuTimer;
                 app_config.sleep_aov_mcu = aov;
+                app_config.sleep_aov_keep_isp = aovKeepIsp;
                 app_config.sleep_idle_timeout_s = idle;
                 app_config.sleep_wake_interval_s = interval;
                 app_config.sleep_wake_check_s = check;

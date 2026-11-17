@@ -788,6 +788,17 @@ int sleep_policy_aov_available(void)
     return aov_supported;
 }
 
+int sleep_policy_aov_keep_pipeline(void)
+{
+    /*
+     * AOV: the MCU takes the frames from the CSI/ISP while the AP sleeps, so
+     * the pipeline must stay up.  Only valid together with the AOV proxy:
+     * without it the MCU is never released and the streaming pipe would just
+     * burn power across the suspend.
+     */
+    return enabled && aov_active && app_config.sleep_aov_keep_isp;
+}
+
 void sleep_policy_api_json(char *out, size_t size)
 {
     long idle = 0;
@@ -808,6 +819,7 @@ void sleep_policy_api_json(char *out, size_t size)
 
     snprintf(out, size,
              "{\"enable\":%s,\"pmu_timer_wake\":%s,\"aov_mcu\":%s,"
+             "\"aov_keep_isp\":%s,"
              "\"aov_available\":%s,\"aov_state\":\"%s\","
              "\"idle_timeout_s\":%u,\"wake_interval_s\":%u,"
              "\"wake_check_s\":%u,\"pmu_timeout_hz\":%u,"
@@ -816,6 +828,7 @@ void sleep_policy_api_json(char *out, size_t size)
              app_config.sleep_enable ? "true" : "false",
              app_config.sleep_pmu_timer_wake ? "true" : "false",
              app_config.sleep_aov_mcu ? "true" : "false",
+             app_config.sleep_aov_keep_isp ? "true" : "false",
              aov_supported ? "true" : "false", aov_state_name(),
              app_config.sleep_idle_timeout_s,
              app_config.sleep_wake_interval_s,

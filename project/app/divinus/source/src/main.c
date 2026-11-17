@@ -263,9 +263,21 @@ int main(int argc, char *argv[]) {
     focus_stop();
     firmware_status_stop();
 
-    sdk_stop();
+    /*
+     * AOV: the MCU takes frames from the CSI/ISP while the AP is suspended,
+     * so the AOV profile can keep the pipeline up (KI-072).  Everywhere else
+     * the pipeline is stopped: a live CSI/ISP stream across a mem cycle used
+     * to turn the resume into a mipi-csi2 error storm.
+     */
+    int aovKeepPipeline = sleepPending && sleep_policy_aov_keep_pipeline();
 
-    if (app_config.stream_enable)
+    if (aovKeepPipeline)
+        HAL_INFO("sleep", "AOV: keeping the CSI/ISP pipeline up for the MCU\n");
+
+    if (!aovKeepPipeline)
+        sdk_stop();
+
+    if (app_config.stream_enable && !aovKeepPipeline)
         media_stop();
 
     if (app_config.rtsp_enable) {

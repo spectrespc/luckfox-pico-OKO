@@ -45,5 +45,8 @@ void sleep_policy_api_json(char *out, size_t size);
 
 /* 1, если ядро и DTS предоставляют AOV-прокси (не зависит от [sleep]). */
 int sleep_policy_aov_available(void);
+/* 1, если AOV-режим включён и пайплайн (CSI/ISP) должен остаться поднятым
+ * на время AP-suspend: main пропускает sdk_stop()/media_stop(). */
+int sleep_policy_aov_keep_pipeline(void);
 
 #endif /* SLEEP_POLICY_H */

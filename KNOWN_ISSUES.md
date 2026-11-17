@@ -337,10 +337,20 @@
   в наш DTS): поведение не изменилось — MCU находит `isp_0`, но кадров в
   окне нет. Причина в архитектуре: divinus останавливает пайплайн
   (CSI/ISP) перед `mem`, поэтому MCU нечего принимать; вендорский AOV
-  оставляет ISP/CIF зарезервированными за MCU. Для AOV нужен режим, в
-  котором AP не гасит ISP (и MCU-порт battery-ipc). Статус: **экспериментальный, не для
-  выпуска**; блокеры — handshake MCU, KI-073 (патч применён) и
-  KI-074 (исправлено, проверено для PMU-only и AOV-armed циклов). Артефакты: `output/bench/aov-image-1m/`,
+  оставляет ISP/CIF зарезервированными за MCU. **2026-11-17 handshake
+  заработал** после двух правок: 1) divinus — режим `[sleep] aov_keep_isp`
+  (в AOV-профиле `sdk_stop()`/`media_stop()` не вызываются, CSI/ISP остаются
+  поднятыми для MCU); 2) ядро — `hpmcu_fast_wkup()` перечитывал статус
+  mailbox после его ack, поэтому здоровый ответ всегда попадал в
+  `-h-timeout-`; результат теперь запоминается флагом. Стенд (11 полных
+  циклов): `[STREAM]: gpio0_int_status is 0, share_data->md_flag is 1,
+  tick:172..204` → `-h-mbox-` → `[sleep] resumed (… aov motion)`.
+  Остаётся: MCU в статичной сцене сообщает движение (`md_flag=1`), поэтому
+  AP просыпается каждый цикл вместо quiet; `wakeup_param` в meta не
+  инициализирован (0xFF); стрим после AOV-resume с сохранённым пайплайном
+  требует отдельной проверки; окно mailbox можно вернуть к ~500 мс.
+  Статус: **экспериментальный, не для выпуска**; блокеры — KI-073 (патч
+  применён), KI-074 (исправлено) и тюнинг MCU (md_flag/wakeup_param). Артефакты: `output/bench/aov-image-1m/`,
   `output/bench/uar0-aov-fit-boot-20261117.log`,
   `output/bench/aov-test/uar0-m2-pmu-only.log`.
 
@@ -970,11 +980,21 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   added to our DTS) was also tested: no change — the MCU finds `isp_0` but
   gets no frames in the window. The reason is architectural: divinus stops
   the pipeline (CSI/ISP) before `mem`, so the MCU has nothing to consume;
-  the vendor AOV keeps the ISP/CIF reserved for the MCU. AOV needs a mode
-  where the AP does not power the ISP down (plus the battery-ipc MCU port).
-  Status: **experimental, not for release**; blockers are the MCU handshake,
-  KI-073 (patched) and KI-074 (fixed, verified for PMU-only and AOV-armed
-  cycles). Artifacts: `output/bench/aov-image-1m/`,
+  the vendor AOV keeps the ISP/CIF reserved for the MCU. **The handshake
+  started working on 2026-11-17** after two fixes: 1) divinus — a new
+  `[sleep] aov_keep_isp` mode (the AOV profile skips `sdk_stop()`/
+  `media_stop()` so the CSI/ISP stay up for the MCU); 2) kernel —
+  `hpmcu_fast_wkup()` re-read the mailbox status after acking it, so a
+  healthy answer always fell into `-h-timeout-`; the result is now latched.
+  Bench (11 complete cycles): `[STREAM]: gpio0_int_status is 0,
+  share_data->md_flag is 1, tick:172..204` → `-h-mbox-` →
+  `[sleep] resumed (… aov motion)`. Still open: the MCU reports motion in a
+  static scene (`md_flag=1`), so the AP resumes on every cycle instead of
+  staying quiet; the meta `wakeup_param` is uninitialized (0xFF); streaming
+  after an AOV resume with the kept pipeline needs its own check; the
+  mailbox window can go back to ~500 ms. Status: **experimental, not for
+  release**; blockers are KI-073 (patched), KI-074 (fixed) and MCU tuning
+  (md_flag/wakeup_param). Artifacts: `output/bench/aov-image-1m/`,
   `output/bench/uar0-aov-fit-boot-20261117.log`,
   `output/bench/aov-test/uar0-m2-pmu-only.log`.
 

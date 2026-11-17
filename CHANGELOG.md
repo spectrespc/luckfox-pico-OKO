@@ -443,6 +443,26 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   passes, including with the divinus policy (`pm_test=core`: the cycles run
   and the board stays alive), so the KI-074 stop is in the real sleep entry,
   not in the PM core; see `KNOWN_ISSUES.md` KI-074.
+- **AOV: handshake MCU заработал (KI-072).** Две правки: в divinus —
+  режим `[sleep] aov_keep_isp` (AOV-профиль не вызывает
+  `sdk_stop()`/`media_stop()`, CSI/ISP остаются поднятыми для MCU, есть в
+  API и yaml); в ядре — `hpmcu_fast_wkup()` больше не перечитывает статус
+  mailbox после ack (флаг `got`), из-за чего любой здоровый ответ
+  трактовался как `-h-timeout-`. Стенд 2026-11-17: 11 полных циклов —
+  `[STREAM]: … md_flag is 1, tick:172..204` → `-h-mbox-` →
+  `[sleep] resumed (… aov motion)`. Остаётся тюнинг MCU (`md_flag` в
+  статичной сцене, `wakeup_param` в meta) и проверка стрима после
+  AOV-resume.
+- **AOV: the MCU handshake now works (KI-072).** Two changes: divinus gets a
+  `[sleep] aov_keep_isp` mode (the AOV profile skips `sdk_stop()`/
+  `media_stop()` so the CSI/ISP stay up for the MCU; exposed in the API and
+  the yaml); the kernel `hpmcu_fast_wkup()` no longer re-reads the mailbox
+  status after acking it (a `got` flag), which used to report every healthy
+  answer as `-h-timeout-`. Bench 2026-11-17: 11 complete cycles —
+  `[STREAM]: … md_flag is 1, tick:172..204` → `-h-mbox-` →
+  `[sleep] resumed (… aov motion)`. Still open: MCU tuning (`md_flag` in a
+  static scene, `wakeup_param` in the meta) and streaming after an AOV
+  resume.
 - **AOV DTS: `aov-reserved` на `&rkcif_mipi_lvds`.** Свойство взято из
   вендорского AOV-эталона `rv1106g-evb2-v12-aov-spi-nor.dts` (резерв
   CIF/ISP под MCU на время AP-suspend). На стенде 2026-11-17 поведение не

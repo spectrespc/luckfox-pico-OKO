@@ -543,6 +543,7 @@ static int hpmcu_fast_wkup(void)
 {
 	u32 cmd;
 	int waited_us = 0;
+	bool got = false;
 
 	hpmcu_start();
 	oko_aov_set_state(OKO_AOV_ARMED);
@@ -562,6 +563,13 @@ static int hpmcu_fast_wkup(void)
 	while (waited_us < RV1106_HPMCU_FAST_WKUP_TIMEOUT * 1000) {
 		if (is_hpmcu_mbox_int()) {
 			rkpm_printstr("-h-mbox-\n");
+			/*
+			 * OKO (KI-072): remember the answer.  The status bit is
+			 * acknowledged below, so re-reading it after the loop
+			 * reported a healthy handshake as a timeout and the AP
+			 * always resumed on the fallback path.
+			 */
+			got = true;
 			/* clear system wake up state */
 			writel(0, pmu_base + RV1106_PMU_SYS_REG(0));
 			writel(BIT(0), mbox_base + RV1106_MBOX_B2A_STATUS);
@@ -572,7 +580,7 @@ static int hpmcu_fast_wkup(void)
 		waited_us += 100;
 	}
 
-	if (!is_hpmcu_mbox_int()) {
+	if (!got) {
 		rkpm_printstr("-h-timeout-\n");
 		oko_aov_set_state(OKO_AOV_TIMEOUT);
 		return 0;

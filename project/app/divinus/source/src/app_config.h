@@ -257,6 +257,7 @@ struct AppConfig {
     bool sleep_enable;
     bool sleep_pmu_timer_wake;  /* program 0xff300048 before suspend */
     bool sleep_aov_mcu;         /* enable the AOV MCU wake proxy */
+    bool sleep_aov_keep_isp;    /* keep CSI/ISP streaming across suspend */
     unsigned int sleep_idle_timeout_s;
     unsigned int sleep_wake_interval_s;
     unsigned int sleep_wake_check_s;

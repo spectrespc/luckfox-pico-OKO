@@ -446,6 +446,7 @@ void app_config_dump(FILE *file) {
     fprintf(file, "  enable: %s\n", app_config.sleep_enable ? "true" : "false");
     fprintf(file, "  pmu_timer_wake: %s\n", app_config.sleep_pmu_timer_wake ? "true" : "false");
     fprintf(file, "  aov_mcu: %s\n", app_config.sleep_aov_mcu ? "true" : "false");
+    fprintf(file, "  aov_keep_isp: %s\n", app_config.sleep_aov_keep_isp ? "true" : "false");
     fprintf(file, "  idle_timeout_s: %d\n", app_config.sleep_idle_timeout_s);
     fprintf(file, "  wake_interval_s: %d\n", app_config.sleep_wake_interval_s);
     fprintf(file, "  wake_check_s: %d\n", app_config.sleep_wake_check_s);
@@ -657,6 +658,7 @@ enum ConfigError app_config_parse(void) {
     app_config.sleep_enable = false;
     app_config.sleep_pmu_timer_wake = true;
     app_config.sleep_aov_mcu = false;
+    app_config.sleep_aov_keep_isp = false;
     app_config.sleep_idle_timeout_s = 600;
     app_config.sleep_wake_interval_s = 10;
     app_config.sleep_wake_check_s = 3;
@@ -1381,6 +1383,7 @@ enum ConfigError app_config_parse(void) {
     parse_bool(&ini, "sleep", "pmu_timer_wake",
         &app_config.sleep_pmu_timer_wake);
     parse_bool(&ini, "sleep", "aov_mcu", &app_config.sleep_aov_mcu);
+    parse_bool(&ini, "sleep", "aov_keep_isp", &app_config.sleep_aov_keep_isp);
     /* Parsed even while disabled so app_config_save() keeps the tuned values. */
     parse_int(&ini, "sleep", "idle_timeout_s", 10, 86400,
         &app_config.sleep_idle_timeout_s);
