@@ -1,0 +1,70 @@
+/*
+ * OKO AOV boot FIT: the kernel is linked at 0x208000 so that it stays clear
+ * of the HPMCU image window (0x40000..0x7c000, see arch/arm/Makefile
+ * textofs-$(CONFIG_RV1106_HPMCU_FAST_WAKEUP)).
+ *
+ * The stock boot.its loads the self-decompressing zImage at 0x8000, and a
+ * zImage cannot be used here: the decompressor runs from the load address
+ * and its relocation target is derived from the link address, which breaks
+ * the MCU window protection as soon as the load address moves.  The vendor
+ * thunder-boot image does what this file does: the FIT carries Image.gz with
+ * compression = "gzip" and load = entry = the link address, so U-Boot
+ * decompresses the kernel directly to 0x208000.
+ *
+ * Built by project/build.sh (__BUILD_KERNEL_FIT) for the -AOV profile only;
+ * the product profile keeps the stock boot.its.
+ */
+
+/dts-v1/;
+/ {
+    description = "OKO AOV FIT: Linux kernel at 0x208000 with FDT and resource";
+
+    images {
+        fdt {
+            data = /incbin/("fdt");
+            type = "flat_dt";
+            arch = "arm";
+            compression = "none";
+            load = <0x00c00000>;
+
+            hash {
+                algo = "sha256";
+            };
+        };
+
+        kernel {
+            data = /incbin/("kernel");
+            type = "kernel";
+            arch = "arm";
+            os = "linux";
+            compression = "gzip";
+            entry = <0x00208000>;
+            load = <0x00208000>;
+
+            hash {
+                algo = "sha256";
+            };
+        };
+
+        resource {
+            data = /incbin/("resource");
+            type = "multi";
+            arch = "arm";
+            compression = "none";
+
+            hash {
+                algo = "sha256";
+            };
+        };
+    };
+
+    configurations {
+        default = "conf";
+
+        conf {
+            fdt = "fdt";
+            kernel = "kernel";
+            multi = "resource";
+        };
+    };
+};

@@ -18,7 +18,7 @@
 | Папка | Назначение |
 |---|---|
 | `config/` | Извлечённые дефконфиги для быстрой настройки: `buildroot_defconfig`, `kernel_defconfig`, `dts_config`. |
-| `bench/` | Утилиты тестового стенда: консоль по UART (telnet-мост ESP32 или `/dev/ttyACM*`, `uart.py`/`serial_exec.py`) и SSH-команды, netboot через TFTP/NFS (`netboot.py`), прошивка SPI NAND по TFTP (`tftp_flash.py`, режим по умолчанию), переключение NAND/NFS через env U-Boot (`nfs_env.py`), проверка OSD по RTSP (`osd_check.py`), сквозная проверка UDP/RTP-раздачи через MediaMTX (`stream_check.py`), сквозная проверка событий и роликов (`event_check.py`), их soak (`clip_soak.py`), матрица HTTP API (`api_check.py`), WebUI в headless Chromium (`ui_check.py`), проверка mDNS сырым UDP-запросом (`mdns_check.py`), soak 2BPP-рамок с контролем fd/RSS/счётчиков ядра (`rgn_boxes_check.py`), AF-метрика и CSV (`focus_check.py`), версии/прошивка контроллеров (`firmware_check.py`), выкатка бинарника в `/oem` (`deploy_divinus.py`), 20-минутный soak двух аплинков (`uplink_soak.py`), venv. В сборке прошивки не участвует. |
+| `bench/` | Утилиты тестового стенда: консоль по UART (telnet-мост ESP32 или `/dev/ttyACM*`, `uart.py`/`serial_exec.py`) и SSH-команды, netboot через TFTP/NFS (`netboot.py`), прошивка SPI NAND по TFTP (`tftp_flash.py`, режим по умолчанию; раскладка читается из `output/image/.env.txt`, компоненты `idblock/uboot/env` доступны явно, перед записью idblock делается SSH-бэкап `/dev/mtdblock1` в `output/bench/backup/`, `--power-cycle` — холодный цикл питания через мост с перехватом U-Boot), питание DUT через ESP32-мост (`power.py`: `off`/`on`/`cycle`/`reset`), переключение NAND/NFS через env U-Boot (`nfs_env.py`), проверка OSD по RTSP (`osd_check.py`), сквозная проверка UDP/RTP-раздачи через MediaMTX (`stream_check.py`), сквозная проверка событий и роликов (`event_check.py`), их soak (`clip_soak.py`), матрица HTTP API (`api_check.py`), WebUI в headless Chromium (`ui_check.py`), проверка mDNS сырым UDP-запросом (`mdns_check.py`), soak 2BPP-рамок с контролем fd/RSS/счётчиков ядра (`rgn_boxes_check.py`), AF-метрика и CSV (`focus_check.py`), версии/прошивка контроллеров (`firmware_check.py`), выкатка бинарника в `/oem` (`deploy_divinus.py`), 20-минутный soak двух аплинков (`uplink_soak.py`), venv. В сборке прошивки не участвует. |
 | `services/` | Docker-сервисы стенда. `services/docker-compose.yml` — контейнер `oko-services`: TFTP (`output/image`), NFS-экспорт `output/srv/nfs/rootfs`, неактивные шаблоны WireGuard/AmneziaWG/OpenVPN (`conf/`), запуск — `tools/native/setup_netboot.sh`. `services/stream/` — отдельный профиль `oko-mediamtx` (MediaMTX, host-сеть): принимает RTP камеры на `5600/udp` и отдаёт RTSP/HLS/WebRTC; `services/events/` — профиль `oko-events` (FastAPI + ffmpeg, порт 8090): принимает JPEG-пачки и fMP4-ролики событий, хранит их в `output/srv/events`, транскодирует H.265 → H.264 для браузера; `services/converter/` — профиль `oko-converter` (FastAPI + rknn-toolkit2 2.5.0, порт 8091): принимает ONNX 640×384 и калибровочные JPEG, конвертирует в `.rknn` для rv1106, задачи и логи — в `output/srv/converter`. В сборке прошивки не участвуют. |
 | `research/` | Архив внешних исследований: заметки о переносимости upstream-кода и минимальные read-only снимки upstream-файлов с провенансом. В сборке прошивки не участвует. |
 | `media/` | Медиастек Rockchip: кодеки, 2D-ускорение, ISP, NPU, медиафреймворк и примеры. |
@@ -145,6 +145,8 @@
   стейджит оба скрипта в `/oem/usr/bin`. Перенос тела из вендорского
   `RkLunch.sh` и список удалённых веток — в `README.md` пакета.
 - `cfg/BoardConfig_IPC/` — конфигурации плат (`BoardConfig-*.mk`), папка `overlay/`
+  (включая экспериментальный `...-SC230AI-AOV.mk` с 1M idblock и meta в OEM;
+  активный профиль — продуктовый `...-SC230AI.mk`).
   с оверлеями rootfs и pre/post-скрипты (`*-pre.sh`, `*-post.sh`),
   `oko-prune.list` (пути, вырезаемые из rootfs и `oem` при упаковке; применяет
   `__RUN_POST_CLEAN_FILES`). В оверлее OKO
@@ -201,6 +203,14 @@
   `busybox_patch/` и патч-серия `patches-2026.08/` (gnutls, libv4l, dbus,
   bluez5_utils), подключаемая через `BR2_GLOBAL_PATCH_DIR`.
 - `source/mcu` — прошивка сопроцессора MCU на RT-Thread (вендорская часть SDK).
+  Экспериментальный OKO-борд AOV-профиля — `bsp/rockchip/rv1106-mcu/board/
+  oko-wakeup-sc230ai-ADC` (SC230AI + `RT_USING_RK_AOV`, meta 0x01000000,
+  ISP 0x01060000); собирается `./build.sh mcu oko-wakeup-sc230ai-ADC`
+  или `tools/native/build_hpmcu.sh [board]`.
+- `source/uboot/rkbin/RKBOOT/RV1106MINIALL_SPI_NAND_HPMCU.ini` — overlay
+  загрузчика AOV: `LOADER1=FlashData`, `LOADER2=Hpmcu`, `LOADER3` — штатный
+  SPL; `build.sh` подставляет в него путь к `rtthread.bin`. Только для
+  экспериментального профиля `-AOV` (KI-072).
 - `source/objs_kernel` — промежуточные объекты сборки ядра.
 - `drv_ko/kmpp`, `drv_ko/rockit`, `drv_ko/wifi` — модули ядра для медиастека и Wi-Fi.
   В `drv_ko/wifi/rtl8821cu/` — USB-драйвер RTL8821CU/RTL8811CU
@@ -218,8 +228,11 @@
   проверка кросс-тулчейна), `env.sh` (`PATH`, `CROSS_COMPILE`, `ARCH`, локаль),
   `smoke.sh` (отчёт `output/bench/native/smoke.log`), `setup_netboot.sh`
   (поднимает контейнер `services/` с TFTP и NFS-экспортом),
+  `build_hpmcu.sh` (сборка AOV-MCU в `output/out/mcu_out/rtthread.bin`),
   `make_oko_update.sh` (пакет `.okp` для обновления из WebUI: манифест
-  `oko-update.conf` + `boot.img`/`oem.img`/`rootfs.img`, несжатый tar),
+  `oko-update.conf` + `boot.img`/`oem.img`/`rootfs.img`, несжатый tar; смещения
+  и размеры читаются из `output/image/.env.txt`, поэтому tool работает и с
+  раскладкой `-AOV`),
   `check_image_contents.sh` (статичная проверка `output/out/oem` и rootfs:
   обязательные файлы OKO на месте, позиций из `oko-prune.list` нет).
 - `linux/toolchain/` — кросс-компилятор `arm-rockchip830-linux-uclibcgnueabihf`.

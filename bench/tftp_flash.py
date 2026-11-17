@@ -39,17 +39,59 @@ import nfs_env
 ROOT = Path(__file__).resolve().parents[1]
 IMAGE_DIR = ROOT / "output" / "image"
 
-# Bytes offsets and sizes of the SPI NAND partitions.  They repeat the
-# mtdparts string from output/image/.env.txt:
-#   mtdparts=spi-nand0:256K(env),256K@256K(idblock),512K(uboot),6M(boot),40M(oem),40M(userdata),168M(rootfs)
-# U-Boot here has CONFIG_CMD_MTDPARTS off, so `mtd` works on the whole
-# spi-nand device and the offset/size must be passed explicitly.
-PARTITIONS = {
+# Fallback layout of the product image; the actual table is read from
+# output/image/.env.txt (mtdparts=...), so the -AOV profile with its larger
+# idblock works without editing this file.  U-Boot here has
+# CONFIG_CMD_MTDPARTS off, so `mtd` works on the whole spi-nand device and
+# the offset/size must be passed explicitly.
+DEFAULT_PARTITIONS = {
+    "env": (0x00000000, 0x00040000),
+    "idblock": (0x00040000, 0x00040000),
+    "uboot": (0x00080000, 0x00080000),
     "boot": (0x00100000, 0x00600000),
     "oem": (0x00700000, 0x02800000),
     "userdata": (0x02F00000, 0x02800000),
     "rootfs": (0x05700000, 0x0A800000),
 }
+
+SIZE_UNITS = {"K": 1024, "M": 1024 * 1024, "G": 1024 * 1024 * 1024}
+
+
+def parse_size(text):
+    text = text.strip()
+    if text[-1:].upper() in SIZE_UNITS:
+        return int(text[:-1], 0) * SIZE_UNITS[text[-1:].upper()]
+    return int(text, 0)
+
+
+def load_partitions():
+    """Read the mtdparts line from output/image/.env.txt.
+
+    Format: mtdparts=spi-nand0:256K(env),512K@256K(idblock),...
+    An explicit @offset is honoured; otherwise the partition follows the
+    previous one.  Returns the fallback table when the file is unavailable.
+    """
+    path = IMAGE_DIR / ".env.txt"
+    try:
+        text = path.read_text()
+    except OSError:
+        return dict(DEFAULT_PARTITIONS)
+    match = re.search(r"mtdparts=[^:]+:(\S+)", text)
+    if not match:
+        return dict(DEFAULT_PARTITIONS)
+    parts = {}
+    offset = 0
+    for item in match.group(1).split(","):
+        m = re.fullmatch(r"([^@(]+)(?:@([^(]+))?\(([^)]+)\)", item)
+        if not m:
+            raise RuntimeError(f"cannot parse mtdparts item: {item}")
+        size = parse_size(m.group(1))
+        if m.group(2):
+            offset = parse_size(m.group(2))
+        parts[m.group(3)] = (offset, size)
+        offset += size
+    return parts
+
 
 SIZE_RE = re.compile(r"Bytes transferred = (\d+)")
 
@@ -60,6 +102,10 @@ TFTP_READY_CMDS = [
     f"setenv gatewayip {netboot.GATEWAY}",
     f"ping {netboot.SERVER_IP}",
 ]
+
+
+def args_out_default():
+    return Path(os.environ.get("OKO_BENCH_OUT", str(netboot.DEFAULT_OUT)))
 
 
 def log(message):
@@ -125,7 +171,30 @@ def at_uboot_prompt(session, seconds=1.5):
     return b"=>" in buf
 
 
-def enter_uboot(session, prompt_timeout):
+def reboot_over_ssh(args):
+    """Reboot the running system over SSH when the console login is unusable.
+
+    The console can be left at a Password prompt or full of kernel output, and
+    a U-Boot prompt that was caught earlier can be lost to autoboot; a fresh
+    reboot issued from Linux while this session keeps hammering Ctrl-C is the
+    reliable way into U-Boot.
+    """
+    import paramiko
+
+    host = args.dut_host or os.environ.get("OKO_DUT_HOST", "192.168.52.33")
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    try:
+        client.connect(host, username=args.dut_user,
+                       password=args.dut_password, timeout=10,
+                       banner_timeout=10)
+        client.exec_command("reboot", timeout=10)
+        time.sleep(0.5)
+    finally:
+        client.close()
+
+
+def enter_uboot(session, prompt_timeout, args):
     """Reach the U-Boot prompt, rebooting a running Linux if needed."""
     if at_uboot_prompt(session):
         log("U-Boot prompt is already active")
@@ -133,10 +202,16 @@ def enter_uboot(session, prompt_timeout):
         return
     if netboot.login(session, timeout=10):
         log("linux shell ok, rebooting into U-Boot")
-        session.write(b"reboot\r")
-        time.sleep(2)
+        # Start hammering Ctrl-C immediately: the U-Boot autoboot window is
+        # only a second or two and a longer pause lets it boot Linux again.
+        session.write(b"reboot\r\n")
+        time.sleep(0.3)
     else:
-        log("no linux shell, trying to interrupt autoboot")
+        log("no console shell; rebooting over SSH and catching U-Boot")
+        try:
+            reboot_over_ssh(args)
+        except Exception as exc:                   # noqa: BLE001 - report it
+            log(f"SSH reboot failed: {exc}")
     if not netboot.wait_prompt(session, prompt_timeout):
         raise RuntimeError("U-Boot prompt not found: "
                            "power-cycle the DUT if it sits in Maskrom/RKUART")
@@ -144,8 +219,8 @@ def enter_uboot(session, prompt_timeout):
     log("U-Boot prompt ok")
 
 
-def flash_component(session, device, name, image, address, timeout):
-    offset, part_size = PARTITIONS[name]
+def flash_component(session, device, name, image, address, timeout, partitions):
+    offset, part_size = partitions[name]
     log(f"--- {name}: {image.name} -> {device} @ 0x{offset:x} (0x{part_size:x})")
     out = uboot_cmd(session, f"tftp {address} {image.name}", timeout=timeout)
     match = SIZE_RE.search(out)
@@ -171,6 +246,48 @@ def flash_component(session, device, name, image, address, timeout):
     log(f"{name}: {size} bytes written at 0x{offset:x}")
 
 
+def backup_idblock(args):
+    """Copy the live idblock partition to the host before it is overwritten.
+
+    The U-Boot TFTP server is read-only, so the backup is taken over SSH from
+    the running Linux.  The image is a raw /dev/mtdblock1 dump (256K on the
+    product layout, 512K on -AOV), stored under --backup-dir.
+    """
+    import paramiko
+
+    host = args.dut_host or os.environ.get("OKO_DUT_HOST", "192.168.52.33")
+    dest_dir = Path(args.backup_dir).expanduser()
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    dest = dest_dir / f"idblock-{stamp}.img"
+    remote = "/tmp/oko-idblock-backup.img"
+
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    try:
+        client.connect(host, username=args.dut_user,
+                       password=args.dut_password, timeout=10,
+                       banner_timeout=10)
+        _, stdout, stderr = client.exec_command(
+            f"cat /dev/mtdblock1 > {remote} && wc -c <{remote}", timeout=30)
+        out = stdout.read().decode(errors="replace").strip()
+        err = stderr.read().decode(errors="replace").strip()
+        if stdout.channel.recv_exit_status() != 0 or not out.isdigit() or int(out) == 0:
+            raise RuntimeError(f"idblock backup failed: {err or out}")
+        sftp = client.open_sftp()
+        sftp.get(remote, str(dest))
+        sftp.close()
+        client.exec_command(f"rm -f {remote}", timeout=10)
+    finally:
+        client.close()
+
+    size = dest.stat().st_size
+    if size < 0x40000:
+        raise RuntimeError(f"idblock backup is too small: {size} bytes")
+    log(f"idblock backup: {dest} ({size} bytes, sha256 {sha256(dest)[:16]}…)")
+    return dest
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--port", default=netboot.default_port(),
@@ -178,9 +295,18 @@ def main():
     parser.add_argument("--address", default="0x00e00000",
                         help="RAM load address (U-Boot ramdisk_addr_r default)")
     parser.add_argument("--components", default="boot,oem,rootfs",
-                        help="comma separated: boot,oem,rootfs (default), userdata")
+                        help="comma separated: env,idblock,uboot,boot,oem,rootfs,userdata "
+                             "(default: boot,oem,rootfs)")
     parser.add_argument("--userdata", action="store_true",
                         help="also rewrite the userdata partition (wipes it)")
+    parser.add_argument("--backup-dir", default=str(Path(args_out_default()) / "backup"),
+                        help="host directory for the pre-flash idblock backup")
+    parser.add_argument("--dut-host", default=os.environ.get("OKO_DUT_HOST", "192.168.52.33"),
+                        help="DUT SSH address for the idblock backup")
+    parser.add_argument("--dut-user", default=os.environ.get("OKO_DUT_USER", "root"))
+    parser.add_argument("--dut-password", default=os.environ.get("OKO_DUT_PASSWORD", "luckfox"))
+    parser.add_argument("--skip-backup", action="store_true",
+                        help="do NOT take the idblock backup (unsafe; Maskrom recovery only)")
     parser.add_argument("--prompt-timeout", type=float, default=120.0,
                         help="seconds to wait for the U-Boot prompt")
     parser.add_argument("--timeout", type=float, default=900.0,
@@ -189,14 +315,25 @@ def main():
                         help="stay in U-Boot instead of resetting")
     parser.add_argument("--out", default=os.environ.get("OKO_BENCH_OUT", str(netboot.DEFAULT_OUT)),
                         help="artifact directory (default: output/bench)")
+    parser.add_argument("--power-cycle", action="store_true",
+                        help="cold power-cycle the DUT through the ESP32 bridge "
+                             "and catch U-Boot on the way up (needed after a "
+                             "failed AOV suspend left a zombie HPMCU)")
+    parser.add_argument("--off-seconds", type=float, default=5.0,
+                        help="power-off time for --power-cycle")
+    parser.add_argument("--bridge-cookie", default=None,
+                        help="reuse this bridge session cookie file")
     args = parser.parse_args()
 
+    partitions = load_partitions()
     components = [item.strip() for item in args.components.split(",") if item.strip()]
     if args.userdata and "userdata" not in components:
         components.append("userdata")
-    unknown = [item for item in components if item not in PARTITIONS]
+    unknown = [item for item in components if item not in partitions]
     if unknown:
         parser.error(f"unknown components: {', '.join(unknown)}")
+    for name, (offset, size) in partitions.items():
+        log(f"layout: {name:8s} @0x{offset:08x} size 0x{size:x}")
 
     images = {}
     for name in components:
@@ -206,10 +343,28 @@ def main():
         images[name] = path
         log(f"{name}: {path} ({path.stat().st_size} bytes, sha256 {sha256(path)[:16]}…)")
 
+    if "idblock" in components:
+        if args.skip_backup:
+            log("idblock: backup SKIPPED (--skip-backup): Maskrom recovery only")
+        else:
+            backup_idblock(args)
+
     session = netboot.Session(args.port, Path(args.out).expanduser())
     try:
         log(f"log: {session.path}")
-        enter_uboot(session, args.prompt_timeout)
+        if args.power_cycle:
+            import power
+
+            log("cold power cycle; catching U-Boot on the way up")
+            power.run("cycle", bridge=os.environ.get("OKO_BRIDGE", "192.168.52.17"),
+                      off_seconds=args.off_seconds,
+                      cookie_file=args.bridge_cookie)
+            if not netboot.wait_prompt(session, args.prompt_timeout):
+                raise RuntimeError("U-Boot prompt not found after the power cycle")
+            uboot_sync(session)
+            log("U-Boot prompt ok")
+        else:
+            enter_uboot(session, args.prompt_timeout, args)
 
         out = uboot_cmd(session, "mtd list", timeout=30)
         match = re.search(r"^\*\s+(\S+)", out, re.MULTILINE)
@@ -222,10 +377,20 @@ def main():
             uboot_cmd(session, command, timeout=30)
 
         for name in components:
-            flash_component(session, device, name, images[name], args.address, args.timeout)
+            flash_component(session, device, name, images[name], args.address,
+                            args.timeout, partitions)
 
         # The env may still point at an NFS root from a netboot session.
         uboot_cmd(session, f"setenv sys_bootargs '{nfs_env.NAND_BOOTARGS}'", timeout=30)
+        # The partition table is derived from the flashed image's .env.txt;
+        # the -AOV layout moves uboot/boot/oem/userdata/rootfs by 768K.
+        try:
+            env_text = (IMAGE_DIR / ".env.txt").read_text()
+        except OSError:
+            env_text = ""
+        match = re.search(r"^mtdparts=(\S+)", env_text, re.MULTILINE)
+        if match:
+            uboot_cmd(session, f"setenv mtdparts '{match.group(1)}'", timeout=30)
         uboot_cmd(session, "saveenv", timeout=60)
 
         if args.no_reset:

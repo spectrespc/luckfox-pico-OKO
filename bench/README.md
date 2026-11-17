@@ -22,14 +22,26 @@ bench/run.sh ec_bus_soak.py --mode hold-scl   # нужна сборка -DEC_DEB
 
 `bench/run.sh` сам вызывает `setup.sh`, если venv ещё нет.
 
+Профиль `-AOV` (экспериментальный, KI-072) меняет таблицу разделов: idblock
+1M, все разделы после него сдвинуты на 768K (rootfs 167M), а `boot.img` —
+это FIT с `Image.gz`, который U-Boot распаковывает в 0x208000. Для
+minimal-прошивки достаточно `--components boot --power-cycle`; полный набор
+(`idblock,uboot,boot,oem,rootfs,userdata`) нужен только при смене раскладки
+и делается из U-Boot-промпта после бэкапа (скрипт снимает бэкап сам при
+наличии SSH). Возврат на продукт — тем же `tftp_flash.py` с продуктовым
+`output/image` (256K idblock, `--components env,idblock,boot,oem`), затем
+`setenv mtdparts`/`saveenv` скрипт делает автоматически. Полный откат без
+U-Boot — Maskrom, USB-порт занят хабом (TESTBENCH §7).
+
 ## Скрипты
 
 | Скрипт | Назначение |
 |---|---|
-| `serial_exec.py` | вход в консоль по UART (telnet-мост `192.168.52.17:23` или `/dev/ttyACM*`, 115200 8N1) и выполнение команд на DUT |
+| `serial_exec.py` | вход в консоль по UART (telnet-мост `192.168.52.17:23` или `/dev/ttyACM*`, 115200 8N1) и выполнение команд на DUT; `--listen N` — зеркало консоли без логина на N секунд (окно простоя перед suspend/resume, когда вывод после приглашения `login:` уже не пишется в `uar0.log`) |
+| `power.py` | питание DUT через ESP32-мост: `off`, `on`, `cycle --off-seconds N`, `reset`; вход `admin`/`admin` (env `OKO_BRIDGE*`) и обязательный logout — мост держит не больше трёх сессий, иначе логин отвечает `429 Too many active sessions`; `--cookie-file` переиспользует готовую сессию |
 | `dut.py` | выполнение команд по SSH через `paramiko` |
 | `netboot.py` | управление U-Boot (та же консоль: telnet-мост или `/dev/ttyACM*`): `catch` (спам Ctrl-C до `=>`, затем netboot-команды), `reboot` (перезагрузка DUT с перехватом U-Boot), `cmd '<команда>'` (одна команда в U-Boot); ядро берётся по TFTP из `output/image/boot.img`, rootfs — по NFS |
-| `tftp_flash.py` | прошивка SPI NAND по TFTP из U-Boot (режим по умолчанию): входит в prompt, грузит `output/image/*.img` на `ramdisk_addr_r`, `mtd erase` + `mtd write` с явным размером, восстанавливает NAND-`sys_bootargs`, `saveenv` и `reset`; `--components`, `--userdata`, `--no-reset` |
+| `tftp_flash.py` | прошивка SPI NAND по TFTP из U-Boot (режим по умолчанию): входит в prompt, грузит `output/image/*.img` на `ramdisk_addr_r`, `mtd erase` + `mtd write` с явным размером, восстанавливает NAND-`sys_bootargs` и `mtdparts`, `saveenv` и `reset`; раскладка читается из `output/image/.env.txt` (работают и продуктовый 256K idblock, и `-AOV` 1M); `--components` (`env,idblock,uboot,boot,oem,rootfs,userdata`, по умолчанию `boot,oem,rootfs`), `--userdata`, `--no-reset`; при `idblock` обязателен SSH-бэкап `/dev/mtdblock1` в `output/bench/backup/` (`--dut-host`, `--skip-backup` — только для восстановления из U-Boot); `--power-cycle` — холодный цикл питания через мост и перехват U-Boot на подъёме (нужно после зависшего HPMCU); если консольный логин недоступен, плата перезагружается по SSH и Ctrl-C начинает бить сразу |
 | `uart.py` | транспорт консоли для `serial_exec.py`/`netboot.py`: telnet-клиент ESP32-моста (отвечает на IAC и вырезает его) или локальный pyserial по `--port /dev/ttyACM*` |
 | `nfs_env.py` | переключение штатной загрузки через env U-Boot: `status` (текущий `sys_bootargs` и режим `nand`/`nfs`), `on` (NFS-root, проверка `/`, `/oem`, `/userdata`), `off` (возврат на `ubi0:rootfs`); `--no-reboot` пишет переменную без перезагрузки |
 | `osd_check.py` | захват кадров RTSP (`--path`, по умолчанию `/live/0`), попарный диф боксов OSD-регионов, сохранение полных кадров и кропов |

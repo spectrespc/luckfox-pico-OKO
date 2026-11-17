@@ -1,6 +1,6 @@
 # Известные ошибки и ограничения OKO
 
-Обновлено: `2026-11-16`. В файле — открытые проблемы, подтверждённые
+Обновлено: `2026-11-17`. В файле — открытые проблемы, подтверждённые
 ограничения и архив закрытых записей (§Архив). Проверенные функции и доказательства — в `VERIFIED_FUNCTIONS.md`,
 состав и статус функционала — в `FEATURES_VERIFIED.md` / `FEATURES_UNVERIFIED.md`,
 процедуры стенда — в `TESTBENCH.md`.
@@ -270,7 +270,57 @@
   сочетание. Обход: power cycle; при повторении — прошивка по TFTP и
   проверка bad blocks. Статус: **открыто, требует наблюдения**; для `[sleep]`
   рекомендуется длительный прогон с мониторингом `dmesg | grep -i sfc` после
-  каждого resume.
+  каждого resume. 2026-11-16/17 AOV-эксперимент: после первого цикла
+  suspend с AOV-ядром (затем и с пересобранным продуктовым ядром) DUT
+  перестал доходить до userspace — `Starting kernel ...` и зависание около
+  probe `rockchip-pm`; исходный продуктовый образ 09:35 восстановлен по
+  TFTP, `bad PEBs: 0`, rootfs/userdata `rw`. Причина не разделена, но
+  AOV-циклы усиливают риск: до выяснения AOV-профиль не выпускать. Уточнение
+  2026-11-17: «зависание после `Starting kernel`» воспроизведено только на
+  ядре со сдвинутым textofs и без `0x208000`-FIT (см. KI-072); «пересобранное
+  продуктовое ядро» на стенде после этого **не перепроверялось** — адрес
+  линковки сверен (`_text = 0x8000`), загрузка — нет.
+
+- **KI-072. Профиль `-AOV`: 1M-раскладка и окно ядра/MCU исправлены,
+  handshake MCU не отвечает.** Hpmcu (117 КБ) + SPL + DDR + usbplug дают
+  idblock ~300 КБ; продуктовый idblock 256K расширен до 1M, все разделы
+  после него сдвинуты на 768K (rootfs уменьшен до 167M, сумма 255.25 МБ).
+  Отдельного meta-раздела нет — 256 МБ NAND заняты, поэтому blob лежит в
+  `/oem/usr/share/oko/meta.img` и копируется в reserved-memory 0x01000000
+  (ISP — 0x01060000). `CONFIG_RV1106_HPMCU_FAST_WAKEUP` поднимает `textofs`
+  до 0x208000; чтобы ядро реально оказалось по этому адресу, `boot.img`
+  профиля собирается из `Image.gz` FIT-ом `boot-aov.its`
+  (`compression = "gzip"`, `load = entry = 0x208000`), и U-Boot распаковывает
+  ядро сразу в 0x208000 — так же устроен вендорский thunder-boot
+  (`output/bench/tb-sc230ai-wakeup/boot.img`). Обычная связка «zImage +
+  загрузка по 0x8000» с этим textofs до userspace не доходит.
+  2026-11-17 на стенде проверено: `/proc/mtd` idblock 1M / rootfs 167M,
+  `/api/status.sleep.aov_available=true`, в консоли
+  `Uncompressing GZIP Kernel Image ... to 0x00208000` и предупреждение об
+  окне `rtos@40000` исчезло. Suspend с `aov_mcu=1` доходит до `-h-wait-` →
+  `-h-timeout-` (2000 мс): MCU не отвечает по mailbox, AP возвращается по
+  таймауту, цикл повторяется. Отрицательный прогон `aov_mcu=0` (PMU-only)
+  циклится штатно (`rv1106 enter/exit sleep`). Статус: **экспериментальный,
+  не для выпуска**; блокеры — handshake MCU и KI-073 (паника I2C3 в тех же
+  прогонах). Артефакты: `output/bench/aov-image-1m/`,
+  `output/bench/uar0-aov-fit-boot-20261117.log`,
+  `output/bench/aov-test/uar0-m2-pmu-only.log`.
+
+- **KI-073. Паника ядра в `rk3x_i2c_irq` на I2C3 при циклах `[sleep]`.**
+  2026-11-17 в AOV-прогоне (idle 30 s, `aov_mcu=1`) шина I2C3
+  (`ff470000.i2c`, STM32 EC) выдала серию `rk3x-i2c ... irq in STATE_IDLE,
+  ipd = 0x10` и `unexpected irq in STOP: 0x10`, затем
+  `Unable to handle kernel NULL pointer dereference at virtual address
+  00000002`, `PC is at rk3x_i2c_irq+0x4a/0x1be`, `Internal error: Oops - BUG:
+  17 [#1] THUMB2`, `Kernel panic - not syncing: Fatal exception in interrupt`;
+  плата ушла в reset. В том же прогоне `oko-ec power --state
+  suspending/awake` отвечал `failed` — шина уже была в ошибке. Падает
+  вендорский обработчик `rk3x_i2c` (не разбирает состояние после
+  `unexpected irq`), это не suspend-путь: риск есть и в PMU-only циклах.
+  Обход на время: `[sleep] enable: false`. Статус: **открыто (P1 для
+  sleep-линии)**; нужен интеграционный патч драйвера и/или разбор шины I2C3
+  (родственная KI-071 линия). Артефакт:
+  `output/bench/aov-test/console-m3-panic-attempt3.log`.
 
 - **KI-064. `GET /api/update` роняет/подвешивает divinus.**
   2026-11-14: и старая сборка 0.3.0 (`/userdata/divinus.old`), и новая
@@ -764,7 +814,58 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   SFC resume or a combination. Workaround: power cycle; on recurrence reflash
   over TFTP and check bad blocks. Status: **open, needs observation**; for
   `[sleep]` a longer run with `dmesg | grep -i sfc` after every resume is
-  recommended.
+  recommended. 2026-11-16/17 AOV experiment: after the first suspend cycle
+  with the AOV kernel (and then with the rebuilt product kernel) the DUT
+  stopped reaching userspace — `Starting kernel ...` followed by a hang
+  near the `rockchip-pm` probe; the original 09:35 product image was
+  restored over TFTP, `bad PEBs: 0`, rootfs/userdata `rw`. The cause is not
+  separated, but AOV cycles raise the risk: do not release the AOV profile
+  until this is understood. Update 2026-11-17: the "hang after `Starting
+  kernel`" reproduces only with a moved textofs and no 0x208000 FIT (see
+  KI-072); the "rebuilt product kernel" has **not** been retested on the
+  bench — only its link address was checked (`_text = 0x8000`).
+
+- **KI-072. `-AOV` profile: 1M layout and the kernel/MCU window are fixed,
+  the MCU handshake does not answer.** Hpmcu (117 KB) + SPL + DDR + usbplug
+  make a ~300 KB idblock; the product 256K idblock is enlarged to 1M and every
+  following partition moves by 768K (rootfs shrinks to 167M, total 255.25 MB).
+  There is no meta partition — the 256 MB NAND is full — so the blob lives in
+  `/oem/usr/share/oko/meta.img` and is copied into reserved memory at
+  0x01000000 (ISP at 0x01060000). `CONFIG_RV1106_HPMCU_FAST_WAKEUP` raises
+  `textofs` to 0x208000; for the kernel to actually land there the profile's
+  `boot.img` is built from `Image.gz` with `boot-aov.its`
+  (`compression = "gzip"`, `load = entry = 0x208000`) and U-Boot unpacks the
+  kernel straight into 0x208000 — the same layout as the vendor thunder-boot
+  image (`output/bench/tb-sc230ai-wakeup/boot.img`). The stock "zImage loaded
+  at 0x8000" combination does not reach userspace with this textofs.
+  Verified on the bench 2026-11-17: `/proc/mtd` idblock 1M / rootfs 167M,
+  `/api/status.sleep.aov_available=true`, the console shows
+  `Uncompressing GZIP Kernel Image ... to 0x00208000` and the `rtos@40000`
+  overlap warning is gone. A suspend with `aov_mcu=1` reaches `-h-wait-` →
+  `-h-timeout-` (2000 ms): the MCU does not answer the mailbox, the AP
+  returns on the timeout and the cycle repeats. The `aov_mcu=0` (PMU-only)
+  run cycles cleanly (`rv1106 enter/exit sleep`). Status: **experimental,
+  not for release**; blockers are the MCU handshake and KI-073 (I2C3 panic
+  in the same runs). Artifacts: `output/bench/aov-image-1m/`,
+  `output/bench/uar0-aov-fit-boot-20261117.log`,
+  `output/bench/aov-test/uar0-m2-pmu-only.log`.
+
+- **KI-073. Kernel panic in `rk3x_i2c_irq` on I2C3 during `[sleep]` cycles.**
+  On 2026-11-17 an AOV run (idle 30 s, `aov_mcu=1`) got a burst of
+  `rk3x-i2c ... irq in STATE_IDLE, ipd = 0x10` and
+  `unexpected irq in STOP: 0x10` on I2C3 (`ff470000.i2c`, STM32 EC),
+  followed by `Unable to handle kernel NULL pointer dereference at virtual
+  address 00000002`, `PC is at rk3x_i2c_irq+0x4a/0x1be`,
+  `Internal error: Oops - BUG: 17 [#1] THUMB2` and
+  `Kernel panic - not syncing: Fatal exception in interrupt`; the board reset.
+  In the same run `oko-ec power --state suspending/awake` answered `failed` —
+  the bus was already in an error state. The vendor `rk3x_i2c` handler
+  (it does not handle the state after `unexpected irq`) is what crashes, not
+  the suspend path, so PMU-only cycles carry the same risk. Workaround for
+  now: `[sleep] enable: false`. Status: **open (P1 for the sleep line)**; it
+  needs an integration patch of the driver and/or an I2C3 bus investigation
+  (the KI-071 family). Artifact:
+  `output/bench/aov-test/console-m3-panic-attempt3.log`.
 
 - **KI-064. `GET /api/update` hangs/kills divinus.**
   On 2026-11-14 both the previous 0.3.0 binary (`/userdata/divinus.old`) and

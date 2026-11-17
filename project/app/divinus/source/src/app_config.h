@@ -255,6 +255,8 @@ struct AppConfig {
 
     // [sleep] — OKO camera sleep (deep suspend + PMU timeout wake)
     bool sleep_enable;
+    bool sleep_pmu_timer_wake;  /* program 0xff300048 before suspend */
+    bool sleep_aov_mcu;         /* enable the AOV MCU wake proxy */
     unsigned int sleep_idle_timeout_s;
     unsigned int sleep_wake_interval_s;
     unsigned int sleep_wake_check_s;

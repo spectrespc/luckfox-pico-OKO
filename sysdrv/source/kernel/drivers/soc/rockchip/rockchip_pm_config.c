@@ -17,6 +17,7 @@
 #include <linux/pm.h>
 #include <linux/regulator/driver.h>
 #include <linux/regulator/machine.h>
+#include <linux/rockchip/oko_aov.h>
 #include <linux/rockchip/rockchip_pm_config.h>
 #include <linux/rockchip/rockchip_sip.h>
 #include <linux/suspend.h>
@@ -78,6 +79,66 @@ struct rk_mcu_sleep_tags {
 };
 
 struct rk_sleep_config *sleep_config;
+
+#ifdef CONFIG_RV1106_HPMCU_FAST_WAKEUP
+/*
+ * OKO AOV wake proxy.  divinus writes aov_wakeproxy=1 right before it
+ * programs the PMU timeout and `echo mem`; only then does the suspend exit
+ * path release the MCU and wait for its AP_SUSPEND/AP_RESUME decision.
+ * aov_wakeproxy=0 keeps the product PMU-only behaviour bit for bit.
+ */
+bool oko_aov_enabled;
+EXPORT_SYMBOL_GPL(oko_aov_enabled);
+u32 oko_aov_state = OKO_AOV_OFF;
+EXPORT_SYMBOL_GPL(oko_aov_state);
+static bool oko_aov_supported;
+
+static const char * const oko_aov_state_name[] = {
+	[OKO_AOV_OFF] = "off",
+	[OKO_AOV_UNSUPPORTED] = "unsupported",
+	[OKO_AOV_ARMED] = "armed",
+	[OKO_AOV_QUIET] = "quiet",
+	[OKO_AOV_MOTION] = "motion",
+	[OKO_AOV_TIMEOUT] = "timeout",
+};
+
+static ssize_t aov_wakeproxy_show(struct device *dev,
+				  struct device_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%d\n", READ_ONCE(oko_aov_enabled) ? 1 : 0);
+}
+
+static ssize_t aov_wakeproxy_store(struct device *dev,
+				   struct device_attribute *attr,
+				   const char *buf, size_t count)
+{
+	bool value;
+
+	if (kstrtobool(buf, &value))
+		return -EINVAL;
+	if (value && !oko_aov_supported)
+		return -EOPNOTSUPP;
+
+	WRITE_ONCE(oko_aov_enabled, value);
+	if (!value)
+		oko_aov_set_state(OKO_AOV_OFF);
+
+	return count;
+}
+static DEVICE_ATTR_RW(aov_wakeproxy);
+
+static ssize_t aov_state_show(struct device *dev,
+			      struct device_attribute *attr, char *buf)
+{
+	u32 state = READ_ONCE(oko_aov_state);
+
+	if (state >= ARRAY_SIZE(oko_aov_state_name))
+		state = OKO_AOV_OFF;
+
+	return sprintf(buf, "%s\n", oko_aov_state_name[state]);
+}
+static DEVICE_ATTR_RO(aov_state);
+#endif /* CONFIG_RV1106_HPMCU_FAST_WAKEUP */
 
 static const struct of_device_id pm_match_table[] = {
 	{ .compatible = "rockchip,pm-config",},
@@ -524,6 +585,18 @@ static int pm_config_probe(struct platform_device *pdev)
 
 	parse_io_config(&pdev->dev);
 	parse_mcu_sleep_config(node);
+
+#ifdef CONFIG_RV1106_HPMCU_FAST_WAKEUP
+	oko_aov_supported = of_property_read_bool(pdev->dev.of_node,
+						  "oko,aov-mcu");
+	if (!oko_aov_supported) {
+		oko_aov_set_state(OKO_AOV_UNSUPPORTED);
+		dev_info(&pdev->dev, "AOV MCU is not declared; aov_wakeproxy is disabled\n");
+	}
+	if (device_create_file(&pdev->dev, &dev_attr_aov_wakeproxy) ||
+	    device_create_file(&pdev->dev, &dev_attr_aov_state))
+		dev_warn(&pdev->dev, "cannot create AOV sysfs attributes\n");
+#endif
 
 #ifndef MODULE
 	parse_virtual_pwroff_config(node);

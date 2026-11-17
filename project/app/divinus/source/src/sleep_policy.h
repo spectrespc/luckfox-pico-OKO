@@ -40,4 +40,10 @@ void sleep_policy_mark_wake(void);
 /* JSON-фрагмент без ведущей запятой: "sleep":{"enabled":...}. */
 void sleep_policy_status_json(char *out, size_t size);
 
+/* Плоский JSON для GET/POST /api/sleep: настройки + живой статус. */
+void sleep_policy_api_json(char *out, size_t size);
+
+/* 1, если ядро и DTS предоставляют AOV-прокси (не зависит от [sleep]). */
+int sleep_policy_aov_available(void);
+
 #endif /* SLEEP_POLICY_H */

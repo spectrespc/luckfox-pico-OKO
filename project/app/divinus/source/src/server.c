@@ -6266,31 +6266,101 @@ if (EQUALS(req->uri, "/api/storage")) {
         return;
     }
 
-    /* OKO: sleep state and a bench-only motion injection.  The camera cannot
-     * be moved from a test script, and a dark/noisy scene keeps IVS busy, so
-     * `?motion=1` feeds the same hook the analytics use.  The injector is
-     * gated by OKO_BENCH_API so a production image cannot keep the camera
-     * awake through it; GET /api/sleep is always available. */
+    /* OKO: camera sleep ([sleep]): PMU timer wake and the AOV MCU proxy.
+     *   GET  /api/sleep — stored switches + live state
+     *   POST /api/sleep — store switches (restart applies them)
+     *   POST /api/sleep?motion=1 — bench-only motion injection
+     * The switches are independent, but "sleep enabled with no wake source"
+     * is rejected here as well as in sleep_policy_init(). */
     if (EQUALS(req->uri, "/api/sleep")) {
-        if (req->method && EQUALS(req->method, "POST") && req->query &&
-            getenv("OKO_BENCH_API")) {
+        if (req->method && EQUALS(req->method, "POST") && req->query) {
+            bool enable = app_config.sleep_enable;
+            bool pmuTimer = app_config.sleep_pmu_timer_wake;
+            bool aov = app_config.sleep_aov_mcu;
+            unsigned int idle = app_config.sleep_idle_timeout_s;
+            unsigned int interval = app_config.sleep_wake_interval_s;
+            unsigned int check = app_config.sleep_wake_check_s;
+            bool motion = false, changed = false;
             char *query = req->query;
+
             while (query) {
                 char *value = split(&query, "&");
                 char *key;
-                if (!value) continue;
+                long number;
+                char *endptr;
+                if (!value || !*value) continue;
                 key = split(&value, "=");
-                if (!key || !*key) continue;
-                if (EQUALS(key, "motion") && value && EQUALS(value, "1")) {
-                    sleep_policy_report_motion();
+                if (!key || !*key || !value) continue;
+                unescape_uri(value);
+                if (EQUALS(key, "motion")) {
+                    /* Bench-only: a static test scene cannot be moved. */
+                    if (getenv("OKO_BENCH_API") && query_bool(value))
+                        motion = true;
+                } else if (EQUALS(key, "enable")) {
+                    enable = query_bool(value); changed = true;
+                } else if (EQUALS(key, "pmu_timer_wake")) {
+                    pmuTimer = query_bool(value); changed = true;
+                } else if (EQUALS(key, "aov_mcu")) {
+                    aov = query_bool(value); changed = true;
+                } else if (EQUALS(key, "idle_timeout_s") ||
+                           EQUALS(key, "wake_interval_s") ||
+                           EQUALS(key, "wake_check_s")) {
+                    number = strtol(value, &endptr, 10);
+                    if (*endptr || number < 1 || number > 86400) {
+                        reply_error(req->clntFd, "blocked",
+                            "sleep timer values must be positive seconds", "");
+                        return;
+                    }
+                    if (EQUALS(key, "idle_timeout_s")) idle = (unsigned int)number;
+                    else if (EQUALS(key, "wake_interval_s")) interval = (unsigned int)number;
+                    else check = (unsigned int)number;
+                    changed = true;
                 }
             }
+
+            if (motion)
+                sleep_policy_report_motion();
+
+            if (changed) {
+                if (enable && !pmuTimer) {
+                    reply_error(req->clntFd, "blocked",
+                        "sleep needs a wake source",
+                        "select the PMU timer; the AOV MCU alone cannot wake the AP on this design");
+                    return;
+                }
+                if (aov && !sleep_policy_aov_available()) {
+                    reply_error(req->clntFd, "blocked",
+                        "AOV is not available in this firmware",
+                        "flash the -AOV image with the MCU in the idblock");
+                    return;
+                }
+                app_config.sleep_enable = enable;
+                app_config.sleep_pmu_timer_wake = pmuTimer;
+                app_config.sleep_aov_mcu = aov;
+                app_config.sleep_idle_timeout_s = idle;
+                app_config.sleep_wake_interval_s = interval;
+                app_config.sleep_wake_check_s = check;
+                if (app_config_save()) {
+                    reply_error(req->clntFd, "failed",
+                        "the sleep settings could not be saved", "");
+                    return;
+                }
+            }
+
+            {
+                char body[256];
+                int len = snprintf(body, sizeof(body),
+                    "{\"applied\":%s,\"note\":\"%s\"}",
+                    changed ? "true" : "false",
+                    changed ? "restart the streamer to apply the sleep settings" : "");
+                reply_json(req->clntFd, body, (size_t)len);
+            }
+            return;
         }
         {
-            char sleepJson[192], body[224];
-            sleep_policy_status_json(sleepJson, sizeof(sleepJson));
-            int len = snprintf(body, sizeof(body), "{%s}", sleepJson);
-            reply_json(req->clntFd, body, (size_t)len);
+            char sleepJson[512];
+            sleep_policy_api_json(sleepJson, sizeof(sleepJson));
+            reply_json(req->clntFd, sleepJson, strlen(sleepJson));
         }
         return;
     }
@@ -6312,7 +6382,7 @@ if (EQUALS(req->uri, "/api/storage")) {
             sprintf(uptime, "%ld:%02ld:%02ld", si.uptime / 3600, (si.uptime % 3600) / 60, si.uptime % 60);
         else
             sprintf(uptime, "%ld:%02ld", si.uptime / 60, si.uptime % 60);
-        char sleepJson[192];
+        char sleepJson[320];
         sleep_policy_status_json(sleepJson, sizeof(sleepJson));
         respLen = sprintf(response,
             "HTTP/1.1 200 OK\r\n"

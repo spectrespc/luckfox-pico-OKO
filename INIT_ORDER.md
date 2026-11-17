@@ -30,7 +30,7 @@ BootROM → U-Boot → ядро Linux → busybox init → init-скрипты �
 | `RK_UBOOT_DEFCONFIG` | `luckfox_rv1106_uboot_defconfig` | конфигурация U-Boot |
 | `RK_UBOOT_DEFCONFIG_FRAGMENT` | `rk-sfc.config` | поддержка SPI flash controller |
 | `RK_KERNEL_DEFCONFIG` | `luckfox_rv1106_linux_defconfig` | базовая конфигурация ядра |
-| `RK_KERNEL_DEFCONFIG_FRAGMENT` | `rv1106-netboot.config rv1106-sc230ai.config rv1106-usb-host.config` | netboot (IP_PNP/ROOT_NFS) + `CONFIG_VIDEO_SC230AI=m`; SC3336/IMX415/MIS5001/MIA1321 явно выключены; usb-host — встроенные HID/USB-net/Bluetooth для host-порта (`dr_mode = "host"`) |
+| `RK_KERNEL_DEFCONFIG_FRAGMENT` | `rv1106-netboot.config rv1106-sc230ai.config rv1106-usb-host.config rv1106-pmu-timeout.config` | netboot (IP_PNP/ROOT_NFS) + `CONFIG_VIDEO_SC230AI=m`; SC3336/IMX415/MIS5001/MIA1321 явно выключены; usb-host — встроенные HID/USB-net/Bluetooth для host-порта (`dr_mode = "host"`) |
 | `RK_BOOTARGS_CMA_SIZE` | `66M` | в cmdline попадает как `rk_dma_heap_cma=66M` |
 | `RK_CAMERA_SENSOR_IQFILES` | `sc230ai_CMK-OT2115-PC1_30IRC-F16.json` | IQ-файл сенсора |
 | `RK_ENABLE_WIFI` | `y` | WiFi-модули собираются и копируются в `/oem/usr/ko` |
@@ -79,6 +79,46 @@ MCU инициализирует SC230AI/ISP, делает fast-AE, перево
 продолжает загрузку. AP-политика сна (`video/aov_sleep.c`) при простое
 программирует `PMU_WAKEUP_TIMEOUT_CNT` (0xff300048) и пишет `mem` в
 `/sys/power/state`; пробуждение — по PMU timeout, MCU в нём не участвует.
+
+### 1.2 Экспериментальный профиль `-AOV` (PMCU wake proxy, NO-GO 2026-11-17)
+
+Отдельная сборка, **не для выпуска** (KI-072). Активный BoardConfig:
+`BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI-AOV.mk`.
+Продуктовые параметры из §1 при этом заменяются только перечисленным ниже;
+активным остаётся продуктовый профиль.
+
+| Параметр | Значение | Комментарий |
+|---|---|---|
+| `RK_KERNEL_DTS` | `rv1106g-luckfox-pico-pro-max-sc230ai-aov.dts` | продуктовая плата + reserved-memory `rtos@40000` (240 КиБ), `meta@1000000`, `isp@1060000`; `&i2c4 rockchip,amp-shared`; `&rockchip_suspend oko,aov-mcu` |
+| `RK_KERNEL_DEFCONFIG_FRAGMENT` | продуктовый набор + `rv1106-hpmcu-aov.config` | `CONFIG_RV1106_HPMCU_FAST_WAKEUP=y` (sysfs `aov_wakeproxy`/`aov_state`, release MCU в suspend-exit) |
+| `RK_PARTITION_CMD_IN_ENV` | `256K(env),1M@256K(idblock),512K(uboot),6M(boot),40M(oem),40M(userdata),167M(rootfs)` | idblock 1M (как в TB-профиле): Hpmcu+SPL+DDR+usbplug ~300 КБ не влезают в 256K; все разделы после idblock сдвинуты на 768K, rootfs уменьшен до 167M, сумма 255.25 МБ |
+| `RK_UBOOT_RKBIN_MCU_CFG` | `oko-wakeup-sc230ai-ADC` | `build.sh` собирает MCU и подставляет `Hpmcu=` в overlay ini |
+| `RK_UBOOT_RKBIN_INI_OVERLAY` | `RKBOOT/RV1106MINIALL_SPI_NAND_HPMCU.ini` | `LOADER1=FlashData`, `LOADER2=Hpmcu` (0x40000), `LOADER3=FlashBoot` — штатный SPL, без fastboot |
+| `RK_META_SIZE` / `RK_META_PARAM` | `393216` / `--meta_load_addr=0x01000000 --no-compress-iq` | meta-раздела в 256 МБ нет: blob кладётся в `/oem/usr/share/oko/meta.img` |
+| `RK_META_CAMERA_SENSOR_IQFILES` | `sc230ai_CMK-OT2115-PC1_30IRC-F16.bin` | MCU получает bin-IQ; AP по-прежнему использует json из `RK_CAMERA_SENSOR_IQFILES` |
+| `RK_KERNEL_BOOT_ITS` / `RK_KERNEL_BOOT_IMAGE` | `boot-aov.its` / `Image.gz` | `build_kernel()` после сборки ядра пересобирает `boot.img` (`__BUILD_KERNEL_FIT`): FIT с `compression = "gzip"`, `load = entry = 0x208000`; U-Boot распаковывает ядро сразу в 0x208000 |
+
+Boot-цепочка: BootROM (`LOADER1` DDR init) → `LOADER2=Hpmcu` (образ MCU в
+окно 0x40000) → `LOADER3` штатный SPL → U-Boot → FIT `boot-aov.its`
+(`Image.gz` → 0x208000, product DTS) → Linux. `textofs` FAST_WAKEUP в
+вендорском `arch/arm/Makefile` восстановлен (0x208000), поэтому ядро не
+пересекается с окном MCU 0x40000..0x7c000; связка «zImage по 0x8000» с этим
+textofs до userspace не доходит (проверено на стенде), вендорский
+thunder-boot устроен так же — `load = 0x208000` + `compression = "gzip"`.
+divinus при `aov_mcu=1` копирует meta в 0x01000000, пишет
+`aov_wakeproxy=1`, программирует PMU timeout и уходит в `mem`; ядро после
+PMU-wake освобождает MCU и ждёт `AP_SUSPEND`/`AP_RESUME` с timeout 2 с
+(`aov_state=timeout` → обычный resume).
+
+Стенд 2026-11-17 (артефакты `output/bench/aov-image-1m/`,
+`output/bench/uar0-aov-fit-boot-20261117.log`): NAND грузит FIT с ядром по
+0x208000 (`Uncompressing GZIP Kernel Image ... to 0x00208000`), `/proc/mtd` —
+idblock 1M / rootfs 167M, `aov_available:true`. Suspend с `aov_mcu=1`
+доходит до `-h-wait-` → `-h-timeout-` (2000 мс): MCU не отвечает по mailbox,
+AP возвращается по таймауту; `aov_mcu=0` (PMU-only) циклится штатно. В тех же
+прогонах — паника `rk3x_i2c_irq` на I2C3 (KI-073), поэтому `[sleep] enable`
+держится `false`. Профиль заблокирован до разбора handshake MCU и KI-073
+(см. `KNOWN_ISSUES.md` KI-072, KI-073).
 
 ## 2. Boot-цепочка
 

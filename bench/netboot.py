@@ -115,6 +115,11 @@ def wait_prompt(session, timeout):
 
 def login(session, timeout=15):
     session.serial.reset_input_buffer()
+    # A failed earlier attempt can leave the getty at a Password prompt where
+    # every line is swallowed; Ctrl-C restarts the login sequence.
+    session.write(b"\x03\r\n")
+    time.sleep(0.5)
+    session.read()
     session.write(b"\r\n")
     deadline = time.time() + 3
     buf = b""
@@ -126,7 +131,15 @@ def login(session, timeout=15):
                 break
     if b"login:" in buf:
         session.write(b"root\r")
-        time.sleep(0.3)
+        # Wait for the password prompt before typing it: the getty needs a
+        # moment, and a password sent too early is dropped.
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            data = session.read()
+            if data:
+                buf += data
+                if b"Password:" in data or b"Password:" in buf[-200:]:
+                    break
         session.write(PASSWORD.encode() + b"\r")
         deadline = time.time() + timeout
         while time.time() < deadline:

@@ -723,6 +723,30 @@ function build_uboot() {
 			msg_error "build mcu <$RK_UBOOT_RKBIN_MCU_CFG> failed"
 			exit 1
 		fi
+	elif [ -n "$RK_UBOOT_RKBIN_MCU_CFG" ]; then
+		# OKO AOV: pack the MCU into the idblock without the thunder-boot
+		# path.  The overlay ini (RK_UBOOT_RKBIN_INI_OVERLAY) already has
+		# LOADER2=Hpmcu and LOADER3=FlashBoot (the stock product SPL), so
+		# NAND boot and the partition table are unchanged; only the MCU
+		# image path is substituted.  A generated copy is used because
+		# __modify_file truncates its target before reading the source.
+		if [ -z "$uboot_rkbin_ini" ]; then
+			msg_error "RK_UBOOT_RKBIN_MCU_CFG needs RK_UBOOT_RKBIN_INI_OVERLAY"
+			exit 1
+		fi
+		build_mcu $RK_UBOOT_RKBIN_MCU_CFG "__MCU_CONTINUE__"
+		if [ ! -f "$RK_PROJECT_FILE_SYSDRV_MCU_BIN" ]; then
+			msg_error "build mcu <$RK_UBOOT_RKBIN_MCU_CFG> failed"
+			exit 1
+		fi
+		mkdir -p "$RK_PROJECT_OUTPUT_IMAGE"
+		tempfile="$RK_PROJECT_OUTPUT_IMAGE/rk_uboot_rkbin_overlay.ini"
+		__modify_file "$uboot_rkbin_ini" "$tempfile" "Hpmcu=" "$RK_PROJECT_FILE_SYSDRV_MCU_BIN" "^"
+		if ! grep -q "^Hpmcu=$RK_PROJECT_FILE_SYSDRV_MCU_BIN$" "$tempfile"; then
+			msg_error "Hpmcu= was not substituted in $uboot_rkbin_ini"
+			exit 1
+		fi
+		uboot_rkbin_ini=$tempfile
 	fi
 
 	make uboot -C ${SDK_SYSDRV_DIR} UBOOT_CFG=${RK_UBOOT_DEFCONFIG} UBOOT_CFG_FRAGMENT=${RK_UBOOT_DEFCONFIG_FRAGMENT} SYSDRV_UBOOT_RKBIN_OVERLAY_INI=$uboot_rkbin_ini
@@ -735,8 +759,12 @@ function build_meta() {
 	if [ -n "$RK_META_SIZE" ]; then
 		if [ -d "${RK_PROJECT_TOP_DIR}/make_meta" ]; then
 			__meta_param="$RK_META_PARAM $RK_CAMERA_PARAM --meta_part_size=$RK_META_SIZE"
+			# OKO AOV: the MCU needs the bin IQ; the AP keeps the json
+			# (RK_CAMERA_SENSOR_IQFILES).  Profiles without the override
+			# keep the old behaviour.
+			__meta_iq="${RK_META_CAMERA_SENSOR_IQFILES:-$RK_CAMERA_SENSOR_IQFILES}"
 			${RK_PROJECT_TOP_DIR}/make_meta/build_meta.sh $@ \
-				--cam_iqfile ${RK_CAMERA_SENSOR_IQFILES} \
+				--cam_iqfile ${__meta_iq} \
 				--meta_param $__meta_param \
 				--output $RK_PROJECT_OUTPUT_IMAGE \
 				--rootfs_dir $RK_PROJECT_PACKAGE_ROOTFS_DIR \
@@ -841,7 +869,62 @@ function build_kernel() {
 		KERNEL_CFG=${RK_KERNEL_DEFCONFIG} \
 		KERNEL_CFG_FRAGMENT=${RK_KERNEL_DEFCONFIG_FRAGMENT}
 
+	__BUILD_KERNEL_FIT
+
 	finish_build
+}
+
+# OKO AOV: rebuild boot.img as a FIT that loads the kernel at its link address.
+#
+# The -AOV kernel is linked at 0x208000 (arch/arm/Makefile, textofs for
+# CONFIG_RV1106_HPMCU_FAST_WAKEUP) so it does not overlap the HPMCU image at
+# 0x40000..0x7c000.  The stock kernel FIT loads a self-decompressing zImage at
+# 0x8000; that combination does not reach userspace once the link address
+# moves, because the decompressor's own location decides where the kernel is
+# unpacked.  The vendor thunder-boot image solves it the same way: the FIT
+# carries Image.gz with compression = "gzip" and load = entry = 0x208000, so
+# U-Boot decompresses the kernel straight to 0x208000.
+#
+# Profiles without RK_KERNEL_BOOT_ITS/RK_KERNEL_BOOT_IMAGE keep the stock FIT.
+function __BUILD_KERNEL_FIT() {
+	[ -n "$RK_KERNEL_BOOT_ITS" ] && [ -n "$RK_KERNEL_BOOT_IMAGE" ] || return 0
+
+	local its objs tmp mkimage dtb
+	its=$SDK_SYSDRV_DIR/source/kernel/$RK_KERNEL_BOOT_ITS
+	objs=$SDK_SYSDRV_DIR/source/objs_kernel
+	mkimage=$SDK_SYSDRV_DIR/source/uboot/rkbin/tools/mkimage
+	dtb=$objs/arch/$RK_ARCH/boot/dts/${RK_KERNEL_DTS%.dts}.dtb
+	tmp=$RK_PROJECT_OUTPUT_IMAGE/.fit
+
+	[ -f "$its" ] || {
+		msg_error "kernel FIT description not found: $its"
+		exit 1
+	}
+	[ -x "$mkimage" ] || {
+		msg_error "mkimage not found: $mkimage"
+		exit 1
+	}
+	[ -f "$objs/arch/$RK_ARCH/boot/$RK_KERNEL_BOOT_IMAGE" ] || {
+		msg_error "kernel payload not found: $RK_KERNEL_BOOT_IMAGE"
+		exit 1
+	}
+	[ -f "$dtb" ] || {
+		msg_error "kernel dtb not found: $dtb"
+		exit 1
+	}
+
+	msg_info "Building $RK_KERNEL_BOOT_IMAGE FIT from $RK_KERNEL_BOOT_ITS"
+	rm -rf "$tmp"
+	mkdir -p "$tmp"
+	cp -f "$its" "$tmp/boot.its"
+	cp -f "$objs/arch/$RK_ARCH/boot/$RK_KERNEL_BOOT_IMAGE" "$tmp/kernel"
+	cp -f "$dtb" "$tmp/fdt"
+	cp -f "$objs/resource.img" "$tmp/resource"
+	(cd "$tmp" && "$mkimage" -E -p 0x800 -f boot.its boot.img) || exit 1
+	cp -fv "$tmp/boot.img" "$RK_PROJECT_OUTPUT_IMAGE/boot.img"
+	mkdir -p "$SDK_SYSDRV_DIR/out/image_${RK_LIBC_TPYE}_${RK_CHIP}"
+	cp -fv "$tmp/boot.img" "$SDK_SYSDRV_DIR/out/image_${RK_LIBC_TPYE}_${RK_CHIP}/boot.img"
+	rm -rf "$tmp"
 }
 
 function build_rootfs() {
@@ -2627,6 +2710,10 @@ function build_firmware() {
 
 	if [ "$RK_ENABLE_FASTBOOT" = "y" ]; then
 		build_meta
+	elif [ -n "$RK_UBOOT_RKBIN_MCU_CFG" ] && [ -n "$RK_META_SIZE" ]; then
+		# OKO AOV: the MCU consumes the meta blob from the reserved
+		# 0x1000000 region; there is no meta partition in the 256MB layout.
+		build_meta
 	fi
 
 	mkdir -p ${RK_PROJECT_OUTPUT_IMAGE}
@@ -2651,6 +2738,15 @@ function build_firmware() {
 		mkdir -p "$RK_PROJECT_PACKAGE_OEM_DIR/usr/lib"
 		cp -fv "$RK_PROJECT_PATH_MEDIA/lib/$RK_AIISP_MODEL" \
 			"$RK_PROJECT_PACKAGE_OEM_DIR/usr/lib/"
+	fi
+
+	# OKO AOV: ship the MCU meta blob (uncompressed IQ) in OEM.  divinus
+	# copies it to the reserved 0x1000000 region before the first suspend.
+	if [ "$RK_ENABLE_FASTBOOT" != "y" ] &&
+		[ -n "$RK_UBOOT_RKBIN_MCU_CFG" ] &&
+		[ -f "$RK_PROJECT_OUTPUT_IMAGE/meta.img" ]; then
+		mkdir -p "$RK_PROJECT_PACKAGE_OEM_DIR/usr/share/oko"
+		cp -fv "$RK_PROJECT_OUTPUT_IMAGE/meta.img" 			"$RK_PROJECT_PACKAGE_OEM_DIR/usr/share/oko/meta.img"
 	fi
 
 	if [ "$RK_BUILD_APP_TO_OEM_PARTITION" = "y" ]; then

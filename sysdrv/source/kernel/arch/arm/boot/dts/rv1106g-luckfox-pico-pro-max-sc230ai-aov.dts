@@ -1,0 +1,70 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * OKO AOV profile: Luckfox Pico Pro Max + SC230AI with the AOV MCU.
+ *
+ * This DTS includes the product board description unchanged and only adds
+ * the memory regions and bus handoff the AOV MCU needs:
+ *
+ *   0x00040000  MCU runtime window (240 KiB)
+ *   0x01000000  meta (IQ/app/sensor parameters copied by divinus from
+ *               /oem/usr/share/oko/meta.img before the first suspend)
+ *   0x01060000  MCU ISP frame buffer (CONFIG_RT_USING_ISP_DDR_ADRESS/SIZE)
+ *
+ * The addresses are above the product kernel image (the Image is ~8.3 MiB
+ * and starts at 0x208000 because CONFIG_RV1106_HPMCU_FAST_WAKEUP moves the
+ * text offset; the zImage itself is loaded at 0x8000 and is transient).
+ *
+ * All three regions are reserved so the Linux allocator never touches them.
+ * Without the meta reservation the MCU would read and write Linux memory,
+ * which corrupts the AP on the first AOV cycle.
+ *
+ * i2c4 is shared with the MCU while the AP is suspended; "rockchip,amp-shared"
+ * lets the Linux i2c-rk3x driver reset and take the bus back after resume.
+ */
+
+/dts-v1/;
+
+#include "rv1106g-luckfox-pico-pro-max-sc230ai.dts"
+
+/ {
+	reserved-memory {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+
+		/* MCU code image and runtime data.  The bootloader loads the
+		 * Hpmcu image at 0x40000 and the kernel text is linked at
+		 * 0x208000 (CONFIG_RV1106_HPMCU_FAST_WAKEUP), so this window
+		 * stays free after the self-decompressor has moved Linux out of
+		 * it.  Without the reservation the Linux allocator would reuse
+		 * 0x40000..0x7c000 and corrupt the MCU. */
+		oko_mcu_rtos: rtos@40000 {
+			reg = <0x00040000 0x0003c000>;
+		};
+
+		/* MCU meta: 0x60000 = RK_META_SIZE (see the AOV BoardConfig).
+		 * 16 MiB is above the 8.3 MiB product kernel image and the
+		 * 0xc00000 DTB load address. */
+		oko_meta: meta@1000000 {
+			reg = <0x01000000 0x00060000>;
+		};
+
+		/* MCU ISP buffers: 0x1060000 + 0x600000
+		 * (CONFIG_RT_USING_ISP_DDR_ADRESS/SIZE). */
+		oko_mcu_isp: isp@1060000 {
+			reg = <0x01060000 0x00600000>;
+		};
+	};
+};
+
+&i2c4 {
+	/* The MCU owns the sensor bus during AP suspend. */
+	rockchip,amp-shared;
+};
+
+&rockchip_suspend {
+	status = "okay";
+	/* Enables aov_wakeproxy/aov_state; without it the kernel still exposes
+	 * the attributes but reports "unsupported" and refuses to arm. */
+	oko,aov-mcu;
+};

@@ -1200,6 +1200,36 @@ Receiver (services/events):
 				<p class="note" data-i18n="sd_size_note">Capacity is the mounted FAT32 volume, not the card's advertised size; a dash means the card is not mounted.</p>
 			</div>
 
+			<div class="card" id="card-sleep">
+				<h3><span data-i18n="sleep_title">Power and sleep</span></h3>
+				<div class="field"><label data-i18n="sleep_enable">Camera sleep</label>
+					<div class="ctl"><select id="sleep_enable" data-group="sleep" data-k="enable" onchange="updateSleepCard(lastStatus &amp;&amp; lastStatus.sleep)">
+						<option value="false">OFF</option><option value="true">ON</option></select></div></div>
+				<div class="field"><label data-i18n="sleep_pmu_timer">PMU timer wake</label>
+					<div class="ctl"><select id="sleep_pmu_timer_wake" data-group="sleep" data-k="pmu_timer_wake" onchange="updateSleepCard(lastStatus &amp;&amp; lastStatus.sleep)">
+						<option value="false">OFF</option><option value="true">ON</option></select></div></div>
+				<div class="field" id="sleep_aov_row"><label data-i18n="sleep_aov">AOV MCU wake proxy</label>
+					<div class="ctl"><select id="sleep_aov_mcu" data-group="sleep" data-k="aov_mcu">
+						<option value="false">OFF</option><option value="true">ON</option></select></div></div>
+				<div class="field"><label data-i18n="sleep_idle">Idle before sleep, s</label>
+					<div class="ctl"><input type="number" id="sleep_idle_timeout_s" min="10" max="86400" data-group="sleep" data-k="idle_timeout_s"></div></div>
+				<div class="field"><label data-i18n="sleep_interval">PMU wake interval, s</label>
+					<div class="ctl"><input type="number" id="sleep_wake_interval_s" min="1" max="3600" data-group="sleep" data-k="wake_interval_s"></div></div>
+				<div class="field"><label data-i18n="sleep_check">Motion check after wake, s</label>
+					<div class="ctl"><input type="number" id="sleep_wake_check_s" min="1" max="60" data-group="sleep" data-k="wake_check_s"></div></div>
+				<div class="field"><label data-i18n="sleep_state">State</label>
+					<div class="ctl"><span id="sleep_state">–</span></div></div>
+				<div class="field"><label data-i18n="sleep_last_wake">Last wake source</label>
+					<div class="ctl"><span id="sleep_last_wake_src">–</span></div></div>
+				<div class="field"><label data-i18n="sleep_aov_state">AOV state</label>
+					<div class="ctl"><span id="sleep_aov_state">–</span></div></div>
+				<div class="actions">
+					<button type="button" class="btn primary" data-apply="sleep" data-ep="sleep" disabled data-i18n="apply">Apply</button>
+				</div>
+				<p class="note" id="sleep_warning" style="display:none" data-i18n="sleep_warn_aov_pmu">The AOV MCU is released only after a PMU timer wake: enable the PMU timer or sleep stays disabled.</p>
+				<p class="note" id="sleep_aov_note" style="display:none" data-i18n="sleep_aov_unsupported">This firmware has no AOV wake proxy; the AOV switch is unavailable.</p>
+			</div>
+
 			<div class="card">
 				<h3><span data-i18n="time">Time</span></h3>
 				<div class="field"><label data-i18n="time_format">Display format</label>
@@ -2497,6 +2527,32 @@ I18N.ru.ntp_on = "NTP ON";
 I18N.en.ntp_off = "NTP OFF";
 I18N.ru.ntp_off = "NTP OFF";
 
+/* Power and sleep ([sleep]). */
+I18N.en.sleep_title = "Power and sleep";
+I18N.ru.sleep_title = "Питание и сон";
+I18N.en.sleep_enable = "Camera sleep";
+I18N.ru.sleep_enable = "Сон камеры";
+I18N.en.sleep_pmu_timer = "PMU timer wake";
+I18N.ru.sleep_pmu_timer = "Пробуждение таймером PMU";
+I18N.en.sleep_aov = "AOV MCU wake proxy";
+I18N.ru.sleep_aov = "AOV-прокси MCU";
+I18N.en.sleep_idle = "Idle before sleep, s";
+I18N.ru.sleep_idle = "Простой до сна, с";
+I18N.en.sleep_interval = "PMU wake interval, s";
+I18N.ru.sleep_interval = "Интервал пробуждения PMU, с";
+I18N.en.sleep_check = "Motion check after wake, s";
+I18N.ru.sleep_check = "Окно проверки движения после пробуждения, с";
+I18N.en.sleep_state = "State";
+I18N.ru.sleep_state = "Состояние";
+I18N.en.sleep_last_wake = "Last wake source";
+I18N.ru.sleep_last_wake = "Последний источник пробуждения";
+I18N.en.sleep_aov_state = "AOV state";
+I18N.ru.sleep_aov_state = "Состояние AOV";
+I18N.en.sleep_warn_aov_pmu = "The AOV MCU is released only after a PMU timer wake: enable the PMU timer or sleep stays disabled.";
+I18N.ru.sleep_warn_aov_pmu = "MCU AOV освобождается только после пробуждения таймером PMU: включите таймер PMU, иначе сон не активируется.";
+I18N.en.sleep_aov_unsupported = "This firmware has no AOV wake proxy; the AOV switch is unavailable.";
+I18N.ru.sleep_aov_unsupported = "В этой прошивке нет AOV-прокси; переключатель AOV недоступен.";
+
 /* Wi-Fi (USB adapter). */
 I18N.en.wifi = "Wi-Fi";
 I18N.ru.wifi = "Wi-Fi";
@@ -3317,6 +3373,25 @@ function uploadOsd(i) {
 }
 
 /* ============================ system ============================ */
+function updateSleepCard(s) {
+	var cur = collectGroup('sleep');
+	var warn = $('sleep_warning');
+	if (warn)
+		warn.style.display = (cur.enable === 'true' && cur.pmu_timer_wake === 'false') ? '' : 'none';
+	if (!s) return;
+	setText('sleep_state', s.state || '–');
+	setText('sleep_last_wake_src', (s.last_wake_src >= 0) ? String(s.last_wake_src) : '–');
+	setText('sleep_aov_state', s.aov_state || '–');
+	var avail = s.aov_available === true;
+	var row = $('sleep_aov_row'), note = $('sleep_aov_note'), sel = $('sleep_aov_mcu');
+	if (row) row.style.display = avail ? '' : 'none';
+	if (note) note.style.display = avail ? 'none' : '';
+	if (sel) {
+		if (!avail) sel.value = 'false';
+		sel.disabled = !avail;
+	}
+}
+
 function renderStatus(d) {
 	if (!d) return;
 	if (d.ip) setText('sb_ip', d.ip);
@@ -3324,6 +3399,7 @@ function renderStatus(d) {
 	if (d.loadavg && d.loadavg.length) setText('sb_load', Number(d.loadavg[0]).toFixed(2));
 	if (d.temp) setText('sb_temp', d.temp);
 	if (d.features) setText('sb_sd', d.features.sd ? t('mounted') : t('absent'));
+	if (d.sleep) updateSleepCard(d.sleep);
 	if (d.loadavg) setText('status_loadavg', d.loadavg.join(' / '));
 	var chips = $('status_features');
 	if (chips && d.features) {
@@ -3905,7 +3981,7 @@ var SECTION_LOAD = {
 	storage: ['storage', 'record'],
 	network: ['network', 'time', 'wifi', 'mdns'],
 	osd: ['osd/0', 'osd/1', 'osd/2', 'osd/3', 'osd/4', 'osd/5', 'osd/6', 'osd/7', 'osd/8', 'osd/9'],
-	system: ['status', 'time']
+	system: ['status', 'time', 'sleep']
 };
 
 function loadSection(name) {

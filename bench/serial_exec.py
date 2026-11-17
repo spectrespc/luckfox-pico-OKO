@@ -45,12 +45,16 @@ def wait_for(port, token, seconds):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("commands", nargs="+", help="shell commands to run on the DUT")
+    parser.add_argument("commands", nargs="*", help="shell commands to run on the DUT")
     parser.add_argument("--port", default=uart.default_target(),
                         help="telnet://host:port or a serial device (default: ESP32 bridge, env OKO_SERIAL_PORT)")
     parser.add_argument("--password", default=os.environ.get("OKO_DUT_PASSWORD", "luckfox"),
                         help="root password (default: vendor value, env OKO_DUT_PASSWORD)")
     parser.add_argument("--wait", type=float, default=2.0, help="seconds to collect output per command")
+    parser.add_argument("--listen", type=float, default=0.0,
+                        help="do not log in: just mirror the console for this many "
+                             "seconds (captures a window across a quiet gap, e.g. "
+                             "the idle timeout before an AOV suspend)")
     args = parser.parse_args()
 
     try:
@@ -59,6 +63,25 @@ def main():
         print(f"cannot open {args.port}: {exc}", file=sys.stderr)
         return 1
     port.reset_input_buffer()
+    if args.listen > 0:
+        # Pure console mirror: no login, no writes.  read_for() would stop at
+        # the first 0.5 s gap, hence the explicit deadline loop here.
+        deadline = time.time() + args.listen
+        try:
+            while time.time() < deadline:
+                data = port.read(4096)
+                if data:
+                    sys.stdout.write(data.decode(errors="replace"))
+                    sys.stdout.flush()
+                else:
+                    time.sleep(0.05)
+        except OSError as exc:
+            print(f"console error: {exc}", file=sys.stderr)
+            return 1
+        finally:
+            port.close()
+        return 0
+
     port.write(b"\r\n")
     buf = wait_for(port, b"login:", 3)
     if b"login:" in buf:

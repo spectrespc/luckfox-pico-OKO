@@ -17,6 +17,7 @@
 #include <asm/suspend.h>
 #include <dt-bindings/suspend/rockchip-rv1106.h>
 #include <linux/irqchip/arm-gic.h>
+#include <linux/rockchip/oko_aov.h>
 #include <linux/rockchip/rockchip_pm_config.h>
 
 #include "rkpm_gicv2.h"
@@ -77,6 +78,9 @@ struct rv1106_sleep_ddr_data {
 };
 
 static struct rv1106_sleep_ddr_data ddr_data;
+
+/* OKO AOV: PMU timeout value written by divinus, restored on RE_ENTER_SLEEP. */
+static u32 pmu_timeout_cnt;
 
 static const struct rk_sleep_config *slp_cfg;
 
@@ -531,15 +535,24 @@ static void hpmcu_start(void)
 static int hpmcu_fast_wkup(void)
 {
 	u32 cmd;
+	int waited_us = 0;
 
 	hpmcu_start();
+	oko_aov_set_state(OKO_AOV_ARMED);
 
-	while (1) {
-		rkpm_printstr("-s-\n");
-		dsb(sy);
-		wfi();
-		rkpm_printstr("-w-\n");
-
+	/*
+	 * OKO: the vendor loop waits for the MCU mailbox forever.  A missing or
+	 * wedged MCU would leave the AP asleep for good, so the wait is bounded
+	 * by RV1106_HPMCU_FAST_WKUP_TIMEOUT; on timeout the caller resumes
+	 * Linux exactly as a PMU-only wake (aov_state=timeout).
+	 *
+	 * Interrupts are still off, so jiffies does not advance; poll with a raw
+	 * microsecond delay instead of `wfi` - with a dead MCU no IRQ is
+	 * pending and a bare wfi would never return.  A healthy MCU answers
+	 * within one 640x480 frame (~33 ms), so the busy window is short.
+	 */
+	rkpm_printstr("-h-wait-");
+	while (waited_us < RV1106_HPMCU_FAST_WKUP_TIMEOUT * 1000) {
 		if (is_hpmcu_mbox_int()) {
 			rkpm_printstr("-h-mbox-\n");
 			/* clear system wake up state */
@@ -547,13 +560,25 @@ static int hpmcu_fast_wkup(void)
 			writel(BIT(0), mbox_base + RV1106_MBOX_B2A_STATUS);
 			break;
 		}
+
+		rkpm_raw_udelay(100);
+		waited_us += 100;
+	}
+
+	if (!is_hpmcu_mbox_int()) {
+		rkpm_printstr("-h-timeout-\n");
+		oko_aov_set_state(OKO_AOV_TIMEOUT);
+		return 0;
 	}
 
 	cmd = readl(mbox_base + RV1106_MBOX_B2A_CMD_0);
-	if (cmd == RV1106_MBOX_CMD_AP_SUSPEND)
+	if (cmd == RV1106_MBOX_CMD_AP_SUSPEND) {
+		oko_aov_set_state(OKO_AOV_QUIET);
 		return 1;
-	else
-		return 0;
+	}
+
+	oko_aov_set_state(OKO_AOV_MOTION);
+	return 0;
 }
 
 static void clock_suspend(void)
@@ -1165,6 +1190,12 @@ static int rv1106_suspend_enter(suspend_state_t state)
 
 	slp_cfg = rockchip_get_cur_sleep_config();
 
+	if (IS_ENABLED(CONFIG_RV1106_HPMCU_FAST_WAKEUP) &&
+	    READ_ONCE(oko_aov_enabled)) {
+		oko_aov_set_state(OKO_AOV_ARMED);
+		pmu_timeout_cnt = readl(pmu_base + RV1106_PMU_WAKEUP_TIMEOUT_CNT);
+	}
+
 	local_fiq_disable();
 
 	rv1106_dbg_irq_prepare();
@@ -1172,6 +1203,15 @@ static int rv1106_suspend_enter(suspend_state_t state)
 	rkpm_printch('-');
 
 RE_ENTER_SLEEP:
+	/*
+	 * OKO AOV: the PMU timeout is the MCU sampling clock.  divinus programs
+	 * it before `echo mem`; rewrite the saved value when the MCU asked the
+	 * AP to go back to sleep, so the next sampling window is never skipped.
+	 */
+	if (IS_ENABLED(CONFIG_RV1106_HPMCU_FAST_WAKEUP) &&
+	    READ_ONCE(oko_aov_enabled) && pmu_timeout_cnt)
+		writel(pmu_timeout_cnt, pmu_base + RV1106_PMU_WAKEUP_TIMEOUT_CNT);
+
 	clock_suspend();
 	rkpm_printch('0');
 
@@ -1210,7 +1250,8 @@ RE_ENTER_SLEEP:
 	rkpm_printch('-');
 
 	/* Check whether it's time_out wakeup */
-	if (IS_ENABLED(CONFIG_RV1106_HPMCU_FAST_WAKEUP)) {
+	if (IS_ENABLED(CONFIG_RV1106_HPMCU_FAST_WAKEUP) &&
+	    READ_ONCE(oko_aov_enabled)) {
 		if (hpmcu_fast_wkup()) {
 			rkpm_gicv2_dist_restore(gicd_base, &gicd_ctx_save);
 			goto RE_ENTER_SLEEP;

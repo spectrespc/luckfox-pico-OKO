@@ -34,6 +34,13 @@
 #define PMU_TIMEOUT_OFF 0x048UL
 #define PMU_MAP_SIZE 0x1000UL
 
+#define AOV_PROXY_PATH "/sys/devices/platform/rockchip-suspend/aov_wakeproxy"
+#define AOV_STATE_PATH "/sys/devices/platform/rockchip-suspend/aov_state"
+#define META_IMAGE_PATH "/oem/usr/share/oko/meta.img"
+#define META_ADDR 0x1000000UL
+#define META_MAP_SIZE 0x60000UL
+#define META_TAG 0x544d4b52U /* "RKMT" */
+
 #define EC_BIN "/oem/usr/bin/oko-ec"
 #define MEM_SLEEP_PATH "/sys/power/mem_sleep"
 #define POWER_STATE_PATH "/sys/power/state"
@@ -69,6 +76,12 @@ static struct timespec probe_deadline;
 
 static volatile unsigned int *pmu_timeout;
 
+/* AOV wake proxy (kernel CONFIG_RV1106_HPMCU_FAST_WAKEUP). */
+static int aov_supported;
+static int aov_active;
+static char aov_reason[64];
+static const char *sleep_reason = "";
+
 static const char *state_name(int value)
 {
     switch (value)
@@ -96,6 +109,190 @@ static struct timespec mono_now(void)
 static long elapsed_s(const struct timespec *since, const struct timespec *now)
 {
     return (long)(now->tv_sec - since->tv_sec);
+}
+
+static int sysfs_read(const char *path, char *buf, size_t size)
+{
+    int fd = open(path, O_RDONLY);
+    ssize_t n;
+
+    if (fd < 0)
+    {
+        return -1;
+    }
+    n = read(fd, buf, size - 1);
+    close(fd);
+    if (n <= 0)
+    {
+        return -1;
+    }
+    buf[n] = '\0';
+    while (n > 0 && (buf[n - 1] == '\n' || buf[n - 1] == '\r'))
+    {
+        buf[--n] = '\0';
+    }
+    return 0;
+}
+
+static int sysfs_write_str(const char *path, const char *value)
+{
+    int fd = open(path, O_WRONLY);
+    ssize_t n;
+
+    if (fd < 0)
+    {
+        return -1;
+    }
+    n = write(fd, value, strlen(value));
+    close(fd);
+    return n == (ssize_t)strlen(value) ? 0 : -1;
+}
+
+static const char *aov_state_name(void)
+{
+    static char value[16];
+
+    if (!app_config.sleep_aov_mcu)
+    {
+        return "off";
+    }
+    if (!aov_supported)
+    {
+        return "unsupported";
+    }
+    if (sysfs_read(AOV_STATE_PATH, value, sizeof(value)) < 0)
+    {
+        return "off";
+    }
+    return value;
+}
+
+/* The MCU expects the meta image in its loaded layout at 0x1000000: the
+ * partition header and items are uncompressed (build_meta --no-compress-iq),
+ * so the OEM file can be byte-copied into the reserved region.  This is the
+ * AP-side loader chosen after S0.2: the product SPL has no meta support and
+ * the 256MB NAND has no room for a separate meta partition. */
+static int load_meta_image(void)
+{
+    struct stat info;
+    int fd, mem;
+    void *map;
+    ssize_t done = 0, n;
+    const unsigned int *head;
+    int rc = -1;
+
+    fd = open(META_IMAGE_PATH, O_RDONLY);
+    if (fd < 0)
+    {
+        HAL_WARNING("sleep", "AOV meta image %s is missing: %s\n",
+                    META_IMAGE_PATH, strerror(errno));
+        return -1;
+    }
+    if (fstat(fd, &info) < 0 || info.st_size <= 0 ||
+        (unsigned long)info.st_size > META_MAP_SIZE)
+    {
+        HAL_WARNING("sleep", "AOV meta image has a bad size\n");
+        close(fd);
+        return -1;
+    }
+
+    map = MAP_FAILED;
+    mem = open("/dev/mem", O_RDWR | O_SYNC);
+    if (mem >= 0)
+    {
+        map = mmap(NULL, META_MAP_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED,
+                   mem, META_ADDR);
+        close(mem);
+    }
+    if (map == MAP_FAILED)
+    {
+        HAL_WARNING("sleep", "cannot map AOV meta at 0x%lx: %s\n",
+                    META_ADDR, strerror(errno));
+        close(fd);
+        return -1;
+    }
+
+    while (done < info.st_size)
+    {
+        n = read(fd, (char *)map + done, (size_t)(info.st_size - done));
+        if (n <= 0)
+        {
+            break;
+        }
+        done += n;
+    }
+    close(fd);
+
+    head = (const unsigned int *)map;
+    if (done != info.st_size || head[0] != META_TAG ||
+        head[1] != (unsigned int)META_ADDR || head[3] != 0)
+    {
+        HAL_WARNING("sleep", "AOV meta layout is invalid (tag/load/compress)\n");
+        goto out;
+    }
+
+    msync(map, META_MAP_SIZE, MS_SYNC);
+    HAL_INFO("sleep", "AOV meta loaded to 0x%lx (%ld bytes)\n",
+             META_ADDR, (long)done);
+    rc = 0;
+out:
+    munmap(map, META_MAP_SIZE);
+    return rc;
+}
+
+/* Probe the kernel/DTS interface even when [sleep] is disabled, so the
+ * WebUI can show or hide the AOV switch before the user enables sleep. */
+static void aov_probe(void)
+{
+    char state[16];
+
+    aov_supported = 0;
+    if (access(AOV_PROXY_PATH, F_OK) != 0)
+    {
+        return;
+    }
+    if (sysfs_read(AOV_STATE_PATH, state, sizeof(state)) == 0 &&
+        strcmp(state, "unsupported") == 0)
+    {
+        return;
+    }
+    aov_supported = 1;
+}
+
+static void aov_prepare(void)
+{
+    aov_active = 0;
+    aov_reason[0] = '\0';
+
+    if (!app_config.sleep_aov_mcu)
+    {
+        /* Clear a proxy left armed by a previous configuration. */
+        if (aov_supported)
+        {
+            (void)sysfs_write_str(AOV_PROXY_PATH, "0\n");
+        }
+        return;
+    }
+
+    if (!aov_supported)
+    {
+        snprintf(aov_reason, sizeof(aov_reason),
+                 "AOV is not supported by the kernel or DTS");
+        HAL_WARNING("sleep", "AOV requested but the kernel/DTS does not "
+                    "provide a wake proxy\n");
+        return;
+    }
+
+    if (load_meta_image() < 0)
+    {
+        snprintf(aov_reason, sizeof(aov_reason),
+                 "AOV meta image is missing or invalid");
+        return;
+    }
+
+    aov_active = 1;
+    (void)sysfs_write_str(AOV_PROXY_PATH, "0\n");
+    HAL_INFO("sleep", "AOV wake proxy is available\n");
 }
 
 static int map_pmu(void)
@@ -299,10 +496,28 @@ void sleep_policy_init(void)
     last_motion = now;
     state = SLEEP_DISABLED;
     load_wake_info();
+    aov_probe();
 
     if (!app_config.sleep_enable)
     {
+        if (aov_supported)
+        {
+            (void)sysfs_write_str(AOV_PROXY_PATH, "0\n");
+        }
         HAL_INFO("sleep", "disabled by [sleep] enable\n");
+        return;
+    }
+
+    aov_prepare();
+
+    /* Guard: a sleep with no way to wake the AP is forbidden.  The MCU is
+     * released only after a PMU timeout wake, so AOV alone (pmu_timer_wake=0)
+     * cannot serve as the wake source on this design (S0.4). */
+    if (!app_config.sleep_pmu_timer_wake)
+    {
+        sleep_reason = "no_wake_source";
+        HAL_WARNING("sleep", "enable=1 needs pmu_timer_wake or a supported "
+                    "AOV wake source; disabled\n");
         return;
     }
 
@@ -479,6 +694,21 @@ int sleep_policy_suspend(void)
     sync();
     ec_set_state("suspending");
 
+    int aov_armed = 0;
+    if (aov_active)
+    {
+        if (sysfs_write_str(AOV_PROXY_PATH, "1\n") == 0)
+        {
+            aov_armed = 1;
+        }
+        else
+        {
+            HAL_WARNING("sleep", "cannot arm aov_wakeproxy; "
+                        "continuing with the PMU timer only\n");
+            aov_active = 0;
+        }
+    }
+
     count = app_config.sleep_wake_interval_s * app_config.sleep_pmu_timeout_hz;
     if (count == 0)
     {
@@ -491,13 +721,18 @@ int sleep_policy_suspend(void)
     *pmu_timeout = count;
     __sync_synchronize();
 
-    HAL_INFO("sleep", "suspending: PMU timeout %u ticks (%u s)\n", count,
-             app_config.sleep_wake_interval_s);
+    HAL_INFO("sleep", "suspending: PMU timeout %u ticks (%u s), aov %s\n",
+             count, app_config.sleep_wake_interval_s,
+             aov_armed ? "armed" : "off");
     int rc = write_power_state();
     if (rc < 0)
     {
         /* EC already knows about SUSPENDING; a failed mem write must not
          * leave the host marked asleep while it keeps running. */
+        if (aov_armed)
+        {
+            (void)sysfs_write_str(AOV_PROXY_PATH, "0\n");
+        }
         ec_set_state("awake");
         pthread_mutex_lock(&lock);
         state = SLEEP_AWAKE;
@@ -521,6 +756,49 @@ int sleep_policy_suspend(void)
     return 0;
 }
 
+int sleep_policy_aov_available(void)
+{
+    return aov_supported;
+}
+
+void sleep_policy_api_json(char *out, size_t size)
+{
+    long idle = 0;
+
+    if (!out || !size)
+    {
+        return;
+    }
+
+    pthread_mutex_lock(&lock);
+    if (enabled)
+    {
+        struct timespec now = mono_now();
+        idle = elapsed_s(&last_motion, &now);
+    }
+    const char *reason = state == SLEEP_DISABLED && *sleep_reason
+        ? sleep_reason : aov_reason;
+
+    snprintf(out, size,
+             "{\"enable\":%s,\"pmu_timer_wake\":%s,\"aov_mcu\":%s,"
+             "\"aov_available\":%s,\"aov_state\":\"%s\","
+             "\"idle_timeout_s\":%u,\"wake_interval_s\":%u,"
+             "\"wake_check_s\":%u,\"pmu_timeout_hz\":%u,"
+             "\"enabled\":%s,\"state\":\"%s\",\"idle_s\":%ld,"
+             "\"last_wake_src\":%d,\"reason\":\"%s\"}",
+             app_config.sleep_enable ? "true" : "false",
+             app_config.sleep_pmu_timer_wake ? "true" : "false",
+             app_config.sleep_aov_mcu ? "true" : "false",
+             aov_supported ? "true" : "false", aov_state_name(),
+             app_config.sleep_idle_timeout_s,
+             app_config.sleep_wake_interval_s,
+             app_config.sleep_wake_check_s,
+             app_config.sleep_pmu_timeout_hz,
+             enabled ? "true" : "false", state_name(state),
+             idle > 0 ? idle : 0, last_wake_src, reason);
+    pthread_mutex_unlock(&lock);
+}
+
 void sleep_policy_status_json(char *out, size_t size)
 {
     long idle = 0;
@@ -536,10 +814,18 @@ void sleep_policy_status_json(char *out, size_t size)
         struct timespec now = mono_now();
         idle = elapsed_s(&last_motion, &now);
     }
+    const char *reason = state == SLEEP_DISABLED && *sleep_reason
+        ? sleep_reason : aov_reason;
+
     snprintf(out, size,
-             "\"sleep\":{\"enabled\":%s,\"state\":\"%s\",\"idle_s\":%ld,"
-             "\"last_wake_src\":%d}",
+             "\"sleep\":{\"enabled\":%s,\"state\":\"%s\","
+             "\"pmu_timer\":%s,\"aov\":%s,\"aov_available\":%s,"
+             "\"aov_state\":\"%s\",\"idle_s\":%ld,"
+             "\"last_wake_src\":%d,\"reason\":\"%s\"}",
              enabled ? "true" : "false", state_name(state),
-             idle > 0 ? idle : 0, last_wake_src);
+             app_config.sleep_pmu_timer_wake ? "true" : "false",
+             aov_active ? "true" : "false",
+             aov_supported ? "true" : "false", aov_state_name(),
+             idle > 0 ? idle : 0, last_wake_src, reason);
     pthread_mutex_unlock(&lock);
 }

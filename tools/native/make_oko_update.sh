@@ -54,24 +54,56 @@ esac
 [ -d "$IMAGE_DIR" ] || die "image directory not found: $IMAGE_DIR"
 [ -n "$OUT" ] || OUT="$IMAGE_DIR/oko-update-$VERSION.okp"
 
-# Offset and full size of every updatable SPI NAND partition.  Keep in sync
-# with output/image/.env.txt (mtdparts) and TESTBENCH.md §7B.
+# Offsets and full sizes come from the flashed image's mtdparts line, so the
+# same packaging tool works for the product layout and the -AOV profile (its
+# idblock is 512K, which moves everything after it by 256K).
+declare -A PART_OFFSET PART_SIZE
+load_mtdparts() {
+    local env_file="$IMAGE_DIR/.env.txt"
+    if [ -f "$env_file" ]; then
+        eval "$(python3 - "$env_file" <<'PY'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+m = re.search(r"mtdparts=[^:]+:(\S+)", text)
+if not m:
+    sys.exit(1)
+units = {"K": 1024, "M": 1024 * 1024, "G": 1024 * 1024 * 1024}
+def size(text):
+    text = text.strip()
+    if text[-1:].upper() in units:
+        return int(text[:-1], 0) * units[text[-1:].upper()]
+    return int(text, 0)
+off = 0
+for item in m.group(1).split(","):
+    part = re.fullmatch(r"([^@(]+)(?:@([^(]+))?\(([^)]+)\)", item)
+    if not part:
+        sys.exit(1)
+    value = size(part.group(1))
+    if part.group(2):
+        off = size(part.group(2))
+    print(f"PART_OFFSET[{part.group(3)}]={hex(off)}")
+    print(f"PART_SIZE[{part.group(3)}]={hex(value)}")
+    off += value
+PY
+)" || true
+    fi
+    # Product defaults when .env.txt is unavailable.
+    : "${PART_OFFSET[boot]:=0x100000}"
+    : "${PART_OFFSET[oem]:=0x700000}"
+    : "${PART_OFFSET[rootfs]:=0x5700000}"
+    : "${PART_SIZE[boot]:=0x600000}"
+    : "${PART_SIZE[oem]:=0x2800000}"
+    : "${PART_SIZE[rootfs]:=0xA800000}"
+}
+
+load_mtdparts
+
 part_offset() {
-    case "$1" in
-        boot)   echo 0x100000 ;;
-        oem)    echo 0x700000 ;;
-        rootfs) echo 0x5700000 ;;
-        *)      return 1 ;;
-    esac
+    printf '%s\n' "${PART_OFFSET[$1]:-}"
 }
 
 part_mtd_size() {
-    case "$1" in
-        boot)   echo 0x600000 ;;
-        oem)    echo 0x2800000 ;;
-        rootfs) echo 0xA800000 ;;
-        *)      return 1 ;;
-    esac
+    printf '%s\n' "${PART_SIZE[$1]:-}"
 }
 
 # The host runs in UTC; the manifest is informational, the hashes are the

@@ -8,7 +8,7 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
 
 | Поле | Значение |
 |---|---|
-| Дата обновления | `2026-11-16` |
+| Дата обновления | `2026-11-17` |
 | Ответственный | `<ФИО>` |
 | Статус | активен |
 | Назначение | сборка прошивки и прошивка SPI NAND для отладки IPC |
@@ -146,6 +146,55 @@ bench/run.sh tftp_flash.py --no-reset                 # остаться в U-Bo
 `env`, `idblock` и `uboot` не трогаются (их меняет только полный `update.img`
 через Maskrom, §7A); при обрыве питания во время `mtd write` прошивка
 повторяется тем же способом (U-Boot остаётся доступен по UART).
+
+### 7-AOV. Экспериментальный профиль `-AOV` (NO-GO, не для выпуска)
+
+Профиль `BoardConfig ...-SC230AI-AOV.mk` (KI-072) меняет idblock и таблицу
+разделов: Hpmcu+SPL+DDR+usbplug ~300 КБ, поэтому idblock 1M, а `uboot`,
+`boot`, `oem`, `userdata`, `rootfs` сдвинуты на 768K (rootfs 167M). Ядро
+линкуется по 0x208000, и `boot.img` собирается FIT-ом `boot-aov.its` из
+`Image.gz` (`load = entry = 0x208000`, `compression = "gzip"`) — U-Boot
+распаковывает его сразу в 0x208000; обычный zImage по 0x8000 с этим
+textofs не грузится. Скрипт `tftp_flash.py` читает раскладку из
+`output/image/.env.txt`, поэтому вручную смещения не задаются.
+
+```sh
+# собрать профиль (idblock/uboot/boot с FIT/oem/rootfs/meta/update.img)
+ln -sfn project/cfg/BoardConfig_IPC/BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI-AOV.mk .BoardConfig.mk
+./build.sh kernel && ./build.sh uboot && ./build.sh firmware
+# прошить минимум компонентов, дождавшись холодного цикла питания
+bench/run.sh tftp_flash.py --components boot --power-cycle
+# возврат на продукт: symlink на ...-SC230AI.mk, ./build.sh, затем
+# bench/run.sh tftp_flash.py --components env,idblock,boot,oem --power-cycle
+```
+
+`--power-cycle` поднимает питание через мост и ловит U-Boot по UART: после
+зависшего HPMCU тёплый `reboot` оставляет MCU в неизвестном состоянии.
+Если консольный логин недоступен, `tftp_flash.py` сам перезагружает плату
+по SSH (`--dut-host`, вендорский пароль). Перед записью `idblock` скрипт
+требует SSH-бэкап `/dev/mtdblock1` в `output/bench/backup/`; из
+U-Boot-промпта SSH недоступен — тогда только `--skip-backup` и внешний
+бэкап/Maskrom. После загрузки проверка: `cat /proc/mtd` (idblock 1M,
+rootfs 167M), `grep -o 'mtdparts=[^ ]*' /proc/cmdline`,
+`/api/status.sleep.aov_available`,
+`cat /sys/devices/platform/rockchip-suspend/aov_state`, в UART —
+`Uncompressing GZIP Kernel Image ... to 0x00208000`.
+
+Стенд 2026-11-17 (артефакты `output/bench/aov-image-1m/`,
+`output/bench/uar0-aov-fit-boot-20261117.log`): FIT c ядром по 0x208000
+загружается с NAND, `/proc/mtd` — idblock 1M / rootfs 167M,
+`aov_available=true`, окно `rtos@40000` больше не пересекается с ядром.
+Suspend с `aov_mcu=1` доходит до `-h-wait-` → `-h-timeout-` (2000 мс):
+MCU не отвечает по mailbox, AP возвращается по таймауту; `aov_mcu=0`
+(PMU-only) циклится штатно (`rv1106 enter/exit sleep`). В этих же прогонах
+шина I2C3 падает в панику `rk3x_i2c_irq` (KI-073) — до её разбора
+`sleep enable` держать `false`, иначе плата уходит в reset на каждом
+цикле. Профиль остаётся NO-GO (KI-072).
+
+Наблюдаемость: мост ESP32 перестаёт отдавать вывод DUT примерно через 7 с
+после старта ядра, поэтому окно suspend/resume снимается только живым
+зеркалом `bench/run.sh serial_exec.py --listen 200`, а не выгрузкой
+`uar0.log`; после события лог забирать сразу (файл кольцевой).
 
 ### 7-TB. Экспериментальная thunder-boot (wakeup-IPC) линия
 
@@ -468,6 +517,15 @@ dmesg | grep -c 'SCL hold by slave'          # ожидается 0
 dmesg | grep 'rk3x-i2c' | tail -5            # timeout, ipd: 0x80 => slave держал SCL
 /usr/sbin/i2cdetect -y -r 3 | grep 42        # 0x42 отвечает
 /oem/usr/bin/oko-ec info                     # device_type 2, proto 3
+
+# AOV-профиль (экспериментальный): интерфейс, meta, состояние
+ls /sys/devices/platform/rockchip-suspend/aov_*
+cat /sys/devices/platform/rockchip-suspend/aov_wakeproxy
+cat /sys/devices/platform/rockchip-suspend/aov_state
+ls -l /oem/usr/share/oko/meta.img            # 393216 Б, RKMT, load 0x01000000
+curl -s -u admin:oko-change-me http://127.0.0.1/api/sleep
+# перед AOV-циклом: dmesg -c; после resume: dmesg | grep -iE 'sfc|ubi.*error'
+# KI-071: при sfc timeout/ro-rootfs — power cycle, при повторе — перепрошивка
 
 # Счётчики DEBUG_BUILD (-DEC_DEBUG_BUILD=ON): 60 байт ответа 0x28
 /usr/sbin/i2ctransfer -y 3 w3@0x42 0x01 0x00 0x28

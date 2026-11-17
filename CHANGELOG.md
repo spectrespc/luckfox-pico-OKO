@@ -26,6 +26,57 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Добавлено
 
+- **Экспериментальный профиль `-AOV`: PMCU-прокси пробуждения (этапы 0–7
+  плана AOV, NO-GO на стенде).** Добавлены профиль
+  `BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI-AOV.mk`,
+  DTS `rv1106g-luckfox-pico-pro-max-sc230ai-aov.dts`, фрагмент
+  `rv1106-hpmcu-aov.config`, MCU-каталог `oko-wakeup-sc230ai-ADC` (RK_AOV,
+  SC230AI, meta 0x01000000, ISP 0x01060000), ini
+  `RV1106MINIALL_SPI_NAND_HPMCU.ini`, sysfs-интерфейс
+  `aov_wakeproxy`/`aov_state` в `rockchip-pm`, гейт и timeout в
+  `rv1106_pm.c`, ключи `[sleep] pmu_timer_wake/aov_mcu`, плоский
+  `GET/POST /api/sleep`, карточка «Питание и сон» в WebUI, а также
+  профиль-зависимые `tftp_flash.py` (разбор mtdparts, `idblock`, SSH-бэкап)
+  и `make_oko_update.sh`. Профиль **не выпускается**: Hpmcu+SPL+DDR+usbplug
+  (~300 КБ) не влезают в продуктовый idblock 256K, поэтому idblock расширен
+  до 1M и все разделы после него сдвинуты на 768K; rootfs уменьшен на 1M (167M); meta-раздела нет
+  (256 МБ заняты), blob лежит в OEM и копируется в reserved-memory
+  0x01000000. Стенд 2026-11-16/17: idblock с `Hpmcu=` и AOV-ядро загрузились,
+  `/api/status` показал `aov_available:true`, но первый цикл suspend/wake
+  завис, после чего пересобранное ядро перестало доходить до userspace;
+  исходный продуктовый образ 09:35 восстановлен по TFTP, плата жива
+  (`bad PEBs: 0`). Сдвиг на 1M проверен отдельно 2026-11-17: AOV-образ
+  загрузился, `/proc/mtd` — idblock 1M, rootfs 167M (rootfs 142.8M, 104M
+  свободно), `/api/status.sleep.aov_available=true`, `api_check` 133/0,
+  `ui_check` зелёный (новая карточка «Питание и сон» не ломает восемь
+  разделов); suspend/wake NO-GO остаётся. Причина не разделена (sleep-stack/KI-071/PMU); AOV-профиль
+  помечен экспериментальным.
+- **Experimental `-AOV` profile: PMCU wake proxy (AOV plan stages 0–7,
+  hardware NO-GO).** Adds the
+  `BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI-AOV.mk`
+  profile, the `rv1106g-luckfox-pico-pro-max-sc230ai-aov.dts` DTS, the
+  `rv1106-hpmcu-aov.config` fragment, the `oko-wakeup-sc230ai-ADC` MCU
+  board (RK_AOV, SC230AI, meta 0x01000000, ISP 0x01060000), the
+  `RV1106MINIALL_SPI_NAND_HPMCU.ini` loader, the `aov_wakeproxy`/
+  `aov_state` sysfs interface in `rockchip-pm`, the gate and timeout in
+  `rv1106_pm.c`, the `[sleep] pmu_timer_wake/aov_mcu` keys, the flat
+  `GET/POST /api/sleep`, the "Power and sleep" WebUI card, and the
+  profile-aware `tftp_flash.py` (mtdparts parsing, `idblock`, SSH backup)
+  and `make_oko_update.sh`. The profile is **not released**: Hpmcu + SPL +
+  DDR + usbplug (~300 KB) do not fit the product 256K idblock, so the AOV
+  idblock is 1M and every following partition moves by 768K; rootfs gives up 1M (167M); there is no
+  meta partition (the 256 MB NAND is full), so the blob ships in OEM and is
+  copied into reserved memory at 0x01000000. Bench 2026-11-16/17: the
+  `Hpmcu=` idblock and the AOV kernel booted, `/api/status` reported
+  `aov_available:true`, but the first suspend/wake cycle hung and the
+  rebuilt kernel then stopped reaching userspace; the original 09:35
+  product image was restored over TFTP and the board is healthy
+  (`bad PEBs: 0`). The 1M shift was verified separately on 2026-11-17: the
+  AOV image booted, `/proc/mtd` shows idblock 1M and rootfs 167M (rootfs
+  142.8M, 104M free), `/api/status.sleep.aov_available=true`, `api_check`
+  133/0 and `ui_check` green (the new "Power and sleep" card does not break
+  the eight sections); the suspend/wake NO-GO remains. The root cause is not isolated (sleep stack/
+  KI-071/PMU); the AOV profile is experimental.
 - **divinus: политика сна камеры `[sleep]` (Д2).** Новый модуль
   `sleep_policy.{c,h}`: после `idle_timeout_s` без движения (хуки IVS с
   `min_area` и YOLO-детекций) дивинус штатно разбирает пайплайн, пишет
@@ -371,6 +422,61 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   four VENC streams together with IVS; the fix is a separate code change.
 
 ### Исправлено
+
+- **AOV: окно ядра/MCU исправлено FIT-ом `0x208000`, загрузка проверена.**
+  Вендорский `textofs-$(CONFIG_RV1106_HPMCU_FAST_WAKEUP) := 0x00208000` в
+  `arch/arm/Makefile` восстановлен (был закомментирован ночью 2026-11-17), а
+  `boot.img` профиля `-AOV` теперь собирается из `Image.gz` новым
+  `sysdrv/source/kernel/boot-aov.its` (`compression = "gzip"`,
+  `load = entry = 0x208000`) в `__BUILD_KERNEL_FIT` (`project/build.sh`):
+  U-Boot распаковывает ядро сразу в 0x208000, как в вендорском
+  thunder-boot-образе. Связка «zImage + загрузка по 0x8000» с этим textofs
+  до userspace не доходит — проверено на стенде. Стенд 2026-11-17:
+  `Uncompressing GZIP Kernel Image ... to 0x00208000`, `_text`/`_etext`
+  = 0xB0208000/0xB06CDD70, предупреждение об окне `rtos@40000` исчезло,
+  1M-раскладка и `aov_available=true` подтверждены (`/proc/mtd`, `/api/status`).
+  Suspend с `aov_mcu=1` доходит до `-h-wait-` → `-h-timeout-` (2000 мс):
+  MCU не отвечает по mailbox и AP возвращается по таймауту; `aov_mcu=0`
+  (PMU-only) циклится штатно. Остаются KI-072 (handshake MCU) и KI-073
+  (паника `rk3x_i2c` на I2C3). Устаревшие комментарии про «meta at 0x800000»
+  в `sleep_policy.c` и `build.sh` исправлены на 0x1000000.
+- **AOV: kernel/MCU window fixed with the `0x208000` FIT, boot verified.**
+  The vendor `textofs-$(CONFIG_RV1106_HPMCU_FAST_WAKEUP) := 0x00208000` in
+  `arch/arm/Makefile` is restored (it was commented out overnight on
+  2026-11-17), and the `-AOV` profile `boot.img` is now built from `Image.gz`
+  with the new `sysdrv/source/kernel/boot-aov.its`
+  (`compression = "gzip"`, `load = entry = 0x208000`) by
+  `__BUILD_KERNEL_FIT` (`project/build.sh`): U-Boot unpacks the kernel
+  straight into 0x208000, exactly like the vendor thunder-boot image. The
+  stock "zImage loaded at 0x8000" combination does not reach userspace with
+  this textofs — verified on the bench. Bench 2026-11-17:
+  `Uncompressing GZIP Kernel Image ... to 0x00208000`, `_text`/`_etext`
+  = 0xB0208000/0xB06CDD70, the `rtos@40000` overlap warning is gone, and the
+  1M layout plus `aov_available=true` are confirmed (`/proc/mtd`,
+  `/api/status`). A suspend with `aov_mcu=1` reaches `-h-wait-` →
+  `-h-timeout-` (2000 ms): the MCU does not answer the mailbox and the AP
+  returns on the timeout; `aov_mcu=0` (PMU-only) cycles cleanly. KI-072 (MCU
+  handshake) and KI-073 (`rk3x_i2c` panic on I2C3) remain open. Stale
+  "meta at 0x800000" comments in `sleep_policy.c` and `build.sh` are fixed to
+  0x1000000.
+- **Bench: управление питанием и надёжный вход в U-Boot.** Новый
+  `bench/power.py` (`off`/`on`/`cycle`/`reset` через ESP32-мост, вход по
+  cookie, обязательный logout: мост держит не больше трёх сессий).
+  `tftp_flash.py` получил `--power-cycle` (холодный цикл питания перед
+  прошивкой — нужен после зависшего HPMCU) и SSH-перезагрузку как запасной
+  путь, когда консольный логин недоступен; `netboot.py` ждёт приглашение
+  `Password:` перед вводом пароля (раньше пароль уходил слишком рано), а
+  `serial_exec.py --listen N` зеркалит консоль N секунд без логина — так
+  ловится окно простоя перед suspend.
+- **Bench: power control and a reliable way into U-Boot.** New
+  `bench/power.py` (`off`/`on`/`cycle`/`reset` through the ESP32 bridge,
+  cookie login and a mandatory logout because the bridge keeps at most three
+  sessions). `tftp_flash.py` gained `--power-cycle` (a cold power cycle
+  before flashing, required after a stuck HPMCU) and an SSH reboot fallback
+  for when the console login is unusable; `netboot.py` now waits for the
+  `Password:` prompt before typing the password (it used to be sent too
+  early), and `serial_exec.py --listen N` mirrors the console for N seconds
+  without logging in, which captures the idle window before a suspend.
 
 - **Ревью сна камеры: состояние EC при сбое suspend и единицы TB-таймера.**
   Если запись `mem` в `/sys/power/state` не удалась, `sleep_policy` теперь

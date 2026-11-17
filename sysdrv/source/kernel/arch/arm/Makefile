@@ -157,6 +157,13 @@ ifeq ($(CONFIG_ROCKCHIP_THUNDER_BOOT),y)
 textofs-$(CONFIG_CPU_RV1106) := 0x00208000
 textofs-$(CONFIG_CPU_RV1126) := 0x00608000
 endif
+# OKO AOV: with CONFIG_RV1106_HPMCU_FAST_WAKEUP the boot ROM loads the MCU
+# image into DDR at 0x40000..0x7c000 and the resume path releases the MCU in
+# place, so the Linux image must stay out of that window.  The vendor 0x208000
+# text offset does exactly that.  U-Boot still copies the zImage to 0x8000 and
+# the decompressor relocates the kernel to its link address, the same way the
+# vendor thunder-boot profile works; the kernel then spans ~0x208000..0xa58000,
+# well below the meta (0x1000000) and ISP (0x1060000) reserved regions.
 textofs-$(CONFIG_RV1106_HPMCU_FAST_WAKEUP) := 0x00208000
 
 # Machine directory name.  This list is sorted alphanumerically
