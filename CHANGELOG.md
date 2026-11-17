@@ -443,6 +443,20 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   passes, including with the divinus policy (`pm_test=core`: the cycles run
   and the board stays alive), so the KI-074 stop is in the real sleep entry,
   not in the PM core; see `KNOWN_ISSUES.md` KI-074.
+- **divinus: результат AOV-handshake в журнале resume.** После resume
+  политика читает `aov_state` до разоружения прокси и пишет его в строку
+  `[sleep] resumed (EC wake src …, last event …, aov …)`. Стенд
+  2026-11-17: `aov timeout` — подтверждает 2-секундный таймаут mailbox
+  (маркеры `-h-wait-`/`-h-mbox-`/`-h-timeout-` печатаются мимо printk и
+  видны только на живом UART). Это даёт наблюдаемость handshake без
+  консоли.
+- **divinus: AOV handshake outcome in the resume log.** After a resume the
+  policy reads `aov_state` before disarming the proxy and prints it in
+  `[sleep] resumed (EC wake src …, last event …, aov …)`. Bench
+  2026-11-17: `aov timeout`, confirming the 2 s mailbox timeout (the
+  `-h-wait-`/`-h-mbox-`/`-h-timeout-` markers bypass printk and are only
+  visible on a live UART). This makes the handshake observable without a
+  console.
 - **PM: восстановление GIC-distributor на resume (KI-074).** В
   `arch/arm/mach-rockchip/rv1106_pm.c` функция `gic400_restore()` при
   `CONFIG_RV1106_HPMCU_FAST_WAKEUP` писала только `GIC_DIST_CTRL` и

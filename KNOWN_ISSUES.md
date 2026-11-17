@@ -311,10 +311,16 @@
   циклится штатно (`rv1106 enter/exit sleep`). После патча KI-074
   (`gic400_restore`) прогон 2026-11-17 15:24 с `aov_mcu=1`: политика пишет
   `aov armed`, ядро дважды проходит `PM: suspend entry` →
-  `Restarting tasks ... done.` → `PM: suspend exit`, AP не виснет. Ответ
-  MCU по mailbox при этом не подтверждён: строки
-  `-h-wait-`/`-h-mbox-`/`-h-timeout-` печатаются `rkpm_printstr` прямо в
-  UART и в лог моста не попали. Статус: **экспериментальный, не для
+  `Restarting tasks ... done.` → `PM: suspend exit`, AP не виснет.
+  Handshake MCU **не работает** (подтверждено 2026-11-17): в логе моста
+  поймана строка `-h-wait--h-timeout-` (ответа `-h-mbox-` нет), а новый
+  журнал divinus пишет `resumed (... aov timeout)`. Диагностика MCU:
+  образ на месте (`devmem 0x40000` = `0x0000A401`, совпадает с
+  `rtthread.bin`), в образе есть AOV-код (`gpio0_int_status ... md_flag`),
+  но `mbox_b2a` (`0xff5c002c`) = 0 и счётчики `wakeup_param` в meta
+  (`0x01001C00..`, `mcu_run_count` @ `0x01001C10`) остались
+  `0xFFFFFFFF` — MCU не дошёл до AOV-логики (не стартовал или упал до
+  первого кадра). Статус: **экспериментальный, не для
   выпуска**; блокеры — handshake MCU, KI-073 (патч применён) и
   KI-074 (исправлено, проверено для PMU-only и AOV-armed циклов). Артефакты: `output/bench/aov-image-1m/`,
   `output/bench/uar0-aov-fit-boot-20261117.log`,
@@ -919,9 +925,16 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   (`gic400_restore`) the 2026-11-17 15:24 run with `aov_mcu=1` shows the
   policy arming AOV (`aov armed`) and the kernel completing
   `PM: suspend entry` → `Restarting tasks ... done.` → `PM: suspend exit`
-  twice, so the AP no longer hangs. The MCU mailbox answer is not confirmed:
-  the `-h-wait-`/`-h-mbox-`/`-h-timeout-` strings are printed by
-  `rkpm_printstr` straight to the UART and never reached the bridge log.
+  twice, so the AP no longer hangs. The MCU handshake **does not work**
+  (confirmed 2026-11-17): the bridge log contains the
+  `-h-wait--h-timeout-` sequence (no `-h-mbox-`) and the new divinus log
+  prints `resumed (... aov timeout)`. MCU diagnosis: the image is in place
+  (`devmem 0x40000` = `0x0000A401`, matching `rtthread.bin`), the image
+  contains the AOV code (`gpio0_int_status ... md_flag`), but `mbox_b2a`
+  (`0xff5c002c`) is 0 and the meta `wakeup_param` counters
+  (`0x01001C00..`, `mcu_run_count` @ `0x01001C10`) are still `0xFFFFFFFF` —
+  the MCU never reached the AOV logic (did not start or crashed before the
+  first frame).
   Status: **experimental, not for release**; blockers are the MCU handshake,
   KI-073 (patched) and KI-074 (fixed, verified for PMU-only and AOV-armed
   cycles). Artifacts: `output/bench/aov-image-1m/`,

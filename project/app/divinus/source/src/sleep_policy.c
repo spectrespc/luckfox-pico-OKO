@@ -745,14 +745,41 @@ int sleep_policy_suspend(void)
     ec_read_power();
     save_wake_info();
 
+    /*
+     * Publish the MCU decision while the kernel still has it: the vendor
+     * path keeps aov_state until the proxy is disarmed, so this is the only
+     * place that can tell a healthy handshake (`quiet`/`motion`) from the
+     * 2 s mailbox timeout without a live UART - the -h-wait-/-h-mbox-/
+     * -h-timeout- markers are printed by rkpm_printstr and bypass printk.
+     */
+    if (aov_armed)
+    {
+        char aov_state[16] = "?";
+
+        if (sysfs_read(AOV_STATE_PATH, aov_state, sizeof(aov_state)) < 0)
+        {
+            snprintf(aov_state, sizeof(aov_state), "?");
+        }
+        else
+        {
+            aov_state[strcspn(aov_state, "\n")] = '\0';
+        }
+
+        HAL_INFO("sleep", "resumed (EC wake src %d, last event %d, aov %s)\n",
+                 last_wake_src, last_event, aov_state);
+    }
+    else
+    {
+        HAL_INFO("sleep", "resumed (EC wake src %d, last event %d, aov off)\n",
+                 last_wake_src, last_event);
+    }
+
     pthread_mutex_lock(&lock);
     state = SLEEP_AWAKE;
     last_motion = mono_now();
     motion_seq++;
     pthread_mutex_unlock(&lock);
 
-    HAL_INFO("sleep", "resumed (EC wake src %d, last event %d)\n",
-             last_wake_src, last_event);
     return 0;
 }
 
