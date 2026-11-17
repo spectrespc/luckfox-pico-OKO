@@ -443,6 +443,24 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   passes, including with the divinus policy (`pm_test=core`: the cycles run
   and the board stays alive), so the KI-074 stop is in the real sleep entry,
   not in the PM core; see `KNOWN_ISSUES.md` KI-074.
+- **MCU: консоль uart2 и окно mailbox 6 с (диагностика AOV).** В
+  `oko-wakeup-sc230ai-ADC/defconfig` включены `CONFIG_RT_USING_UART` и
+  `CONFIG_RT_USING_UART2` (общий с AP отладочный uart2) — по логу видно,
+  что MCU стартует и доходит до `[STREAM]: the device to be found:isp_0`,
+  но кадр/решение получает только после resume AP (его ISP). Окно
+  `RV1106_HPMCU_FAST_WKUP_TIMEOUT` увеличено с 2000 до 6000 мс по
+  измеренному времени до решения MCU (~4.2 с); handshake это не
+  исправляет — MCU-прошивке нужен порт battery-ipc AOV (свой подъём
+  ISP/сенсора).
+- **MCU: uart2 console and a 6 s mailbox window (AOV diagnosis).** The
+  `oko-wakeup-sc230ai-ADC/defconfig` now enables `CONFIG_RT_USING_UART` and
+  `CONFIG_RT_USING_UART2` (the shared AP debug uart2), which shows the MCU
+  booting and reaching `[STREAM]: the device to be found:isp_0`, but it only
+  gets a frame and decides after the AP resumed (its ISP). The
+  `RV1106_HPMCU_FAST_WKUP_TIMEOUT` window is raised from 2000 to 6000 ms
+  based on the measured time to the MCU decision (~4.2 s); this does not fix
+  the handshake — the MCU firmware needs the battery-ipc AOV port (its own
+  ISP/sensor bring-up).
 - **divinus: результат AOV-handshake в журнале resume.** После resume
   политика читает `aov_state` до разоружения прокси и пишет его в строку
   `[sleep] resumed (EC wake src …, last event …, aov …)`. Стенд

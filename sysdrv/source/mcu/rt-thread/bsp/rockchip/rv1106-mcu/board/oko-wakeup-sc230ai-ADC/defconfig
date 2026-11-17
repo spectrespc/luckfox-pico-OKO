@@ -334,7 +334,12 @@ CONFIG_RT_USING_SARADC=y
 #
 # Enable UART
 #
-# CONFIG_RT_USING_UART is not set
+# OKO: the MCU console shares uart2 with the AP debug console.  The base
+# wakeup board keeps it off; enable it while debugging the AOV handshake
+# (the MCU boots RT-Thread but never reaches the wakeup logic, and without
+# a console there is no way to see why).
+CONFIG_RT_USING_UART=y
+CONFIG_RT_USING_UART2=y
 
 #
 # RT-Thread Common Test case

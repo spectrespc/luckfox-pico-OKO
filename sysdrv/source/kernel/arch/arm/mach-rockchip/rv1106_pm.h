@@ -7,7 +7,15 @@
 #define __MACH_ROCKCHIP_RV1106_PM_H
 
 #define RV1106_WAKEUP_TO_SYSTEM_RESET	0
-#define RV1106_HPMCU_FAST_WKUP_TIMEOUT	2000 /* ms */
+/*
+ * OKO AOV: bound on the MCU mailbox wait.  The vendor loop waits forever; a
+ * dead MCU would then keep the AP asleep for good.  Measured on the bench
+ * (oko-wakeup-sc230ai-ADC): the MCU reboots on hpmcu_start(), brings up the
+ * sensor/ISP and answers after ~4.2 s (its stream thread logs
+ * "[STREAM]: gpio0_int_status ... tick:4160"), so a 2 s window always timed
+ * out.  Keep a margin over the measured figure.
+ */
+#define RV1106_HPMCU_FAST_WKUP_TIMEOUT	6000 /* ms */
 
 #define RV1106_PERIGRF_OFFSET		0x0
 #define RV1106_VENCGRF_OFFSET		0x10000

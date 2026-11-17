@@ -319,8 +319,20 @@
   `rtthread.bin`), в образе есть AOV-код (`gpio0_int_status ... md_flag`),
   но `mbox_b2a` (`0xff5c002c`) = 0 и счётчики `wakeup_param` в meta
   (`0x01001C00..`, `mcu_run_count` @ `0x01001C10`) остались
-  `0xFFFFFFFF` — MCU не дошёл до AOV-логики (не стартовал или упал до
-  первого кадра). Статус: **экспериментальный, не для
+  `0xFFFFFFFF` — MCU не дошёл до AOV-логики. Затем включена консоль MCU
+  (`CONFIG_RT_USING_UART=y`, `RT_USING_UART2=y` в
+  `oko-wakeup-sc230ai-ADC`, общий uart2) и снят лог: MCU **стартует**,
+  печатает `RT_USING_RK_AOV=y`, `[STREAM]: share size:11245 (...)`,
+  `[STREAM]: the device to be found:isp_0, object_id:0`, но кадр/решение
+  получает только после того, как AP уже проснулся и поднял ISP (в прогоне
+  с окном 2 с решение появилось на `tick:4160` уже после resume). Прошивка
+  MCU — «wakeup»-вариант (`rv1106_evb2_wakeup-SC200AI-ADC`) и не владеет
+  ISP/сенсором: полноценный AOV требует MCU-порта battery-ipc с
+  самостоятельным подъёмом ISP (питание/клоки сенсора, amp-shared i2c4).
+  Временно окно mailbox увеличено до 6000 мс
+  (`RV1106_HPMCU_FAST_WKUP_TIMEOUT`), измеренное время до решения MCU
+  ~4.2 с; проблему это не закрывает — AP всё равно возвращается по
+  таймауту. Статус: **экспериментальный, не для
   выпуска**; блокеры — handshake MCU, KI-073 (патч применён) и
   KI-074 (исправлено, проверено для PMU-only и AOV-armed циклов). Артефакты: `output/bench/aov-image-1m/`,
   `output/bench/uar0-aov-fit-boot-20261117.log`,
@@ -933,8 +945,21 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   contains the AOV code (`gpio0_int_status ... md_flag`), but `mbox_b2a`
   (`0xff5c002c`) is 0 and the meta `wakeup_param` counters
   (`0x01001C00..`, `mcu_run_count` @ `0x01001C10`) are still `0xFFFFFFFF` —
-  the MCU never reached the AOV logic (did not start or crashed before the
-  first frame).
+  the MCU never reached the AOV logic. The MCU console was then enabled
+  (`CONFIG_RT_USING_UART=y`, `RT_USING_UART2=y` in
+  `oko-wakeup-sc230ai-ADC`, shared uart2) and the capture shows that the MCU
+  **does boot**: it prints `RT_USING_RK_AOV=y`,
+  `[STREAM]: share size:11245 (...)`,
+  `[STREAM]: the device to be found:isp_0, object_id:0`, but it only gets a
+  frame and decides after the AP has already resumed and brought the ISP up
+  (in the 2 s-window run the decision appeared at `tick:4160`, i.e. after
+  the resume). The MCU firmware is the "wakeup" variant
+  (`rv1106_evb2_wakeup-SC200AI-ADC`) and does not own the ISP/sensor: real
+  AOV needs the battery-ipc AOV firmware port (sensor power/clocks, ISP
+  bring-up on the MCU, amp-shared i2c4). As a temporary measure the mailbox
+  window was raised to 6000 ms (`RV1106_HPMCU_FAST_WKUP_TIMEOUT`) while the
+  measured time to the MCU decision is ~4.2 s; this does not fix the problem
+  — the AP still returns on the timeout.
   Status: **experimental, not for release**; blockers are the MCU handshake,
   KI-073 (patched) and KI-074 (fixed, verified for PMU-only and AOV-armed
   cycles). Artifacts: `output/bench/aov-image-1m/`,
