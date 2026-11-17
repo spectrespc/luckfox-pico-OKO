@@ -275,7 +275,15 @@
   перестал доходить до userspace — `Starting kernel ...` и зависание около
   probe `rockchip-pm`; исходный продуктовый образ 09:35 восстановлен по
   TFTP, `bad PEBs: 0`, rootfs/userdata `rw`. Причина не разделена, но
-  AOV-циклы усиливают риск: до выяснения AOV-профиль не выпускать. Уточнение
+  AOV-циклы усиливают риск: до выяснения AOV-профиль не выпускать. 2026-11-17
+  14:47 повтор: после ~15 циклов suspend/resume появились
+  `rockchip-sfc ffac0000.spi: DMA wait for transfer finish timeout` /
+  `xfer data failed ret -110 dir 1`, UBIFS (`ubi0:0`) ушёл в read-only
+  (`ubifs_leb_write ... error -5`, `make_reservation ... error -30`), а
+  ближайший `PM: suspend entry` после этого не завершился пробуждением (AP
+  остался спать, UART молчит). Power cycle через мост восстановил
+  rootfs/userdata в `rw`, `dmesg` без SFC/UBI ошибок — сценарий KI-071
+  повторяем. Уточнение
   2026-11-17: «зависание после `Starting kernel`» воспроизведено только на
   ядре со сдвинутым textofs и без `0x208000`-FIT (см. KI-072); «пересобранное
   продуктовое ядро» на стенде после этого **не перепроверялось** — адрес
@@ -339,8 +347,19 @@
   I2C (KI-073), то есть к патчу отношения не имеет. Последние сообщения —
   `rk_gmac-dwmac ... Link is Down` / `init for RMII`; при опущенном `eth0`
   их нет, а зависание то же, значит стоп происходит в device-resume, а не
-  только в GMAC/PHY. Статус: **открыто (P1 для sleep-линии)**; блокирует
-  M2/M3 и весь AOV-трек. Артефакты:
+  только в GMAC/PHY. Статус: **причина найдена и исправлена 2026-11-17**:
+  при `CONFIG_RV1106_HPMCU_FAST_WAKEUP=y` вендорский `gic400_restore()`
+  писал только `GIC_DIST_CTRL`, оставляя восстановление контекста
+  GIC-distributor AOV-MCU; когда MCU простаивает (`aov off`) или не
+  отвечает (`-h-timeout-`), distributor остаётся в сброшенном состоянии,
+  прерывания не доставляются и resume умирает в
+  `suspend_thaw_processes()`. Патч `rv1106_pm.c`: контекст
+  восстанавливается всегда (`rkpm_gicv2_dist_restore`), как и в
+  вендорском timeout-пути. Стенд: AOV-ядро (0x208000, gzip-FIT) с
+  `aov_mcu=0` прошло ~15 циклов (`[sleep] resumed (EC wake src 4)`,
+  `Restarting tasks ... done.`); продуктовое ядро (флаг off) циклы
+  проходило и раньше; путь `aov_mcu=1` после патча не перепроверен (на
+  стенде приложение не стартовало из-за отказа audio/SDK). Артефакты:
   `output/bench/aov-test/console-nakguard-run1.log`,
   `console-ethdown-patched-run.log`, `console-prepatch-control.log`.
   Дополнение 2026-11-17 (диагностика `pm_test`): ядро собрано с
@@ -858,7 +877,15 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   near the `rockchip-pm` probe; the original 09:35 product image was
   restored over TFTP, `bad PEBs: 0`, rootfs/userdata `rw`. The cause is not
   separated, but AOV cycles raise the risk: do not release the AOV profile
-  until this is understood. Update 2026-11-17: the "hang after `Starting
+  until this is understood. 2026-11-17 14:47 recurrence: after ~15
+  suspend/resume cycles the log showed
+  `rockchip-sfc ffac0000.spi: DMA wait for transfer finish timeout` /
+  `xfer data failed ret -110 dir 1`, UBIFS (`ubi0:0`) switched to read-only
+  (`ubifs_leb_write ... error -5`, `make_reservation ... error -30`) and the
+  next `PM: suspend entry` never woke (the AP stayed asleep and the UART was
+  silent). A bridge power cycle restored rootfs/userdata to `rw` with no
+  SFC/UBI errors in `dmesg`, so the KI-071 scenario reproduces. Update
+  2026-11-17: the "hang after `Starting
   kernel`" reproduces only with a moved textofs and no 0x208000 FIT (see
   KI-072); the "rebuilt product kernel" has **not** been retested on the
   bench — only its link address was checked (`_text = 0x8000`).
@@ -920,8 +947,19 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   reproduces on the build **without** the I2C patch (KI-073), so it is not
   caused by that patch. The last messages are `rk_gmac-dwmac ... Link is
   Down` / `init for RMII`; with `eth0` down they disappear but the hang stays,
-  so the stop is in device resume, not only in GMAC/PHY. Status: **open (P1
-  for the sleep line)**; it blocks M2/M3 and the whole AOV track. Artifacts:
+  so the stop is in device resume, not only in GMAC/PHY. Status: **root
+  cause found and fixed on 2026-11-17**: with
+  `CONFIG_RV1106_HPMCU_FAST_WAKEUP=y` the vendor `gic400_restore()` wrote
+  only `GIC_DIST_CTRL` and left the distributor context to the AOV MCU; when
+  the MCU is idle (`aov off`) or does not answer (`-h-timeout-`) the
+  distributor stays reset, interrupts are no longer delivered and the resume
+  dies in `suspend_thaw_processes()`. The `rv1106_pm.c` patch always
+  restores the context (`rkpm_gicv2_dist_restore`), matching the vendor
+  timeout path. Bench: the AOV kernel (0x208000, gzip FIT) with `aov_mcu=0`
+  ran ~15 cycles (`[sleep] resumed (EC wake src 4)`, `Restarting tasks ...
+  done.`); the product kernel (flag off) cycled before; the `aov_mcu=1` path
+  after the fix is not re-verified (the bench app failed to start because of
+  an audio/SDK init error). Artifacts:
   `output/bench/aov-test/console-nakguard-run1.log`,
   `console-ethdown-patched-run.log`, `console-prepatch-control.log`.
   Update 2026-11-17 (`pm_test` diagnosis): the kernel is built with the

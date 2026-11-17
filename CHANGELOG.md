@@ -443,6 +443,34 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   passes, including with the divinus policy (`pm_test=core`: the cycles run
   and the board stays alive), so the KI-074 stop is in the real sleep entry,
   not in the PM core; see `KNOWN_ISSUES.md` KI-074.
+- **PM: восстановление GIC-distributor на resume (KI-074).** В
+  `arch/arm/mach-rockchip/rv1106_pm.c` функция `gic400_restore()` при
+  `CONFIG_RV1106_HPMCU_FAST_WAKEUP` писала только `GIC_DIST_CTRL` и
+  оставляла контекст distributor'а AOV-MCU; если MCU простаивает (`aov off`)
+  или не отвечает (`-h-timeout-`), прерывания после resume не доставляются и
+  AP виснет в `suspend_thaw_processes()` (последний вывод —
+  `OOM killer enabled.`). Теперь контекст восстанавливается всегда, как это
+  уже делает вендорский timeout-путь. Стенд 2026-11-17: AOV-ядро (0x208000,
+  gzip-FIT) с `aov_mcu=0` прошло ~15 циклов
+  (`[sleep] resumed (EC wake src 4)`, `Restarting tasks ... done.`); до
+  патча первый же resume зависал. Путь `aov_mcu=1` после патча не
+  перепроверен; последующее зависание после ~15 циклов — это SFC/NAND
+  (KI-071), не PM. Артефакты: `output/bench/aov-test/console-gicfix-run1.log`,
+  `uar0-gicfix-death.log`.
+- **PM: restore the GIC distributor on resume (KI-074).** In
+  `arch/arm/mach-rockchip/rv1106_pm.c` the `gic400_restore()` function wrote
+  only `GIC_DIST_CTRL` when `CONFIG_RV1106_HPMCU_FAST_WAKEUP` was set and
+  left the distributor context to the AOV MCU; with the MCU idle (`aov off`)
+  or not answering (`-h-timeout-`) no interrupts are delivered after resume
+  and the AP hangs in `suspend_thaw_processes()` (the last output is
+  `OOM killer enabled.`). The context is now always restored, exactly like
+  the vendor timeout path already does. Bench 2026-11-17: the AOV kernel
+  (0x208000, gzip FIT) with `aov_mcu=0` ran ~15 cycles
+  (`[sleep] resumed (EC wake src 4)`, `Restarting tasks ... done.`); before
+  the patch the first resume already hung. The `aov_mcu=1` path is not
+  re-verified after the patch; the later hang after ~15 cycles is SFC/NAND
+  (KI-071), not PM. Artifacts: `output/bench/aov-test/console-gicfix-run1.log`,
+  `uar0-gicfix-death.log`.
 - **I2C3: паника `rk3x_i2c_irq` при циклах `[sleep]` (KI-073) — патч.**
   В вендорский `drivers/i2c/busses/i2c-rk3x.c` добавлен guard после ack
   NAK: `rk3x_i2c_stop()` обнуляет `i2c->msg` для последнего сообщения, но

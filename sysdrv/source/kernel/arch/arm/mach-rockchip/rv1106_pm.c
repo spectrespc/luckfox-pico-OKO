@@ -375,10 +375,17 @@ static void gic400_save(void)
 
 static void gic400_restore(void)
 {
-	if (IS_ENABLED(CONFIG_RV1106_HPMCU_FAST_WAKEUP))
-		writel_relaxed(0x3, gicd_base + GIC_DIST_CTRL);
-	else
-		rkpm_gicv2_dist_restore(gicd_base, &gicd_ctx_save);
+	/*
+	 * OKO (KI-074): with CONFIG_RV1106_HPMCU_FAST_WAKEUP the vendor writes
+	 * only GIC_DIST_CTRL and leaves the distributor context to the AOV MCU.
+	 * When the MCU is idle (aov off) or does not answer (-h-timeout-) the
+	 * distributor keeps a reset state, interrupts stop being delivered and
+	 * the resume dies in suspend_thaw_processes().  The AOV timeout path
+	 * restores the distributor explicitly right after the mailbox
+	 * exchange, so restoring it here is consistent with the vendor flow and
+	 * makes the AP-only case work again.
+	 */
+	rkpm_gicv2_dist_restore(gicd_base, &gicd_ctx_save);
 	rkpm_gicv2_cpu_restore(gicd_base, gicc_base, &gicc_ctx_save);
 }
 
