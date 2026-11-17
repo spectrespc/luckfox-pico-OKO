@@ -756,6 +756,36 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Изменено
 
+- **Документация: REST API ESP32-моста (ESP32-OKO-KVM) в инструкциях агента.**
+  `AGENTS.md §7` превращён из пары curl-команд в роутер по мосту: прошивка и
+  upstream-репозиторий, каналы (telnet `:23` — один управляющий клиент,
+  read-only мониторы UART `:2324`/`:24`, HTTP `:80`), группы API (`/config`,
+  `/sd/*`, `/logs`, `/ext/status|power|reset`, `/system/time`, `/ota/*`),
+  гигиена сессий (login → работа → обязательный logout, пул 3 сессии, `429`);
+  в §2 (`TESTBENCH.md`) добавлено упоминание REST API моста. В `TESTBENCH.md`
+  по пробам живого моста (прошивка `1.10.0`, слот `ota_1`) описаны проверенные
+  эндпоинты с форматами ответов, коды `401`/`429`/`MON_DISABLED`, распиновка
+  (`ext_pwr` GPIO20, `ext_rst` GPIO19, UART0 GPIO16/17), формат text
+  SD-лога; исправлено «файл кольцевой» на ротацию 1 МиБ × 10 копий и
+  зафиксировано, что на 1.10.0 запись идёт без подключённого telnet-клиента
+  (upstream-описание «только при клиенте» помечено как неподтверждённое);
+  уточнены §2/§4/§5/§6/§7-AOV и добавлена особенность моста как общего
+  ресурса стенда в §9.
+- **Docs: ESP32 bridge REST API (ESP32-OKO-KVM) in the agent instructions.**
+  `AGENTS.md §7` is now a router for the bridge instead of a pair of curl
+  commands: firmware and upstream repository, channels (telnet `:23` with a
+  single control client, read-only UART monitors `:2324`/`:24`, HTTP `:80`),
+  API groups (`/config`, `/sd/*`, `/logs`, `/ext/status|power|reset`,
+  `/system/time`, `/ota/*`) and session hygiene (login → work → mandatory
+  logout, a 3-session pool, `429`); §2 (the `TESTBENCH.md` row) mentions the
+  bridge REST API. `TESTBENCH.md` documents the endpoints verified on the live
+  bridge (firmware `1.10.0`, slot `ota_1`) with response formats, the
+  `401`/`429`/`MON_DISABLED` codes, pinout (`ext_pwr` GPIO20, `ext_rst`
+  GPIO19, UART0 GPIO16/17) and the text SD-log format; the "ring file" wording
+  is replaced by 1 MiB × 10-copy rotation, and it is recorded that on 1.10.0
+  the log is written without a connected telnet client (the upstream "only
+  while a client is attached" statement is marked unconfirmed); §2/§4/§5/§6/
+  §7-AOV are refined and §9 gains the bridge-as-shared-resource note.
 - **Правило проекта: вендорский код — только справочник (AGENTS.md §6).**
   Зафиксировано, что `project/app/rkipc`, `rk_smart_door`,
   `fastboot_client`, `component/rkadk`, `sysdrv/source/mcu` (RT-Thread) и
