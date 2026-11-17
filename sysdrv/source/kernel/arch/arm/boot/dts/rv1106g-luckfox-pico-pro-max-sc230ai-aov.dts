@@ -68,3 +68,12 @@
 	 * the attributes but reports "unsupported" and refuses to arm. */
 	oko,aov-mcu;
 };
+/*
+ * Vendor AOV reference (rv1106g-evb2-v12-aov-spi-nor.dts) keeps the CIF pipe
+ * reserved for the MCU while the AP is suspended.  Without it the MCU finds
+ * the isp_0 device but never gets a frame when it runs alone (KI-072).
+ */
+&rkcif_mipi_lvds {
+	aov-reserved;
+	status = "okay";
+};

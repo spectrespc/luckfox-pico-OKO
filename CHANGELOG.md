@@ -443,6 +443,17 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   passes, including with the divinus policy (`pm_test=core`: the cycles run
   and the board stays alive), so the KI-074 stop is in the real sleep entry,
   not in the PM core; see `KNOWN_ISSUES.md` KI-074.
+- **AOV DTS: `aov-reserved` на `&rkcif_mipi_lvds`.** Свойство взято из
+  вендорского AOV-эталона `rv1106g-evb2-v12-aov-spi-nor.dts` (резерв
+  CIF/ISP под MCU на время AP-suspend). На стенде 2026-11-17 поведение не
+  изменилось: MCU находит `isp_0`, но кадров в окне mailbox нет, потому что
+  divinus останавливает ISP/CSI перед `mem`; вывод записан в KI-072.
+- **AOV DTS: `aov-reserved` on `&rkcif_mipi_lvds`.** Taken from the vendor
+  AOV reference `rv1106g-evb2-v12-aov-spi-nor.dts` (keeps the CIF/ISP
+  reserved for the MCU during AP suspend). On the bench 2026-11-17 the
+  behaviour did not change: the MCU finds `isp_0` but gets no frames in the
+  mailbox window because divinus stops the ISP/CSI before `mem`; the
+  conclusion is recorded in KI-072.
 - **MCU: консоль uart2 и окно mailbox 6 с (диагностика AOV).** В
   `oko-wakeup-sc230ai-ADC/defconfig` включены `CONFIG_RT_USING_UART` и
   `CONFIG_RT_USING_UART2` (общий с AP отладочный uart2) — по логу видно,

@@ -332,7 +332,13 @@
   Временно окно mailbox увеличено до 6000 мс
   (`RV1106_HPMCU_FAST_WKUP_TIMEOUT`), измеренное время до решения MCU
   ~4.2 с; проблему это не закрывает — AP всё равно возвращается по
-  таймауту. Статус: **экспериментальный, не для
+  таймауту. Проверено и вендорское свойство `aov-reserved` на
+  `&rkcif_mipi_lvds` (есть в `rv1106g-evb2-v12-aov-spi-nor.dts`, добавлено
+  в наш DTS): поведение не изменилось — MCU находит `isp_0`, но кадров в
+  окне нет. Причина в архитектуре: divinus останавливает пайплайн
+  (CSI/ISP) перед `mem`, поэтому MCU нечего принимать; вендорский AOV
+  оставляет ISP/CIF зарезервированными за MCU. Для AOV нужен режим, в
+  котором AP не гасит ISP (и MCU-порт battery-ipc). Статус: **экспериментальный, не для
   выпуска**; блокеры — handshake MCU, KI-073 (патч применён) и
   KI-074 (исправлено, проверено для PMU-only и AOV-armed циклов). Артефакты: `output/bench/aov-image-1m/`,
   `output/bench/uar0-aov-fit-boot-20261117.log`,
@@ -959,7 +965,13 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   bring-up on the MCU, amp-shared i2c4). As a temporary measure the mailbox
   window was raised to 6000 ms (`RV1106_HPMCU_FAST_WKUP_TIMEOUT`) while the
   measured time to the MCU decision is ~4.2 s; this does not fix the problem
-  — the AP still returns on the timeout.
+  — the AP still returns on the timeout. The vendor `aov-reserved` property
+  on `&rkcif_mipi_lvds` (present in `rv1106g-evb2-v12-aov-spi-nor.dts`, now
+  added to our DTS) was also tested: no change — the MCU finds `isp_0` but
+  gets no frames in the window. The reason is architectural: divinus stops
+  the pipeline (CSI/ISP) before `mem`, so the MCU has nothing to consume;
+  the vendor AOV keeps the ISP/CIF reserved for the MCU. AOV needs a mode
+  where the AP does not power the ISP down (plus the battery-ipc MCU port).
   Status: **experimental, not for release**; blockers are the MCU handshake,
   KI-073 (patched) and KI-074 (fixed, verified for PMU-only and AOV-armed
   cycles). Artifacts: `output/bench/aov-image-1m/`,
