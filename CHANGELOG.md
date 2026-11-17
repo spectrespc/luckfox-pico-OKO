@@ -443,6 +443,24 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   passes, including with the divinus policy (`pm_test=core`: the cycles run
   and the board stays alive), so the KI-074 stop is in the real sleep entry,
   not in the PM core; see `KNOWN_ISSUES.md` KI-074.
+- **AOV: управляемое решение MCU (`wakeup_param`) и сброс pending IRQ.**
+  Сборка инициализирует сегмент `wakeup_param` в `meta.img`
+  (`RK_META_AOV_AE_WAKEUP_MODE`, `RK_META_AOV_MCU_MAX_RUN_COUNT`,
+  `tools/native/patch_meta_aov.py`): 0 — решение по AE, 1 — принудительное
+  движение, 2 — принудительная тишина. Стенд 2026-11-17: `ae_mode=2` —
+  `md_flag is 0`, AP_SUSPEND, 0 resume (AP спит); `ae_mode=1` —
+  `md_flag is 1`, `aov motion`, resume. В ядре добавлен
+  `gic_irq_clear_pending()` после ack mailbox: pending IRQ будил AP сразу и
+  quiet-цикл превращался в плотный цикл ~370 мс.
+- **AOV: controllable MCU decision (`wakeup_param`) and IRQ pending clear.**
+  The build now initializes the `wakeup_param` segment in `meta.img`
+  (`RK_META_AOV_AE_WAKEUP_MODE`, `RK_META_AOV_MCU_MAX_RUN_COUNT`,
+  `tools/native/patch_meta_aov.py`): 0 — AE decides, 1 — force motion, 2 —
+  force quiet. Bench 2026-11-17: `ae_mode=2` — `md_flag is 0`, AP_SUSPEND,
+  zero resumes (the AP stays asleep); `ae_mode=1` — `md_flag is 1`,
+  `aov motion`, resume. The kernel now calls `gic_irq_clear_pending()` after
+  the mailbox ack: the pending IRQ woke the AP immediately and turned the
+  quiet cycle into a tight ~370 ms loop.
 - **AOV: handshake MCU заработал (KI-072).** Две правки: в divinus —
   режим `[sleep] aov_keep_isp` (AOV-профиль не вызывает
   `sdk_stop()`/`media_stop()`, CSI/ISP остаются поднятыми для MCU, есть в

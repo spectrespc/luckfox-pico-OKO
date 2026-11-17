@@ -345,12 +345,19 @@
   `-h-timeout-`; результат теперь запоминается флагом. Стенд (11 полных
   циклов): `[STREAM]: gpio0_int_status is 0, share_data->md_flag is 1,
   tick:172..204` → `-h-mbox-` → `[sleep] resumed (… aov motion)`.
-  Остаётся: MCU в статичной сцене сообщает движение (`md_flag=1`), поэтому
-  AP просыпается каждый цикл вместо quiet; `wakeup_param` в meta не
-  инициализирован (0xFF); стрим после AOV-resume с сохранённым пайплайном
-  требует отдельной проверки; окно mailbox можно вернуть к ~500 мс.
-  Статус: **экспериментальный, не для выпуска**; блокеры — KI-073 (патч
-  применён), KI-074 (исправлено) и тюнинг MCU (md_flag/wakeup_param). Артефакты: `output/bench/aov-image-1m/`,
+  `wakeup_param` в meta теперь инициализируется сборкой
+  (`RK_META_AOV_AE_WAKEUP_MODE`, `tools/native/patch_meta_aov.py`): 0 — по
+  AE, 1 — принудительно движение, 2 — принудительно тишина. Стенд
+  2026-11-17: при `ae_mode=2` MCU печатает `md_flag is 0` и отвечает
+  AP_SUSPEND — за прогон **0** `[sleep] resumed` (AP остаётся спать); при
+  `ae_mode=1` — `md_flag is 1`, `aov motion` и resume. Побочный эффект:
+  после ack mailbox IRQ оставался pending в GIC, и AP просыпался сразу
+  (плотный цикл ~370 мс) — добавлен `gic_irq_clear_pending()`. Остаётся:
+  подтвердить кадентность quiet-цикла (ожидается 1 цикл на
+  `wake_interval_s`) и стрим после AOV-resume с сохранённым пайплайном;
+  окно mailbox можно вернуть к ~500 мс. Статус: **экспериментальный, не для
+  выпуска**; блокеры — KI-073 (патч применён), KI-074 (исправлено) и
+  проверка quiet/стрима. Артефакты: `output/bench/aov-image-1m/`,
   `output/bench/uar0-aov-fit-boot-20261117.log`,
   `output/bench/aov-test/uar0-m2-pmu-only.log`.
 
@@ -989,12 +996,19 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   Bench (11 complete cycles): `[STREAM]: gpio0_int_status is 0,
   share_data->md_flag is 1, tick:172..204` → `-h-mbox-` →
   `[sleep] resumed (… aov motion)`. Still open: the MCU reports motion in a
-  static scene (`md_flag=1`), so the AP resumes on every cycle instead of
-  staying quiet; the meta `wakeup_param` is uninitialized (0xFF); streaming
-  after an AOV resume with the kept pipeline needs its own check; the
-  mailbox window can go back to ~500 ms. Status: **experimental, not for
-  release**; blockers are KI-073 (patched), KI-074 (fixed) and MCU tuning
-  (md_flag/wakeup_param). Artifacts: `output/bench/aov-image-1m/`,
+  the meta `wakeup_param` is now initialized by the build
+  (`RK_META_AOV_AE_WAKEUP_MODE`, `tools/native/patch_meta_aov.py`): 0 — use
+  AE, 1 — force motion, 2 — force quiet. Bench 2026-11-17: with
+  `ae_mode=2` the MCU logs `md_flag is 0` and answers AP_SUSPEND — **0**
+  `[sleep] resumed` in the run (the AP keeps sleeping); with `ae_mode=1` it
+  logs `md_flag is 1`, `aov motion` and resumes. Side effect found and
+  fixed: the mailbox IRQ stayed pending in the GIC after the ack, so the AP
+  woke immediately (a tight ~370 ms loop) — `gic_irq_clear_pending()` was
+  added. Still open: confirm the quiet-cycle cadence (expected one cycle per
+  `wake_interval_s`) and verify streaming after an AOV resume with the kept
+  pipeline; the mailbox window can go back to ~500 ms. Status:
+  **experimental, not for release**; blockers are KI-073 (patched), KI-074
+  (fixed) and the quiet/stream verification. Artifacts: `output/bench/aov-image-1m/`,
   `output/bench/uar0-aov-fit-boot-20261117.log`,
   `output/bench/aov-test/uar0-m2-pmu-only.log`.
 

@@ -772,6 +772,17 @@ function build_meta() {
 				--pc_tools_dir $RK_PROJECT_PATH_PC_TOOLS \
 				--boot_medium $RK_BOOT_MEDIUM \
 				--tiny_meta $RK_TINY_META
+			# OKO AOV: make_meta leaves the MCU wakeup-parameter segment
+			# filled with 0xff; the MCU AOV app then has no policy and
+			# treats the ISP motion flag as-is.  Write a real structure
+			# when the profile asks for one (KI-072).
+			if [ -n "$RK_META_AOV_AE_WAKEUP_MODE" ] &&
+			   [ -f "$RK_PROJECT_OUTPUT_IMAGE/meta.img" ]; then
+				python3 "$RK_PROJECT_TOP_DIR/../tools/native/patch_meta_aov.py" \
+					--meta "$RK_PROJECT_OUTPUT_IMAGE/meta.img" \
+					--ae-wakeup-mode "$RK_META_AOV_AE_WAKEUP_MODE" \
+					--mcu-max-run-count "${RK_META_AOV_MCU_MAX_RUN_COUNT:--1}"
+			fi
 		fi
 	fi
 	finish_build

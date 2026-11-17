@@ -511,6 +511,13 @@ static void gic_irq_en(int irq)
 	dsb(sy);
 }
 
+static void gic_irq_clear_pending(int irq)
+{
+	writel_relaxed(BIT(irq % 32),
+		       gicd_base + GIC_DIST_PENDING_CLEAR + (irq >> 5 << 2));
+	dsb(sy);
+}
+
 static int is_hpmcu_mbox_int(void)
 {
 	return !!(readl(mbox_base + RV1106_MBOX_B2A_STATUS) & BIT(0));
@@ -573,6 +580,13 @@ static int hpmcu_fast_wkup(void)
 			/* clear system wake up state */
 			writel(0, pmu_base + RV1106_PMU_SYS_REG(0));
 			writel(BIT(0), mbox_base + RV1106_MBOX_B2A_STATUS);
+			/*
+			 * OKO (KI-072): the mailbox IRQ stays pending in the GIC
+			 * after the exchange, so the next WFI returned at once
+			 * and the AP re-entered the MCU handshake in a tight
+			 * loop instead of sleeping on the PMU timeout.
+			 */
+			gic_irq_clear_pending(RV1106_HPMCU_MBOX_IRQ_AP);
 			break;
 		}
 

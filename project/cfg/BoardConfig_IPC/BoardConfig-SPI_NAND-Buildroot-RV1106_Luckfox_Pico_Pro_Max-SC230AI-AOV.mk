@@ -116,6 +116,13 @@ export RK_KERNEL_DEFCONFIG_FRAGMENT="rv1106-netboot.config rv1106-sc230ai.config
 export RK_KERNEL_BOOT_ITS=boot-aov.its
 export RK_KERNEL_BOOT_IMAGE=Image.gz
 
+# The MCU AOV app reads struct wakeup_param_info from the meta image
+# (offset 0x1c00) to decide AP_RESUME vs AP_SUSPEND:
+#   0 - use the ISP/AE motion flag, 1 - force motion, 2 - force quiet.
+# make_meta leaves the segment at 0xff, which the MCU treats as "no policy".
+export RK_META_AOV_AE_WAKEUP_MODE=0
+export RK_META_AOV_MCU_MAX_RUN_COUNT=-1
+
 # Config sensor IQ files
 # RK_CAMERA_SENSOR_IQFILES format:
 #     "iqfile1 iqfile2 iqfile3 ..."
