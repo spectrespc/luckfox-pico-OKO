@@ -760,18 +760,26 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   `RV1106_HPMCU_FAST_WKUP_TIMEOUT` 6000 → 1000 мс: при поднятом конвейере MCU
   отвечает `-h-mbox-` через ~0.2 с (прогон 2026-11-17), а 6 с только
   задерживали возврат AP по таймауту, когда кадров нет (`aov_keep_isp=0`).
-  Проверено на стенде: motion-resume отвечает в окне, `aov_state` =
-  `quiet`/`motion`, `-h-timeout-` появляется только на здоровом MCU без
-  кадров. Диагностические печати и эксперименты с PM/MCU из этого цикла
-  откатаны; длинный тихий сон записан в KI-072 как NO-GO на стороне AP.
+  Стенд (ядро #26, окно 1000 мс, motion-мета): 6 из 6 `-h-wait-`
+  получили `-h-mbox-`, ни одного `-h-timeout-`, в консоли
+  `[sleep] resumed (… aov motion)` (артефакт
+  `output/bench/aov-test/quiet_motion1000.20261118-094013.log`); в тихих
+  прогонах #24/#25 MCU тоже отвечал в окне (десятки `-h-mbox-`). `-h-timeout-`
+  появляется только на здоровом MCU без кадров (`aov_keep_isp=0`).
+  Диагностические печати и эксперименты с PM/MCU из этого цикла откатаны;
+  длинный тихий сон записан в KI-072 как NO-GO на стороне AP.
 - **AOV: the mailbox wait window is cut to 1000 ms (KI-072).**
   `RV1106_HPMCU_FAST_WKUP_TIMEOUT` 6000 → 1000 ms: with the pipeline kept up
   the MCU answers `-h-mbox-` after ~0.2 s (2026-11-17 run), while 6 s only
   delayed the AP timeout return when there are no frames (`aov_keep_isp=0`).
-  Verified on the bench: motion-resume answers inside the window, `aov_state`
-  is `quiet`/`motion`, and `-h-timeout-` appears only on a healthy MCU without
-  frames. The diagnostic prints and the PM/MCU experiments from this cycle are
-  reverted; the long quiet sleep is recorded in KI-072 as NO-GO on the AP side.
+  Bench (kernel #26, 1000 ms window, motion meta): 6 of 6 `-h-wait-` got an
+  `-h-mbox-`, no `-h-timeout-`, and the console logs
+  `[sleep] resumed (… aov motion)` (artifact
+  `output/bench/aov-test/quiet_motion1000.20261118-094013.log`); the quiet runs
+  #24/#25 also answered inside the window (dozens of `-h-mbox-`). `-h-timeout-`
+  appears only on a healthy MCU without frames (`aov_keep_isp=0`). The
+  diagnostic prints and the PM/MCU experiments from this cycle are reverted;
+  the long quiet sleep is recorded in KI-072 as NO-GO on the AP side.
 - **Сборка ядра: пустой `Image.gz` больше не попадает в `boot.img`.**
   Правило `%.img` в `arch/arm` собирает `zImage` и `Image.gz` одним
   параллельным `make`; один раз это дало 20-байтный `Image.gz` (cat ещё не

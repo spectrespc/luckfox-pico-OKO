@@ -396,7 +396,9 @@
      Решение вне AP-стороны: вендорский AOV передаёт ISP MCU, а не
      оставляет его AP. Все экспериментальные правки PM откатаны; в дереве
      осталось только окно mailbox 1000 мс (вместо 6000) и защита от пустого
-     `Image.gz` в `build.sh`.
+     `Image.gz` в `build.sh`. Окно проверено на ядре #26 с motion-метой:
+     6 из 6 `-h-wait-` → `-h-mbox-`, ни одного `-h-timeout-`
+     (`output/bench/aov-test/quiet_motion1000.20261118-094013.log`).
   Статус: **экспериментальный, не для выпуска**. Блокеры — KI-073 (патч
   применён), KI-074 (исправлено), длинный тихий сон = **NO-GO на стороне
   AP** (нужен вендорский разбор захвата ISP/PMU). AOV в текущем виде —
@@ -1093,7 +1095,9 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
      ~20 ms. The fix is outside the AP: the vendor AOV hands the ISP to the
      MCU instead of leaving it on the AP. All experimental PM changes are
      reverted; the tree keeps only the 1000 ms mailbox window (was 6000) and
-     the empty-`Image.gz` guard in `build.sh`.
+     the empty-`Image.gz` guard in `build.sh`. The window is verified on kernel
+     #26 with motion meta: 6 of 6 `-h-wait-` → `-h-mbox-`, no `-h-timeout-`
+     (`output/bench/aov-test/quiet_motion1000.20261118-094013.log`).
   Status: **experimental, not for release**. Blockers are KI-073 (patched),
   KI-074 (fixed) and the long quiet sleep = **NO-GO on the AP side** (needs a
   vendor look at the ISP/PMU handover). AOV as it stands is
