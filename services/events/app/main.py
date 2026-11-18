@@ -1,9 +1,12 @@
 """OKO event receiver.
 
-The camera PUTs JPEG frames (`/ingest/frame`) and one fragmented-MP4 clip
-(`/ingest/clip`) under a shared X-Event-Id.  The service stores them under
-`$EVENTS_DIR/<date>/<event_id>/`, transcodes the H.265 clip to an H.264 copy
-for the browser, and serves a minimal event list.
+The camera PUTs JPEG frames (`/ingest/frame`), one fragmented-MP4 clip
+(`/ingest/clip`) and one heartbeat JPEG per quiet sleep cycle
+(`/ingest/heartbeat`) under a shared X-Event-Id.  The service stores event
+files under `$EVENTS_DIR/<date>/<event_id>/`, transcodes the H.265 clip to an
+H.264 copy for the browser, and serves a minimal event list.  Heartbeats are
+kept apart in `$EVENTS_DIR/heartbeat/<date>/` and bypass the event/transcode
+pipeline.
 
 Only stdlib + FastAPI/uvicorn are used; ffmpeg handles the video work.
 """
@@ -105,6 +108,67 @@ def _parse_ts(value: str | None) -> int:
         return int(value or "0")
     except ValueError:
         return 0
+
+
+HEARTBEAT_DIR_NAME = "heartbeat"
+HEARTBEAT_MAX_RECORDS = 5000
+
+
+def _heartbeat_list_path(directory: Path) -> Path:
+    return directory / "heartbeat.json"
+
+
+def _append_heartbeat(directory: Path, record: dict) -> None:
+    """Appends one record to the per-date heartbeat.json, bounded in size."""
+    with _meta_lock:
+        path = _heartbeat_list_path(directory)
+        try:
+            records = json.loads(path.read_text())
+        except (OSError, ValueError):
+            records = []
+        if not isinstance(records, list):
+            records = []
+        records.append(record)
+        if len(records) > HEARTBEAT_MAX_RECORDS:
+            records = records[-HEARTBEAT_MAX_RECORDS:]
+        try:
+            tmp = directory / "heartbeat.json.part"
+            tmp.write_text(json.dumps(records, ensure_ascii=False))
+            tmp.replace(path)
+        except OSError as exc:
+            print(f"heartbeat: cannot store {directory}: {exc}", flush=True)
+
+
+def _heartbeat_records(max_records: int) -> list:
+    """Newest first, across date directories, without touching event folders."""
+    root = EVENTS_DIR / HEARTBEAT_DIR_NAME
+    if not root.is_dir():
+        return []
+    out = []
+    for day in sorted(root.iterdir(), reverse=True):
+        if not day.is_dir():
+            continue
+        path = _heartbeat_list_path(day)
+        if not path.is_file():
+            continue
+        try:
+            records = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        if not isinstance(records, list):
+            continue
+        for record in reversed(records):
+            if not isinstance(record, dict):
+                continue
+            item = dict(record)
+            item["date"] = day.name
+            name = item.get("file")
+            if name:
+                item["url"] = f"/media/{HEARTBEAT_DIR_NAME}/{day.name}/{name}"
+            out.append(item)
+            if len(out) >= max_records:
+                return out
+    return out
 
 
 def _transcode_worker() -> None:
@@ -323,6 +387,70 @@ async def ingest_clip(request: Request) -> dict:
     return {"stored": "clip.mp4", "event_id": event_id, "bytes": len(body)}
 
 
+@app.put("/ingest/heartbeat")
+async def ingest_heartbeat(request: Request) -> dict:
+    """Proof-of-life JPEG from a quiet sleep cycle of the camera.
+
+    It never enters the event archive or the transcode queue: the receiver
+    only records that the camera was alive and the scene was quiet.
+    """
+    _check_token(request)
+    length = request.headers.get("content-length")
+    try:
+        if length and int(length) > FRAME_MAX_BYTES:
+            raise HTTPException(status_code=413, detail="heartbeat too large")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="bad content-length")
+    body = await request.body()
+    if len(body) > FRAME_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="heartbeat too large")
+    if not body or not body.startswith(b"\xff\xd8"):
+        raise HTTPException(status_code=400, detail="body is not a JPEG")
+
+    now = datetime.now(timezone.utc)
+    ts = _parse_ts(request.headers.get("x-heartbeat-ts")) or int(now.timestamp() * 1000)
+    day = now.strftime("%Y-%m-%d")
+    directory = EVENTS_DIR / HEARTBEAT_DIR_NAME / day
+    directory.mkdir(parents=True, exist_ok=True)
+    name = f"hb-{ts}.jpg"
+    (directory / name).write_bytes(body)
+    record = {
+        "ts": ts,
+        "received_at": now.isoformat(),
+        "idle_s": _parse_ts(request.headers.get("x-oko-idle-s")),
+        "area": _parse_ts(request.headers.get("x-oko-motion-area")),
+        "sleep": request.headers.get("x-oko-sleep", ""),
+        "wake_cycle": _parse_ts(request.headers.get("x-oko-wake-cycle")),
+        "file": name,
+        "bytes": len(body),
+    }
+    _append_heartbeat(directory, record)
+    print(f"{time.time():.3f} heartbeat {day}/{name} idle={record['idle_s']} "
+          f"area={record['area']} cycle={record['wake_cycle']}", flush=True)
+    return {"stored": name, "ts": ts, "idle_s": record["idle_s"],
+            "area": record["area"]}
+
+
+@app.get("/api/heartbeats")
+def list_heartbeats(limit: int = 20, expected_s: int = 0) -> dict:
+    """Last heartbeats, newest first, plus the gaps against expected_s.
+
+    expected_s is the configured heartbeat cadence in seconds.  With 0 the
+    gap counter is not computed.
+    """
+    limit = max(1, min(limit, 200))
+    records = _heartbeat_records(limit)
+    missed = 0
+    if expected_s > 0:
+        ordered = list(reversed(records))     # oldest -> newest
+        for older, newer in zip(ordered, ordered[1:]):
+            delta = (newer.get("ts", 0) - older.get("ts", 0)) / 1000.0
+            if delta > expected_s:
+                missed += max(0, int(round(delta / expected_s)) - 1)
+    return {"heartbeats": records, "count": len(records),
+            "expected_s": expected_s, "missed": missed}
+
+
 @app.get("/api/events")
 def list_events(limit: int = 50) -> dict:
     limit = max(1, min(limit, 500))
@@ -402,7 +530,7 @@ def stats() -> dict:
     total = 0
     count = 0
     for day in EVENTS_DIR.iterdir():
-        if not day.is_dir():
+        if not day.is_dir() or day.name == HEARTBEAT_DIR_NAME:
             continue
         for event_dir in day.iterdir():
             if not event_dir.is_dir():

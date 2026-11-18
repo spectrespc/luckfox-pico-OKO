@@ -53,6 +53,7 @@ U-Boot — Maskrom, USB-порт занят хабом (TESTBENCH §7).
 | `mdns_check.py` | проверка mDNS-публикации: запрос A-записи `<имя>.local` на `224.0.0.251:5353` сырым UDP-сокетом, разбор ответа (включая компрессию имён) и сверка адреса с `GET /api/mdns`; `--absent` — публикации быть не должно (после `POST ?enable=0`); avahi/nss-mdns на хосте не нужны |
 | `event_check.py` | сквозная проверка событий: поднимает `services/events`, `POST /api/clip?test=1` на DUT, ждёт JPEG-пачку и клип, сверяет длительность `pre+post ±2 с` и кодеки (hevc → h264-копия) через ffprobe; `--retry` — остановка/запуск приёмника и доставка повтором, `--outbox` — вытеснение в outbox на microSD, `--require-detection` — живая детекция YOLO11; отчёт `output/bench/events/report.json` |
 | `clip_soak.py` | soak детектора и событий: опрос `/api/clip` и `services/events`, тестовое событие при простое, отчёт с `sent/lost/outbox/ring_dropped` и `MemFree`; `--minutes` (по умолчанию 120), `--interval`, `--event-every`; JSON — `output/bench/events/soak-*.json` |
+| `heartbeat_check.py` | heartbeat-Snapshot сна: настраивает `[http_post]` и `[sleep]` (`enable=1`, `heartbeat=1`, `idle=30`, `wake_interval=10`, `wake_check=5`, `heartbeat_interval_s=0`), перезапускает divinus и ждёт ≥3 тихих цикла; проверяет JPEG+заголовки `X-Heartbeat-*`/`X-OKO-*` в `services/events`, рост `wake_cycle`, `fail_streak=0`; `--neg` — приёмник выключен и `fail_streak` растёт, циклы продолжаются; `--no-motion` — пропустить инъекцию `?motion=1` (нужен `OKO_BENCH_API=1`); отчёт и кадры — `output/bench/heartbeat` |
 | `deploy_divinus.py` | копирование свежесобранного `divinus` в `/oem/usr/bin` по SSH и graceful restart (быстрая итерация, не замена прошивке) |
 | `rgn_boxes_check.py` | soak 2BPP-рамок (KI-063): `--mode observe` — сэмплы fd/VmRSS/потоков и счётчиков ядра (`sfc`, `UBIFS`, `dup mClientFd`/`CHECK_GE`, oops, `rga2_reg`) каждые 10 с; `--mode cycle --target yolo\|ivs` — A/B тумблер через API; `--mode restart` — SIGHUP-рестарты с привязанным регионом (`--settle` секунд перед сэмплом, критерий — стабильный fd); `--mode config --target ivs --value true` — правка `boxes` в `/userdata/divinus.yaml` (бэкап `.oko-rgn-boxes.bak`) с рестартом; `--mode steady` — включить рамки и держать; JSON-отчёт в `output/bench/rgn`, код 1 при росте fd, VmRSS или счётчика ядра |
 | `yolo_night.py` | KI-005: ночная точность YOLO по матрице `{vpss3, vi0} × {AIISP off, on}` (C1–C4). Правка `/userdata/divinus.yaml` по SSH + graceful restart на каждую конфигурацию (vi0 иначе не применяется), `night`-сцена вручную через `/api/night`, сбор истории `/api/yolo?detections=1`, метрики recall / mean best score / FP per frame по `--gt` (IoU ≥ `--iou`), день C1/C4 — контроль методики; `--repeat`, `--seconds`, `--snapshots`, `--capture-gt`, `--deploy`, `--dry-run`, `--keep-config`; `report.json`/`report.csv` и `raw-*.json` в `output/bench/yolo_night` |
@@ -380,6 +381,8 @@ TESTBENCH.md §7D.
 | `OKO_DUT_HOST` | `192.168.52.150` | адрес DUT по умолчанию (SSH/RTSP; текущий DHCP-адрес — `192.168.52.33`, см. TESTBENCH.md §5) |
 | `OKO_DUT_PASSWORD` | `luckfox` | пароль root (публичный вендорский дефолт) |
 | `OKO_RTSP_USER` / `OKO_RTSP_PASS` | `admin` / `oko-change-me` | учётка divinus (фабричный дефолт) |
+| `OKO_EVENTS_URL` | `http://127.0.0.1:8090` | адрес `services/events` с хоста (проверки в `event_check.py`/`heartbeat_check.py`) |
+| `OKO_EVENTS_ADDR` | `192.168.52.200:8090` | адрес приёмника, который прописывается камере в `http_post.host` для heartbeat |
 | `OKO_WIFI_SSID` / `OKO_WIFI_PSK` | — | стендовая точка доступа для ручных STA-проверок; в репозиторий не пишутся |
 | `OKO_UPLINK_DUT` | `192.168.44.50` | адрес DUT по Wi-Fi для `uplink_soak.py` (управление и проверка wlan-аплинка) |
 | `OKO_UPLINK_ETH` | `192.168.52.33` | адрес DUT по Ethernet для `uplink_soak.py` |
@@ -406,7 +409,39 @@ TESTBENCH.md §7D.
 - VPN: `output/bench/vpn/report.json`, `ssh.log`, `profile.conf` (тестовый
   профиль; содержит ключи — не коммитить).
 - Soak шины EC: `output/bench/ec_bus_soak-<YYYYmmdd-HHMMSS>.json` и `.log`.
+- Heartbeat сна: `output/bench/heartbeat/report.json` и полученные `hb-<ts>.jpg`.
 - Каталог создаётся автоматически; `output/` в `.gitignore`.
+
+## Heartbeat сна (Snapshot)
+
+`heartbeat_check.py` проверяет proof-of-life кадр из `[sleep]`: один JPEG за
+тихий wake-цикл, отправленный перед повторным suspend.
+
+Лабораторная сцена постоянно даёт IVS ~1000 ‰, поэтому перед прогоном
+поднимите `ivs.min_area` (или выключите IVS/YOLO) — иначе тихих циклов не
+будет и heartbeat не появится.
+
+```sh
+docker compose -f services/events/docker-compose.yml up -d
+bench/run.sh heartbeat_check.py                 # ≥3 тихих цикла + motion-фаза
+bench/run.sh heartbeat_check.py --no-motion     # без инъектора
+bench/run.sh heartbeat_check.py --neg           # приёмник выключен: fail_streak растёт
+```
+
+- Скрипт сам включает `[http_post]` (`host=$OKO_EVENTS_ADDR`,
+  `url=/ingest/frame`) и `[sleep]` (`heartbeat=1`, `idle=30`,
+  `wake_interval=10`, `wake_check=5`, `heartbeat_interval_s=0`), затем делает
+  `POST /api/cmd?restart`; в конце возвращает прежние настройки
+  (`--keep-config` — не возвращать).
+- Приёмник принимает кадр на `PUT /ingest/heartbeat` и отдаёт записи через
+  `GET /api/heartbeats?limit=`. Заголовки: `X-Heartbeat`, `X-Heartbeat-Ts`,
+  `X-OKO-Idle-S`, `X-OKO-Motion-Area` (−1 — IVS выключен), `X-OKO-Sleep`,
+  `X-OKO-Wake-Cycle`.
+- Motion-фаза использует `POST /api/sleep?motion=1`, который доступен только
+  при запуске divinus с `OKO_BENCH_API=1`; без него проверка помечается
+  `SKIP`, а не падает.
+- `--neg` останавливает приёмник: камера всё равно засыпает, а
+  `heartbeat_fail_streak` в `/api/status.sleep` растёт.
 
 ## Wi-Fi на стенде
 

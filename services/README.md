@@ -121,11 +121,19 @@ docker compose -f services/stream/docker-compose.yml down
   `X-Frame-Index`, `X-Frame-Total`, `X-Frame-Ts`, `X-Event-Cause`, `X-Model`;
 - `PUT /ingest/clip` — fMP4 H.265 с `X-Event-Id`, `X-Cause`, `X-Model`,
   `X-Duration-Ms`, `X-Ts`;
+- `PUT /ingest/heartbeat` — proof-of-life JPEG из тихого цикла сна с
+  `X-Heartbeat`, `X-Heartbeat-Ts`, `X-OKO-Idle-S`, `X-OKO-Motion-Area`,
+  `X-OKO-Sleep`, `X-OKO-Wake-Cycle`; файл и запись складываются в
+  `heartbeat/<ГГГГ-ММ-ДД>/` (`hb-<ts>.jpg`, `heartbeat.json`), событийный
+  архив и очередь ffmpeg не затрагиваются;
 - файлы события: `<ГГГГ-ММ-ДД>/<event_id>/` (`meta.json`, `frame-NNN.jpg`,
   `clip.mp4`), плюс `clip-h264.mp4` и `clip.jpg` после транскодинга
   (ffmpeg, `libx264 veryfast`, `+faststart`);
 - `GET /api/events?limit=`, `GET /api/events/<id>`, `GET /media/...`,
   `GET /api/stats`, минимальный HTML-список на `/`;
+- `GET /api/heartbeats?limit=&expected_s=` — последние heartbeat-записи
+  (новые первыми) и число пропущенных интервалов `missed` относительно
+  `expected_s` (0 — не считать); ссылка на JPEG — `/media/heartbeat/<дата>/<файл>`;
 - retention: `EVENTS_MAX_GB` (по умолчанию 2 ГБ), удаляются старые даты;
 - опциональный `OKO_EVENTS_TOKEN`: при непустом значении требуется заголовок
   `X-OKO-Token`. На стенде токен не задан.
@@ -169,6 +177,19 @@ event_clip:
 Если сервис недоступен, камера повторяет отправку (30 с / 2 мин / 10 мин),
 затем кладёт клип в outbox на microSD (`/mnt/sdcard/oko-outbox`, квота
 256 МиБ); без карты событие теряется и учитывается в `/api/clip` (`lost`).
+
+Heartbeat сна (`[sleep] heartbeat: true`) идёт на тот же `host` и путь,
+производный от `http_post.url` (`/ingest/frame` → `/ingest/heartbeat`), но
+мимо событийного архива. Последние записи и разрывы:
+
+```sh
+curl -fsS 'http://127.0.0.1:8090/api/heartbeats?limit=20&expected_s=60' | head
+# {"heartbeats":[{"ts":1763456789000,"date":"2026-11-18","idle_s":12,...}],
+#  "count":20,"expected_s":60,"missed":1}
+```
+
+Сквозная проверка — `bench/run.sh heartbeat_check.py` (тихие циклы, motion,
+`--neg` при выключенном приёмнике).
 
 ## Web-конвертер RKNN: `services/converter/`
 
