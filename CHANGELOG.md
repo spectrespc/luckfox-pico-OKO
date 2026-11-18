@@ -756,6 +756,60 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Изменено
 
+- **AOV: окно ожидания mailbox сокращено до 1000 мс (KI-072).**
+  `RV1106_HPMCU_FAST_WKUP_TIMEOUT` 6000 → 1000 мс: при поднятом конвейере MCU
+  отвечает `-h-mbox-` через ~0.2 с (прогон 2026-11-17), а 6 с только
+  задерживали возврат AP по таймауту, когда кадров нет (`aov_keep_isp=0`).
+  Проверено на стенде: motion-resume отвечает в окне, `aov_state` =
+  `quiet`/`motion`, `-h-timeout-` появляется только на здоровом MCU без
+  кадров. Диагностические печати и эксперименты с PM/MCU из этого цикла
+  откатаны; длинный тихий сон записан в KI-072 как NO-GO на стороне AP.
+- **AOV: the mailbox wait window is cut to 1000 ms (KI-072).**
+  `RV1106_HPMCU_FAST_WKUP_TIMEOUT` 6000 → 1000 ms: with the pipeline kept up
+  the MCU answers `-h-mbox-` after ~0.2 s (2026-11-17 run), while 6 s only
+  delayed the AP timeout return when there are no frames (`aov_keep_isp=0`).
+  Verified on the bench: motion-resume answers inside the window, `aov_state`
+  is `quiet`/`motion`, and `-h-timeout-` appears only on a healthy MCU without
+  frames. The diagnostic prints and the PM/MCU experiments from this cycle are
+  reverted; the long quiet sleep is recorded in KI-072 as NO-GO on the AP side.
+- **Сборка ядра: пустой `Image.gz` больше не попадает в `boot.img`.**
+  Правило `%.img` в `arch/arm` собирает `zImage` и `Image.gz` одним
+  параллельным `make`; один раз это дало 20-байтный `Image.gz` (cat ещё не
+  дописанного `Image`), FIT собрался с пустым ядром и U-Boot ушёл в
+  `### ERROR ###`. `__BUILD_KERNEL_FIT` теперь при размере меньше 1 МиБ
+  пересобирает payload последовательно и отказывается упаковывать FIT, если
+  размер всё ещё подозрительный.
+- **Kernel build: an empty `Image.gz` never reaches `boot.img`.**
+  The `%.img` rule in `arch/arm` builds `zImage` and `Image.gz` in one parallel
+  `make`; once that produced a 20-byte `Image.gz` (cat of an `Image` that was
+  still being written), the FIT was packed with an empty kernel and U-Boot
+  stopped at `### ERROR ###`. `__BUILD_KERNEL_FIT` now rebuilds the payload
+  serially when it is smaller than 1 MiB and refuses to pack the FIT if the
+  size is still suspicious.
+- **Стенд: захват U-Boot больше не путает вывод MCU с приглашением.**
+  HPMCU делит UART2 с консолью AP и печатает строки вида
+  `[AELIB]: ... env_lux ==> 0.0000`; поиск подстроки `=>` принимал их за
+  приглашение U-Boot, команды `mtd list` уходили в чужой контекст и прошивка
+  падала на `no MTD device in 'mtd list'`. `netboot.wait_prompt()`,
+  `tftp_flash.at_uboot_prompt()`/`uboot_cmd()` теперь ищут `=>` только в
+  начале строки (и предварительно сливают остатки ввода).
+- **Bench: catching U-Boot no longer mistakes MCU output for the prompt.**
+  The HPMCU shares UART2 with the AP console and prints lines such as
+  `[AELIB]: ... env_lux ==> 0.0000`; a plain `=>` substring search took them
+  for the U-Boot prompt, `mtd list` went to the wrong context and the flash
+  failed with `no MTD device in 'mtd list'`. `netboot.wait_prompt()`,
+  `tftp_flash.at_uboot_prompt()`/`uboot_cmd()` now match `=>` only at the
+  start of a line (and drain pending input first).
+- **Стенд: `bench/aov_cadence.py` — замер кадентности AOV по монитору UART.**
+  Скрипт пишет поток read-only монитора моста (`:2324`) в
+  `output/bench/aov-test/`, считает `-h-wait-`/`-h-mbox-`/`-h-timeout-` и
+  печатает дельты и темп (JSON-сводка рядом с захватом); умеет разбирать
+  готовый файл (`--file`). Использован для дифференциальных прогонов KI-072.
+- **Bench: `bench/aov_cadence.py` measures AOV cadence from the UART monitor.**
+  The script records the bridge read-only monitor stream (`:2324`) into
+  `output/bench/aov-test/`, counts `-h-wait-`/`-h-mbox-`/`-h-timeout-` and
+  prints deltas and the rate (a JSON summary next to the capture); it can also
+  parse an existing file (`--file`). Used for the KI-072 differential runs.
 - **Документация: REST API ESP32-моста (ESP32-OKO-KVM) в инструкциях агента.**
   `AGENTS.md §7` превращён из пары curl-команд в роутер по мосту: прошивка и
   upstream-репозиторий, каналы (telnet `:23` — один управляющий клиент,

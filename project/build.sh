@@ -924,6 +924,22 @@ function __BUILD_KERNEL_FIT() {
 		exit 1
 	}
 
+	# The arm %.img rule builds zImage and Image.gz in one parallel make; once
+	# that produced a 20-byte Image.gz (cat of an Image that was still being
+	# written) and the FIT silently carried an empty kernel.  Rebuild the gzip
+	# payload serially and refuse to pack anything that cannot be a kernel.
+	if [ "$(stat -c %s "$objs/arch/$RK_ARCH/boot/$RK_KERNEL_BOOT_IMAGE")" -lt 1048576 ]; then
+		msg_warn "$RK_KERNEL_BOOT_IMAGE is too small (parallel gzip race); rebuilding serially"
+		rm -f "$objs/arch/$RK_ARCH/boot/$RK_KERNEL_BOOT_IMAGE" \
+		      "$objs/arch/$RK_ARCH/boot/.$RK_KERNEL_BOOT_IMAGE.cmd"
+		make O="$objs" -C "$SDK_SYSDRV_DIR/source/kernel" ARCH="$RK_ARCH" \
+			CROSS_COMPILE="${RK_TOOLCHAIN_CROSS}-" Image.gz || exit 1
+	fi
+	[ "$(stat -c %s "$objs/arch/$RK_ARCH/boot/$RK_KERNEL_BOOT_IMAGE")" -ge 1048576 ] || {
+		msg_error "$RK_KERNEL_BOOT_IMAGE is still too small; refusing to build boot.img"
+		exit 1
+	}
+
 	msg_info "Building $RK_KERNEL_BOOT_IMAGE FIT from $RK_KERNEL_BOOT_ITS"
 	rm -rf "$tmp"
 	mkdir -p "$tmp"

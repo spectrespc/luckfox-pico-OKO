@@ -364,13 +364,47 @@
   считает прерванной. Проверены и **не помогли**: маска mailbox IRQ до и
   после `rkpm_gicv2_dist_restore()`, `GIC_DIST_CTRL = 0` перед повторным
   входом, перенос перезаписи `PMU_WAKEUP_TIMEOUT_CNT` перед WFI. Ядро
-  откатано к проверенному состоянию (`got` + `gic_irq_clear_pending`);
-  кандидаты — PMU-stub/DDR (`Jump to PMU_SRAM`, `PMU_WAKEUP_INT_CON`,
-  `CPU_INT_EN`) и линии CSI/ISP при `aov_keep_isp`. Статус: **экспериментальный, не для выпуска**;
-  блокеры — KI-073 (патч применён), KI-074 (исправлено), маскирование IRQ
-  (собрано, не проверено) и проверка стрима. Артефакты: `output/bench/aov-image-1m/`,
-  `output/bench/uar0-aov-fit-boot-20261117.log`,
-  `output/bench/aov-test/uar0-m2-pmu-only.log`.
+  откатано к проверенному состоянию (`got` + `gic_irq_clear_pending`).
+  **Итог диагностики 2026-11-17/18 (ядро #19…#26, стенд):** источник
+  плотного цикла установлен с точностью до механизма, но не устранён.
+  1) Дифференциальный прогон без правок кода: `aov_keep_isp=1` (meta 2,
+     тишина) — 344 `-h-wait-`/120 с (2.86/с), userspace не возвращается;
+     `aov_keep_isp=0` — 7 входов/97 с (16 с на цикл, `-h-timeout-`);
+     motion (meta 1) — `-h-mbox-` через ~0.2 с, после resume `/api/status`
+     = `probe`, `/image.jpg` 1920×1080 и RTSP `DESCRIBE /live/0` = 200,
+     ошибок CSI/сенсора нет.
+  2) Дамп GIC на границе WFI (временные печати, сняты): 99 из 99 дампов
+     `ISENABLER` 128..159 = `0x00000004` — **включён только RTC**, все
+     rkisp/rkcif/mipi-csi2/venc выключены; `ISPENDR`/`ACTIVE` = 0,
+     `GICC_HPPIR` = 0x3FF, GPIO0 `INT_STATUS` = 0. Гипотеза «level-IRQ
+     ISP держит WFI» **опровергнута**: `gic400_save()` снимает контекст
+     после suspend-колбэков драйверов, и `dist_restore()` возвращает
+     состояние без media-линий.
+  3) Код MCU (`applications/battery-ipc/stream.c`): после отправки
+     `CMD_AP_SUSPEND` — `rt_hw_interrupt_disable(); sysTick_stop(); while (1)
+     asm("wfi");`. MCU после ack AP не будит; версия «MCU поднимает SoC»
+     опровергнута.
+  4) Проверены и **не помогли**: не сбрасывать MCU на повторных входах
+     (цикл падает до 0.28/с, но MCU перестаёт отвечать → timeout →
+     userspace каждые 7–8 с), `SYS_IS_WKUP` без сброса, reset-on-timeout
+     (0.73/с), снятие `BIT(GPIO_INT_EN)` из `PMU_WAKEUP_INT_CON`
+     (2.61/с, без изменений), снятие `BIT(IDLE_REQ_VI)` из
+     `pmu_bus_idle_con` (2.64/с, без изменений).
+  5) Вывод: **deep suspend не завершается, пока AP держит ISP/CSI-конвейер
+     в стриме** (`aov_keep_isp=1`); PMU при этом не фиксирует источник
+     (`PMU_WAKEUP_INT_ST = 0`), а SoC проходит resume-путь через ~20 мс.
+     Решение вне AP-стороны: вендорский AOV передаёт ISP MCU, а не
+     оставляет его AP. Все экспериментальные правки PM откатаны; в дереве
+     осталось только окно mailbox 1000 мс (вместо 6000) и защита от пустого
+     `Image.gz` в `build.sh`.
+  Статус: **экспериментальный, не для выпуска**. Блокеры — KI-073 (патч
+  применён), KI-074 (исправлено), длинный тихий сон = **NO-GO на стороне
+  AP** (нужен вендорский разбор захвата ISP/PMU). AOV в текущем виде —
+  **motion-resume**; quiet-ветка с `aov_keep_isp` непригодна для выпуска.
+  Артефакты: `output/bench/aov-test/quiet-differential-20261117.md`,
+  `gicdiag-wfi-20261117.md`, `mcu-reset-experiment-20261117.md`,
+  `quiet_keepisp{0,1}.*`, `quiet_motion.*`, `quiet_{mcuonce,mcunotify,hybrid,gpiomask,viidle}.*`,
+  `output/bench/aov-image-1m/`, `output/bench/uar0-aov-fit-boot-20261117.log`.
 
 - **KI-073. Паника ядра в `rk3x_i2c_irq` на I2C3 при циклах `[sleep]`.**
   2026-11-17 в AOV-прогоне (idle 30 s, `aov_mcu=1`) шина I2C3
@@ -1027,14 +1061,48 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   mailbox IRQ before and after `rkpm_gicv2_dist_restore()`,
   `GIC_DIST_CTRL = 0` before re-entry, and moving the
   `PMU_WAKEUP_TIMEOUT_CNT` rewrite right before the WFI. The kernel was
-  rolled back to the verified state (`got` + `gic_irq_clear_pending`); next
-  candidates are the PMU-stub/DDR path (`Jump to PMU_SRAM`,
-  `PMU_WAKEUP_INT_CON`, `CPU_INT_EN`) and the CSI/ISP lines under
-  `aov_keep_isp`. Status:
-  **experimental, not for release**; blockers are KI-073 (patched), KI-074
-  (fixed), the IRQ masking (built, unverified) and the stream check. Artifacts: `output/bench/aov-image-1m/`,
-  `output/bench/uar0-aov-fit-boot-20261117.log`,
-  `output/bench/aov-test/uar0-m2-pmu-only.log`.
+  rolled back to the verified state (`got` + `gic_irq_clear_pending`).
+  **Diagnostics 2026-11-17/18 (kernels #19…#26 on the bench):** the dense
+  loop mechanism is identified but not fixed.
+  1) Differential run without code changes: `aov_keep_isp=1` (meta 2, quiet)
+     gives 344 `-h-wait-`/120 s (2.86/s) and userspace never returns;
+     `aov_keep_isp=0` gives 7 entries/97 s (16 s per cycle, `-h-timeout-`);
+     motion (meta 1) answers `-h-mbox-` after ~0.2 s, and after the resume
+     `/api/status` is `probe`, `/image.jpg` is 1920×1080 and RTSP
+     `DESCRIBE /live/0` returns 200 with no CSI/sensor errors.
+  2) GIC dump at the WFI boundary (temporary prints, removed): all 99 dumps
+     show `ISENABLER` 128..159 = `0x00000004` — **only RTC enabled**, every
+     rkisp/rkcif/mipi-csi2/venc line off; `ISPENDR`/`ACTIVE` = 0,
+     `GICC_HPPIR` = 0x3FF, GPIO0 `INT_STATUS` = 0. The "ISP level IRQ keeps
+     WFI from sleeping" hypothesis is **refuted**: `gic400_save()` captures
+     the distributor after the driver suspend callbacks, and `dist_restore()`
+     re-applies that media-free state.
+  3) MCU code (`applications/battery-ipc/stream.c`): after sending
+     `CMD_AP_SUSPEND` it does `rt_hw_interrupt_disable(); sysTick_stop();
+     while (1) asm("wfi");`. The MCU does not wake the AP after the ack, so
+     the "MCU boot resumes the SoC" version is refuted as well.
+  4) Tried and **ineffective**: not resetting the MCU on re-entries (the loop
+     drops to 0.28/s but the MCU stops answering → timeout → userspace every
+     7–8 s), `SYS_IS_WKUP` without a reset, reset-on-timeout (0.73/s),
+     dropping `BIT(GPIO_INT_EN)` from `PMU_WAKEUP_INT_CON` (2.61/s, no
+     change), dropping `BIT(IDLE_REQ_VI)` from `pmu_bus_idle_con` (2.64/s,
+     no change).
+  5) Conclusion: **deep suspend does not complete while the AP keeps the
+     ISP/CSI pipeline streaming** (`aov_keep_isp=1`); the PMU records no wake
+     source (`PMU_WAKEUP_INT_ST = 0`) and the SoC runs the resume path after
+     ~20 ms. The fix is outside the AP: the vendor AOV hands the ISP to the
+     MCU instead of leaving it on the AP. All experimental PM changes are
+     reverted; the tree keeps only the 1000 ms mailbox window (was 6000) and
+     the empty-`Image.gz` guard in `build.sh`.
+  Status: **experimental, not for release**. Blockers are KI-073 (patched),
+  KI-074 (fixed) and the long quiet sleep = **NO-GO on the AP side** (needs a
+  vendor look at the ISP/PMU handover). AOV as it stands is
+  **motion-resume**; the quiet branch with `aov_keep_isp` is not
+  release-ready. Artifacts: `output/bench/aov-test/quiet-differential-20261117.md`,
+  `gicdiag-wfi-20261117.md`, `mcu-reset-experiment-20261117.md`,
+  `quiet_keepisp{0,1}.*`, `quiet_motion.*`,
+  `quiet_{mcuonce,mcunotify,hybrid,gpiomask,viidle}.*`,
+  `output/bench/aov-image-1m/`, `output/bench/uar0-aov-fit-boot-20261117.log`.
 
 - **KI-073. Kernel panic in `rk3x_i2c_irq` on I2C3 during `[sleep]` cycles.**
   On 2026-11-17 an AOV run (idle 30 s, `aov_mcu=1`) got a burst of

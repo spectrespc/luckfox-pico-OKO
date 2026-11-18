@@ -19,11 +19,22 @@ Examples:
 """
 import argparse
 import os
+import re
 import sys
 import time
 from pathlib import Path
 
 import uart
+
+# The U-Boot prompt is "=> " at the start of a line.  A bare "=>" search is not
+# enough: the HPMCU shares UART2 with the AP console and prints lines such as
+# "[AELIB]: ... env_lux ==> 0.0000", which contain "=>" too.
+UBOOT_PROMPT_RE = re.compile(rb"(?:\A|\r?\n)=\>")
+
+
+def has_uboot_prompt(data):
+    """True when *data* contains the U-Boot prompt at the start of a line."""
+    return UBOOT_PROMPT_RE.search(data) is not None
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUT = ROOT / "output" / "bench"
@@ -108,7 +119,7 @@ def wait_prompt(session, timeout):
     while time.time() < deadline:
         session.write(b"\x03")
         time.sleep(0.02)
-        if session.read() and b"=>" in session.tail[-8192:]:
+        if session.read() and has_uboot_prompt(session.tail[-8192:]):
             return True
     return False
 

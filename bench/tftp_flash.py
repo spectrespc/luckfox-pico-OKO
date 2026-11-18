@@ -120,25 +120,30 @@ def sha256(path):
     return digest.hexdigest()
 
 
-def uboot_cmd(session, command, timeout=60.0, prompt=b"=>"):
+def uboot_cmd(session, command, timeout=60.0):
     """Send one U-Boot command and collect the output up to the next prompt.
 
-    The prompt is accepted only after a short quiet period: Ctrl-C leftovers
-    from wait_prompt() print "<INTERRUPT>" and would otherwise be mistaken
-    for the command output.
+    The HPMCU prints to the same UART2 as the AP console (lines like
+    "env_lux ==> 0.0000"), so a bare "=>" match is not a prompt: the prompt is
+    matched only at the start of a line.  Ctrl-C leftovers from wait_prompt()
+    are drained first, otherwise an old prompt would end the command early.
     """
+    drain_deadline = time.time() + 0.3
+    while time.time() < drain_deadline:
+        if not session.read():
+            time.sleep(0.03)
     session.serial.reset_input_buffer()
     session.write(command.encode() + b"\r")
     deadline = time.time() + timeout
     buf = b""
-    last_data = time.time()
     while time.time() < deadline:
         data = session.read()
         if data:
             buf += data
-            last_data = time.time()
-        elif buf.rstrip().endswith(prompt) and time.time() - last_data > 0.3:
-            break
+            if netboot.has_uboot_prompt(buf):
+                time.sleep(0.05)
+                buf += session.read()
+                break
         else:
             time.sleep(0.05)
     text = buf.decode(errors="replace")
@@ -168,7 +173,7 @@ def at_uboot_prompt(session, seconds=1.5):
             buf += data
         else:
             time.sleep(0.05)
-    return b"=>" in buf
+    return netboot.has_uboot_prompt(buf)
 
 
 def reboot_over_ssh(args):
