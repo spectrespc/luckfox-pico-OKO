@@ -1223,6 +1223,17 @@ DTS есть `rockchip,rv1106`, все `.ko` пересобраны `./build.sh 
     концу: первые 1–2 попытки часто не соединяются, третий retry доставляет
     кадр, часть циклов остаётся без heartbeat (видно по `missed`). Артефакты —
     `output/bench/heartbeat/`.
+11. Динамическая сцена (реальный MD, не инъектор): включить IVS
+    (`POST /api/ivs?enable=true&min_area=30`), sleep с `idle_timeout_s=30`,
+    `wake_interval_s=10`, `wake_check_s=30`; после deep suspend в окне
+    `probe` сцена даёт `area 1000‰` → `[ivs] Motion event` (см. консоль) и
+    `[sleep] motion in the wake window; stream stays on`, AP остаётся
+    бодрствовать, heartbeat в этом цикле не уходит; после 30 с без движения
+    — снова suspend. Проверено 2026-11-18 дважды (wake_cycle 1 и 2),
+    артефакт `output/bench/heartbeat/dynamic-scene.txt`.
+    Ловушка стенда: `/api/ivs` меняет `enable`/`min_area` живьём, но не
+    сохраняет конфиг — после правки нужен `POST /api/cmd?save`, иначе
+    reboot вернёт прежние значения.
 
 Не держать активный CSI/ISP-пайплайн через `echo mem`: на этой плате resume
 даёт шторм `mipi-csi2-hw ERR1:0x10` и AP зависает. Политика сама разбирает
