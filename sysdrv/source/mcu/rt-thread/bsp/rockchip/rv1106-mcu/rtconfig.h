@@ -156,7 +156,7 @@
 
 /* RT-Thread board config */
 
-#define RT_BOARD_NAME "rv1106_evb-SC3338-ADC"
+#define RT_BOARD_NAME "oko-wakeup-sc230ai-ADC"
 #define RT_USING_CAM_STREAM_ON_LATE
 
 /* RT-Thread rockchip common drivers */
@@ -202,7 +202,7 @@
 
 /* RT_USING_ISP is not set */
 #define RT_USING_ISP3
-#define RT_USING_ISP_DDR_ADRESS 0x860000
+#define RT_USING_ISP_DDR_ADRESS 0x1060000
 #define RT_USING_ISP_DDR_SIZE 0x600000
 #define RT_USING_CHANNEL_MIPI
 /* RT_USING_CHANNEL_DVP is not set */
@@ -229,14 +229,14 @@
 /* RT_USING_OV02k10 is not set */
 /* RT_USING_GC2053 is not set */
 /* RT_USING_F37 is not set */
-/* RT_USING_SC230AI is not set */
+#define RT_USING_SC230AI
 /* RT_USING_SC501AI is not set */
 /* RT_USING_SC530AI is not set */
 /* RT_USING_SC223A is not set */
 /* RT_USING_SC2336 is not set */
 /* RT_USING_SC301IOT is not set */
 /* RT_USING_SC3336 is not set */
-#define RT_USING_SC3338
+/* RT_USING_SC3338 is not set */
 /* RT_USING_SC4336 is not set */
 /* RT_USING_GC3003 is not set */
 /* RT_USING_SC200AI is not set */
@@ -268,9 +268,9 @@
 
 /* Enable PSTORE */
 
-#define RT_USING_PSTORE
-#define PERSISTENT_RAM_ADDR 0x7c000
-#define PERSISTENT_RAM_SIZE 0x3000
+/* OKO AOV: keep PSTORE off. 0x7c000 overlaps the Linux kernel image on the */
+/* product memory map, and the MCU console (uart2) is the shared debug UART. */
+/* RT_USING_PSTORE is not set */
 
 /* RT-Thread rockchip AMP driver */
 
@@ -293,7 +293,12 @@
 
 /* Enable UART */
 
-/* RT_USING_UART is not set */
+/* OKO: the MCU console shares uart2 with the AP debug console.  The base */
+/* wakeup board keeps it off; enable it while debugging the AOV handshake */
+/* (the MCU boots RT-Thread but never reaches the wakeup logic, and without */
+/* a console there is no way to see why). */
+#define RT_USING_UART
+#define RT_USING_UART2
 
 /* RT-Thread Common Test case */
 
@@ -308,7 +313,8 @@
 
 /* RT-Thread Application Rockchip Battery IPC */
 
-#define RT_USING_META_DDR_ADRESS 0x800000
+#define RT_USING_META_DDR_ADRESS 0x1000000
+#define RT_USING_RK_AOV
 /* RT_USING_RK_IOT_APP is not set */
 /* ENABLE_DUAL_TRACKING is not set */
 
