@@ -489,3 +489,24 @@ NPU 28%, `librkpostisp.so` загружен, пропусков в `/live/0` н�
       (KI-046).
 - [ ] Сторонние `/oem`-blob'ы со старым ABI (`libssl.so.1.1`, Python 3.11):
       пересобрать из SDK или добавить compat-копии (KI-045).
+
+## 13. Сон камеры: proof-of-life кадром
+
+- [x] **Snapshot (v1).** При тихом wake-цикле divinus перед повторным
+      suspend отправляет JPEG через `[http_post]` на эндпоинт, производный
+      от `http_post.url` (`frame` → `heartbeat`), с заголовками
+      `X-Heartbeat`, `X-Heartbeat-Ts`, `X-OKO-Idle-S`,
+      `X-OKO-Motion-Area`, `X-OKO-Sleep`, `X-OKO-Wake-Cycle`. Ключи
+      `[sleep] heartbeat/heartbeat_interval_s/heartbeat_retries`, API
+      `/api/sleep`, приёмник `PUT /ingest/heartbeat` +
+      `GET /api/heartbeats`, `bench/heartbeat_check.py`. Сбой отправки не
+      мешает сну (`fail_streak`). Проверка и soak — на стенде.
+- [ ] **MCU-frame heartbeat (v2, следующий шаг).** MCU пишет low-res
+      JPEG/raw + статистику (площадь, счётчик кадров) в shared DDR (адрес
+      meta/ISP-окна, протокол shared-буфера), AP на timer-wake читает
+      готовый кадр и отправляет без подъёма media/ISP — дешевле Snapshot по
+      энергии и времени цикла. Зависимости: handoff ISP MCU до suspend
+      (KI-072, архитектура AOV), `RT_USING_JPEG_ENC` в MCU-сборке, протокол
+      shared-буфера и валидация кадра на AP, wake по GPIO
+      (`wakeup_mode=1` в `wakeup_param`). Статус: **запланировано,
+      заблокировано KI-072/handoff**.

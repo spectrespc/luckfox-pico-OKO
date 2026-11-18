@@ -26,6 +26,40 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Добавлено
 
+- **Сон камеры: heartbeat-кадр (Snapshot) в `[sleep]`.** Новый модуль
+  `heartbeat.c`/`heartbeat_task.c` отправляет один JPEG за тихий
+  wake-цикл — в конце окна `wake_check_s`, непосредственно перед повторным
+  suspend. Кадр идёт через `[http_post]` на эндпоинт, производный от
+  `http_post.url` (`frame` → `heartbeat`), с заголовками `X-Heartbeat`,
+  `X-Heartbeat-Ts`, `X-OKO-Idle-S`, `X-OKO-Motion-Area` (‰ последнего
+  IVS-результата, `-1` — IVS выключен), `X-OKO-Sleep: quiet` и
+  `X-OKO-Wake-Cycle`. Ключи `heartbeat` (bool), `heartbeat_interval_s`
+  (0..86400, `0` — каждый тихий цикл) и `heartbeat_retries` (0..10)
+  добавлены в `[sleep]`, `GET/POST /api/sleep` (вложенный объект
+  `heartbeat` с `last_sent_s`/`fail_streak`/`wake_cycle`/`reason`) и
+  карточку «Питание и сон» WebUI. Сбой отправки не задерживает сон:
+  `heartbeat_fail_streak` в `/api/status.sleep` растёт и сбрасывается при
+  успехе. В `services/events` добавлены `PUT /ingest/heartbeat`,
+  `GET /api/heartbeats` и хранение `heartbeat/<дата>/hb-<ts>.jpg` вне
+  событийного архива; `bench/heartbeat_check.py` проверяет циклы, motion и
+  негативный сценарий. Хост-тест — `tests/heartbeat_test.c`.
+- **Camera sleep: heartbeat snapshot in `[sleep]`.** The new
+  `heartbeat.c`/`heartbeat_task.c` module sends one JPEG per quiet wake cycle
+  at the end of `wake_check_s`, right before the repeated suspend. The frame
+  goes through `[http_post]` to the endpoint derived from `http_post.url`
+  (`frame` → `heartbeat`) with `X-Heartbeat`, `X-Heartbeat-Ts`,
+  `X-OKO-Idle-S`, `X-OKO-Motion-Area` (last IVS result in permille, `-1` when
+  IVS is off), `X-OKO-Sleep: quiet` and `X-OKO-Wake-Cycle` headers. The
+  `heartbeat` (bool), `heartbeat_interval_s` (0..86400, `0` = every quiet
+  cycle) and `heartbeat_retries` (0..10) keys were added to `[sleep]`,
+  `GET/POST /api/sleep` (nested `heartbeat` object with
+  `last_sent_s`/`fail_streak`/`wake_cycle`/`reason`) and the "Power and sleep"
+  WebUI card. A failed send never postpones the suspend:
+  `heartbeat_fail_streak` in `/api/status.sleep` grows and resets on success.
+  `services/events` gained `PUT /ingest/heartbeat`, `GET /api/heartbeats` and
+  `heartbeat/<date>/hb-<ts>.jpg` storage outside the event archive;
+  `bench/heartbeat_check.py` covers cycles, motion and the negative case. The
+  host test is `tests/heartbeat_test.c`.
 - **Экспериментальный профиль `-AOV`: PMCU-прокси пробуждения (этапы 0–7
   плана AOV, NO-GO на стенде).** Добавлены профиль
   `BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI-AOV.mk`,
@@ -756,6 +790,14 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Изменено
 
+- **`[http_post]`: стартовый снимок не дублирует heartbeat в wake-цикле.**
+  Если `sleep.heartbeat=1` и процесс стартовал после probe-wake, поток
+  периодической отправки пропускает свой первый снимок: единственный кадр
+  цикла отправляет heartbeat. При обычной загрузке поведение прежнее.
+- **`[http_post]`: the startup snapshot no longer duplicates the heartbeat in
+  a wake cycle.** With `sleep.heartbeat=1` and a process started after a
+  probe wake, the periodic sender skips its first snapshot: the heartbeat is
+  the only frame of the cycle. A normal boot keeps the previous behaviour.
 - **AOV: окно ожидания mailbox сокращено до 1000 мс (KI-072).**
   `RV1106_HPMCU_FAST_WKUP_TIMEOUT` 6000 → 1000 мс: при поднятом конвейере MCU
   отвечает `-h-mbox-` через ~0.2 с (прогон 2026-11-17), а 6 с только

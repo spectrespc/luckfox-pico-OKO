@@ -287,7 +287,12 @@
   2026-11-17: «зависание после `Starting kernel`» воспроизведено только на
   ядре со сдвинутым textofs и без `0x208000`-FIT (см. KI-072); «пересобранное
   продуктовое ядро» на стенде после этого **не перепроверялось** — адрес
-  линковки сверен (`_text = 0x8000`), загрузка — нет.
+  линковки сверен (`_text = 0x8000`), загрузка — нет. 2026-11-18, прогон
+  heartbeat-Snapshot на том же AOV-образе: 40 тихих циклов за 746 с прошли
+  без SFC/UBI-ошибок (`rootfs`/`userdata` в `rw`), но более ранний
+  ~15-минутный прогон закончился молчанием UART и зависанием (AP не
+  проснулся); после power cycle — `rw`, ошибок в новом `dmesg` нет.
+  Heartbeat не добавил новых записей SFC/UBI, но и не снимает риск KI-071.
 
 - **KI-072. Профиль `-AOV`: 1M-раскладка и окно ядра/MCU исправлены,
   handshake MCU не отвечает.** Hpmcu (117 КБ) + SPL + DDR + usbplug дают
@@ -982,7 +987,13 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   2026-11-17: the "hang after `Starting
   kernel`" reproduces only with a moved textofs and no 0x208000 FIT (see
   KI-072); the "rebuilt product kernel" has **not** been retested on the
-  bench — only its link address was checked (`_text = 0x8000`).
+  bench — only its link address was checked (`_text = 0x8000`). 2026-11-18,
+  a heartbeat-Snapshot run on the same AOV image: 40 quiet cycles in 746 s
+  with no SFC/UBI errors (`rootfs`/`userdata` stayed `rw`), but an earlier
+  ~15-minute run ended in UART silence and a hang (the AP never woke); after
+  a power cycle the volumes were `rw` and the new `dmesg` had no errors.
+  Heartbeat added no new SFC/UBI records, but it does not remove the KI-071
+  risk.
 
 - **KI-072. `-AOV` profile: 1M layout and the kernel/MCU window are fixed,
   the MCU handshake does not answer.** Hpmcu (117 KB) + SPL + DDR + usbplug

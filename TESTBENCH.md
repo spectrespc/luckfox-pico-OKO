@@ -1158,7 +1158,8 @@ bench/run.sh rgn_boxes_check.py --mode restart --target ivs --count 20
 
 ### Сон камеры `[sleep]` (deep suspend + PMU timeout) — смоук-тест
 
-Проверено 2026-11-16 на продуктовом образе. Условие: ядро собрано с
+Проверено 2026-11-16 на продуктовом образе; heartbeat-Snapshot — 2026-11-18
+на AOV-образе (PMU-only, `aov_mcu=0`). Условие: ядро собрано с
 `rv1106-pmu-timeout.config` (продуктовый BoardConfig), в root `compatible`
 DTS есть `rockchip,rv1106`, все `.ko` пересобраны `./build.sh driver`.
 
@@ -1192,6 +1193,31 @@ DTS есть `rockchip,rv1106`, все `.ko` пересобраны `./build.sh 
    `rkadk_aov.c`: `io -4 0xff300048 seconds*32`). Значение 320 = ~10 с;
    при замене `pmu_timeout_hz` замерять фактический период по логу
    `[sleep] suspending ... (N s)` и возврату сети.
+9. Heartbeat-кадр (Snapshot): в `[sleep]` добавить `heartbeat: true`,
+   `heartbeat_interval_s: 0`, `heartbeat_retries: 3`, включить `[http_post]`
+   с `host: 192.168.52.200:8090` и `url: /ingest/frame`; SIGHUP. На тихом
+   цикле после `wake_check_s` в консоли `[heartbeat] sent (wake cycle N, …)`,
+   в приёмнике — `PUT /ingest/heartbeat` (JPEG + `X-Heartbeat*`/`X-OKO-*`;
+   `X-OKO-Motion-Area: -1` при выключенном IVS). Тихий цикл без карточки
+   движения может не наступить: в лаборатории IVS даёт ~1000 ‰, поэтому
+   поднять `ivs.min_area` (до 50) или выключить IVS/YOLO.
+10. Сквозная проверка heartbeat (приёмник `services/events`, `docker compose
+    -f services/events/docker-compose.yml up -d`):
+    `bench/run.sh heartbeat_check.py` — ≥3 тихих цикла, сверка заголовков и
+    `wake_cycle`, `fail_streak=0`; `--neg` (приёмник выключен) — сон всё
+    равно наступает, `heartbeat_fail_streak` растёт; motion-фаза требует
+    `OKO_BENCH_API=1` у divinus (иначе `SKIP`). Артефакты —
+    `output/bench/heartbeat/`. После серии — `api_check.py`, `ui_check.py`,
+    `dmesg | grep -iE "sfc|ubi.*err"`.
+    Heartbeat добавляет к циклу до `heartbeat_retries × (3 с connect + 1 с
+    пауза)` при недоступном приёмнике; это задерживает вход в suspend, но не
+    отменяет его.
+    Результат 2026-11-18 (`heartbeat_check.py`, AOV-образ): 40 heartbeat за
+    746 с (циклы 2→62) и 12 за 195 с на финальной сборке, `area=-1`, `fail_streak` сброшен, `--neg` — рост
+    `fail_streak` и продолжение циклов; первые 1–2 попытки после resume часто
+    не соединяются, третий retry доставляет кадр. 12-минутный прогон без
+    SFC/UBI-ошибок; 1-часовой soak не выполнен. Артефакты —
+    `output/bench/heartbeat/`.
 
 Не держать активный CSI/ISP-пайплайн через `echo mem`: на этой плате resume
 даёт шторм `mipi-csi2-hw ERR1:0x10` и AP зависает. Политика сама разбирает
