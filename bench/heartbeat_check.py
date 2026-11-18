@@ -28,6 +28,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -99,6 +100,14 @@ def wait_service(timeout=60):
 def heartbeats(limit=100):
     _status, dec = service("/api/heartbeats?limit=%d" % limit)
     return dec.get("heartbeats", [])
+
+
+def received_ms(item):
+    """Host arrival time of a record, for the camera-clock drift check."""
+    try:
+        return int(datetime.fromisoformat(item.get("received_at")).timestamp() * 1000)
+    except (TypeError, ValueError):
+        return None
 
 
 def wait_reachable(timeout=180):
@@ -400,9 +409,12 @@ def main():
         ok &= check("header area (%s)" % item.get("ts"),
                     isinstance(item.get("area"), int) and item["area"] >= -1,
                     str(item.get("area")))
+        # Compare with the arrival time of this record, not the end of the
+        # run: a long soak would drift past any fixed tolerance.
+        arrived = received_ms(item) or now_ms
         ok &= check("header ts close to host (%s)" % item.get("ts"),
                     isinstance(item.get("ts"), int) and
-                    abs(now_ms - item["ts"]) < 3600 * 1000,
+                    abs(arrived - item["ts"]) < 120 * 1000,
                     str(item.get("ts")))
 
     hb = wait_streak_zero(120)
@@ -413,7 +425,8 @@ def main():
         motion = motion_phase(args)
         if motion is None:
             skip("motion cycle without heartbeat",
-                 "OKO_BENCH_API=1 is not enabled on the camera")
+                 "OKO_BENCH_API=1 is off or the probe is too short "
+                 "(try --wake-check 30)")
         else:
             ok &= check("motion cycle without heartbeat", motion[0], motion[1])
             report["motion"] = {"ok": motion[0], "detail": motion[1]}

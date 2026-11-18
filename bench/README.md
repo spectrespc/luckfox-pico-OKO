@@ -438,8 +438,11 @@ bench/run.sh heartbeat_check.py --neg           # приёмник выключ�
   `X-OKO-Idle-S`, `X-OKO-Motion-Area` (−1 — IVS выключен), `X-OKO-Sleep`,
   `X-OKO-Wake-Cycle`.
 - Motion-фаза использует `POST /api/sleep?motion=1`, который доступен только
-  при запуске divinus с `OKO_BENCH_API=1`; без него проверка помечается
-  `SKIP`, а не падает.
+  при запуске divinus с `OKO_BENCH_API=1`. На стенде сеть после resume
+  поднимается к концу 5-секундного окна, поэтому инъектору нужно больше
+  времени: `--wake-check 30` (проверено 2026-11-18: `probe` → `awake`, цикл
+  без heartbeat, следующий тихий — с кадром). Без env или при слишком
+  коротком окне проверка помечается `SKIP`, а не падает.
 - `--neg` останавливает приёмник: камера всё равно засыпает, а
   `heartbeat_fail_streak` в `/api/status.sleep` растёт.
 
