@@ -38,6 +38,11 @@ static time_t ivsLastTrigger;
 
 static time_t ivsLastShown;
 
+/* Last motion area of the analytics loop, permille of the frame; -1 while
+ * IVS is off or has not produced a result yet.  The heartbeat snapshot puts
+ * it into a header, so a plain aligned store is enough. */
+static volatile int ivsLastArea = -1;
+
 static void ivs_osd_indicator(int active, time_t when)
 {
     FILE *file = fopen("/tmp/osd-ivs.txt", "w");
@@ -417,6 +422,7 @@ static void *ivs_thread(void *arg)
         if (!rk_ivs_get_results(&result, 500)) {
             unsigned int area = ivs_area_permille(&result);
             const char *cause = result.rectCount > 0 ? "md" : "od";
+            ivsLastArea = (int)area;
             /* min_area is a percentage, area is permille.  OD hits are never
              * hidden by the threshold: they have no rectangle to measure. */
             int below = app_config.ivs_min_area > 0 &&
@@ -495,6 +501,11 @@ void ivs_events_stop(void)
         boxesDrawn = 0;
     }
 #endif
+}
+
+int ivs_last_area_permille(void)
+{
+    return ivsLastArea;
 }
 
 size_t ivs_events_json(char *out, size_t size)

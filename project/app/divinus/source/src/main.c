@@ -5,6 +5,7 @@
 #include "focus_proto.h"
 #include "gating.h"
 #include "hal/macros.h"
+#include "heartbeat_task.h"
 #include "http_post.h"
 #include "record_clip.h"
 #include "ivs_events.h"
@@ -128,7 +129,10 @@ int main(int argc, char *argv[]) {
     }
 
     /* OKO: read [sleep] and the OKO_SLEEP_WAKE probe flag before any media
-     * subsystem is started; the policy thread itself starts after IVS/YOLO. */
+     * subsystem is started; the policy thread itself starts after IVS/YOLO.
+     * heartbeat_init() must run first: sleep_policy_init() consumes the wake
+     * marker/env that the heartbeat module also needs. */
+    heartbeat_init();
     sleep_policy_init();
 
     models_start();
@@ -226,6 +230,12 @@ int main(int argc, char *argv[]) {
 
     while (keepRunning) {
         if (sleep_policy_should_suspend()) {
+            /* A quiet probe cycle is the only place a heartbeat snapshot is
+             * sent.  It blocks the entry into suspend for at most
+             * heartbeat_retries * (3 s connect + 1 s pause); a failure still
+             * lets the camera sleep (the receiver notices the gap). */
+            if (sleep_policy_cycle_is_quiet_resume() && heartbeat_due())
+                heartbeat_before_suspend();
             HAL_INFO("sleep", "entering the sleep cycle\n");
             sleepPending = 1;
             graceful = 1;

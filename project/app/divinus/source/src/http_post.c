@@ -4,6 +4,9 @@
 #include <fcntl.h>
 #include <string.h>
 
+#include "heartbeat.h"
+#include "heartbeat_task.h"
+
 pthread_t httpPostPid = 0;
 /* The thread loop has to observe a stop flag: pthread_join() alone deadlocks
  * when the loop only checks the global keepRunning. */
@@ -85,8 +88,11 @@ static int http_post_connect(const char *host, int timeoutMs)
     return fd;
 }
 
-/* One PUT with the standard fields and an optional extra header block. */
-static int http_post_put(hal_jpegdata *jpeg, const char *extra)
+/* One PUT with the standard fields and an optional extra header block.
+ * url_template is the raw configured URL: the strftime expansion (if any) is
+ * applied here, after the caller has derived the endpoint. */
+static int http_post_put_url(const char *url_template, const hal_jpegdata *jpeg,
+    const char *extra)
 {
     char *host = app_config.http_post_host;
     struct timeval timeout = { .tv_sec = 3, .tv_usec = 0 };
@@ -97,7 +103,8 @@ static int http_post_put(hal_jpegdata *jpeg, const char *extra)
     time_t timer = time(NULL);
     struct tm tm_buf, *tm_info = localtime_r(&timer, &tm_buf);
 
-    if (!host || !*host || !jpeg || !jpeg->data || !jpeg->jpegSize)
+    if (!host || !*host || !jpeg || !jpeg->data || !jpeg->jpegSize ||
+        !url_template || !*url_template)
         return EXIT_FAILURE;
 
     fd = http_post_connect(host, 3000);
@@ -111,12 +118,11 @@ static int http_post_put(hal_jpegdata *jpeg, const char *extra)
 
     url[0] = 0;
     {
-        size_t used = strftime(url, sizeof(url), app_config.http_post_url,
-            tm_info);
+        size_t used = strftime(url, sizeof(url), url_template, tm_info);
         if (used >= sizeof(url)) url[0] = 0;
     }
     if (!url[0])
-        snprintf(url, sizeof(url), "%s", app_config.http_post_url);
+        snprintf(url, sizeof(url), "%s", url_template);
 
     length = snprintf(request, sizeof(request),
         "PUT %s HTTP/1.1\r\n"
@@ -177,6 +183,25 @@ static int http_post_put(hal_jpegdata *jpeg, const char *extra)
 
     close(fd);
     return ret;
+}
+
+/* The plain frame post: the standard periodic snapshot of [http_post]. */
+static int http_post_put(const hal_jpegdata *jpeg, const char *extra)
+{
+    return http_post_put_url(app_config.http_post_url, jpeg, extra);
+}
+
+/* Heartbeat snapshot: one JPEG per quiet sleep cycle, proof that the camera
+ * is alive and the scene has no motion.  The endpoint is derived from the
+ * raw frame URL so that strftime patterns stay intact. */
+int http_post_heartbeat(const hal_jpegdata *jpeg, const char *headers)
+{
+    char url[256];
+
+    if (!jpeg || !headers) return EXIT_FAILURE;
+    heartbeat_derive_url(url, sizeof(url), app_config.http_post_url);
+    if (!url[0]) return EXIT_FAILURE;
+    return http_post_put_url(url, jpeg, headers);
 }
 
 /* Derives the clip endpoint from the frame URL: /ingest/frame -> /ingest/clip.
@@ -384,14 +409,19 @@ int http_post_event(hal_jpegdata *jpeg, const char *eventId, int index,
 
 void *http_post_thread(void) {
     hal_jpegdata jpeg = {0};
+    time_t last_time = 0;
     jpeg.data = NULL;
     jpeg.length = 0;
     jpeg.jpegSize = 0;
+    /* In a wake cycle the heartbeat snapshot is the only image the receiver
+     * should get: suppress the startup snapshot of the periodic poster by
+     * pretending it was just sent.  A normal boot keeps last_time = 0. */
+    if (app_config.sleep_heartbeat && heartbeat_wake_start())
+        last_time = time(NULL);
     /* Keep the usual warm-up, but stay responsive to a stop request. */
     for (int i = 0; i < 3 && keepRunning && httpPostRun; i++) sleep(1);
 
     while (keepRunning && httpPostRun) {
-        static time_t last_time = 0;
         time_t current_time = time(NULL);
         if (current_time - last_time < app_config.http_post_interval) {
             sleep(1);

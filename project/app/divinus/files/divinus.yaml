@@ -324,6 +324,9 @@ mjpeg:
 #   wake_interval_s: 10   # PMU timeout between motion checks, 1..3600
 #   wake_check_s: 3       # motion-check window after resume, 1..60
 #   pmu_timeout_hz: 32    # PMU timeout ticks per second (measured on the bench)
+#   heartbeat: false      # send one JPEG proof-of-life before a quiet re-suspend
+#   heartbeat_interval_s: 0   # quiet cycles between heartbeats; 0 — every cycle
+#   heartbeat_retries: 3  # send attempts before giving up and sleeping anyway
 #
 # The camera pipeline is stopped before suspend and restarted after wake:
 # keeping CSI/ISP running across a mem cycle produces a mipi-csi2 error storm

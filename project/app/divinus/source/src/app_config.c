@@ -451,6 +451,9 @@ void app_config_dump(FILE *file) {
     fprintf(file, "  wake_interval_s: %d\n", app_config.sleep_wake_interval_s);
     fprintf(file, "  wake_check_s: %d\n", app_config.sleep_wake_check_s);
     fprintf(file, "  pmu_timeout_hz: %d\n", app_config.sleep_pmu_timeout_hz);
+    fprintf(file, "  heartbeat: %s\n", app_config.sleep_heartbeat ? "true" : "false");
+    fprintf(file, "  heartbeat_interval_s: %d\n", app_config.sleep_heartbeat_interval_s);
+    fprintf(file, "  heartbeat_retries: %d\n", app_config.sleep_heartbeat_retries);
 }
 
 enum ConfigError app_config_parse(void) {
@@ -663,6 +666,9 @@ enum ConfigError app_config_parse(void) {
     app_config.sleep_wake_interval_s = 10;
     app_config.sleep_wake_check_s = 3;
     app_config.sleep_pmu_timeout_hz = 32; /* measured on the bench */
+    app_config.sleep_heartbeat = false;
+    app_config.sleep_heartbeat_interval_s = 0;
+    app_config.sleep_heartbeat_retries = 3;
 
     struct IniConfig ini;
     memset(&ini, 0, sizeof(struct IniConfig));
@@ -1393,6 +1399,11 @@ enum ConfigError app_config_parse(void) {
         &app_config.sleep_wake_check_s);
     parse_int(&ini, "sleep", "pmu_timeout_hz", 1, 1000,
         &app_config.sleep_pmu_timeout_hz);
+    parse_bool(&ini, "sleep", "heartbeat", &app_config.sleep_heartbeat);
+    parse_int(&ini, "sleep", "heartbeat_interval_s", 0, 86400,
+        &app_config.sleep_heartbeat_interval_s);
+    parse_int(&ini, "sleep", "heartbeat_retries", 0, 10,
+        &app_config.sleep_heartbeat_retries);
 
     parse_bool(&ini, "http_post", "enable", &app_config.http_post_enable);
     /* These keys are read even while the sender is disabled: app_config_save()

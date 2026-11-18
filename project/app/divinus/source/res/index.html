@@ -1217,10 +1217,21 @@ Receiver (services/events):
 					<div class="ctl"><input type="number" id="sleep_wake_interval_s" min="1" max="3600" data-group="sleep" data-k="wake_interval_s"></div></div>
 				<div class="field"><label data-i18n="sleep_check">Motion check after wake, s</label>
 					<div class="ctl"><input type="number" id="sleep_wake_check_s" min="1" max="60" data-group="sleep" data-k="wake_check_s"></div></div>
+				<div class="field"><label data-i18n="sleep_hb">Heartbeat snapshot</label>
+					<div class="ctl"><select id="sleep_heartbeat" data-group="sleep" data-k="heartbeat" onchange="updateSleepCard(lastStatus &amp;&amp; lastStatus.sleep)">
+						<option value="false">OFF</option><option value="true">ON</option></select></div></div>
+				<div class="field"><label data-i18n="sleep_hb_interval">Heartbeat interval, s</label>
+					<div class="ctl"><input type="number" id="sleep_heartbeat_interval_s" min="0" max="86400" data-group="sleep" data-k="heartbeat_interval_s"></div></div>
+				<div class="field"><label data-i18n="sleep_hb_retries">Heartbeat send attempts</label>
+					<div class="ctl"><input type="number" id="sleep_heartbeat_retries" min="0" max="10" data-group="sleep" data-k="heartbeat_retries"></div></div>
 				<div class="field"><label data-i18n="sleep_state">State</label>
 					<div class="ctl"><span id="sleep_state">–</span></div></div>
 				<div class="field"><label data-i18n="sleep_last_wake">Last wake source</label>
 					<div class="ctl"><span id="sleep_last_wake_src">–</span></div></div>
+				<div class="field"><label data-i18n="sleep_hb_last">Last heartbeat, s ago</label>
+					<div class="ctl"><span id="sleep_hb_last">–</span></div></div>
+				<div class="field"><label data-i18n="sleep_hb_fail">Heartbeat failures in a row</label>
+					<div class="ctl"><span id="sleep_hb_fail">–</span></div></div>
 				<div class="field"><label data-i18n="sleep_aov_state">AOV state</label>
 					<div class="ctl"><span id="sleep_aov_state">–</span></div></div>
 				<div class="actions">
@@ -1228,6 +1239,7 @@ Receiver (services/events):
 				</div>
 				<p class="note" id="sleep_warning" style="display:none" data-i18n="sleep_warn_aov_pmu">The AOV MCU is released only after a PMU timer wake: enable the PMU timer or sleep stays disabled.</p>
 				<p class="note" id="sleep_aov_note" style="display:none" data-i18n="sleep_aov_unsupported">This firmware has no AOV wake proxy; the AOV switch is unavailable.</p>
+				<p class="note" id="sleep_hb_note" style="display:none" data-i18n="sleep_hb_no_receiver">The heartbeat is idle: enable the HTTP event sender and set a receiver host.</p>
 			</div>
 
 			<div class="card">
@@ -2089,6 +2101,7 @@ function applyValues(ep, dec) {
 	if (ep === 'mdns') updateMdnsCard(dec);
 	if (ep === 'wifi') updateWifiCard(dec);
 	if (ep === 'http_post') updateHttpPostLink(dec);
+	if (ep === 'sleep') updateHeartbeatCard(dec);
 }
 
 /* The receiver link prefers http_post.receiver_url; an empty value is derived
@@ -2143,7 +2156,7 @@ function applyGroup(g) {
 		snapshotEndpoint(info.ep);
 		refreshAllGroups();
 		if (dec.note && /restart|перезапуск/i.test(dec.note)) showRestartHint(true);
-		toast('ok', t('applied'), dec.note || '');
+		toast('ok', t('applied'), dec.warning || dec.note || '');
 	});
 }
 
@@ -2542,6 +2555,18 @@ I18N.en.sleep_interval = "PMU wake interval, s";
 I18N.ru.sleep_interval = "Интервал пробуждения PMU, с";
 I18N.en.sleep_check = "Motion check after wake, s";
 I18N.ru.sleep_check = "Окно проверки движения после пробуждения, с";
+I18N.en.sleep_hb = "Heartbeat snapshot";
+I18N.ru.sleep_hb = "Кадр-подтверждение (Snapshot)";
+I18N.en.sleep_hb_interval = "Heartbeat interval, s";
+I18N.ru.sleep_hb_interval = "Интервал heartbeat, с";
+I18N.en.sleep_hb_retries = "Heartbeat send attempts";
+I18N.ru.sleep_hb_retries = "Попыток отправки heartbeat";
+I18N.en.sleep_hb_last = "Last heartbeat, s ago";
+I18N.ru.sleep_hb_last = "Последний heartbeat, с назад";
+I18N.en.sleep_hb_fail = "Heartbeat failures in a row";
+I18N.ru.sleep_hb_fail = "Сбоев heartbeat подряд";
+I18N.en.sleep_hb_no_receiver = "The heartbeat is idle: enable the HTTP event sender and set a receiver host.";
+I18N.ru.sleep_hb_no_receiver = "Heartbeat не работает: включите HTTP-отправку событий и укажите хост приёмника.";
 I18N.en.sleep_state = "State";
 I18N.ru.sleep_state = "Состояние";
 I18N.en.sleep_last_wake = "Last wake source";
@@ -3373,6 +3398,19 @@ function uploadOsd(i) {
 }
 
 /* ============================ system ============================ */
+/* GET /api/sleep carries the heartbeat settings flat and its live state in a
+ * nested object, so the generic collector skips it and this hook fills the
+ * switch and the status rows. */
+function updateHeartbeatCard(dec) {
+	var hb = dec && dec.heartbeat;
+	if (!hb || typeof hb !== 'object') return;
+	setField('sleep_heartbeat', hb.enable ? 'true' : 'false');
+	setText('sleep_hb_last', (hb.last_sent_s >= 0) ? String(hb.last_sent_s) : '–');
+	setText('sleep_hb_fail', (hb.fail_streak === undefined || hb.fail_streak === null) ? '–' : String(hb.fail_streak));
+	var note = $('sleep_hb_note');
+	if (note) note.style.display = (hb.enable && !hb.ready) ? '' : 'none';
+}
+
 function updateSleepCard(s) {
 	var cur = collectGroup('sleep');
 	var warn = $('sleep_warning');
@@ -3382,6 +3420,8 @@ function updateSleepCard(s) {
 	setText('sleep_state', s.state || '–');
 	setText('sleep_last_wake_src', (s.last_wake_src >= 0) ? String(s.last_wake_src) : '–');
 	setText('sleep_aov_state', s.aov_state || '–');
+	if (s.heartbeat_fail_streak !== undefined && s.heartbeat_fail_streak !== null)
+		setText('sleep_hb_fail', String(s.heartbeat_fail_streak));
 	var avail = s.aov_available === true;
 	var row = $('sleep_aov_row'), note = $('sleep_aov_note'), sel = $('sleep_aov_mcu');
 	if (row) row.style.display = avail ? '' : 'none';

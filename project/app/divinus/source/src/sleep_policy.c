@@ -29,6 +29,7 @@
 
 #include "app_config.h"
 #include "hal/macros.h"
+#include "heartbeat_task.h"
 
 #define PMU_BASE 0xff300000UL
 #define PMU_TIMEOUT_OFF 0x048UL
@@ -45,7 +46,6 @@
 #define MEM_SLEEP_PATH "/sys/power/mem_sleep"
 #define POWER_STATE_PATH "/sys/power/state"
 #define WAKE_INFO_PATH "/tmp/oko-sleep-wake"
-#define PROBE_MARKER_PATH "/tmp/oko-sleep-probe"
 
 enum sleep_state
 {
@@ -71,6 +71,10 @@ static int last_event = -1;
 static unsigned long motion_seq;
 static unsigned long request_seq;
 static unsigned long suspend_seq;
+/* Origin of the pending/accepted suspend request: 1 when the quiet SLEEP_PROBE
+ * window expired, 0 for the normal idle timeout. */
+static int quiet_request;
+static int quiet_suspend;
 static struct timespec last_motion;
 static struct timespec probe_deadline;
 
@@ -466,6 +470,7 @@ static void *policy_thread(void *arg)
                 {
                     request = 1;
                     request_seq = motion_seq;
+                    quiet_request = 1;
                     state = SLEEP_SUSPENDING;
                     HAL_INFO("sleep", "wake window is quiet; suspending again\n");
                 }
@@ -477,6 +482,7 @@ static void *policy_thread(void *arg)
                 {
                     request = 1;
                     request_seq = motion_seq;
+                    quiet_request = 0;
                     state = SLEEP_SUSPENDING;
                     HAL_INFO("sleep", "idle for %ld s; suspending\n", idle);
                 }
@@ -538,13 +544,13 @@ void sleep_policy_init(void)
     enabled = 1;
 
     const char *wake = getenv("OKO_SLEEP_WAKE");
-    int marker = access(PROBE_MARKER_PATH, F_OK) == 0;
+    int marker = access(SLEEP_PROBE_MARKER_PATH, F_OK) == 0;
     HAL_INFO("sleep", "init: wake env %s, probe marker %s, idle=%u s\n",
              (wake && *wake) ? "yes" : "no", marker ? "yes" : "no",
              app_config.sleep_idle_timeout_s);
     if (marker)
     {
-        unlink(PROBE_MARKER_PATH);
+        unlink(SLEEP_PROBE_MARKER_PATH);
     }
     if ((wake && *wake) || marker)
     {
@@ -568,14 +574,14 @@ void sleep_policy_init(void)
 
 void sleep_policy_mark_wake(void)
 {
-    FILE *file = fopen(PROBE_MARKER_PATH, "w");
+    FILE *file = fopen(SLEEP_PROBE_MARKER_PATH, "w");
     if (file)
     {
         fclose(file);
     }
     else
     {
-        HAL_WARNING("sleep", "cannot create %s: %s\n", PROBE_MARKER_PATH,
+        HAL_WARNING("sleep", "cannot create %s: %s\n", SLEEP_PROBE_MARKER_PATH,
                     strerror(errno));
     }
 }
@@ -636,6 +642,10 @@ void sleep_policy_report_motion(void)
         HAL_INFO("sleep", "motion in the wake window; stream stays on\n");
     }
     pthread_mutex_unlock(&lock);
+
+    /* Confirmed motion is delivered by the event path; rebase the heartbeat
+     * interval so the next quiet cycle does not add a duplicate frame. */
+    heartbeat_set_due();
 }
 
 int sleep_policy_should_suspend(void)
@@ -654,12 +664,15 @@ int sleep_policy_should_suspend(void)
         {
             /* Движение пришло уже после решения: отменяем вход в сон. */
             request = 0;
+            quiet_request = 0;
             state = SLEEP_AWAKE;
             HAL_INFO("sleep", "motion during suspend entry; cancelled\n");
         }
         else
         {
             request = 0;
+            quiet_suspend = quiet_request;
+            quiet_request = 0;
             suspend_seq = motion_seq;
             result = 1;
         }
@@ -667,6 +680,11 @@ int sleep_policy_should_suspend(void)
     pthread_mutex_unlock(&lock);
 
     return result;
+}
+
+int sleep_policy_cycle_is_quiet_resume(void)
+{
+    return quiet_suspend;
 }
 
 int sleep_policy_suspend(void)
@@ -802,11 +820,14 @@ int sleep_policy_aov_keep_pipeline(void)
 void sleep_policy_api_json(char *out, size_t size)
 {
     long idle = 0;
+    char heartbeat[256];
 
     if (!out || !size)
     {
         return;
     }
+
+    heartbeat_status_json(heartbeat, sizeof(heartbeat));
 
     pthread_mutex_lock(&lock);
     if (enabled)
@@ -824,7 +845,7 @@ void sleep_policy_api_json(char *out, size_t size)
              "\"idle_timeout_s\":%u,\"wake_interval_s\":%u,"
              "\"wake_check_s\":%u,\"pmu_timeout_hz\":%u,"
              "\"enabled\":%s,\"state\":\"%s\",\"idle_s\":%ld,"
-             "\"last_wake_src\":%d,\"reason\":\"%s\"}",
+             "\"last_wake_src\":%d,\"reason\":\"%s\",\"heartbeat\":%s}",
              app_config.sleep_enable ? "true" : "false",
              app_config.sleep_pmu_timer_wake ? "true" : "false",
              app_config.sleep_aov_mcu ? "true" : "false",
@@ -835,18 +856,21 @@ void sleep_policy_api_json(char *out, size_t size)
              app_config.sleep_wake_check_s,
              app_config.sleep_pmu_timeout_hz,
              enabled ? "true" : "false", state_name(state),
-             idle > 0 ? idle : 0, last_wake_src, reason);
+             idle > 0 ? idle : 0, last_wake_src, reason, heartbeat);
     pthread_mutex_unlock(&lock);
 }
 
 void sleep_policy_status_json(char *out, size_t size)
 {
     long idle = 0;
+    char heartbeat[96];
 
     if (!out || !size)
     {
         return;
     }
+
+    heartbeat_status_fields(heartbeat, sizeof(heartbeat));
 
     pthread_mutex_lock(&lock);
     if (enabled)
@@ -861,11 +885,11 @@ void sleep_policy_status_json(char *out, size_t size)
              "\"sleep\":{\"enabled\":%s,\"state\":\"%s\","
              "\"pmu_timer\":%s,\"aov\":%s,\"aov_available\":%s,"
              "\"aov_state\":\"%s\",\"idle_s\":%ld,"
-             "\"last_wake_src\":%d,\"reason\":\"%s\"}",
+             "\"last_wake_src\":%d,\"reason\":\"%s\",%s}",
              enabled ? "true" : "false", state_name(state),
              app_config.sleep_pmu_timer_wake ? "true" : "false",
              aov_active ? "true" : "false",
              aov_supported ? "true" : "false", aov_state_name(),
-             idle > 0 ? idle : 0, last_wake_src, reason);
+             idle > 0 ? idle : 0, last_wake_src, reason, heartbeat);
     pthread_mutex_unlock(&lock);
 }

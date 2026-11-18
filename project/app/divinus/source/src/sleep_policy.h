@@ -13,6 +13,11 @@
 
 #include <stddef.h>
 
+/* Marker written before the exec restart of the wake path; a new instance
+ * reads it as "this start follows a probe wake".  Also read by the heartbeat
+ * module, so it is shared here. */
+#define SLEEP_PROBE_MARKER_PATH "/tmp/oko-sleep-probe"
+
 /* Прочитать [sleep], проверить готовность платформы и env OKO_SLEEP_WAKE.
  * Вызывать после app_config_parse().  Не запускает поток. */
 void sleep_policy_init(void);
@@ -28,6 +33,12 @@ void sleep_policy_report_motion(void);
 
 /* main loop: пора ли разбирать пайплайн и уходить в suspend. */
 int sleep_policy_should_suspend(void);
+
+/* 1, когда принятый запрос suspend родился из тихого окна SLEEP_PROBE (а не
+ * из обычного idle-таймера).  Действителен сразу после
+ * sleep_policy_should_suspend() == 1; по нему main решает, слать ли
+ * heartbeat-кадр. */
+int sleep_policy_cycle_is_quiet_resume(void);
 
 /* Выполнить suspend.  Блокируется до resume; вызывать после полного
  * teardown.  Возвращает 0, если AP проснулся, -1 — если suspend не удался

@@ -6281,6 +6281,9 @@ if (EQUALS(req->uri, "/api/storage")) {
             unsigned int idle = app_config.sleep_idle_timeout_s;
             unsigned int interval = app_config.sleep_wake_interval_s;
             unsigned int check = app_config.sleep_wake_check_s;
+            bool heartbeat = app_config.sleep_heartbeat;
+            unsigned int hbInterval = app_config.sleep_heartbeat_interval_s;
+            unsigned int hbRetries = app_config.sleep_heartbeat_retries;
             bool motion = false, changed = false;
             char *query = req->query;
 
@@ -6305,6 +6308,25 @@ if (EQUALS(req->uri, "/api/storage")) {
                     aov = query_bool(value); changed = true;
                 } else if (EQUALS(key, "aov_keep_isp")) {
                     aovKeepIsp = query_bool(value); changed = true;
+                } else if (EQUALS(key, "heartbeat")) {
+                    heartbeat = query_bool(value); changed = true;
+                } else if (EQUALS(key, "heartbeat_interval_s") ||
+                           EQUALS(key, "heartbeat_retries")) {
+                    long max = EQUALS(key, "heartbeat_retries") ? 10 : 86400;
+                    number = strtol(value, &endptr, 10);
+                    if (*endptr || number < 0 || number > max) {
+                        reply_error(req->clntFd, "blocked",
+                            EQUALS(key, "heartbeat_retries")
+                                ? "heartbeat_retries must be 0..10"
+                                : "heartbeat_interval_s must be 0..86400",
+                            "");
+                        return;
+                    }
+                    if (EQUALS(key, "heartbeat_interval_s"))
+                        hbInterval = (unsigned int)number;
+                    else
+                        hbRetries = (unsigned int)number;
+                    changed = true;
                 } else if (EQUALS(key, "idle_timeout_s") ||
                            EQUALS(key, "wake_interval_s") ||
                            EQUALS(key, "wake_check_s")) {
@@ -6344,6 +6366,9 @@ if (EQUALS(req->uri, "/api/storage")) {
                 app_config.sleep_idle_timeout_s = idle;
                 app_config.sleep_wake_interval_s = interval;
                 app_config.sleep_wake_check_s = check;
+                app_config.sleep_heartbeat = heartbeat;
+                app_config.sleep_heartbeat_interval_s = hbInterval;
+                app_config.sleep_heartbeat_retries = hbRetries;
                 if (app_config_save()) {
                     reply_error(req->clntFd, "failed",
                         "the sleep settings could not be saved", "");
@@ -6352,17 +6377,27 @@ if (EQUALS(req->uri, "/api/storage")) {
             }
 
             {
-                char body[256];
-                int len = snprintf(body, sizeof(body),
-                    "{\"applied\":%s,\"note\":\"%s\"}",
+                char warning[160] = "";
+                char body[512];
+                int len;
+
+                if (app_config.sleep_enable && app_config.sleep_heartbeat &&
+                    (!app_config.http_post_enable ||
+                     !app_config.http_post_host[0]))
+                    snprintf(warning, sizeof(warning),
+                        "heartbeat needs http_post.enable with a receiver host; "
+                        "it will stay idle (reason no_receiver)");
+                len = snprintf(body, sizeof(body),
+                    "{\"applied\":%s,\"note\":\"%s\",\"warning\":\"%s\"}",
                     changed ? "true" : "false",
-                    changed ? "restart the streamer to apply the sleep settings" : "");
+                    changed ? "restart the streamer to apply the sleep settings" : "",
+                    warning);
                 reply_json(req->clntFd, body, (size_t)len);
             }
             return;
         }
         {
-            char sleepJson[512];
+            char sleepJson[1024];
             sleep_policy_api_json(sleepJson, sizeof(sleepJson));
             reply_json(req->clntFd, sleepJson, strlen(sleepJson));
         }
@@ -6386,7 +6421,7 @@ if (EQUALS(req->uri, "/api/storage")) {
             sprintf(uptime, "%ld:%02ld:%02ld", si.uptime / 3600, (si.uptime % 3600) / 60, si.uptime % 60);
         else
             sprintf(uptime, "%ld:%02ld", si.uptime / 60, si.uptime % 60);
-        char sleepJson[320];
+        char sleepJson[512];
         sleep_policy_status_json(sleepJson, sizeof(sleepJson));
         respLen = sprintf(response,
             "HTTP/1.1 200 OK\r\n"

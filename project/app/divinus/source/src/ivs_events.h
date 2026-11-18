@@ -11,3 +11,7 @@ void ivs_boxes_request(int enable);
 
 /* Renders the recent events as a JSON array; returns the length. */
 size_t ivs_events_json(char *out, size_t size);
+
+/* Last motion area of the analytics loop in permille of the frame, or -1
+ * when IVS is disabled or has not produced a result yet. */
+int ivs_last_area_permille(void);

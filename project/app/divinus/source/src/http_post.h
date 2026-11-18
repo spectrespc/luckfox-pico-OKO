@@ -15,6 +15,9 @@
 #include "jpeg.h"
 
 int http_post_send(hal_jpegdata *jpeg);
+/* Sends the sleep heartbeat JPEG to the endpoint derived from http_post.url
+ * (last segment "frame" becomes "heartbeat") with a raw header block. */
+int http_post_heartbeat(const hal_jpegdata *jpeg, const char *headers);
 /* Sends one frame of an event package with the X-Event-* headers. */
 int http_post_event(hal_jpegdata *jpeg, const char *eventId, int index,
     int total, unsigned long long timestampMs, const char *cause,
