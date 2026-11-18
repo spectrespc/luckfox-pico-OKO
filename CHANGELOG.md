@@ -812,12 +812,18 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   Скрипт пишет поток read-only монитора моста (`:2324`) в
   `output/bench/aov-test/`, считает `-h-wait-`/`-h-mbox-`/`-h-timeout-` и
   печатает дельты и темп (JSON-сводка рядом с захватом); умеет разбирать
-  готовый файл (`--file`). Использован для дифференциальных прогонов KI-072.
+  готовый файл (`--file`). Сводка учитывает потери монитора
+  (`dropped_bytes`/`gap_notices`, `complete=false`) и склеивает маркеры,
+  разорванные границей чанка, поэтому прогон с потерями не выдаётся за полный
+  замер. Использован для дифференциальных прогонов KI-072.
 - **Bench: `bench/aov_cadence.py` measures AOV cadence from the UART monitor.**
   The script records the bridge read-only monitor stream (`:2324`) into
   `output/bench/aov-test/`, counts `-h-wait-`/`-h-mbox-`/`-h-timeout-` and
   prints deltas and the rate (a JSON summary next to the capture); it can also
-  parse an existing file (`--file`). Used for the KI-072 differential runs.
+  parse an existing file (`--file`). The summary accounts for monitor drops
+  (`dropped_bytes`/`gap_notices`, `complete=false`) and joins markers split by
+  a chunk boundary, so a run that lost data is not reported as a full
+  measurement. Used for the KI-072 differential runs.
 - **Документация: REST API ESP32-моста (ESP32-OKO-KVM) в инструкциях агента.**
   `AGENTS.md §7` превращён из пары curl-команд в роутер по мосту: прошивка и
   upstream-репозиторий, каналы (telnet `:23` — один управляющий клиент,

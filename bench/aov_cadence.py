@@ -14,8 +14,12 @@ Examples:
 
 The monitor must be enabled on the bridge first (POST /config with
 {"telnet0_mon_enable":1} + bridge reboot); it defaults to 192.168.52.17:2324.
+The monitor drops bytes on a busy console and says so inline; the summary
+counts them (dropped_bytes/gap_notices) and sets complete=false, so a run that
+lost data is not mistaken for a full measurement.
 """
 import argparse
+import bisect
 import json
 import re
 import socket
@@ -29,9 +33,12 @@ DEFAULT_OUT = ROOT / "output" / "bench" / "aov-test"
 MARKERS = ("-h-wait-", "-h-mbox-", "-h-timeout-")
 
 # Each chunk starts with "[2026-11-17 21:58:57.388] RX: "; the bytes of the DUT
-# follow until the next chunk prefix and may span several lines.
+# follow until the next chunk prefix and may span several lines.  A busy
+# console makes the monitor drop bytes, which it marks inline, and a marker can
+# straddle a chunk boundary - both must be handled or the cadence is understated.
 CHUNK_RE = re.compile(
     rb"\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})\] RX: ", re.MULTILINE)
+GAP_RE = re.compile(r"--- gap: (\d+) byte\(s\) dropped ---")
 
 
 def parse_chunks(raw):
@@ -45,14 +52,42 @@ def parse_chunks(raw):
 
 
 def summarize(raw, label):
-    marks = {name: [] for name in MARKERS}
+    # Join the payloads before counting: a marker split by a chunk boundary is
+    # then found, and the chunk start offsets map each hit back to its stamp.
+    pieces = []
+    starts = []
+    chunk_stamps = []
+    dropped_bytes = 0
+    gap_notices = 0
+    offset = 0
     for stamp, payload in parse_chunks(raw):
         text = payload.decode(errors="replace")
-        for name in MARKERS:
-            marks[name].extend([stamp] * text.count(name))
+        for gap in GAP_RE.finditer(text):
+            dropped_bytes += int(gap.group(1))
+            gap_notices += 1
+        # A NUL keeps the two sides of a gap from forming a marker.
+        text = GAP_RE.sub("\x00", text)
+        if text:
+            chunk_stamps.append(stamp)
+        starts.append((offset, stamp))
+        pieces.append(text)
+        offset += len(text)
+    joined = "".join(pieces)
+    start_offsets = [item[0] for item in starts]
+
+    marks = {}
+    for name in MARKERS:
+        times = []
+        for hit in re.finditer(re.escape(name), joined):
+            index = bisect.bisect_right(start_offsets, hit.start()) - 1
+            times.append(starts[max(index, 0)][1])
+        marks[name] = times
+
     waits = sorted(marks["-h-wait-"])
     deltas = [round(b - a, 3) for a, b in zip(waits, waits[1:])]
     span = round(waits[-1] - waits[0], 3) if len(waits) > 1 else 0.0
+    chunk_gaps = [round(b - a, 3) for a, b in zip(chunk_stamps, chunk_stamps[1:])]
+    chunk_gaps = [gap for gap in chunk_gaps if gap > 0]
     summary = {
         "label": label,
         "counts": {name: len(times) for name, times in marks.items()},
@@ -61,7 +96,12 @@ def summarize(raw, label):
         "delta_median_s": round(statistics.median(deltas), 3) if deltas else None,
         "delta_p90_s": (round(sorted(deltas)[int(0.9 * (len(deltas) - 1))], 3)
                         if deltas else None),
+        "delta_resolution_s": (round(statistics.median(chunk_gaps), 3)
+                               if chunk_gaps else None),
         "gaps_over_2s": [d for d in deltas if d > 2.0][:20],
+        "dropped_bytes": dropped_bytes,
+        "gap_notices": gap_notices,
+        "complete": dropped_bytes == 0,
     }
     return summary
 
