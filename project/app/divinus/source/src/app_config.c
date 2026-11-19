@@ -436,11 +436,31 @@ void app_config_dump(FILE *file) {
     fprintf(file, "  qfactor: %d\n", app_config.http_post_qfactor);
     fprintf(file, "  receiver_url: \"%s\"\n", app_config.http_post_receiver_url);
 
+    fprintf(file, "mqtt:\n");
+    fprintf(file, "  enable: %s\n", app_config.mqtt_enable ? "true" : "false");
+    /* Quoted like [http_post]: an unset value must survive a save/reload. */
+    fprintf(file, "  host: \"%s\"\n", app_config.mqtt_host);
+    fprintf(file, "  login: \"%s\"\n", app_config.mqtt_login);
+    fprintf(file, "  password: \"%s\"\n", app_config.mqtt_password);
+    fprintf(file, "  topic_prefix: \"%s\"\n", app_config.mqtt_topic_prefix);
+    fprintf(file, "  client_id: \"%s\"\n", app_config.mqtt_client_id);
+    fprintf(file, "  keepalive_s: %d\n", app_config.mqtt_keepalive_s);
+    fprintf(file, "  telemetry_interval_s: %d\n",
+        app_config.mqtt_telemetry_interval_s);
+    fprintf(file, "  publish_events: %s\n",
+        app_config.mqtt_publish_events ? "true" : "false");
+    fprintf(file, "  publish_telemetry: %s\n",
+        app_config.mqtt_publish_telemetry ? "true" : "false");
+
     fprintf(file, "event_clip:\n");
     fprintf(file, "  enable: %s\n", app_config.event_clip_enable ? "true" : "false");
     fprintf(file, "  pre_seconds: %d\n", app_config.event_clip_pre_seconds);
     fprintf(file, "  post_seconds: %d\n", app_config.event_clip_post_seconds);
     fprintf(file, "  max_bytes: %llu\n", app_config.event_clip_max_bytes);
+
+    fprintf(file, "motor:\n");
+    fprintf(file, "  sleep_enable: %s\n", app_config.motor_sleep_enable ? "true" : "false");
+    fprintf(file, "  sleep_idle_s: %d\n", app_config.motor_sleep_idle_s);
 
     fprintf(file, "sleep:\n");
     fprintf(file, "  enable: %s\n", app_config.sleep_enable ? "true" : "false");
@@ -641,6 +661,14 @@ enum ConfigError app_config_parse(void) {
     app_config.http_post_qfactor = 90;
     strcpy(app_config.http_post_url, "/");
 
+    /* [mqtt] keeps its shape even while disabled: app_config_save() writes
+     * the whole section, and a later enable must not fail the range check. */
+    strcpy(app_config.mqtt_topic_prefix, "oko");
+    app_config.mqtt_keepalive_s = 60;
+    app_config.mqtt_telemetry_interval_s = 30;
+    app_config.mqtt_publish_events = true;
+    app_config.mqtt_publish_telemetry = true;
+
     app_config.mirror = false;
     app_config.flip = false;
     app_config.antiflicker = 0;
@@ -658,6 +686,9 @@ enum ConfigError app_config_parse(void) {
 
     /* [sleep]: off by default; the policy itself refuses to arm when the
      * kernel has no deep suspend or /dev/mem is unavailable. */
+    app_config.motor_sleep_enable = false;
+    app_config.motor_sleep_idle_s = 3;
+
     app_config.sleep_enable = false;
     app_config.sleep_pmu_timer_wake = true;
     app_config.sleep_aov_mcu = false;
@@ -1385,6 +1416,11 @@ enum ConfigError app_config_parse(void) {
         app_config.event_clip_post_seconds = (unsigned int)post;
     }
 
+    parse_bool(&ini, "motor", "sleep_enable",
+        &app_config.motor_sleep_enable);
+    parse_int(&ini, "motor", "sleep_idle_s", 1, 60,
+        &app_config.motor_sleep_idle_s);
+
     parse_bool(&ini, "sleep", "enable", &app_config.sleep_enable);
     parse_bool(&ini, "sleep", "pmu_timer_wake",
         &app_config.sleep_pmu_timer_wake);
@@ -1451,6 +1487,40 @@ enum ConfigError app_config_parse(void) {
         if (err == CONFIG_OK) app_config.http_post_qfactor = (unsigned int)v;
         else if (required) goto RET_ERR;
     }
+
+    parse_bool(&ini, "mqtt", "enable", &app_config.mqtt_enable);
+    /* Same rule as [http_post]: the keys are read while the sender is
+     * disabled so a save/reload round trip keeps them, and a missing host is
+     * fatal only when the publisher is enabled. */
+    err = parse_param_value_n(&ini, "mqtt", "host", app_config.mqtt_host,
+        sizeof(app_config.mqtt_host));
+    if (err != CONFIG_OK && app_config.mqtt_enable) goto RET_ERR;
+    parse_param_value_n(&ini, "mqtt", "login", app_config.mqtt_login,
+        sizeof(app_config.mqtt_login));
+    parse_param_value_n(&ini, "mqtt", "password", app_config.mqtt_password,
+        sizeof(app_config.mqtt_password));
+    err = parse_param_value_n(&ini, "mqtt", "topic_prefix",
+        app_config.mqtt_topic_prefix, sizeof(app_config.mqtt_topic_prefix));
+    if (err != CONFIG_OK && app_config.mqtt_enable) goto RET_ERR;
+    parse_param_value_n(&ini, "mqtt", "client_id", app_config.mqtt_client_id,
+        sizeof(app_config.mqtt_client_id));
+    {
+        int v = (int)app_config.mqtt_keepalive_s;
+
+        err = parse_int(&ini, "mqtt", "keepalive_s", 5, 3600, &v);
+        if (err == CONFIG_OK) app_config.mqtt_keepalive_s = (unsigned int)v;
+        else if (app_config.mqtt_enable) goto RET_ERR;
+
+        v = (int)app_config.mqtt_telemetry_interval_s;
+        err = parse_int(&ini, "mqtt", "telemetry_interval_s", 1, 86400, &v);
+        if (err == CONFIG_OK)
+            app_config.mqtt_telemetry_interval_s = (unsigned int)v;
+        else if (app_config.mqtt_enable) goto RET_ERR;
+    }
+    parse_bool(&ini, "mqtt", "publish_events",
+        &app_config.mqtt_publish_events);
+    parse_bool(&ini, "mqtt", "publish_telemetry",
+        &app_config.mqtt_publish_telemetry);
 
     free(ini.str);
     return CONFIG_OK;

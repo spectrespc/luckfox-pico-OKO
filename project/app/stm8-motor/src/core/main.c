@@ -32,6 +32,7 @@
                             Without it only the reset vector is generated and
                             no ISR (I2C/TIM4) ever fires. */
 #include "main.h"
+#include "sleep_logic.h"
 
 /* Private variables ---------------------------------------------------------*/
 /* Volatile: written from ISRs (TIM4/I2C) and read in the main loop. */
@@ -41,6 +42,33 @@ volatile uint8_t i2c_need_reset = 0;
 volatile uint8_t i2c_cmd_ready = 0;
 uint32_t eeprom_last_save_time = 0;
 volatile uint8_t eeprom_dirty = 0;
+
+/* Sleep mode runtime state.  The compile-time default depends on the board:
+ * the production build (BOARD=oko) is OFF and the host enables it explicitly,
+ * the test build (BOARD=test, -DSLEEP_DEFAULT_ON=1) is ON from reset. */
+volatile uint8_t  sleep_enabled = SLEEP_DEFAULT_ON;
+volatile uint16_t sleep_idle_ms = SLEEP_IDLE_MS;
+volatile uint8_t  g_sleep_state = SLEEP_STATE_AWAKE;
+volatile uint16_t g_sleep_entries = 0;
+volatile uint8_t  g_wake_by_i2c = 0;
+volatile uint8_t  g_wake_by_awu = 0;
+
+/**
+  * @brief  Snapshot the live state for the pure sleep decision logic.
+  *         Called with interrupts in whatever state the caller needs: the
+  *         pre-Halt re-check runs under sim(), so the snapshot is atomic.
+  */
+static void sleep_read_conditions(sleep_conditions *sc)
+{
+    sc->last_activity = i2c_last_frame;
+    sc->now = system_ticks;
+    sc->idle_ms = sleep_idle_ms;
+    sc->sleep_enabled = sleep_enabled;
+    sc->motor_running = (uint8_t)((steppers[0].state == STATUS_RUNNING) ||
+                                  (steppers[1].state == STATUS_RUNNING));
+    sc->eeprom_dirty = eeprom_dirty;
+    sc->i2c_busy = i2c_is_busy();
+}
 
 /* Private function prototypes ---------------------------------------*/
 /* Private functions ---------------------------------------------------------*/
@@ -66,7 +94,8 @@ void main(void)
     
     uint8_t led_state = 0;
     uint32_t last_led_tick = 0;
-    
+    uint8_t sleep_state = SLEEP_STATE_AWAKE;
+
     /* Infinite loop */
     while (1)
     {
@@ -90,6 +119,71 @@ void main(void)
         }
         
         eeprom_periodic_save();
+
+        /* I2C-idle sleep: after SLEEP_IDLE_MS of bus silence (and with no
+           motion, transfer or pending frame) the core enters a chain of
+           Active-halt slices.  Each AWU slice reloads the IWDG, so the
+           watchdog never expires; the I2C address match wakes the core. */
+        {
+            sleep_conditions sc;
+            uint8_t action;
+
+            sleep_read_conditions(&sc);
+            action = sleep_next_action(sleep_state, &sc);
+
+            if (action == SLEEP_ACTION_SAVE)
+            {
+                /* Persist the positions before the tick stops; respects the
+                   "no Flash programming while stepping" rule. */
+                eeprom_force_save();
+                sleep_state = SLEEP_STATE_FORCE_SAVE;
+            }
+            else if (action == SLEEP_ACTION_HALT)
+            {
+                /* Atomic check-then-halt window: mask interrupts, re-check,
+                   then HALT.  A frame that arrives in this window still wakes
+                   the core (the I2C slave stretches SCL) and its ISR runs
+                   after rim(), so it is not lost. */
+                __asm__("sim");
+                sleep_read_conditions(&sc);
+                if (sleep_can_enter(&sc))
+                {
+                    g_sleep_state = SLEEP_STATE_ASLEEP;
+                    GPIO_WriteLow(GPIOD, GPIO_PIN_4);   /* LED off */
+                    hw_sleep_enter();
+
+                    if (hw_sleep_wake_awu())
+                    {
+                        if (g_wake_by_awu != 0xFF)
+                            g_wake_by_awu++;
+                    }
+                    else
+                    {
+                        if (g_wake_by_i2c != 0xFF)
+                            g_wake_by_i2c++;
+                    }
+
+                    hw_sleep_exit();
+                    if (g_sleep_entries != 0xFFFF)
+                        g_sleep_entries++;
+                    g_sleep_state = SLEEP_STATE_AWAKE;
+                    sleep_state = SLEEP_STATE_AWAKE;
+                    /* system_ticks is frozen across Halt, so restart the LED
+                       phase from the current value. */
+                    last_led_tick = system_ticks;
+                }
+                __asm__("rim");
+            }
+            else if (action == SLEEP_ACTION_WAKE)
+            {
+                g_sleep_state = SLEEP_STATE_AWAKE;
+                sleep_state = SLEEP_STATE_AWAKE;
+            }
+            else
+            {
+                sleep_state = SLEEP_STATE_AWAKE;
+            }
+        }
         
         /* LED blink every 500ms */
         if (system_ticks - last_led_tick >= 500)

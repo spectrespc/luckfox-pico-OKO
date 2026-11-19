@@ -12,6 +12,15 @@
 
 static int verbose = 1;
 
+/* Write-phase retry budget.  The STM8 wakes from Active-halt on the address
+ * match, but the HSI start-up latency can make the very first frame after a
+ * sleep period fail with EREMOTEIO (no ACK).  Retrying the address phase is
+ * the same fix that was applied to the STM32 EC transport.
+ * Only address-phase failures (write() < 0) are retried: a partial frame is
+ * not replayed, so a move command can never be executed twice. */
+#define I2C_WRITE_RETRIES 2
+#define I2C_WRITE_RETRY_US 2000
+
 void i2c_host_set_quiet(int quiet)
 {
     verbose = quiet ? 0 : 1;
@@ -20,6 +29,7 @@ void i2c_host_set_quiet(int quiet)
 int i2c_host_open(const char *device, uint8_t address)
 {
     int fd = open(device, O_RDWR);
+    int timeout = 100;         /* 100 * 10 ms = 1 s */
 
     if (fd < 0)
     {
@@ -35,6 +45,15 @@ int i2c_host_open(const char *device, uint8_t address)
         close(fd);
         return -1;
     }
+    /* The STM8 stretches SCL while it programs/erases Flash (the CPU stalls
+       with interrupts disabled).  The rk3x default timeout is shorter than a
+       bootloader erase+write burst, so the adapter aborts mid-transaction and
+       the slave is left holding SCL.  One second covers the documented
+       tPROG/tERASE worst cases with a margin. */
+    if (ioctl(fd, I2C_TIMEOUT, timeout) < 0)
+    {
+        /* Not fatal: some adapters do not implement it. */
+    }
     return fd;
 }
 
@@ -46,16 +65,25 @@ void i2c_host_close(int fd)
 
 int i2c_host_write(int fd, const uint8_t *buf, size_t len)
 {
-    ssize_t n = write(fd, buf, len);
+    unsigned attempt;
+    ssize_t n = -1;
 
-    if (n != (ssize_t)len)
+    for (attempt = 0; attempt < I2C_WRITE_RETRIES; attempt++)
     {
-        if (verbose)
-            fprintf(stderr, "i2c write failed (%zd/%zu): %s\n", n, len,
-                    strerror(errno));
-        return -1;
+        if (attempt)
+            usleep(I2C_WRITE_RETRY_US);
+
+        n = write(fd, buf, len);
+        if (n == (ssize_t)len)
+            return 0;
+        if (n >= 0)
+            break;             /* partial transfer: do not replay it */
     }
-    return 0;
+
+    if (verbose)
+        fprintf(stderr, "i2c write failed (%zd/%zu): %s\n", n, len,
+                n < 0 ? strerror(errno) : "short write");
+    return -1;
 }
 
 int i2c_host_transfer(int fd, const uint8_t *wbuf, size_t wlen,

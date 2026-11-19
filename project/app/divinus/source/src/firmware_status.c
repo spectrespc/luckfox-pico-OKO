@@ -30,6 +30,13 @@ typedef struct {
     char boot_version[16];
     int address;
     long age;
+    /* I2C-idle sleep (firmware 2.2.0+); valid=0 when the query failed. */
+    int sleep_valid;
+    int sleep_mode;
+    int sleep_state;
+    unsigned sleep_entries;
+    unsigned sleep_wake_i2c;
+    unsigned sleep_wake_awu;
 } fw_stm8;
 
 static pthread_mutex_t fw_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -159,6 +166,23 @@ static void poll_stm8(void)
             strcpy(next.state, "app");
             snprintf(next.version, sizeof(next.version), "%u.%u.%u",
                      version[0], version[1], version[2]);
+            /* GET_SLEEP exists since 2.2.0.  On older firmware the opcode is
+               ignored and would return stale bytes, so gate it on the
+               version instead of trusting the reply. */
+            if (version[0] > 2 || (version[0] == 2 && version[1] >= 2))
+            {
+                fm_sleep sleep;
+
+                if (focus_motor_get_sleep(&sleep) == FM_OK)
+                {
+                    next.sleep_valid = 1;
+                    next.sleep_mode = sleep.enabled;
+                    next.sleep_state = sleep.state;
+                    next.sleep_entries = sleep.entries;
+                    next.sleep_wake_i2c = sleep.wake_i2c;
+                    next.sleep_wake_awu = sleep.wake_awu;
+                }
+            }
         }
         else
         {
@@ -273,11 +297,17 @@ char *firmware_status_json(void)
             "\"version\":%s,\"proto\":%d,\"device_type\":%d,\"age\":%ld},"
             "\"stm8\":{\"present\":%s,\"state\":\"%s\","
             "\"version\":%s,\"boot_version\":%s,"
-            "\"address\":%d,\"age\":%ld,\"stale\":%s}}",
+            "\"address\":%d,\"age\":%ld,\"stale\":%s,"
+            "\"sleep_mode\":%d,\"sleep_state\":%d,"
+            "\"sleep_entries\":%u,\"sleep_wake_i2c\":%u,"
+            "\"sleep_wake_awu\":%u}}",
             ec.present ? "true" : "false", ec.state, v32, ec.proto,
             ec.device_type, ec.age,
             mo.present ? "true" : "false", mo.state, v8, b8,
-            mo.address, mo.age, focus_motor_suspended() ? "true" : "false");
+            mo.address, mo.age, focus_motor_suspended() ? "true" : "false",
+            mo.sleep_valid ? mo.sleep_mode : -1,
+            mo.sleep_valid ? mo.sleep_state : -1,
+            mo.sleep_entries, mo.sleep_wake_i2c, mo.sleep_wake_awu);
     }
     return buffer;
 }

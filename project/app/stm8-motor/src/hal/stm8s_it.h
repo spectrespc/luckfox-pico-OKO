@@ -49,8 +49,12 @@
    Therefore main.c MUST include this header, and only the handlers actually
    implemented in stm8s_it.c are declared here, each with its correct STM8S103
    vector number (RM0016, STM8S103 interrupt vector table):
-     19 = I2C
+     1  = AWU (Active-halt timed wake-up)
+     19 = I2C (also WUFH wake-up from Halt/Active-halt)
      23 = TIM4 update/overflow                                              */
+
+/* Auto wake-up interrupt handler (vector 1) */
+INTERRUPT_HANDLER(AWU_IRQHandler, 1);
 
 /* I2C interrupt handler (vector 19) */
 INTERRUPT_HANDLER(I2C_IRQHandler, 19);

@@ -480,6 +480,39 @@ def main():
         page.screenshot(path=os.path.join(SHOTS, "events-upload.png"),
                         full_page=True)
 
+        # Events: the MQTT card shares the Apply/dirty model; the password is
+        # write-only and the status fields are rendered next to the form.
+        for selector in ("#mqtt_enable", "#mqtt_host", "#mqtt_login",
+                         "#mqtt_password", "#mqtt_topic_prefix",
+                         "#mqtt_client_id", "#mqtt_keepalive_s",
+                         "#mqtt_telemetry_interval_s", "#mqtt_publish_events",
+                         "#mqtt_publish_telemetry", "#mqtt_connected",
+                         "#mqtt_sent", "#mqtt_failed", "#mqtt_last_error"):
+            if page.locator(selector).count() == 0:
+                failures.append("MQTT card element %s is missing" % selector)
+        note = page.text_content("[data-i18n='mqtt_note']") or ""
+        if "QoS1" not in note or "retained" not in note:
+            failures.append("the MQTT card note is incomplete")
+        page.evaluate(
+            "() => applyValues('mqtt', {enable: true,"
+            " host: '192.168.52.200:1883', password: true, connected: true,"
+            " sent: 3, last_error: ''})")
+        mqtt_fields = page.evaluate(
+            "() => [document.getElementById('mqtt_password').value,"
+            " document.getElementById('mqtt_host').value,"
+            " document.getElementById('mqtt_connected').textContent,"
+            " document.getElementById('mqtt_sent').textContent]")
+        if mqtt_fields[0] != "":
+            failures.append("the MQTT card echoes the password: %r"
+                            % (mqtt_fields[0],))
+        if mqtt_fields[1] != "192.168.52.200:1883" or \
+                mqtt_fields[2] in ("", "true", "false") or \
+                mqtt_fields[3] != "3":
+            failures.append("the MQTT card did not render the status: %r"
+                            % (mqtt_fields,))
+        page.evaluate("() => apiRead('mqtt')")
+        page.wait_for_timeout(300)
+
         # Model upload/activate/delete through the UI.  The synthetic file is
         # stored but cannot be loaded by rknn_init: the error toast must show
         # the server reason and the row must still be deletable.

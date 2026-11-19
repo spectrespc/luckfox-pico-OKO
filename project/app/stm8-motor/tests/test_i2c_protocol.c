@@ -77,6 +77,8 @@ static void test_required_len(void)
     CHECK(i2c_required_len(0x07) == 1); /* enter-boot */
     CHECK(i2c_required_len(0x08) == 1); /* get role + version */
     CHECK(i2c_required_len(0x09) == 6); /* set position (int32 payload) */
+    CHECK(i2c_required_len(0x0A) == 1); /* get sleep (no payload) */
+    CHECK(i2c_required_len(0x0B) == 3); /* set sleep: mode + idle seconds */
     CHECK(i2c_required_len(0x42) == 1); /* unknown    */
 }
 

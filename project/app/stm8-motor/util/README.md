@@ -33,6 +33,8 @@ Commands:
   speed <motor> <speed>  Set motor speed
   move <motor> <steps>  Move motor by steps
   set-pos <motor> <value>  Force the logical position (no motion, 2.0.2+)
+  sleep on|off [seconds]  Enable/disable I2C-idle sleep (2.2.0+; default 3 s)
+  sleep show     Sleep mode, state and wake-up counters (2.2.0+)
   home <motor> [speed]  Drive to the negative stop, then zero (bench)
   position <motor>    Get motor position
   status <motor>  Get motor status
@@ -87,6 +89,14 @@ motorctl home focus 300
 Reset controller:
 ```bash
 motorctl reset
+```
+
+Enable I2C-idle sleep after 3 s of bus silence, then read the counters
+(firmware 2.2.0+; the production build ships with the feature off):
+```bash
+motorctl sleep on
+motorctl sleep show
+motorctl sleep off
 ```
 
 ## Requirements

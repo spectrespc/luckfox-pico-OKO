@@ -1,0 +1,58 @@
+name: oko-mqtt
+
+# MQTT chain for the bench: a password-protected mosquitto broker on 1883 and
+# a recorder that subscribes to oko/# and keeps the JSON traffic under
+# output/srv/mqtt/.  Both use the host network like the other profiles:
+# the camera publishes to 192.168.52.200:1883 and the operator opens
+# http://192.168.52.200:8092/.
+#
+# Defaults are the public bench credentials from TESTBENCH.md; override them
+# with OKO_MQTT_* env vars for anything beyond the lab.
+
+services:
+  oko-mqtt-broker:
+    image: eclipse-mosquitto:2.0.20
+    container_name: oko-mqtt-broker
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      OKO_MQTT_USER: ${OKO_MQTT_USER:-oko}
+      OKO_MQTT_PASS: ${OKO_MQTT_PASS:-oko}
+      OKO_MQTT_REC_USER: ${OKO_MQTT_REC_USER:-oko-rec}
+      OKO_MQTT_REC_PASS: ${OKO_MQTT_REC_PASS:-oko-rec}
+    volumes:
+      - ./conf/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./conf/acl.conf:/mosquitto/config/acl.conf:ro
+      - ./conf/entrypoint.sh:/docker-entrypoint.sh:ro
+      - ../../output/srv/mqtt/broker:/mosquitto/data
+    entrypoint: ["/bin/sh", "/docker-entrypoint.sh"]
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          mosquitto_pub -h 127.0.0.1 -p 1883
+          -u "$${OKO_MQTT_USER}" -P "$${OKO_MQTT_PASS}"
+          -t "oko/health" -m probe
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  oko-mqtt-recorder:
+    build: .
+    image: oko-mqtt-recorder:latest
+    container_name: oko-mqtt-recorder
+    network_mode: host
+    restart: unless-stopped
+    depends_on:
+      oko-mqtt-broker:
+        condition: service_healthy
+    environment:
+      MQTT_BROKER: ${MQTT_BROKER:-127.0.0.1}
+      MQTT_PORT: ${MQTT_PORT:-1883}
+      MQTT_REC_USER: ${OKO_MQTT_REC_USER:-oko-rec}
+      MQTT_REC_PASS: ${OKO_MQTT_REC_PASS:-oko-rec}
+      MQTT_REC_DIR: /data
+      # Retention for the JSON archive; the bench keeps weeks of events.
+      MQTT_REC_MAX_MB: ${MQTT_REC_MAX_MB:-16}
+    volumes:
+      - ../../output/srv/mqtt/recorder:/data

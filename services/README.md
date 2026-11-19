@@ -7,7 +7,8 @@
 - **опционально** — WireGuard, AmneziaWG, OpenVPN по готовому паттерну.
 
 Отдельно живут профили `services/stream/` (приёмник UDP/RTP MediaMTX),
-`services/events/` (приём событий камеры) и `services/converter/`
+`services/events/` (приём событий камеры), `services/mqtt/` (брокер MQTT и
+JSON-рекордер) и `services/converter/`
 (web-конвертер ONNX → RKNN); они не входят в этот контейнер и поднимаются
 своими профилями compose.
 
@@ -190,6 +191,54 @@ curl -fsS 'http://127.0.0.1:8090/api/heartbeats?limit=20&expected_s=60' | head
 
 Сквозная проверка — `bench/run.sh heartbeat_check.py` (тихие циклы, motion,
 `--neg` при выключенном приёмнике).
+
+## Брокер MQTT и рекордер: `services/mqtt/`
+
+Профиль `oko-mqtt` поднимает два контейнера с `network_mode: host`:
+
+- `oko-mqtt-broker` — `eclipse-mosquitto:2.0.20` на **1883** с обязательной
+  аутентификацией. Пароли задаются переменными окружения, в git попадают
+  только стендовые дефолты: устройство `oko`/`oko`, рекордер `oko-rec`/`oko-rec`
+  (`OKO_MQTT_USER`, `OKO_MQTT_PASS`, `OKO_MQTT_REC_USER`, `OKO_MQTT_REC_PASS`).
+  `conf/entrypoint.sh` генерирует `mosquitto.passwd` в `output/srv/mqtt/broker/`,
+  ACL (`conf/acl.conf`): устройство пишет и читает `oko/#`, рекордер — только
+  читает. TLS нет.
+- `oko-mqtt-recorder` — HTTP-API на **8092** (`python:3.12-slim`, пины
+  `fastapi==0.115.6`, `uvicorn==0.34.0`, `paho-mqtt==2.1.0`), подписка на
+  `oko/#`, архив в `output/srv/mqtt/recorder/`:
+  `events/<ГГГГ-ММ-ДД>.jsonl`, `telemetry/<id>.json`, `status/<id>.json`,
+  `messages.log.jsonl`; retention `MQTT_REC_MAX_MB` (по умолчанию 16 МиБ).
+
+Темы и payload (JSON, без картинок):
+
+- `oko/<id>/event` — QoS1, по одному сообщению на событие:
+  `{"type":"motion|yolo|clip|heartbeat","event_id":"...","cause":"...",`
+  `"model":"...","ts_ms":N,...}`; у `clip` есть `duration_ms`/`bytes`, у
+  `motion` — `area_permille`, у `heartbeat` — `idle_s`,
+  `motion_area_permille`, `sleep`, `wake_cycle`;
+- `oko/<id>/telemetry` — QoS0, retained, `{"ts":N,"available":bool,"data":…}`
+  из `/tmp/oko-ec.json` (устаревший файл — `available:false`,`age`);
+- `oko/<id>/status` — retained `{"online":true,"fw":"…"}`, LWT брокера —
+  `{"online":false}`.
+
+```sh
+docker compose -f services/mqtt/docker-compose.yml up -d --build
+docker compose -f services/mqtt/docker-compose.yml logs -f
+curl -fsS http://127.0.0.1:8092/health
+curl -fsS 'http://127.0.0.1:8092/api/events?limit=20'
+# брокер видит сообщения только с паролем (без пароля — отказ):
+docker exec oko-mqtt-broker mosquitto_sub -h 127.0.0.1 -u oko -P oko \
+  -t 'oko/#' -W 10 -C 1
+docker compose -f services/mqtt/docker-compose.yml down
+```
+
+Рекордер отдаёт `/health`, `/api/messages?topic=&limit=`, `/api/events?limit=`,
+`/api/telemetry`, `/api/status` и минимальную HTML-страницу на `/`.
+Камера настраивается в `[mqtt]` (`host: 192.168.52.200:1883`, `enable: true`)
+или живьём через WebUI → Events → «MQTT (события, телеметрия)»
+(`GET/POST /api/mqtt`). Сквозная проверка — `bench/run.sh mqtt_check.py`
+(`--neg` при выключенном профиле; bench-событие `POST /api/mqtt?test=1`
+требует запуска divinus с `OKO_BENCH_API=1`).
 
 ## Web-конвертер RKNN: `services/converter/`
 

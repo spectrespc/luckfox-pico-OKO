@@ -28,6 +28,7 @@
 #include <unistd.h>
 
 #include "app_config.h"
+#include "focus_motor.h"
 #include "hal/macros.h"
 #include "heartbeat_task.h"
 
@@ -739,6 +740,21 @@ int sleep_policy_suspend(void)
     *pmu_timeout = count;
     __sync_synchronize();
 
+    /* Put the STM8 focus/zoom controller into its I2C-idle sleep chain while
+       the AP is suspended.  Best effort: a missing motor controller must not
+       block the camera sleep path. */
+    if (app_config.focus_motor && app_config.motor_sleep_enable)
+    {
+        int src = focus_motor_set_sleep(1, app_config.motor_sleep_idle_s);
+
+        if (src != FM_OK)
+            HAL_WARNING("sleep", "cannot enable STM8 I2C-idle sleep: %s\n",
+                        focus_motor_error(src));
+        else
+            HAL_INFO("sleep", "STM8 I2C-idle sleep enabled (idle %u s)\n",
+                     app_config.motor_sleep_idle_s);
+    }
+
     HAL_INFO("sleep", "suspending: PMU timeout %u ticks (%u s), aov %s\n",
              count, app_config.sleep_wake_interval_s,
              aov_armed ? "armed" : "off");
@@ -757,6 +773,20 @@ int sleep_policy_suspend(void)
         last_motion = mono_now();
         pthread_mutex_unlock(&lock);
         return -1;
+    }
+
+    /* Resume: turn the STM8 sleep off and prove that the controller answers
+       again before anything else talks to it. */
+    if (app_config.focus_motor)
+    {
+        uint8_t version[3];
+        int src = focus_motor_set_sleep(0, 0);
+
+        if (src != FM_OK)
+            HAL_WARNING("sleep", "cannot disable STM8 sleep after resume: %s\n",
+                        focus_motor_error(src));
+        if (focus_motor_read_app_version(version) != FM_OK)
+            HAL_WARNING("sleep", "STM8 did not answer after resume\n");
     }
 
     ec_set_state("awake");

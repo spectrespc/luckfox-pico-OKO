@@ -97,6 +97,31 @@ externally.
 - DRV8833 VM: 2.7–10.8 V, up to 1.5 A per bridge
 - Keep the MCU supply (3.3 V/5 V) separate from VM where possible
 
+## Power Management
+
+The application has an I2C-idle sleep mode (firmware 2.2.0+; on by default on
+the `BOARD=test` build, off on `BOARD=oko` until the host enables it).
+
+| Mode | Entry | Wake-up | Typical current |
+|---|---|---|---|
+| Run (HSI 16 MHz, motors off) | after reset | — | `~1.7 mA` (datasheet HSI run mode) |
+| Active-halt slices (400 ms nominal) | `SLEEP_IDLE_MS` of bus silence | I2C address match or AWU | to be measured on the bench; between the Run value and the Halt value |
+| Halt (reference, not used) | — | I2C/EXTI only | `~62 µA @ 3.3 V` with Flash operating, `~4.5 µA` with Flash power-down |
+
+Why Active-halt and not Halt: the IWDG is enabled at boot and cannot be
+disabled without a reset (STM8S datasheet §4.7), and it keeps counting in
+Halt.  The AWU and the IWDG share the 128 kHz LSI, so a 51200-LSI-period slice
+(`APR=24`, `TBR=12`) is exactly 80 % of the `250*256` LSI IWDG window and the
+watchdog is reloaded on every wake-up, independent of the LSI tolerance.
+
+Wake-up sources are fixed by the STM8S003F3 datasheet (Table 11): the I2C
+address match wakes from Halt and Active-halt, EXTI does too, the AWU wakes
+from Active-halt only, and TIM4 wakes from neither.  TIM4 is therefore
+stopped and its pending flag cleared before HALT.
+
+`system_ticks` stops during Halt, so the 2 s I2C self-reset and every other
+tick-based timeout freeze while the controller sleeps.
+
 ## PCB Layout Notes
 - I²C traces: keep short, avoid crosstalk
 - Coil traces: keep the two coils of a motor together; watch VM/GND current paths

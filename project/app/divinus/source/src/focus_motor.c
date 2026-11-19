@@ -14,11 +14,19 @@
 #define FM_APP_DELAY_US   2000u
 #define FM_BOOT_DELAY_US  5000u
 #define FM_RETRIES        3
+/* The first frame after the STM8 wakes from Active-halt can be lost to the
+   HSI start-up latency (no ACK on the address phase).  Mirror the STM32 EC
+   fix: retry only an address-phase failure, never a partial frame, so a move
+   command cannot be executed twice. */
+#define FM_WRITE_RETRIES  2
+#define FM_WRITE_RETRY_US 2000u
 #define FM_LOCK_PATH      "/run/oko-motor.lock"
 #define FM_LOCK_FALLBACK  "/tmp/oko-motor.lock"
 
 /* Protocol values mirrored from stm8-motor/src/common/oko_boot.h. */
 #define FM_CMD_GET_STATE   0x08
+#define FM_CMD_GET_SLEEP   0x0A
+#define FM_CMD_SET_SLEEP   0x0B
 #define FM_ROLE_APP        0x00
 #define FM_BOOT_CMD_INFO   0x10
 #define FM_BOOT_WRITE_MAX  32
@@ -79,7 +87,30 @@ static int fm_open(void)
         close(fd);
         return -1;
     }
+    /* The STM8 stretches SCL while programming/erasing Flash; the adapter
+       default is shorter than a bootloader burst and aborts mid-transaction. */
+    if (ioctl(fd, I2C_TIMEOUT, 100) < 0)
+    {
+        /* Not fatal: the adapter may not implement it. */
+    }
     return fd;
+}
+
+static int fm_write(int fd, const uint8_t *buf, size_t len)
+{
+    for (int attempt = 0; attempt < FM_WRITE_RETRIES; attempt++)
+    {
+        ssize_t n;
+
+        if (attempt)
+            usleep(FM_WRITE_RETRY_US);
+        n = write(fd, buf, len);
+        if (n == (ssize_t)len)
+            return 0;
+        if (n >= 0)
+            return -1;         /* partial transfer: do not replay it */
+    }
+    return -1;
 }
 
 static int fm_transfer(int fd, const uint8_t *wbuf, size_t wlen,
@@ -88,7 +119,7 @@ static int fm_transfer(int fd, const uint8_t *wbuf, size_t wlen,
 {
     ssize_t n;
 
-    if (!wbuf || write(fd, wbuf, wlen) != (ssize_t)wlen)
+    if (!wbuf || fm_write(fd, wbuf, wlen))
         return -1;
 
     for (int attempt = 0; attempt < retries; attempt++)
@@ -232,7 +263,7 @@ static int fm_app_write(const uint8_t *req, size_t req_len)
         fm_end(lock);
         return FM_ERR_IO;
     }
-    rc = write(fd, req, req_len) == (ssize_t)req_len ? 0 : -1;
+    rc = fm_write(fd, req, req_len) == 0 ? 0 : -1;
     close(fd);
     fm_end(lock);
     return rc == 0 ? FM_OK : FM_ERR_IO;
@@ -278,6 +309,37 @@ int focus_motor_read_boot_info(uint8_t info[8])
     /* BOOT_INFO reports max block 32 in byte 6 and state 1 in byte 7. */
     if (info[6] != FM_BOOT_WRITE_MAX || info[7] != FM_BOOT_STATE_BOOT)
         return FM_ERR_NO_DEVICE;
+    return FM_OK;
+}
+
+int focus_motor_set_sleep(int enable, unsigned idle_s)
+{
+    uint8_t req[3];
+
+    req[0] = FM_CMD_SET_SLEEP;
+    req[1] = enable ? 1 : 0;
+    req[2] = (uint8_t)((idle_s > 60) ? 60 : idle_s);  /* 0 = default 3 s */
+    return fm_app_write(req, sizeof(req));
+}
+
+int focus_motor_get_sleep(fm_sleep *out)
+{
+    uint8_t req[1];
+    uint8_t resp[8];
+    int rc;
+
+    if (!out)
+        return FM_ERR_PARAM;
+    req[0] = FM_CMD_GET_SLEEP;
+    rc = fm_app_read(req, sizeof(req), resp, sizeof(resp));
+    if (rc != FM_OK)
+        return rc;
+    out->enabled = resp[0] ? 1 : 0;
+    out->state = resp[1];
+    out->slice_ms = (unsigned)resp[2] * 10u;
+    out->entries = ((unsigned)resp[4] << 8) | resp[5];
+    out->wake_i2c = resp[6];
+    out->wake_awu = resp[7];
     return FM_OK;
 }
 

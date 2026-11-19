@@ -16,7 +16,9 @@
 #include "focus_proto.h"
 #include "firmware_status.h"
 #include "gating.h"
+#include "http_post.h"
 #include "ivs_events.h"
+#include "mqtt_post.h"
 #include "ntp.h"
 #include "update.h"
 #include "vpn.h"
@@ -1326,6 +1328,45 @@ static int http_post_url_valid(const char *url)
         unsigned char c = (unsigned char)*p;
 
         if (c <= ' ' || c == 0x7f) return 0;
+    }
+    return 1;
+}
+
+/* MQTT topic prefix: '/'-separated segments of [A-Za-z0-9_-].  Wildcards,
+ * '+'/'#' and empty segments would silently widen or break the subscriptions
+ * of the bench recorder. */
+static int mqtt_topic_prefix_valid(const char *prefix)
+{
+    size_t length;
+
+    if (!prefix || !(length = strlen(prefix)) || length > 63) return 0;
+    if (prefix[0] == '/' || prefix[length - 1] == '/') return 0;
+    if (strstr(prefix, "//")) return 0;
+    for (const char *p = prefix; *p; p++) {
+        char c = *p;
+
+        if (c == '/') continue;
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || c == '_' || c == '-')
+            continue;
+        return 0;
+    }
+    return 1;
+}
+
+/* Empty client id is allowed and means "derive it from the MAC".  A 23-byte
+ * limit is the MQTT 3.1.1 server compatibility range. */
+static int mqtt_client_id_valid(const char *id)
+{
+    if (!id || !*id) return 1;
+    if (strlen(id) > 23) return 0;
+    for (const char *p = id; *p; p++) {
+        char c = *p;
+
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || c == '_' || c == '-')
+            continue;
+        return 0;
     }
     return 1;
 }
@@ -3716,6 +3757,239 @@ void respond_request(http_request_t *req) {
                 escLogin, app_config.http_post_width, app_config.http_post_height,
                 app_config.http_post_interval, app_config.http_post_qfactor,
                 escReceiver, passwordSet ? "true" : "false", note);
+        }
+        send_and_close(req->clntFd, response, respLen);
+        return;
+    }
+
+    /* OKO: [mqtt] event/telemetry publisher.  The sender thread owns the
+     * socket; the API stores the configuration, starts/stops the thread on an
+     * enable transition and asks it to reconnect after a connection change
+     * (no SIGHUP and no stream restart, same as [http_post]). */
+    if (EQUALS(req->uri, "/api/mqtt")) {
+        const char *note = "MQTT settings applied";
+
+        if (req->query) {
+            char host[sizeof(app_config.mqtt_host)];
+            char login[sizeof(app_config.mqtt_login)];
+            char password[sizeof(app_config.mqtt_password)];
+            char prefix[sizeof(app_config.mqtt_topic_prefix)];
+            char clientId[sizeof(app_config.mqtt_client_id)];
+            unsigned int keepalive = app_config.mqtt_keepalive_s;
+            unsigned int telemetry = app_config.mqtt_telemetry_interval_s;
+            bool publishEvents = app_config.mqtt_publish_events;
+            bool publishTelemetry = app_config.mqtt_publish_telemetry;
+            bool enable = app_config.mqtt_enable;
+            bool wasEnabled = app_config.mqtt_enable;
+            bool test = false;
+            bool connectionChanged;
+
+            snprintf(host, sizeof(host), "%s", app_config.mqtt_host);
+            snprintf(login, sizeof(login), "%s", app_config.mqtt_login);
+            snprintf(password, sizeof(password), "%s",
+                app_config.mqtt_password);
+            snprintf(prefix, sizeof(prefix), "%s",
+                app_config.mqtt_topic_prefix);
+            snprintf(clientId, sizeof(clientId), "%s",
+                app_config.mqtt_client_id);
+
+            while (req->query) {
+                char *value = split(&req->query, "&");
+                char *key;
+
+                if (!value || !*value) continue;
+                key = split(&value, "=");
+                if (!key || !*key) continue;
+                if (value) unescape_uri(value);
+
+                if (EQUALS(key, "enable")) {
+                    enable = query_bool(value) ? true : false;
+                } else if (EQUALS(key, "host")) {
+                    if (strlen(value ? value : "") >= sizeof(host)) {
+                        reply_bad_request(req->clntFd,
+                            "mqtt.host is too long", "shorten the host");
+                        return;
+                    }
+                    snprintf(host, sizeof(host), "%s", value ? value : "");
+                } else if (EQUALS(key, "login")) {
+                    if (strlen(value ? value : "") >= sizeof(login)) {
+                        reply_bad_request(req->clntFd,
+                            "mqtt.login is too long", "shorten the login");
+                        return;
+                    }
+                    snprintf(login, sizeof(login), "%s", value ? value : "");
+                } else if (EQUALS(key, "password")) {
+                    /* Write-only, like http_post: an empty field keeps the
+                     * stored value. */
+                    if (strlen(value ? value : "") >= sizeof(password)) {
+                        reply_bad_request(req->clntFd,
+                            "mqtt.password is too long",
+                            "shorten the password");
+                        return;
+                    }
+                    if (value && *value)
+                        snprintf(password, sizeof(password), "%s", value);
+                } else if (EQUALS(key, "topic_prefix")) {
+                    if (strlen(value ? value : "") >= sizeof(prefix)) {
+                        reply_bad_request(req->clntFd,
+                            "mqtt.topic_prefix is too long",
+                            "shorten the topic prefix");
+                        return;
+                    }
+                    snprintf(prefix, sizeof(prefix), "%s",
+                        value ? value : "");
+                } else if (EQUALS(key, "client_id")) {
+                    if (strlen(value ? value : "") >= sizeof(clientId)) {
+                        reply_bad_request(req->clntFd,
+                            "mqtt.client_id is too long",
+                            "use at most 23 characters");
+                        return;
+                    }
+                    snprintf(clientId, sizeof(clientId), "%s",
+                        value ? value : "");
+                } else if (EQUALS(key, "keepalive_s")) {
+                    long v;
+                    if (!value || !parse_ranged(value, 5, 3600, &v)) {
+                        reply_bad_request(req->clntFd,
+                            "invalid mqtt.keepalive_s", "use 5..3600 seconds");
+                        return;
+                    }
+                    keepalive = (unsigned int)v;
+                } else if (EQUALS(key, "telemetry_interval_s")) {
+                    long v;
+                    if (!value || !parse_ranged(value, 1, 86400, &v)) {
+                        reply_bad_request(req->clntFd,
+                            "invalid mqtt.telemetry_interval_s",
+                            "use 1..86400 seconds");
+                        return;
+                    }
+                    telemetry = (unsigned int)v;
+                } else if (EQUALS(key, "publish_events")) {
+                    publishEvents = query_bool(value) ? true : false;
+                } else if (EQUALS(key, "publish_telemetry")) {
+                    publishTelemetry = query_bool(value) ? true : false;
+                } else if (EQUALS(key, "test")) {
+                    /* Bench-only synthetic event, gated like the sleep motion
+                     * injector; it goes through the normal queue and topic. */
+                    test = query_bool(value) ? true : false;
+                }
+            }
+
+            if (!http_post_host_valid(host)) {
+                reply_bad_request(req->clntFd,
+                    "invalid mqtt.host",
+                    "use host or host:port, or none to disable");
+                return;
+            }
+            if (!mqtt_topic_prefix_valid(prefix)) {
+                reply_bad_request(req->clntFd,
+                    "invalid mqtt.topic_prefix",
+                    "use /-separated letters, digits, '-' and '_'");
+                return;
+            }
+            if (!mqtt_client_id_valid(clientId)) {
+                reply_bad_request(req->clntFd,
+                    "invalid mqtt.client_id",
+                    "use up to 23 letters, digits, '-' or '_'; empty derives it "
+                    "from the MAC");
+                return;
+            }
+            if (enable && (!host[0] || EQUALS_CASE(host, "none"))) {
+                reply_bad_request(req->clntFd,
+                    "mqtt.host is not set",
+                    "set the broker host before enabling the publisher");
+                return;
+            }
+            if (test && !getenv("OKO_BENCH_API")) {
+                reply_bad_request(req->clntFd,
+                    "the MQTT test event is bench-only",
+                    "start divinus with OKO_BENCH_API=1");
+                return;
+            }
+
+            connectionChanged =
+                strcmp(host, app_config.mqtt_host) ||
+                strcmp(login, app_config.mqtt_login) ||
+                strcmp(password, app_config.mqtt_password) ||
+                strcmp(prefix, app_config.mqtt_topic_prefix) ||
+                strcmp(clientId, app_config.mqtt_client_id) ||
+                keepalive != app_config.mqtt_keepalive_s;
+
+            snprintf(app_config.mqtt_host, sizeof(app_config.mqtt_host), "%s",
+                host);
+            snprintf(app_config.mqtt_login, sizeof(app_config.mqtt_login),
+                "%s", login);
+            snprintf(app_config.mqtt_password, sizeof(app_config.mqtt_password),
+                "%s", password);
+            snprintf(app_config.mqtt_topic_prefix,
+                sizeof(app_config.mqtt_topic_prefix), "%s", prefix);
+            snprintf(app_config.mqtt_client_id,
+                sizeof(app_config.mqtt_client_id), "%s", clientId);
+            app_config.mqtt_keepalive_s = keepalive;
+            app_config.mqtt_telemetry_interval_s = telemetry;
+            app_config.mqtt_publish_events = publishEvents;
+            app_config.mqtt_publish_telemetry = publishTelemetry;
+            app_config.mqtt_enable = enable;
+
+            if (!enable) {
+                if (wasEnabled) mqtt_post_stop();
+                note = "MQTT publisher stopped";
+            } else if (!wasEnabled) {
+                mqtt_post_start();
+                note = "MQTT publisher started";
+            } else if (connectionChanged) {
+                mqtt_post_reload();
+                note = "MQTT settings applied, reconnecting";
+            }
+
+            if (test) {
+                char eventId[48];
+
+                snprintf(eventId, sizeof(eventId), "bench-%llu",
+                    (unsigned long long)time(NULL));
+                if (mqtt_post_event("test", eventId, "bench", "bench",
+                        (unsigned long long)time(NULL) * 1000ull, 0) ==
+                    EXIT_SUCCESS)
+                    note = "MQTT test event queued";
+                else
+                    note = "MQTT test event was not queued";
+            }
+
+            app_config_save();
+        }
+
+        {
+            char escHost[sizeof(app_config.mqtt_host) * 6 + 1];
+            char escLogin[sizeof(app_config.mqtt_login) * 6 + 1];
+            char escPrefix[sizeof(app_config.mqtt_topic_prefix) * 6 + 1];
+            char escClientId[sizeof(app_config.mqtt_client_id) * 6 + 1];
+            char status[640];
+            bool passwordSet = app_config.mqtt_password[0] &&
+                !EQUALS_CASE(app_config.mqtt_password, "none");
+
+            escape_json(escHost, app_config.mqtt_host, sizeof(escHost));
+            escape_json(escLogin, app_config.mqtt_login, sizeof(escLogin));
+            escape_json(escPrefix, app_config.mqtt_topic_prefix,
+                sizeof(escPrefix));
+            escape_json(escClientId, app_config.mqtt_client_id,
+                sizeof(escClientId));
+            mqtt_post_status_json(status, sizeof(status));
+            respLen = sprintf(response,
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: application/json;charset=UTF-8\r\n"
+                "Connection: close\r\n"
+                "\r\n"
+                "{\"enable\":%s,\"host\":\"%s\",\"login\":\"%s\","
+                "\"topic_prefix\":\"%s\",\"client_id\":\"%s\","
+                "\"keepalive_s\":%d,\"telemetry_interval_s\":%d,"
+                "\"publish_events\":%s,\"publish_telemetry\":%s,"
+                "\"password\":%s,%s,\"note\":\"%s\"}",
+                app_config.mqtt_enable ? "true" : "false", escHost, escLogin,
+                escPrefix, escClientId, app_config.mqtt_keepalive_s,
+                app_config.mqtt_telemetry_interval_s,
+                app_config.mqtt_publish_events ? "true" : "false",
+                app_config.mqtt_publish_telemetry ? "true" : "false",
+                passwordSet ? "true" : "false", status, note);
         }
         send_and_close(req->clntFd, response, respLen);
         return;

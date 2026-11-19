@@ -13,6 +13,7 @@
 
 void eeprom_init(void);
 void eeprom_periodic_save(void);
+uint8_t eeprom_force_save(void);
 uint16_t eeprom_crc16(uint8_t *data, uint8_t len);
 
 #endif

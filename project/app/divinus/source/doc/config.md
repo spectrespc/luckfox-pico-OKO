@@ -249,3 +249,28 @@ depacketize them.
 - **height**: Image height sent in pixels.
 - **interval**: Interval between requests in seconds.
 - **qfactor**: JPEG compression quality factor.
+
+## MQTT section
+
+JSON-only MQTT 3.1.1 publisher (events and `oko-ec` telemetry).  JPEG frames
+and clips stay on the `[http_post]` channel.  Topics are
+`<topic_prefix>/<client_id>/{event,telemetry,status}`.
+
+- **enable**: Boolean to start the sender thread.
+- **host**: Broker `host` or `host:port` (default port 1883); empty or `none`
+  disables publishing.
+- **login**, **password**: Optional CONNECT credentials; `none` is treated as
+  unset.  The password is plaintext in `/userdata/divinus.yaml`, the same
+  accepted limitation as `[http_post].password`.
+- **topic_prefix**: First topic segment (default `oko`); letters, digits, `-`
+  and `_`, `/`-separated.
+- **client_id**: MQTT client id, at most 23 characters; empty derives it from
+  the eth0 MAC (`oko-xxxx`, like the mDNS name).
+- **keepalive_s**: Keepalive interval, 5–3600 (default 60).
+- **telemetry_interval_s**: `/tmp/oko-ec.json` publish period, 1–86400
+  (default 30).  The payload mirrors `GET /api/telemetry`, including
+  `available:false` for a stale file.
+- **publish_events**: Publish `motion`, `yolo`, `clip` and `heartbeat` events
+  (default `true`).
+- **publish_telemetry**: Publish the retained telemetry topic (default
+  `true`).

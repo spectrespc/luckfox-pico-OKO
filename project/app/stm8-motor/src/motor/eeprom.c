@@ -36,7 +36,15 @@ for (int i = 0; i < 10; i++)
     }
 }
 
-void eeprom_periodic_save(void)
+/**
+  * @brief  Persist the positions if needed.
+  * @param  force  0: honour the 1 s hold-off (periodic path)
+  *                1: save immediately (sleep entry path; still refuses to
+  *                   program Flash while a motor is stepping)
+  * @retval 1 if the data is persisted (or was already clean), 0 if the save
+  *         was skipped and must be retried later.
+  */
+static uint8_t eeprom_save(uint8_t force)
 {
     uint32_t now;
     uint8_t data[10]; /* 8 bytes for positions + 2 bytes for checksum */
@@ -50,15 +58,18 @@ void eeprom_periodic_save(void)
     now = system_ticks;
     rim();
 
-    if (!eeprom_dirty || (now - eeprom_last_save_time) <= 1000)
-        return;
+    if (!eeprom_dirty)
+        return 1;
+
+    if (!force && (now - eeprom_last_save_time) <= 1000)
+        return 0;
 
     /* Never program while a motor is stepping. On STM8 the programming stall
        (up to ~30 ms for 10 bytes) stops the TIM4 update ISR, which would skip
        step generation (the DDA) and the nFAULT check, and would also block a
        safety STOP. STATUS_ERROR is not RUNNING, so error positions are saved. */
     if (steppers[0].state == STATUS_RUNNING || steppers[1].state == STATUS_RUNNING)
-        return;
+        return 0;
 
     /* Atomic snapshot of the 32-bit positions (written by the TIM4 ISR) */
     sim();
@@ -95,6 +106,22 @@ void eeprom_periodic_save(void)
     /* Mark as clean */
     eeprom_dirty = 0;
     eeprom_last_save_time = now;
+    return 1;
+}
+
+void eeprom_periodic_save(void)
+{
+    (void)eeprom_save(0);
+}
+
+/**
+  * @brief  Save the positions before the first sleep slice.  Bypasses the 1 s
+  *         hold-off so the data is on Flash before the core stops ticking, but
+  *         keeps the "no Flash programming while stepping" rule.
+  */
+uint8_t eeprom_force_save(void)
+{
+    return eeprom_save(1);
 }
 
 uint16_t eeprom_crc16(uint8_t *data, uint8_t len)

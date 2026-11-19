@@ -846,6 +846,57 @@ Receiver (services/events):
 			</div>
 
 			<div class="card">
+				<h3><span data-i18n="mqtt_card">MQTT (events, telemetry)</span></h3>
+				<div class="field"><label data-i18n="enabled">Enabled</label>
+					<div class="ctl"><select id="mqtt_enable" data-group="mqtt" data-k="enable"><option value="false">OFF</option><option value="true">ON</option></select></div></div>
+				<div class="field"><label data-i18n="mqtt_host">Broker host</label>
+					<div class="ctl"><input type="text" id="mqtt_host" data-group="mqtt" data-k="host" placeholder="192.168.52.200:1883"></div></div>
+				<div class="field"><label data-i18n="username">Username</label>
+					<div class="ctl"><input type="text" id="mqtt_login" data-group="mqtt" data-k="login" autocomplete="off"></div></div>
+				<div class="field"><label data-i18n="password">Password</label>
+					<div class="ctl"><input type="password" id="mqtt_password" data-group="mqtt" data-k="password" placeholder="(unchanged)" autocomplete="new-password"></div></div>
+				<div class="field"><label data-i18n="mqtt_prefix">Topic prefix</label>
+					<div class="ctl"><input type="text" id="mqtt_topic_prefix" data-group="mqtt" data-k="topic_prefix" placeholder="oko"></div></div>
+				<div class="field"><label data-i18n="mqtt_client_id">Client id (empty = MAC)</label>
+					<div class="ctl"><input type="text" id="mqtt_client_id" data-group="mqtt" data-k="client_id" maxlength="23" placeholder="oko-xxxx"></div></div>
+				<div class="field"><label data-i18n="mqtt_keepalive">Keepalive (s)</label>
+					<div class="ctl"><input type="number" id="mqtt_keepalive_s" data-group="mqtt" data-k="keepalive_s" min="5" max="3600"></div></div>
+				<div class="field"><label data-i18n="mqtt_telemetry">Telemetry interval (s)</label>
+					<div class="ctl"><input type="number" id="mqtt_telemetry_interval_s" data-group="mqtt" data-k="telemetry_interval_s" min="1" max="86400"></div></div>
+				<div class="field"><label data-i18n="mqtt_publish_events">Publish events</label>
+					<div class="ctl"><select id="mqtt_publish_events" data-group="mqtt" data-k="publish_events"><option value="false">OFF</option><option value="true">ON</option></select></div></div>
+				<div class="field"><label data-i18n="mqtt_publish_telemetry">Publish telemetry</label>
+					<div class="ctl"><select id="mqtt_publish_telemetry" data-group="mqtt" data-k="publish_telemetry"><option value="false">OFF</option><option value="true">ON</option></select></div></div>
+				<div class="actions">
+					<button type="button" class="btn primary" data-apply="mqtt" data-ep="mqtt" disabled data-i18n="apply">Apply</button>
+				</div>
+				<p class="note" data-i18n="mqtt_note">JSON only: motion, YOLO, clip and heartbeat events go to &lt;prefix&gt;/&lt;id&gt;/event (QoS1), the oko-ec snapshot to .../telemetry (retained), the online flag to .../status (LWT). JPEG frames and clips stay on the HTTP channel above. The device never reads the password back.</p>
+				<div class="field"><label data-i18n="mqtt_stat_connection">Connection</label>
+					<div class="ctl"><span id="mqtt_connected" class="hint">–</span></div></div>
+				<div class="field"><label data-i18n="mqtt_stat_counts">Sent / failed</label>
+					<div class="ctl"><span id="mqtt_sent" class="hint">–</span> / <span id="mqtt_failed" class="hint">–</span></div></div>
+				<div class="field"><label data-i18n="mqtt_stat_queue">Queued / dropped</label>
+					<div class="ctl"><span id="mqtt_queued" class="hint">–</span> / <span id="mqtt_dropped" class="hint">–</span></div></div>
+				<div class="field"><label data-i18n="mqtt_stat_error">Last error</label>
+					<div class="ctl"><span id="mqtt_last_error" class="hint">–</span></div></div>
+				<details>
+					<summary data-i18n="mqtt_topics_title">MQTT topics and recorder endpoints</summary>
+					<pre class="hint" style="white-space:pre-wrap" data-i18n="mqtt_topics_body">event:     oko/&lt;id&gt;/event      QoS1, one JSON per event
+  type motion|yolo|clip|heartbeat, event_id, cause,
+  model, ts_ms (+ area_permille / duration_ms+bytes /
+  idle_s, motion_area_permille, sleep, wake_cycle)
+telemetry: oko/&lt;id&gt;/telemetry  QoS0 retained
+  {ts, available, data} from /tmp/oko-ec.json
+status:    oko/&lt;id&gt;/status     QoS0 retained
+  {online:true, fw} on CONNECT, LWT {online:false}
+
+Recorder (services/mqtt, port 8092):
+  GET /api/events?limit=N, GET /api/messages?topic=&amp;limit=N
+  GET /api/telemetry, GET /api/status, GET /health</pre>
+				</details>
+			</div>
+
+			<div class="card">
 				<h3><span data-i18n="clip_card">Event clips</span></h3>
 				<div class="field"><label data-i18n="enabled">Enabled</label>
 					<div class="ctl"><select id="clip_enable" data-group="clip" data-k="enable"><option value="false">OFF</option><option value="true">ON</option></select></div></div>
@@ -1494,6 +1545,20 @@ var I18N = {
 		http_post_note: "Periodic snapshots only controls the timer above. Event JPEG bundles and clips are sent to the host whenever IVS act_http_post, a YOLO event or an event clip fires; an empty host or none disables sending. The path may use strftime tokens.",
 		api_docs_title: "Event API and receiver endpoints",
 		api_docs_body: "Frame: PUT <url> image/jpeg\n  X-Event-Id, X-Frame-Index, X-Frame-Total, X-Frame-Ts,\n  X-Event-Cause, X-Model\nClip:  PUT <url with the last 'frame' segment replaced by 'clip'>\n  video/mp4 (fMP4 H.265), X-Event-Id, X-Cause, X-Model,\n  X-Duration-Ms, X-Ts\nBasic auth is used when login and password are set. The URL accepts\nstrftime tokens. Failed deliveries retry after 30 s, 2 min and 10 min\nand spool to /mnt/sdcard/oko-outbox.\n\nReceiver (services/events):\n  PUT /ingest/frame, PUT /ingest/clip  (X-OKO-Token when configured)\n  GET /api/events[?limit=N], GET /api/events/<id>\n  GET /media/<date>/<id>/<file>, GET /api/stats, GET /health",
+		mqtt_card: "MQTT (events, telemetry)",
+		mqtt_host: "Broker host", mqtt_prefix: "Topic prefix",
+		mqtt_client_id: "Client id (empty = MAC)",
+		mqtt_keepalive: "Keepalive (s)",
+		mqtt_telemetry: "Telemetry interval (s)",
+		mqtt_publish_events: "Publish events",
+		mqtt_publish_telemetry: "Publish telemetry",
+		mqtt_note: "JSON only: motion, YOLO, clip and heartbeat events go to <prefix>/<id>/event (QoS1), the oko-ec snapshot to .../telemetry (retained), the online flag to .../status (LWT). JPEG frames and clips stay on the HTTP channel above. The device never reads the password back.",
+		mqtt_stat_connection: "Connection",
+		mqtt_stat_counts: "Sent / failed",
+		mqtt_stat_queue: "Queued / dropped",
+		mqtt_stat_error: "Last error",
+		mqtt_topics_title: "MQTT topics and recorder endpoints",
+		mqtt_topics_body: "event:     oko/<id>/event      QoS1, one JSON per event\n  type motion|yolo|clip|heartbeat, event_id, cause,\n  model, ts_ms (+ area_permille / duration_ms+bytes /\n  idle_s, motion_area_permille, sleep, wake_cycle)\ntelemetry: oko/<id>/telemetry  QoS0 retained\n  {ts, available, data} from /tmp/oko-ec.json\nstatus:    oko/<id>/status     QoS0 retained\n  {online:true, fw} on CONNECT, LWT {online:false}\n\nRecorder (services/mqtt, port 8092):\n  GET /api/events?limit=N, GET /api/messages?topic=&limit=N\n  GET /api/telemetry, GET /api/status, GET /health",
 		clip_card: "Event clips", clip_pre: "Pre-roll (s)",
 		clip_post: "Post-roll (s)", clip_max: "Clip byte quota (0 = off)",
 		clip_test: "Test event", clip_test_started: "Test event started",
@@ -1749,6 +1814,20 @@ var I18N = {
 		http_post_note: "«Периодические снимки» управляют только таймером выше. Пачки JPEG и ролики событий уходят на хост по решениям IVS act_http_post, события YOLO и клипа события; пустой host или none отключает отправку. В пути допустимы токены strftime.",
 		api_docs_title: "API событий и эндпоинты приёмника",
 		api_docs_body: "Кадр: PUT <url> image/jpeg\n  X-Event-Id, X-Frame-Index, X-Frame-Total, X-Frame-Ts,\n  X-Event-Cause, X-Model\nРолик: PUT <url, где последний сегмент 'frame' заменён на 'clip'>\n  video/mp4 (fMP4 H.265), X-Event-Id, X-Cause, X-Model,\n  X-Duration-Ms, X-Ts\nBasic-auth используется, если заданы login и password. В URL допустимы\nтокены strftime. Неудачные отправки повторяются через 30 с, 2 мин и 10 мин\nи складываются в /mnt/sdcard/oko-outbox.\n\nПриёмник (services/events):\n  PUT /ingest/frame, PUT /ingest/clip  (X-OKO-Token, если задан)\n  GET /api/events[?limit=N], GET /api/events/<id>\n  GET /media/<date>/<id>/<file>, GET /api/stats, GET /health",
+		mqtt_card: "MQTT (события, телеметрия)",
+		mqtt_host: "Хост брокера", mqtt_prefix: "Префикс тем",
+		mqtt_client_id: "Client id (пусто = MAC)",
+		mqtt_keepalive: "Keepalive (с)",
+		mqtt_telemetry: "Интервал телеметрии (с)",
+		mqtt_publish_events: "Публиковать события",
+		mqtt_publish_telemetry: "Публиковать телеметрию",
+		mqtt_note: "Только JSON: события motion, YOLO, клипа и heartbeat уходят в <prefix>/<id>/event (QoS1), снимок oko-ec — в .../telemetry (retained), признак связи — в .../status (LWT). JPEG-кадры и ролики остаются на HTTP-канале выше. Пароль устройство обратно не отдаёт.",
+		mqtt_stat_connection: "Соединение",
+		mqtt_stat_counts: "Отправлено / ошибок",
+		mqtt_stat_queue: "В очереди / потеряно",
+		mqtt_stat_error: "Последняя ошибка",
+		mqtt_topics_title: "Темы MQTT и эндпоинты рекордера",
+		mqtt_topics_body: "event:     oko/<id>/event      QoS1, одно JSON на событие\n  type motion|yolo|clip|heartbeat, event_id, cause,\n  model, ts_ms (+ area_permille / duration_ms+bytes /\n  idle_s, motion_area_permille, sleep, wake_cycle)\ntelemetry: oko/<id>/telemetry  QoS0 retained\n  {ts, available, data} из /tmp/oko-ec.json\nstatus:    oko/<id>/status     QoS0 retained\n  {online:true, fw} при CONNECT, LWT {online:false}\n\nРекордер (services/mqtt, порт 8092):\n  GET /api/events?limit=N, GET /api/messages?topic=&limit=N\n  GET /api/telemetry, GET /api/status, GET /health",
 		clip_card: "Ролики событий", clip_pre: "Пре-ролл (с)",
 		clip_post: "Пост-ролл (с)", clip_max: "Квота ролика (байт, 0 = выкл)",
 		clip_test: "Тестовое событие", clip_test_started: "Тестовое событие запущено",
@@ -2047,6 +2126,9 @@ var READ_HOOKS = {
 	'wifi_chip_supports_ap_st': function (v) { return v ? t('yes') : t('no'); },
 	/* The password is write-only: the API returns a "set" flag, not a value. */
 	'http_post_password': function () { return ''; },
+	'mqtt_password': function () { return ''; },
+	'mqtt_connected': function (v) { return v ? t('yes') : t('no'); },
+	'mqtt_last_error': function (v) { return v || '–'; },
 	'clip_running': function (v) { return v ? t('yes') : t('no'); },
 	'clip_available': function (v) { return v ? t('yes') : t('no'); },
 	'clip_reason': function (v) { return v || '–'; },
@@ -4017,7 +4099,7 @@ var SECTION_LOAD = {
 	live: ['record', 'eptz', 'rotate', 'mp4', 'mjpeg', 'isp'],
 	image: ['isp', 'night', 'aiisp', 'hdr', 'iq'],
 	streams: ['mp4', 'substream', 'mjpeg', 'jpeg', 'audio', 'venc', 'rtsp', 'stream', 'onvif'],
-	events: ['ivs', 'yolo', 'http_post', 'clip'],
+	events: ['ivs', 'yolo', 'http_post', 'mqtt', 'clip'],
 	storage: ['storage', 'record'],
 	network: ['network', 'time', 'wifi', 'mdns'],
 	osd: ['osd/0', 'osd/1', 'osd/2', 'osd/3', 'osd/4', 'osd/5', 'osd/6', 'osd/7', 'osd/8', 'osd/9'],

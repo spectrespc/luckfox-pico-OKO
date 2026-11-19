@@ -12,6 +12,7 @@
 #include "hal/globals.h"
 #include "hal/support.h"
 #include "http_post.h"
+#include "mqtt_post.h"
 #include "jpeg.h"
 #include "record.h"
 #include "sleep_policy.h"
@@ -109,6 +110,7 @@ static void ivs_record_event(time_t when, const hal_ivs_result *result,
     HAL_INFO("ivs", "Motion event: %u rect(s), cause %s, area %u permille, "
         "mdSquare %u of %ux%u\n", result->rectCount, cause, area,
         result->mdSquare, result->width, result->height);
+    mqtt_post_motion((unsigned long long)when * 1000ull, area, cause);
     ivs_trigger_actions(when);
 }
 

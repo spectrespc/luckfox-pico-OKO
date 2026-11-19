@@ -46,6 +46,12 @@ volatile uint8_t i2c_tx_idx = 0;
 volatile uint8_t i2c_rx_len = 0;   /* bytes received in the last write phase */
 volatile uint8_t i2c_state = 0;    /* 0: idle, 1: receiving, 2: transmitting */
 
+/* Last real bus activity.  i2c_last_activity additionally feeds the 2 s
+   self-reset and is re-armed by every i2c_slave_reset(); this one is only
+   written by the ISR, so it is the correct input for the idle sleep timer
+   (otherwise the periodic self-reset would keep postponing the sleep). */
+volatile uint32_t i2c_last_frame = 0;
+
 /* Private function prototypes -----------------------------------------------*/
 void i2c_slave_reset(void);
 uint8_t i2c_check_timeout(void);
@@ -107,6 +113,25 @@ uint8_t i2c_check_timeout(void)
 }
 
 /**
+  * @brief  Report whether a transaction is in progress or a received frame is
+  *         still waiting for the main loop.  The sleep gate must not stop the
+  *         core in the middle of a transfer (the STM32C011 reference has the
+  *         same rule for Stop).
+  * @param  None
+  * @retval 1 if Halt must be postponed, 0 if the bus is idle
+  */
+uint8_t i2c_is_busy(void)
+{
+    if (i2c_state != 0 || i2c_cmd_ready)
+        return 1;
+
+    /* An unserviced address match or STOP means the ISR still has work to do;
+       these are the only flags that must be consumed before Halt.  TXE/AF are
+       normal leftovers of a finished read and must not block sleep forever. */
+    return (I2C->SR1 & 0x12) ? 1 : 0;
+}
+
+/**
   * @brief  I2C interrupt service routine
   * @param  None
   * @retval None
@@ -115,6 +140,17 @@ void i2c_isr_handler(void)
 {
     uint8_t sr1 = I2C->SR1;      /* read once: decides every branch below */
     uint8_t sr2 = I2C->SR2;
+
+    /* --- Wake-up from Halt (WUFH = SR2 bit5) ---
+       The address match that woke the core sets WUFH and stretches SCL until
+       it is cleared (RM0016, I2C low power modes).  No ADDR flag is raised for
+       that address, so the master may have to repeat it - the host transport
+       retries an address-phase failure.  Writing 0 clears the flag. */
+    if (sr2 & I2C_SR2_WUFH)
+    {
+        I2C->SR2 = (uint8_t)~I2C_SR2_WUFH;
+        sr2 &= (uint8_t)~I2C_SR2_WUFH;
+    }
 
     /* --- Address matched (ADDR = SR1 bit1) --- */
     if (sr1 & 0x02)
@@ -146,6 +182,7 @@ void i2c_isr_handler(void)
                 i2c_rx_buf[i] = 0;
         }
         i2c_last_activity = system_ticks;
+        i2c_last_frame = system_ticks;
     }
 
     /* --- Stop detected (STOPF = SR1 bit4) --- */
@@ -156,6 +193,7 @@ void i2c_isr_handler(void)
         i2c_cmd_ready = 1;
         i2c_state = 0;
         i2c_last_activity = system_ticks;
+        i2c_last_frame = system_ticks;
     }
 
     /* --- Data received (RXNE = SR1 bit6) --- */
@@ -165,6 +203,7 @@ void i2c_isr_handler(void)
         if (i2c_rx_idx < I2C_RX_BUF_SIZE)
             i2c_rx_buf[i2c_rx_idx++] = d;
         i2c_last_activity = system_ticks;
+        i2c_last_frame = system_ticks;
     }
 
     /* --- Transmit empty (TXE = SR1 bit7) --- */
@@ -248,6 +287,19 @@ void i2c_prepare_read_response(void)
             i2c_tx_buf[3] = APP_VERSION_PATCH;
             i2c_tx_idx = 0;
             break;
+        case I2C_CMD_GET_SLEEP: /* Sleep mode, state and diagnostic counters */
+            i2c_tx_buf[0] = sleep_enabled ? 1 : 0;
+            i2c_tx_buf[1] = g_sleep_state;
+            /* slice_ms does not fit in one byte; report it in 10 ms units
+               (40 = 400 ms). */
+            i2c_tx_buf[2] = (uint8_t)(SLEEP_SLICE_MS / 10);
+            i2c_tx_buf[3] = 0;
+            i2c_tx_buf[4] = (uint8_t)(g_sleep_entries >> 8);
+            i2c_tx_buf[5] = (uint8_t)(g_sleep_entries & 0xFF);
+            i2c_tx_buf[6] = g_wake_by_i2c;
+            i2c_tx_buf[7] = g_wake_by_awu;
+            i2c_tx_idx = 0;
+            break;
         case 0xFF: /* Firmware version */
             i2c_tx_buf[0] = APP_VERSION_MAJOR;
             i2c_tx_buf[1] = APP_VERSION_MINOR;
@@ -304,6 +356,20 @@ void i2c_process_command(void)
         case 0x06: /* Software reset */
             WWDG->CR = 0xBF;
             while(1);
+            break;
+        case I2C_CMD_SET_SLEEP: /* [cmd][mode][idle_s] - no reply, read back 0x0A */
+            {
+                uint8_t idle_s = i2c_rx_buf[2];
+
+                sleep_enabled = i2c_rx_buf[1] ? 1 : 0;
+                if (idle_s == 0)
+                    idle_s = SLEEP_IDLE_DEFAULT_S;
+                if (idle_s > SLEEP_IDLE_MAX_S)
+                    idle_s = SLEEP_IDLE_MAX_S;
+                sleep_idle_ms = (uint16_t)(((uint16_t)idle_s << 10) -
+                                           ((uint16_t)idle_s << 4) -
+                                           ((uint16_t)idle_s << 3));
+            }
             break;
         case I2C_CMD_ENTER_BOOT: /* Ask the bootloader for an update */
             stepper_stop(0);

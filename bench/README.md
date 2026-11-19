@@ -54,6 +54,7 @@ U-Boot — Maskrom, USB-порт занят хабом (TESTBENCH §7).
 | `event_check.py` | сквозная проверка событий: поднимает `services/events`, `POST /api/clip?test=1` на DUT, ждёт JPEG-пачку и клип, сверяет длительность `pre+post ±2 с` и кодеки (hevc → h264-копия) через ffprobe; `--retry` — остановка/запуск приёмника и доставка повтором, `--outbox` — вытеснение в outbox на microSD, `--require-detection` — живая детекция YOLO11; отчёт `output/bench/events/report.json` |
 | `clip_soak.py` | soak детектора и событий: опрос `/api/clip` и `services/events`, тестовое событие при простое, отчёт с `sent/lost/outbox/ring_dropped` и `MemFree`; `--minutes` (по умолчанию 120), `--interval`, `--event-every`; JSON — `output/bench/events/soak-*.json` |
 | `heartbeat_check.py` | heartbeat-Snapshot сна: настраивает `[http_post]` и `[sleep]` (`enable=1`, `heartbeat=1`, `idle=30`, `wake_interval=10`, `wake_check=5`, `heartbeat_interval_s=0`), перезапускает divinus и ждёт ≥3 тихих цикла; проверяет JPEG+заголовки `X-Heartbeat-*`/`X-OKO-*` в `services/events`, рост `wake_cycle`, `fail_streak=0`; `--neg` — приёмник выключен и `fail_streak` растёт, циклы продолжаются; `--no-motion` — пропустить инъекцию `?motion=1` (нужен `OKO_BENCH_API=1`); отчёт и кадры — `output/bench/heartbeat` |
+| `mqtt_check.py` | сквозная проверка MQTT: поднимает `services/mqtt`, проверяет аутентификацию брокера (верный/неверный пароль), настраивает `[mqtt]` живьём через `POST /api/mqtt`, ждёт retained `online:true` и телеметрию в рекордере, затем `SIGKILL` divinus → LWT `online:false`, перезапускает divinus с `OKO_BENCH_API=1` → `online:true` и bench-событие `POST /api/mqtt?test=1`, в конце перезапускает без `OKO_BENCH_API`; `--neg` — профиль выключен и публикатор остаётся disconnected; `--deploy`, `--keep-config`; отчёт — `output/bench/mqtt/report.json` |
 | `deploy_divinus.py` | копирование свежесобранного `divinus` в `/oem/usr/bin` по SSH и graceful restart (быстрая итерация, не замена прошивке) |
 | `rgn_boxes_check.py` | soak 2BPP-рамок (KI-063): `--mode observe` — сэмплы fd/VmRSS/потоков и счётчиков ядра (`sfc`, `UBIFS`, `dup mClientFd`/`CHECK_GE`, oops, `rga2_reg`) каждые 10 с; `--mode cycle --target yolo\|ivs` — A/B тумблер через API; `--mode restart` — SIGHUP-рестарты с привязанным регионом (`--settle` секунд перед сэмплом, критерий — стабильный fd); `--mode config --target ivs --value true` — правка `boxes` в `/userdata/divinus.yaml` (бэкап `.oko-rgn-boxes.bak`) с рестартом; `--mode steady` — включить рамки и держать; JSON-отчёт в `output/bench/rgn`, код 1 при росте fd, VmRSS или счётчика ядра |
 | `yolo_night.py` | KI-005: ночная точность YOLO по матрице `{vpss3, vi0} × {AIISP off, on}` (C1–C4). Правка `/userdata/divinus.yaml` по SSH + graceful restart на каждую конфигурацию (vi0 иначе не применяется), `night`-сцена вручную через `/api/night`, сбор истории `/api/yolo?detections=1`, метрики recall / mean best score / FP per frame по `--gt` (IoU ≥ `--iou`), день C1/C4 — контроль методики; `--repeat`, `--seconds`, `--snapshots`, `--capture-gt`, `--deploy`, `--dry-run`, `--keep-config`; `report.json`/`report.csv` и `raw-*.json` в `output/bench/yolo_night` |
@@ -383,6 +384,10 @@ TESTBENCH.md §7D.
 | `OKO_RTSP_USER` / `OKO_RTSP_PASS` | `admin` / `oko-change-me` | учётка divinus (фабричный дефолт) |
 | `OKO_EVENTS_URL` | `http://127.0.0.1:8090` | адрес `services/events` с хоста (проверки в `event_check.py`/`heartbeat_check.py`) |
 | `OKO_EVENTS_ADDR` | `192.168.52.200:8090` | адрес приёмника, который прописывается камере в `http_post.host` для heartbeat |
+| `OKO_MQTT_URL` | `http://127.0.0.1:8092` | HTTP-API рекордера `services/mqtt` с хоста (`mqtt_check.py`) |
+| `OKO_MQTT_ADDR` | `192.168.52.200:1883` | адрес брокера, который прописывается камере в `mqtt.host` |
+| `OKO_MQTT_USER` / `OKO_MQTT_PASS` | `oko` / `oko` | стендовая учётка устройства у брокера |
+| `OKO_MQTT_REC_USER` / `OKO_MQTT_REC_PASS` | `oko-rec` / `oko-rec` | учётка рекордера |
 | `OKO_WIFI_SSID` / `OKO_WIFI_PSK` | — | стендовая точка доступа для ручных STA-проверок; в репозиторий не пишутся |
 | `OKO_UPLINK_DUT` | `192.168.44.50` | адрес DUT по Wi-Fi для `uplink_soak.py` (управление и проверка wlan-аплинка) |
 | `OKO_UPLINK_ETH` | `192.168.52.33` | адрес DUT по Ethernet для `uplink_soak.py` |
@@ -410,6 +415,7 @@ TESTBENCH.md §7D.
   профиль; содержит ключи — не коммитить).
 - Soak шины EC: `output/bench/ec_bus_soak-<YYYYmmdd-HHMMSS>.json` и `.log`.
 - Heartbeat сна: `output/bench/heartbeat/report.json` и полученные `hb-<ts>.jpg`.
+- MQTT: `output/bench/mqtt/report.json`.
 - Каталог создаётся автоматически; `output/` в `.gitignore`.
 
 ## Heartbeat сна (Snapshot)

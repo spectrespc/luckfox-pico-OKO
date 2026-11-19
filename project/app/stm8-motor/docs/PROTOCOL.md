@@ -25,6 +25,8 @@
 | 0x07 | [cmd] | — | Enter the I2C bootloader (OKO fork) |
 | 0x08 | [cmd] | [role][maj][min][pat] | Get role (0=app, 1=boot) and version (shared with the bootloader) |
 | 0x09 | [cmd][motor][pos_0..pos_3] | — | Force the logical position (int32 BE) without moving; ignored while RUNNING (2.0.2+) |
+| 0x0A | [cmd] | [mode][state][slice][0][ent_hi][ent_lo][w_ic2][w_awu] | Get the I2C-idle sleep state and counters (2.2.0+) |
+| 0x0B | [cmd][mode][idle_s] | — | Enable/disable I2C-idle sleep; `mode` 0=off 1=on, `idle_s` 0=default 3 s (2.2.0+); no reply, read back 0x0A |
 | 0xFF | [cmd] | [maj][min][pat] | Get firmware version (3 bytes; application only) |
 
 ## Detailed Command Examples
@@ -32,7 +34,7 @@
 ### Version Request
 ```bash
 i2ctransfer -y 3 w1@0x60 0xFF r3
-# Response: 0x02 0x00 0x02 (version 2.0.2)
+# Response: 0x02 0x02 0x00 (version 2.2.0; test board 2.3.0)
 ```
 
 ### Set Speed
@@ -84,6 +86,41 @@ i2ctransfer -y 3 w6@0x60 0x09 0x00 0x00 0x00 0x00 0x00
 the logical position with a corrupted top byte (`-1` reads as `0xFBFFFFFF`),
 although the motor travels the commanded number of steps. Do not use a
 negative `GET_POS` value for control; send `SET_POS(0)` after homing instead.
+
+### Sleep control (0x0A / 0x0B)
+
+```bash
+# Enable sleep after 3 s of bus silence (idle_s = 0 selects the default)
+i2ctransfer -y 3 w3@0x60 0x0B 0x01 0x00
+# Read back: mode, state, slice/10 ms, reserved, entries (BE), wake by I2C, wake by AWU
+i2ctransfer -y 3 w1@0x60 0x0A r8
+# Response: 0x01 0x03 0x28 0x00 0x00 0x2A 0x03 0x2A
+```
+
+`state`: 0 = awake, 1 = saving EEPROM, 2 = armed (about to Halt),
+3 = asleep (reported when the address match that wakes the controller is
+being serviced).
+
+## Power management (I2C-idle sleep)
+
+- Idle source: any completed frame.  After `idle_s` seconds of silence, with
+  no motor RUNNING, no pending frame and a clean EEPROM, the application
+  enters a chain of Active-halt slices.
+- Each slice is 400 ms (nominal): the AWU wakes the core every
+  `(APR+1)<<(TBR-1) = 25*2048 = 51200` LSI periods and the main loop reloads
+  the IWDG.  The IWDG window is 250*256 = 64000 LSI periods, so the slice is
+  80 % of the window and the ratio is independent of the LSI tolerance.
+- The I2C address match wakes the controller from Halt and Active-halt, so the
+  next host frame is answered without a special wake-up command.
+- `TIM4` is stopped during Halt and cannot wake the core; the AWU is the only
+  timed wake-up source.
+- `system_ticks` stops during Halt, exactly like `millis()` on the
+  STM32C011 EC: the 2 s I2C self-reset does not advance while asleep (the bus
+  is idle and there is nothing to recover).  The host must not rely on
+  tick-based timeouts across a sleep period.
+- Default: off on the production build (`BOARD=oko`, 2.2.0), on for the test
+  board (`BOARD=test`, 2.3.0).  `oko-motor flash`/`/api/flash` disable the
+  sleep before `ENTER_BOOT`.
 
 ## Error Handling
 - Unknown commands are ignored (no NACK); 0x07 is ENTER_BOOT in this fork.

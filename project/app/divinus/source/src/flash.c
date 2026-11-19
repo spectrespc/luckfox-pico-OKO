@@ -26,12 +26,12 @@
 #define FLASH_LOG_LINES  20
 #define FLASH_LINE_MAX   160
 
-/* The installed STM32 is an STM32F103CBT6: 128 KiB total, 8 KiB boot,
- * 2 KiB metadata.  The loader accepts a 60 KiB test image, which confirms the
- * 128 KiB layout; a C8T6 build would reject it.  Reject larger images before
- * the job starts, because the bootloader reports ERR_PARAM only after the EC
- * has already switched to update mode. */
-#define FLASH_STM32_APP_MAX (120u * 1024u)
+/* The installed STM32 EC is an STM32C011F6P6 (32 KiB Flash, 2 KiB pages):
+ * 8 KiB boot + 2 x 2 KiB metadata + a 20 KiB application slot
+ * (stm32_acpi-ec/hal/c0/flash.c checks APP_SIZE == 20 KiB against board.h).
+ * Reject larger images before the job starts, because the bootloader reports
+ * ERR_PARAM only after the EC has already switched to update mode. */
+#define FLASH_STM32_APP_MAX (20u * 1024u)
 
 typedef struct {
     char id[32];

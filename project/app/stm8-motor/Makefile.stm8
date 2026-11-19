@@ -13,6 +13,10 @@
 # build/.board records the variant and forces a full recompile when BOARD
 # changes, so a mixed build cannot silently flash the wrong pin map.
 #
+# The I2C-idle sleep mode is ON by default only on the test build; the
+# production firmware stays off and the host enables it explicitly
+# (`oko-motor sleep on`, divinus before suspend).
+#
 # Layout: boot 0x8000..0x89FF, header 0x8A00..0x8A0F, app 0x8A10..0x9FFF.
 SPL_ROOT ?= $(HOME)/STM8-SPL-SDCC
 SPL_INC  := $(SPL_ROOT)/Libraries/STM8S_StdPeriph_Driver/inc
@@ -27,14 +31,16 @@ INCLUDE  := -Isrc/core -Isrc/hal -Isrc/i2c -Isrc/motor -Isrc/common \
 BUILD    := build
 
 # The test board uses a different pin map and therefore gets a different minor
-# version: 2.1.1 can never be mistaken for the 2.0.2 production firmware, and
+# version: 2.3.0 can never be mistaken for the 2.2.0 production firmware, and
 # neither /api/flash nor `oko-motor check` accepts the wrong artifact.
+# Version convention: even minor = production, odd minor = test board.
 BOARD ?= oko
 ifeq ($(BOARD),test)
-CFLAGS      += -DBOARD_TEST \
-               -DAPP_VERSION_MAJOR=2 -DAPP_VERSION_MINOR=1 -DAPP_VERSION_PATCH=1
-APP_VERSION := 2.1.1
+CFLAGS      += -DBOARD_TEST -DSLEEP_DEFAULT_ON=1 \
+               -DAPP_VERSION_MAJOR=2 -DAPP_VERSION_MINOR=3 -DAPP_VERSION_PATCH=0
+APP_VERSION := 2.3.0
 else
+CFLAGS      += -DSLEEP_DEFAULT_ON=0
 APP_VERSION := $(shell awk '/define[[:space:]]+APP_VERSION_(MAJOR|MINOR|PATCH)/{printf "%s.", $$3}' \
 	src/core/main.h | sed 's/\.$$//')
 endif

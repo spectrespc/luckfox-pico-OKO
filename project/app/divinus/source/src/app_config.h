@@ -174,6 +174,10 @@ struct AppConfig {
     unsigned int af_timeout_s;          /* whole search timeout            */
     unsigned int af_min_gain_pct;       /* required gain over the start    */
 
+    // [motor] — STM8 focus/zoom controller idle behaviour
+    bool motor_sleep_enable;            /* I2C-idle sleep around suspend   */
+    unsigned int motor_sleep_idle_s;    /* silent time before Halt, 1..60  */
+
     // [flash]
     bool flash_enable;
     unsigned int flash_max_bytes;
@@ -246,6 +250,19 @@ struct AppConfig {
     unsigned int http_post_interval;
     /* Web receiver UI link; empty means "build it from http_post.host". */
     char http_post_receiver_url[256];
+
+    // [mqtt] — MQTT 3.1.1 publisher for events and oko-ec telemetry
+    bool mqtt_enable;
+    char mqtt_host[128];
+    char mqtt_login[128];
+    char mqtt_password[128];
+    char mqtt_topic_prefix[64];
+    /* Empty means "derive from mdns_hostname()" (oko-xxxx). */
+    char mqtt_client_id[64];
+    unsigned int mqtt_keepalive_s;
+    unsigned int mqtt_telemetry_interval_s;
+    bool mqtt_publish_events;
+    bool mqtt_publish_telemetry;
 
     // [event_clip]
     bool event_clip_enable;

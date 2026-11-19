@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # hardware_test.sh — automated on-target tests for the STM8S103 + DRV8833 firmware.
 #
-# Covers stages 2–12 of the test plan. Manual-only checks are intentionally
+# Covers stages 2–13 of the test plan. Manual-only checks are intentionally
 # skipped and listed at the end: 0.4 visual wiring, 1.5 LED, 5.x visual
 # rotation, 8.x mechanical stall (nFAULT), 9.2/9.3 power cycle EEPROM.
 #
@@ -108,8 +108,8 @@ if grep -qE '^60:[[:space:]]+60' <<<"$DETECT_OUT"; then
 else
     fail "2.1 I2C detect 0x60" "(address not present on bus $BUS)"
 fi
-check_contains "2.2 Firmware version (motorctl)" "2.0.0" "$MCTL" version
-check_contains "2.3 Raw version" "0x02 0x00 0x00" "$I2CTRANSFER" -y "$BUS" "w1@$ADDR" 0xFF r3
+check_contains "2.2 Firmware version (motorctl)" "2.3.0" "$MCTL" version
+check_contains "2.3 Raw version" "0x02 0x03 0x00" "$I2CTRANSFER" -y "$BUS" "w1@$ADDR" 0xFF r3
 
 echo "=== Stage 3: Focus motor ==="
 reset_mcu
@@ -212,7 +212,7 @@ done
 if [ "$fail_count" -eq 0 ]; then pass "10.1 100x version (0 fails)"; else fail "10.1 100x version ($fail_count fails)"; fi
 
 sleep 3   # > I2C_TIMEOUT_MS (2000 ms)
-check_contains "10.2 I2C timeout recovery" "2.0.0" "$MCTL" version
+check_contains "10.2 I2C timeout recovery" "2.3.0" "$MCTL" version
 
 for i in $(seq 1 50); do
     "$MCTL" speed focus $(( (i % 10) * 100 + 100 )) >/dev/null 2>&1
@@ -223,23 +223,98 @@ sleep 2
 check_contains "10.3 Focus IDLE after stress" "IDLE" "$MCTL" status focus
 check_contains "10.3 Zoom IDLE after stress" "IDLE" "$MCTL" status zoom
 
-echo "=== Stage 11: Watchdog ==="
+echo "=== Stage 11: Watchdog (sleep is ON by default on BOARD=test) ==="
 P0=$(get_pos focus)
 sleep 30
 P1=$(get_pos focus)
 if [ -n "$P0" ] && [ "$P0" = "$P1" ]; then pass "11.1 WDT no reset (position stable)"; else fail "11.1 WDT reset detected" "($P0 -> $P1)"; fi
 
-echo "=== Stage 12: Reset command ==="
+echo "=== Stage 12: I2C-idle sleep / wake ==="
+SLEEP_SOAK_S=${SLEEP_SOAK_S:-1800}
+
+sleep_entries() {
+    "$MCTL" sleep show 2>/dev/null | sed -n 's/.*entries \([0-9]*\).*/\1/p'
+}
+sleep_counter() {
+    "$MCTL" sleep show 2>/dev/null | sed -n "s/.*$1 \([0-9]*\).*/\1/p"
+}
+
+# 12.1 Off: the controller must behave exactly as before the feature.
+check_contains "12.1 sleep off" "sleep off" "$MCTL" sleep off
+sleep 4
+check_contains "12.1 version after sleep off" "2.3.0" "$MCTL" version
+
+# 12.2 On with the default 3 s idle: one raw (single-attempt) read after the
+# controller had time to enter the Active-halt chain.
+check_contains "12.2 sleep on" "sleep on" "$MCTL" sleep on
+sleep 4
+check_contains "12.2 first raw read after sleep" "0x02 0x03 0x00" \
+    "$I2CTRANSFER" -y "$BUS" "w1@$ADDR" 0xFF r3
+
+# 12.3 Wake reliability metric: 100 sleep/wake cycles with idle_s = 1.  Each
+# iteration lets the controller sleep for > idle + slice, then performs one
+# untranslated single-attempt read.  Any refusal is a lost wake-up.
+"$MCTL" sleep on 1 >/dev/null 2>&1
+WAKE_FAIL=0
+for _ in $(seq 1 100); do
+    sleep 1.5
+    "$I2CTRANSFER" -y "$BUS" "w1@$ADDR" 0xFF r3 >/dev/null 2>&1 || WAKE_FAIL=$((WAKE_FAIL + 1))
+done
+if [ "$WAKE_FAIL" -eq 0 ]; then
+    pass "12.3 100 wake cycles (0 failures)"
+else
+    fail "12.3 100 wake cycles ($WAKE_FAIL failures)" "(reliability metric, see the acceptance criterion)"
+fi
+
+# 12.4 Counters: entries and both wake sources must be non-zero.
+E0=$(sleep_entries); WI0=$(sleep_counter "wake i2c"); WA0=$(sleep_counter "wake awu")
+if [ -n "$E0" ] && [ "$E0" -gt 0 ] && [ "${WI0:-0}" -gt 0 ] && [ "${WA0:-0}" -gt 0 ]; then
+    pass "12.4 counters entries=$E0 i2c=$WI0 awu=$WA0"
+else
+    fail "12.4 counters" "(entries='${E0:-}', i2c='${WI0:-}', awu='${WA0:-}')"
+fi
+
+# 12.5 Motion immediately after a wake: positive offsets only (KI-042) and a
+# clean scale from SET_POS 0.
+"$MCTL" sleep on >/dev/null 2>&1
+sleep 4
+"$MCTL" set-pos focus 0 >/dev/null 2>&1
+"$MCTL" speed focus 200 >/dev/null 2>&1
+"$MCTL" move focus 100 >/dev/null 2>&1
+sleep 2
+check_pos "12.5 move completes after wake" 100 focus
+
+# 12.6 Soak: entries must keep growing across the whole idle window.  The
+# STM8S has no reset-cause register, so a false IWDG reset is only visible as
+# the RAM counters restarting from zero.
+E1=$(sleep_entries)
+echo "  (soak ${SLEEP_SOAK_S}s with idle=1s; entries before=$E1)"
+sleep "$SLEEP_SOAK_S"
+E2=$(sleep_entries)
+if [ -n "$E1" ] && [ -n "$E2" ] && [ "$E2" -gt "$E1" ]; then
+    pass "12.6 soak: entries $E1 -> $E2 (no IWDG reset)"
+else
+    fail "12.6 soak" "(entries '$E1' -> '$E2', possible false IWDG reset)"
+fi
+
+# 12.7 Watchdog with sleep on: same 30 s position-stability check as stage 11.
+"$MCTL" sleep on >/dev/null 2>&1
+P2=$(get_pos focus)
+sleep 30
+P3=$(get_pos focus)
+if [ -n "$P2" ] && [ "$P2" = "$P3" ]; then pass "12.7 sleep+WDT: position stable"; else fail "12.7 sleep+WDT reset detected" "($P2 -> $P3)"; fi
+
+echo "=== Stage 13: Reset command ==="
 reset_mcu
 "$MCTL" speed focus 200 >/dev/null 2>&1
 B12=$(get_pos focus)
 "$MCTL" move focus 100 >/dev/null 2>&1
 sleep 2
-check_pos "12.1 Pos before reset" "$((B12 + 100))" focus
+check_pos "13.1 Pos before reset" "$((B12 + 100))" focus
 
 "$MCTL" reset >/dev/null 2>&1
 sleep 1
-check_contains "12.1 Controller alive after reset" "2.0.0" "$MCTL" version
+check_contains "13.1 Controller alive after reset" "2.3.0" "$MCTL" version
 
 echo "=== SUMMARY ==="
 echo "PASS: $PASS"

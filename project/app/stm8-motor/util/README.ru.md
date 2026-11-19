@@ -33,6 +33,8 @@ Commands:
   speed <motor> <speed>  Set motor speed
   move <motor> <steps>  Move motor by steps
   set-pos <motor> <value>  Force the logical position (no motion, 2.0.2+)
+  sleep on|off [seconds]  Enable/disable I2C-idle sleep (2.2.0+; default 3 s)
+  sleep show     Sleep mode, state and wake-up counters (2.2.0+)
   home <motor> [speed]  Drive to the negative stop, then zero (bench)
   position <motor>    Get motor position
   status <motor>  Get motor status
@@ -82,6 +84,14 @@ motorctl set-pos zoom 0
 Прижать focus к отрицательному упору на 300 шагов/с и обнулить (стенд):
 ```bash
 motorctl home focus 300
+```
+
+Включить сон по тишине I2C (3 с) и посмотреть счётчики (прошивка 2.2.0+;
+в продуктовой сборке режим по умолчанию выключен):
+```bash
+motorctl sleep on
+motorctl sleep show
+motorctl sleep off
 ```
 
 Сбросить контроллер:

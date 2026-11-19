@@ -7,6 +7,7 @@
 #include "hal/macros.h"
 #include "heartbeat_task.h"
 #include "http_post.h"
+#include "mqtt_post.h"
 #include "record_clip.h"
 #include "ivs_events.h"
 #include "media.h"
@@ -218,6 +219,12 @@ int main(int argc, char *argv[]) {
     if (app_config.http_post_enable)
         http_post_start();
 
+    /* [mqtt]: a "none" host would only keep the reconnect timer busy, so the
+     * thread starts once a real broker is configured. */
+    if (app_config.mqtt_enable && *app_config.mqtt_host &&
+        !EQUALS_CASE(app_config.mqtt_host, "none"))
+        mqtt_post_start();
+
     if (app_config.osd_enable)
         region_start();
 
@@ -257,6 +264,9 @@ int main(int argc, char *argv[]) {
 
     if (app_config.http_post_enable)
         http_post_stop();
+
+    /* Publishes the retained "online:false" status before closing. */
+    mqtt_post_stop();
 
     if (app_config.osd_enable)
         region_stop();

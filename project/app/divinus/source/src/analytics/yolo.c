@@ -35,6 +35,7 @@
 #include "hal/plus/rk_rga.h"
 #include <sys/mman.h>
 #include "http_post.h"
+#include "mqtt_post.h"
 #include "record_clip.h"
 #include "sleep_policy.h"
 
@@ -1081,6 +1082,11 @@ static void yolo_send_event(int slotIndex)
     else
         snprintf(eventId, sizeof(eventId), "%llu-%llu",
             (unsigned long long)time(NULL), eventSequence);
+
+    /* One JSON per event on the MQTT channel, independent of the JPEG
+     * bundle: the sender thread only enqueues. */
+    mqtt_post_event("yolo", eventId, "yolo", modelName,
+        (unsigned long long)time(NULL) * 1000ull, (unsigned int)slot->count);
 
     if (!app_config.http_post_enable || !*app_config.http_post_host) {
         HAL_INFO("yolo", "Event %s has %d frame(s); HTTP post is disabled\n",

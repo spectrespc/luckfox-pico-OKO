@@ -8,45 +8,83 @@
 #define MAX_STEP_SPEED      5000
 #define I2C_TIMEOUT_MS    2000
 
+/* I2C-idle sleep mode (src/motor/sleep_logic.h, src/hal/hw_config.c).
+ *
+ * SLEEP_SLICE_MS is the Active-halt slice length: the AWU wakes the core and
+ * the main loop reloads the IWDG, so the watchdog is never allowed to expire
+ * while asleep.  IWDG (PR=256, RLR=250) runs from the same 128 kHz LSI and
+ * times out after 250*256 = 64000 LSI periods; the AWU slice is
+ * (APR+1)<<(TBR-1) = 25*2048 = 51200 LSI periods = 80 % of that window at the
+ * nominal frequency.  Because both dividers share one LSI, the ratio is
+ * independent of the part-to-part LSI tolerance.
+ *
+ * BOARD=test enables the feature by default; the production build keeps it
+ * off and the host turns it on explicitly (oko-motor sleep on). */
+#ifndef SLEEP_DEFAULT_ON
+#define SLEEP_DEFAULT_ON 0
+#endif
+#define SLEEP_IDLE_MS        3000
+#define SLEEP_IDLE_DEFAULT_S 3
+#define SLEEP_IDLE_MAX_S     60
+#define SLEEP_SLICE_MS       400    /* nominal; reported divided by 10 */
+
 /* Application version reported by I2C command 0xFF and written into the
  * application header by tools/mkapp.py.  Bump it on every user-visible
  * firmware change; the WebUI shows these three bytes.
  *
  * The #ifndef guards let the Makefile override the version for a BOARD
- * variant (-DAPP_VERSION_MINOR=1 for BOARD=test) without a redefinition
+ * variant (-DAPP_VERSION_MINOR=3 for BOARD=test) without a redefinition
  * error; the default build keeps the values below. */
 #ifndef APP_VERSION_MAJOR
 #define APP_VERSION_MAJOR   2
 #endif
 #ifndef APP_VERSION_MINOR
-#define APP_VERSION_MINOR   0
+#define APP_VERSION_MINOR   2
 #endif
 #ifndef APP_VERSION_PATCH
-#define APP_VERSION_PATCH   2
+#define APP_VERSION_PATCH   0
 #endif
 
 /* Shared with ISRs: must be volatile (and read atomically where 32-bit). */
 extern volatile uint32_t system_ticks;
 extern volatile uint32_t i2c_last_activity;
+/* Last real bus activity (address/data/stop).  Unlike i2c_last_activity this
+ * is NOT re-armed by i2c_slave_reset(), so the idle sleep timer keeps running
+ * while the 2 s self-reset keeps re-initialising an idle peripheral. */
+extern volatile uint32_t i2c_last_frame;
 extern volatile uint8_t i2c_need_reset;
 extern volatile uint8_t i2c_cmd_ready;
 extern volatile uint8_t eeprom_dirty;
 extern uint32_t eeprom_last_save_time;
+
+/* Sleep state and diagnostic counters (GET_SLEEP 0x0A). */
+extern volatile uint8_t sleep_enabled;
+extern volatile uint16_t sleep_idle_ms;
+extern volatile uint8_t g_sleep_state;
+extern volatile uint16_t g_sleep_entries;
+extern volatile uint8_t g_wake_by_i2c;
+extern volatile uint8_t g_wake_by_awu;
 
 void hw_clock_init(void);
 void hw_gpio_init(void);
 void hw_iwdg_init(void);
 void hw_tim4_init(void);
 void hw_i2c_init(void);
+void hw_awu_init(void);
+void hw_sleep_enter(void);
+void hw_sleep_exit(void);
+uint8_t hw_sleep_wake_awu(void);
 void hw_reset(void);
 
 void i2c_process_command(void);
 void i2c_slave_reset(void);
 uint8_t i2c_check_timeout(void);
+uint8_t i2c_is_busy(void);
 void i2c_isr_handler(void);
 
 void eeprom_init(void);
 void eeprom_periodic_save(void);
+uint8_t eeprom_force_save(void);
 
 void stepper_init(void);
 void stepper_move(uint8_t motor, int16_t steps);

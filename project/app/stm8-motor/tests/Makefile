@@ -4,12 +4,13 @@ CC      = gcc
 CFLAGS  = -Wall -Wextra -std=c99 -O2 -I../src/core -I../src/i2c -I../src/motor \
           -I../src/common
 
-TARGETS = test_i2c_protocol test_stepper_logic test_crc32 test_boot_header \
-          test_boot_protocol
+TARGETS = test_i2c_protocol test_stepper_logic test_sleep_logic test_crc32 \
+          test_boot_header test_boot_protocol
 
 test: $(TARGETS)
 	./test_i2c_protocol
 	./test_stepper_logic
+	./test_sleep_logic
 	./test_crc32
 	./test_boot_header
 	./test_boot_protocol
@@ -20,6 +21,9 @@ test_i2c_protocol: test_i2c_protocol.c ../src/core/main.h ../src/i2c/i2c_proto.h
 
 test_stepper_logic: test_stepper_logic.c ../src/core/main.h ../src/motor/stepper_logic.h
 	$(CC) $(CFLAGS) -o $@ test_stepper_logic.c
+
+test_sleep_logic: test_sleep_logic.c ../src/motor/sleep_logic.h
+	$(CC) $(CFLAGS) -o $@ test_sleep_logic.c
 
 test_crc32: test_crc32.c ../src/common/oko_crc.h ../src/common/oko_crc.c
 	$(CC) $(CFLAGS) -o $@ test_crc32.c ../src/common/oko_crc.c

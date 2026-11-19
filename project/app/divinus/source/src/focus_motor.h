@@ -30,6 +30,15 @@ typedef struct {
     int32_t zoom_position;
 } fm_snapshot;
 
+typedef struct {
+    int enabled;
+    int state;              /* 0 awake, 1 saving, 2 armed, 3 asleep */
+    unsigned slice_ms;
+    unsigned entries;
+    unsigned wake_i2c;
+    unsigned wake_awu;
+} fm_sleep;
+
 int focus_motor_init(const char *device, unsigned int address);
 void focus_motor_shutdown(void);
 void focus_motor_set_enabled(int enabled);
@@ -51,6 +60,11 @@ int focus_motor_reset(void);
 
 int focus_motor_read_app_version(uint8_t version[3]);
 int focus_motor_read_boot_info(uint8_t info[8]);
+
+/* I2C-idle sleep (firmware 2.2.0+).  set is best-effort: the write has no
+ * reply, the caller may confirm with get. */
+int focus_motor_set_sleep(int enable, unsigned idle_s);
+int focus_motor_get_sleep(fm_sleep *out);
 
 void focus_motor_suspend(int on);
 int focus_motor_suspended(void);

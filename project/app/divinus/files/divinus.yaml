@@ -151,6 +151,21 @@ http_post:
   # WebUI link to the event receiver; empty builds it from host:8090
   receiver_url: ""
 
+# MQTT 3.1.1 publisher (JSON only; JPEG frames and clips stay on [http_post]).
+# Topics: <topic_prefix>/<client_id>/{event,telemetry,status}.  client_id is
+# derived from the eth0 MAC (oko-xxxx) when left empty.
+mqtt:
+  enable: false
+  host: none              # host or host:port, default port 1883
+  login: none
+  password: none
+  topic_prefix: oko
+  client_id: ""
+  keepalive_s: 60
+  telemetry_interval_s: 30
+  publish_events: true     # motion / yolo / clip / heartbeat
+  publish_telemetry: true  # oko-ec snapshot, retained
+
 # Event clips: the encoded main H.265 stream is kept in a RAM ring and turned
 # into an fMP4 for [pre_seconds .. event .. post_seconds]; the clip is sent to
 # http_post.host with PUT <url with "frame" -> "clip">.
@@ -315,6 +330,10 @@ mjpeg:
 #   mode: normal          # normal | hdr2 | hdr3
 #   apply: restart        # auto | dyn | restart
 
+# motor:
+#   sleep_enable: false   # STM8 focus/zoom I2C-idle sleep around camera suspend
+#   sleep_idle_s: 3       # bus silence before Halt, 1..60
+#
 # sleep:
 #   enable: false         # idle camera sleep: AP deep suspend + PMU timeout wake
 #   pmu_timer_wake: true  # program the PMU timeout before suspend; required

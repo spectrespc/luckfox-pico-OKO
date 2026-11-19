@@ -22,6 +22,7 @@ dist/
 util/motorctl
 tests/test_i2c_protocol
 tests/test_stepper_logic
+tests/test_sleep_logic
 tests/test_boot_header
 tests/test_boot_protocol
 tests/test_crc32

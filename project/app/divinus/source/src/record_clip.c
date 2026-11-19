@@ -22,6 +22,7 @@
 #include "hal/macros.h"
 #include "http_post.h"
 #include "media.h"
+#include "mqtt_post.h"
 
 /* A clip lasts pre+post (15 s by default) while YOLO retriggers every 5 s,
  * so two slots lose roughly every third event when the scene keeps a person
@@ -464,6 +465,12 @@ static int clip_job_finish_recording(int index)
     pthread_mutex_unlock(&jobMtx);
     HAL_INFO("clip", "Event %s: %llu bytes, %.1f s, delivery queued\n",
         job->eventId, job->bytes, (double)job->durationMs / 1000.0);
+    /* Metadata goes to MQTT as soon as the clip exists, independently of the
+     * HTTP delivery outcome.  tsMs is monotonic here, so the wall-clock time
+     * is stamped for the JSON consumer. */
+    mqtt_post_clip(job->eventId, job->cause, job->model,
+        (unsigned long long)time(NULL) * 1000ull, job->durationMs,
+        job->bytes);
     return 0;
 }
 

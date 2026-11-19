@@ -59,6 +59,7 @@ GET_JSON = [
     "/api/streams",
     "/api/stream",
     "/api/http_post",
+    "/api/mqtt",
     "/api/vpn",
 ] + ["/api/osd/%d" % i for i in range(10)]
 
@@ -89,6 +90,7 @@ POST_NOOP = [
     "/api/time",
     "/api/stream",
     "/api/http_post",
+    "/api/mqtt",
 ] + ["/api/osd/%d" % i for i in range(10)]
 
 
@@ -676,6 +678,67 @@ def feature_checks(failures, checks):
         failures.append("POST /api/http_post relative url: expected 400, "
                         "got %s %r" % (status, dec))
     print("POST %-18s %s %s" % ("/api/http_post url", status,
+                                dec.get("error", "?")))
+
+    # MQTT publisher: read-only GET, password is never echoed, invalid topic
+    # prefix/client id and "enable without host" are rejected before saving.
+    checks += 1
+    status, _headers, body = request("/api/mqtt")
+    try:
+        dec = json.loads(body.decode())
+    except Exception:                              # noqa: BLE001
+        dec = {}
+    needed = ("enable", "host", "login", "topic_prefix", "client_id",
+              "keepalive_s", "telemetry_interval_s", "publish_events",
+              "publish_telemetry", "password", "connected", "sent", "failed",
+              "queued", "dropped", "resolved_client_id", "event_topic",
+              "telemetry_topic", "status_topic")
+    if status != 200 or not all(k in dec for k in needed):
+        failures.append("GET /api/mqtt: HTTP %s %r" % (status, dec))
+    elif not isinstance(dec.get("password"), bool):
+        failures.append("GET /api/mqtt leaks the password: %r" %
+                        dec.get("password"))
+    print("GET  %-18s %s host=%r connected=%r password=%r" %
+          ("/api/mqtt", status, dec.get("host"), dec.get("connected"),
+           dec.get("password")))
+
+    checks += 1
+    status, _headers, body = request(
+        "/api/mqtt?topic_prefix=oko%23bad", "POST", b"")
+    try:
+        dec = json.loads(body.decode())
+    except Exception:                              # noqa: BLE001
+        dec = {}
+    if status != 400 or dec.get("error") != "invalid":
+        failures.append("POST /api/mqtt bad topic prefix: expected 400, got "
+                        "%s %r" % (status, dec))
+    print("POST %-18s %s %s" % ("/api/mqtt prefix", status,
+                                dec.get("error", "?")))
+
+    checks += 1
+    status, _headers, body = request(
+        "/api/mqtt?client_id=this-client-id-is-way-too-long", "POST", b"")
+    try:
+        dec = json.loads(body.decode())
+    except Exception:                              # noqa: BLE001
+        dec = {}
+    if status != 400 or dec.get("error") != "invalid":
+        failures.append("POST /api/mqtt long client id: expected 400, got "
+                        "%s %r" % (status, dec))
+    print("POST %-18s %s %s" % ("/api/mqtt client id", status,
+                                dec.get("error", "?")))
+
+    checks += 1
+    status, _headers, body = request("/api/mqtt?enable=1&host=none", "POST",
+                                     b"")
+    try:
+        dec = json.loads(body.decode())
+    except Exception:                              # noqa: BLE001
+        dec = {}
+    if status != 400:
+        failures.append("POST /api/mqtt enable without host: expected 400, "
+                        "got %s %r" % (status, dec))
+    print("POST %-18s %s %s" % ("/api/mqtt no host", status,
                                 dec.get("error", "?")))
 
     # Clip settings: change the window only while the collector is stopped.

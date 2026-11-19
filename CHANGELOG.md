@@ -26,6 +26,50 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Добавлено
 
+- **MQTT: события и телеметрия камеры + стендовый брокер.** Новый
+  самописный клиент MQTT 3.1.1 в divinus: чистый кодек `mqtt.c`/`mqtt.h`
+  (CONNECT с LWT и учёткой, PUBLISH QoS0/QoS1, PINGREQ/DISCONNECT, разбор
+  CONNACK/PUBACK/PINGRESP, varint) и отправитель `mqtt_post.c`/`mqtt_post.h`
+  с отдельным потоком, очередью на 64 JSON в RAM (переполнение теряет самое
+  старое, счётчик `dropped`), backoff 30 с/2 мин/10 мин и телеметрией
+  `oko-ec` по таймеру. Темы: `oko/<id>/event` (QoS1: motion, yolo, clip,
+  heartbeat), `oko/<id>/telemetry` (QoS0 retained, `available`/`age` для
+  устаревшего `/tmp/oko-ec.json`) и `oko/<id>/status` (retained
+  `online:true` + LWT `online:false`); `id` по умолчанию — `oko-<4 hex MAC>`.
+  Секция `[mqtt]` (enable, host, login, password, topic_prefix, client_id,
+  keepalive_s, telemetry_interval_s, publish_events, publish_telemetry),
+  живые `GET/POST /api/mqtt` (пароль write-only, старт/стоп по `enable`,
+  переподключение при смене хоста/учётки) и карточка «MQTT (события,
+  телеметрия)» в WebUI → Events. Хуки стоят параллельно HTTP-каналу и его
+  не заменяют. Новый профиль `services/mqtt/`: `eclipse-mosquitto:2.0.20`
+  с парольным файлом из env (стендовые `oko`/`oko`, рекордер
+  `oko-rec`/`oko-rec`), ACL (устройство — write/read `oko/#`, рекордер —
+  read) и рекордер на 8092 (`/api/events`, `/api/messages`, `/api/telemetry`,
+  `/api/status`, retention `MQTT_REC_MAX_MB`). Проверки: хост-тест
+  `tests/mqtt_test.c`, `bench/mqtt_check.py` (auth, событие, телеметрия,
+  LWT через `kill -9`, рестарт), расширения `api_check.py`/`ui_check.py`.
+- **MQTT: camera events and telemetry + a bench broker.** A self-contained
+  MQTT 3.1.1 client inside divinus: the pure codec `mqtt.c`/`mqtt.h` (CONNECT
+  with LWT and credentials, PUBLISH QoS0/QoS1, PINGREQ/DISCONNECT, CONNACK/
+  PUBACK/PINGRESP parsing, varint) and the `mqtt_post.c`/`mqtt_post.h` sender
+  with its own thread, a 64-message RAM queue (overflow drops the oldest and
+  increments `dropped`), 30 s/2 min/10 min backoff and timer-driven `oko-ec`
+  telemetry. Topics: `oko/<id>/event` (QoS1: motion, yolo, clip, heartbeat),
+  `oko/<id>/telemetry` (QoS0 retained, `available`/`age` for a stale
+  `/tmp/oko-ec.json`) and `oko/<id>/status` (retained `online:true` plus the
+  LWT `online:false`); `id` defaults to `oko-<4 hex MAC>`. The `[mqtt]`
+  section (enable, host, login, password, topic_prefix, client_id,
+  keepalive_s, telemetry_interval_s, publish_events, publish_telemetry), live
+  `GET/POST /api/mqtt` (write-only password, start/stop on `enable`,
+  reconnect after a host/credential change) and a "MQTT (events, telemetry)"
+  card in WebUI → Events. The hooks run next to the HTTP channel and do not
+  replace it. New `services/mqtt/` profile: `eclipse-mosquitto:2.0.20` with a
+  password file generated from env (bench defaults `oko`/`oko`, recorder
+  `oko-rec`/`oko-rec`), an ACL (device writes/reads `oko/#`, recorder reads)
+  and a recorder on 8092 (`/api/events`, `/api/messages`, `/api/telemetry`,
+  `/api/status`, retention `MQTT_REC_MAX_MB`). Checks: the host test
+  `tests/mqtt_test.c`, `bench/mqtt_check.py` (auth, event, telemetry, LWT via
+  `kill -9`, restart) and extensions to `api_check.py`/`ui_check.py`.
 - **Сон камеры: heartbeat-кадр (Snapshot) в `[sleep]`.** Новый модуль
   `heartbeat.c`/`heartbeat_task.c` отправляет один JPEG за тихий
   wake-цикл — в конце окна `wake_check_s`, непосредственно перед повторным
@@ -455,6 +499,56 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   reservation and the gate follow the old topology. Workaround: do not run all
   four VENC streams together with IVS; the fix is a separate code change.
 
+- **Сон привода STM8 по тишине I2C (Active-halt + AWU).** Прошивка
+  `stm8-motor` 2.2.0 (тестовая плата 2.3.0) после 3 с без обращений к
+  `0x60` уходит в цепочку слайсов Active-halt; ядро будят совпадение
+  адреса I2C и AWU, `main` кормит IWDG на каждом пробуждении. Слайс —
+  51200 периодов LSI (400 мс при 128 кГц) = 80 % окна IWDG `250*256`,
+  поэтому отношение не зависит от разброса LSI; TIM4 перед HALT
+  останавливается и его `UIF` сбрасывается (Table 11 паспорта STM8S003F3:
+  TIM4 не будит ни из Halt, ни из Active-halt). Перед первым слайсом
+  позиции принудительно сохраняются в EEPROM (не во время RUNNING), LED
+  гаснет. `system_ticks` во сне не идёт — 2-секундный self-reset I2C и
+  прочие тиковые таймауты замирают. Чистая логика —
+  `src/motor/sleep_logic.h`, хост-тест `tests/test_sleep_logic.c`.
+  Новые команды: `0x0A GET_SLEEP` (8 байт: режим, состояние, слайс/10 мс,
+  резерв, входы BE, пробуждения I2C/AWU) и `0x0B SET_SLEEP`
+  (`[cmd][mode][idle_s]`, 0 — дефолт 3 с). `oko-motor sleep on|off [S]` /
+  `sleep show` с проверкой версии 2.2.0+; в продуктовой сборке режим
+  выключен по умолчанию, на тестовой — включён (`-DSLEEP_DEFAULT_ON`).
+  `tests/hardware_test.sh`: секция 12 (сон/пробуждение, 100 циклов,
+  счётчики, движение после пробуждения, 30-минутный soak).
+- **STM8 focus-motor sleep over I2C silence (Active-halt + AWU).**
+  `stm8-motor` firmware 2.2.0 (test board 2.3.0) enters a chain of
+  Active-halt slices after 3 s without traffic to `0x60`; the I2C address
+  match and the AWU wake the core, and `main` reloads the IWDG on every
+  wake-up. A slice is 51200 LSI periods (400 ms at 128 kHz) = 80 % of the
+  `250*256` IWDG window, so the ratio is independent of the LSI tolerance.
+  TIM4 is stopped and its `UIF` cleared before HALT (STM8S003F3 datasheet
+  Table 11: TIM4 wakes from neither Halt nor Active-halt). Before the first
+  slice the positions are force-saved to EEPROM (never while RUNNING) and
+  the LED is turned off. `system_ticks` freezes during Halt, so the 2 s I2C
+  self-reset and every tick-based timeout freeze with it. Pure decision
+  logic is `src/motor/sleep_logic.h` with the `tests/test_sleep_logic.c`
+  host test. New commands: `0x0A GET_SLEEP` (8 bytes: mode, state, slice in
+  10 ms units, reserved, entries BE, I2C/AWU wake counters) and `0x0B
+  SET_SLEEP` (`[cmd][mode][idle_s]`, 0 = default 3 s). `oko-motor sleep
+  on|off [S]` / `sleep show` require 2.2.0+; the production build keeps the
+  mode off, the test board defaults it on (`-DSLEEP_DEFAULT_ON`).
+  `tests/hardware_test.sh` gained section 12 (sleep/wake, 100 wake cycles,
+  counters, motion after wake, a 30-minute soak).
+- **`[motor] sleep_enable`/`sleep_idle_s` и поля сна в `/api/firmware`.**
+  `divinus` включает сон STM8 перед `write_power_state()` (suspend) и
+  выключает после resume с одним контрольным чтением версии; в
+  `/api/firmware.stm8` добавлены `sleep_mode`, `sleep_state`,
+  `sleep_entries`, `sleep_wake_i2c`, `sleep_wake_awu`. Дефолт
+  `sleep_enable: false`.
+- **`[motor] sleep_enable`/`sleep_idle_s` and sleep fields in `/api/firmware`.**
+  `divinus` enables the STM8 sleep before `write_power_state()` (suspend)
+  and disables it after resume with one version read; `/api/firmware.stm8`
+  gained `sleep_mode`, `sleep_state`, `sleep_entries`, `sleep_wake_i2c` and
+  `sleep_wake_awu`. Default `sleep_enable: false`.
+
 ### Исправлено
 
 - **Диагностика resume: `pm_test` и многострочный `--uboot-command`.**
@@ -788,6 +882,28 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   `//etc/passwd` path and `/api/cmd?export` killed the process. The server now
   raises the stack to 128 KiB and warns about a too-small value.
 
+- **Хостовый STM32-gate приведён к слоту C011.** `flash.c` ограничивает
+  образ STM32 20 КиБ (было 120 КиБ для CBT6); обновлены комментарий и
+  текст ошибки. Документация стенда: `TESTBENCH.md` §2 описывает EC
+  STM32C011F6P6 (`0x42`, proto v3) и дату §1; `FEATURES_VERIFIED.md`,
+  `FEATURES.md` и `TO_DO.md` сохраняют исторические записи 2026-11-07 и
+  помечают актуальный EC.
+- **Host STM32 gate matches the C011 slot.** `flash.c` limits the STM32
+  image to 20 KiB (was 120 KiB for the CBT6); the comment and error text
+  were updated. Bench docs: `TESTBENCH.md` §2 now lists the EC as an
+  STM32C011F6P6 (`0x42`, proto v3) and §1 carries the new date;
+  `FEATURES_VERIFIED.md`, `FEATURES.md` and `TO_DO.md` keep the historical
+  2026-11-07 records and annotate the current EC.
+- **I2C-транспорт хостов: ретрай записи и таймаут адаптера.** `oko-motor`
+  и `focus_motor.c` повторяют только отказ фазы адреса (`I2C_WRITE_RETRIES`
+  2 / `FM_WRITE_RETRIES` 2), не переигрывая частичный кадр, и выставляют
+  `I2C_TIMEOUT` 1 с: STM8 удерживает SCL во время программирования Flash.
+- **Host I2C transport: write retry and adapter timeout.** `oko-motor` and
+  `focus_motor.c` retry an address-phase failure only (`I2C_WRITE_RETRIES`
+  2 / `FM_WRITE_RETRIES` 2) and never replay a partial frame, and set
+  `I2C_TIMEOUT` to 1 s because the STM8 stretches SCL while programming
+  Flash.
+
 ### Изменено
 
 - **`[http_post]`: стартовый снимок не дублирует heartbeat в wake-цикле.**
@@ -1018,6 +1134,20 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   section), `source/doc/README.md` (an addendum to G7/G11 and "Channel budget"),
   `README_RU.md` (the current list of open STM8/STM32 entries) and
   `STRUCTURE.md` (the root file list now includes `TO_DO.md`).
+
+- **Прошивка STM8: версии 2.2.0 (продукт) и 2.3.0 (тестовая плата),
+  тестовая секция 12 и документация.** `Makefile.stm8` задаёт версии по
+  `BOARD` и `SLEEP_DEFAULT_ON`; обновлены `PROTOCOL*`, `HARDWARE*`,
+  `HARDWARE_TESTBOARD.md`, README утилиты и subtree-CHANGELOG. Стендовая
+  проверка сна заблокирована KI-075 (I2C-обновление STM8 не стирает
+  Flash на текущем экземпляре); продуктовый дефолт сна остаётся OFF.
+- **STM8 firmware: versions 2.2.0 (product) and 2.3.0 (test board), test
+  section 12 and documentation.** `Makefile.stm8` sets the versions per
+  `BOARD` and `SLEEP_DEFAULT_ON`; `PROTOCOL*`, `HARDWARE*`,
+  `HARDWARE_TESTBOARD.md`, the utility READMEs and the subtree CHANGELOG
+  were updated. On-target sleep validation is blocked by KI-075 (the STM8
+  I2C update does not erase Flash on the current sample); the product sleep
+  default stays OFF.
 
 ## [0.3.0] — 2026-11-14
 

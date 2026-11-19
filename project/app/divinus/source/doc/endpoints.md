@@ -804,6 +804,49 @@ keeps the stored value and `GET` returns a boolean `password` flag.
  "receiver_url":"","password":false,"note":"snapshot sender started"}
 ```
 
+#### `/api/mqtt`
+
+**OKO.** `[mqtt]` JSON publisher. The sender thread owns the broker socket;
+an `enable` transition starts or stops it, and a change of host, credentials,
+topic prefix, client id or keepalive asks it to reconnect. No restart and no
+stream interruption. The password is write-only: an empty `password` keeps the
+stored value.
+
+| Method | Parameters | Description |
+|--------|------------|-------------|
+| GET | – | Configuration, `password` (set flag) and live status |
+| POST | `enable` | `1`/`0`: start/stop the sender |
+| POST | `host` | `host` or `host:port` (default 1883); `none` disables |
+| POST | `login`, `password` | CONNECT credentials; `none`/empty = unset |
+| POST | `topic_prefix` | First topic segment (`oko`) |
+| POST | `client_id` | 1–23 chars; empty derives `oko-xxxx` from the MAC |
+| POST | `keepalive_s` | 5–3600 seconds |
+| POST | `telemetry_interval_s` | 1–86400 seconds |
+| POST | `publish_events`, `publish_telemetry` | Per-channel switches |
+| POST | `test` | Bench-only: enqueue one `{"type":"test","cause":"bench"}` event; rejected unless divinus runs with `OKO_BENCH_API=1` |
+
+Status fields: `connected`, `sent`, `failed`, `queued`, `dropped`,
+`last_error`, `resolved_client_id`, `event_topic`, `telemetry_topic`,
+`status_topic`.
+
+```json
+{"enable":true,"host":"192.168.52.200:1883","login":"oko",
+ "topic_prefix":"oko","client_id":"","keepalive_s":60,
+ "telemetry_interval_s":30,"publish_events":true,"publish_telemetry":true,
+ "password":true,"connected":true,"sent":12,"failed":0,"queued":0,
+ "dropped":0,"last_error":"","resolved_client_id":"oko-1a2b",
+ "event_topic":"oko/oko-1a2b/event",
+ "telemetry_topic":"oko/oko-1a2b/telemetry",
+ "status_topic":"oko/oko-1a2b/status","note":"MQTT settings applied"}
+```
+
+Publishing is deliberately non-blocking for the analytics threads: an event is
+copied into a 64-message RAM queue (overflow drops the oldest and increments
+`dropped`), and the QoS1 PUBACK wait happens only in the sender thread.
+Connect failures back off at 30 s / 2 min / 10 min. A graceful shutdown
+publishes the retained `{"online":false}` status before DISCONNECT; an
+ungraceful death is covered by the broker LWT.
+
 #### `/api/focus`
 
 **OKO.** Focus assistant: AF measurement metric and the optional STM8 motors.

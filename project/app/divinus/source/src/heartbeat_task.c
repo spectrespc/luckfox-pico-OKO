@@ -24,6 +24,7 @@
 #include "http_post.h"
 #include "ivs_events.h"
 #include "jpeg.h"
+#include "mqtt_post.h"
 #include "sleep_policy.h"
 
 #define HEARTBEAT_STATE_PATH "/tmp/oko-heartbeat-state"
@@ -169,6 +170,12 @@ int heartbeat_before_suspend(void)
         HAL_INFO("heartbeat", "interval gate: cycle skipped\n");
         return -1;
     }
+
+    /* MQTT gets the same proof of life as a JSON event; the JPEG below is
+     * optional, so publish before the snapshot can fail. */
+    mqtt_post_heartbeat(realtime_ms(),
+        (unsigned int)(mono_s() - init_s), ivs_last_area_permille(), 1,
+        wake_cycle);
 
     if (jpeg_get((short)app_config.http_post_width,
             (short)app_config.http_post_height,

@@ -56,6 +56,8 @@ static void usage(void)
         "  speed MOTOR VALUE    set speed in steps/s (1..5000)\n"
         "  move MOTOR STEPS     relative move\n"
         "  set-pos MOTOR VALUE  force the logical position without moving\n"
+        "  sleep on|off [S]     enable/disable I2C-idle sleep after S seconds\n"
+        "  sleep show           sleep mode, state and wake counters\n"
         "  home MOTOR [SPEED]   drive to the negative stop, then zero (bench)\n"
         "  stop MOTOR           stop one motor\n"
         "  reset                software reset of the application\n"
@@ -447,6 +449,14 @@ static int enter_boot(int fd)
         return -1;
     }
 
+    /* Disable I2C-idle sleep before asking for the bootloader: the update
+       must not race the AWU/Halt chain.  Firmware older than 2.2.0 ignores
+       the unknown opcode, so this is safe on every build. */
+    {
+        uint8_t sleep_off[3] = { I2C_CMD_SET_SLEEP, 0, 0 };
+        (void)app_write(fd, sleep_off, sizeof(sleep_off));
+    }
+
     if (app_write(fd, &cmd, 1) < 0)
         return -1;
     /* The application stores the boot magic and stops reloading the IWDG. */
@@ -670,6 +680,106 @@ static int cmd_set_pos(int fd, uint8_t motor, int32_t position)
                 "(readback %ld); update to 2.0.2/2.1.1\n", (long)readback);
         return 1;
     }
+    return 0;
+}
+
+/* ---------------------------------------------------------------- sleep */
+
+/* The sleep commands exist since 2.2.0.  The firmware reports an older
+ * version (or a stale/zeroed reply) for unknown opcodes, so always check the
+ * version before trusting a GET_SLEEP payload. */
+static int version_at_least(const uint8_t v[3], uint8_t major, uint8_t minor)
+{
+    if (v[0] != major)
+        return v[0] > major;
+    return v[1] >= minor;
+}
+
+static int read_sleep(int fd, uint8_t out[8])
+{
+    return app_read(fd, I2C_CMD_GET_SLEEP, out, 8);
+}
+
+static void print_sleep(const uint8_t r[8])
+{
+    printf("sleep %s, state %u, slice %u ms, entries %u, wake i2c %u awu %u\n",
+           r[0] ? "on" : "off", (unsigned)r[1],
+           (unsigned)r[2] * 10u,
+           (unsigned)(((uint16_t)r[4] << 8) | r[5]),
+           (unsigned)r[6], (unsigned)r[7]);
+}
+
+static int cmd_sleep(int fd, int argc, char **argv)
+{
+    uint8_t version[3];
+    uint8_t resp[8];
+    int enable;
+    long idle_s = 0;
+
+    if (read_app_version(fd, version) < 0)
+    {
+        fprintf(stderr, "no application response\n");
+        return 1;
+    }
+    if (!version_at_least(version, 2, 2))
+    {
+        fprintf(stderr, "sleep requires firmware 2.2.0+ (device reports "
+                "%u.%u.%u)\n", version[0], version[1], version[2]);
+        return 1;
+    }
+
+    if (argc == 0 || !strcmp(argv[0], "show"))
+    {
+        if (read_sleep(fd, resp) < 0)
+        {
+            fprintf(stderr, "no application response\n");
+            return 1;
+        }
+        print_sleep(resp);
+        return 0;
+    }
+
+    if (!strcmp(argv[0], "on") || !strcmp(argv[0], "off"))
+        enable = !strcmp(argv[0], "on");
+    else
+    {
+        usage();
+        return 2;
+    }
+
+    if (argc > 1)
+    {
+        idle_s = strtol(argv[1], NULL, 0);
+        if (idle_s < 0 || idle_s > 60)
+        {
+            fprintf(stderr, "idle seconds must be 0..60 (0 = default 3 s)\n");
+            return 2;
+        }
+    }
+
+    {
+        uint8_t frame[3] = { I2C_CMD_SET_SLEEP, (uint8_t)enable,
+                             (uint8_t)idle_s };
+
+        /* No reply: verify with GET_SLEEP, which also wakes a sleeping
+           controller.  The first write after a sleep period is retried by
+           i2c_host_write(). */
+        if (app_write(fd, frame, sizeof(frame)))
+            return 1;
+    }
+    usleep(10000);
+    if (read_sleep(fd, resp) < 0)
+    {
+        fprintf(stderr, "no application response after SET_SLEEP\n");
+        return 1;
+    }
+    if ((resp[0] != 0) != (enable != 0))
+    {
+        fprintf(stderr, "SET_SLEEP not applied (mode readback %u)\n",
+                (unsigned)resp[0]);
+        return 1;
+    }
+    print_sleep(resp);
     return 0;
 }
 
@@ -1033,6 +1143,10 @@ int main(int argc, char **argv)
             else
                 rc = cmd_set_pos(fd, motor, (int32_t)value);
         }
+    }
+    else if (!strcmp(command, "sleep"))
+    {
+        rc = cmd_sleep(fd, argc - optind, argv + optind);
     }
     else if (!strcmp(command, "home"))
     {

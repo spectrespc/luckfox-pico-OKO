@@ -4,7 +4,7 @@
 (RV1106, SPI NAND, Buildroot) с сенсором SC230AI: паспорт платформы, индекс по
 файлам статусов проверки и краткие команды проверки.
 
-Статус на 2026-11-15. Пометки: **работает** — проверено на стенде;
+Статус на 2026-11-19. Пометки: **работает** — проверено на стенде;
 **ограничено** — работает с оговоркой; **заблокировано** — отказ с причиной.
 
 | Файл | Содержание |
@@ -47,6 +47,9 @@ bench/run.sh firmware_check.py --negative
 
 # статус платы
 curl -u admin:oko-change-me http://192.168.52.97/api/status
+
+# MQTT: брокер + рекордер и сквозная проверка камеры
+bench/run.sh mqtt_check.py
 
 # USB: роль порта, хаб и устройства за ним (нужен OTG-переходник + питание 5 В)
 bench/run.sh dut.py --host 192.168.52.97 'cat /proc/device-tree/usbdrd/usb@ffb00000/dr_mode; lsusb'
@@ -111,6 +114,19 @@ bench/run.sh dut.py --host 192.168.52.97 'cat /proc/device-tree/usbdrd/usb@ffb00
   `GET/POST /api/mdns`, WebUI **Сеть → mDNS**; discovery работает на
   интерфейсе multicast-маршрута, SoftAP и VPN не обслуживаются (KI-067).
   Service-записей (`_http._tcp`, `_rtsp._tcp`) нет.
+- MQTT: JSON-публикатор MQTT 3.1.1 в `divinus` (`mqtt.c`/`mqtt_post.c`) —
+  события motion/yolo/clip/heartbeat в `oko/<id>/event` (QoS1), снимок
+  `oko-ec` в `oko/<id>/telemetry` (QoS0 retained, `available`/`age` для
+  устаревшего файла) и retained-статус `oko/<id>/status` + LWT
+  `online:false`; `id` по умолчанию — `oko-<4 hex MAC>`. Управление —
+  секция `[mqtt]`, `GET/POST /api/mqtt`, WebUI **Events → MQTT (события,
+  телеметрия)**; `enable` стартует/останавливает поток без рестарта и без
+  обрыва потока, отправка не блокирует аналитику (очередь 64 JSON, PUBACK
+  ждёт только mqtt-поток). Стендовый профиль `services/mqtt` — mosquitto с
+  паролем и рекордер с HTTP-API на 8092. Статус —
+  `FEATURES_VERIFIED.md`; ограничения (нет TLS и входящих команд, потеря
+  событий при suspend, пароль в yaml открытым текстом) —
+  `FEATURES_UNVERIFIED.md`.
 - VPN: WireGuard (`type=wg`, встроенный модуль ядра), AmneziaWG (`type=awg`,
   out-of-tree `amneziawg.ko`, `RK_ENABLE_AWG=y`) и OpenVPN-клиент (`type=ovpn`,
   пакет `openvpn 2.5.7` + `CONFIG_TUN=y`) применяются своим POSIX-хелпером
@@ -160,7 +176,7 @@ Entry point for OKO capabilities on the Luckfox Pico Pro Max (RV1106, SPI NAND,
 Buildroot) with the SC230AI sensor: platform passport, an index of the
 verification-status files and short verification commands.
 
-Status as of 2026-11-15. Markers: **works**, **limited**, **blocked**.
+Status as of 2026-11-19. Markers: **works**, **limited**, **blocked**.
 
 | File | Content |
 |---|---|
@@ -188,8 +204,24 @@ experiments were not run); see `FEATURES_UNVERIFIED.md`. Shared notes: see the
 Russian section above; open defects are in `KNOWN_ISSUES.md`, and unverified stream combinations, YOLO, sensors and
 microSD limits are in `FEATURES_UNVERIFIED.md`. A real STM32 update (CBT6,
 WebUI `app-1.0.1.bin` → rollback `app-1.0.0.bin`, dotted `1.0.0` in
-`/api/firmware`) is verified. Flashing procedure and bench addresses are in
+`/api/firmware`) is verified; since 2026-11-13 the bench EC is an
+STM32C011F6P6 (proto v3, 20 KiB application slot), and the host STM32
+size gate matches that slot. Flashing procedure and bench addresses are in
 `TESTBENCH.md`; evidence is in `VERIFIED_FUNCTIONS.md`.
+
+MQTT: a JSON-only MQTT 3.1.1 publisher in `divinus` (`mqtt.c`/`mqtt_post.c`)
+sends motion/yolo/clip/heartbeat events to `oko/<id>/event` (QoS1), the
+`oko-ec` snapshot to `oko/<id>/telemetry` (QoS0 retained, `available`/`age`
+for a stale file) and the retained `oko/<id>/status` plus the `online:false`
+LWT; `id` defaults to `oko-<4 hex MAC>`. Control: the `[mqtt]` section,
+`GET/POST /api/mqtt`, WebUI **Events → MQTT (events, telemetry)**; `enable`
+starts/stops the thread without a restart or a stream interruption, and
+publishing never blocks analytics (64-message queue, only the MQTT thread
+waits for PUBACK). The bench profile `services/mqtt` is mosquitto with a
+password file plus a recorder HTTP API on 8092. Status is in
+`FEATURES_VERIFIED.md`; limits (no TLS or inbound commands, events lost
+during suspend, plaintext password in the yaml) are in
+`FEATURES_UNVERIFIED.md`.
 
 Ethernet and a Wi-Fi station (`eth0`, `wlan0`) are peer uplinks and can be up
 at the same time. Their priority is set by `oko_net_metric` (default 100) and

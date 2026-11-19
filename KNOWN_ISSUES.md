@@ -1,6 +1,6 @@
 # Известные ошибки и ограничения OKO
 
-Обновлено: `2026-11-17`. В файле — открытые проблемы, подтверждённые
+Обновлено: `2026-11-19`. В файле — открытые проблемы, подтверждённые
 ограничения и архив закрытых записей (§Архив). Проверенные функции и доказательства — в `VERIFIED_FUNCTIONS.md`,
 состав и статус функционала — в `FEATURES_VERIFIED.md` / `FEATURES_UNVERIFIED.md`,
 процедуры стенда — в `TESTBENCH.md`.
@@ -690,6 +690,21 @@
   `apt-get download libasound2t64`, распаковать `dpkg-deb -x` и задать
   `LD_LIBRARY_PATH` (см. `bench/README.md`). Статус: **особенность хоста**.
 
+- **KI-075. STM8: обновление по I2C не стирает Flash (SCL hold, IWDG-сброс).**
+  2026-11-19, стенд, приложение STM8 `2.1.1`, загрузчик `1.0.0`.
+  `oko-motor flash app-2.3.0.ihx` доходит до `PROGRESS 100` и `RC=0`, но
+  после `BOOT_RESET` работает прежняя прошивка, и `BOOT_INFO` показывает
+  прежнюю версию в заголовке — команда `0x11 ERASE` фактически не
+  выполняется. Повторяется и старым `oko-motor` (сборка из git HEAD), то
+  есть к изменениям сна отношения не имеет. В `dmesg`: `rk3x-i2c ...
+  SCL hold by slave` / `timeout, ipd: 0x91`; через ~3 с (IWDG) загрузчик
+  сбрасывается в приложение. 9-байтовый кадр неизвестной команды
+  обрабатывается штатно (STATUS 6), значит приём кадров цел и зависает
+  именно стирание/программирование Flash. Обход: прошить
+  `factory-<ver>.ihx` через ST-Link (SWIM). Статус: **открыто, блокирует
+  стендовую проверку сна STM8**; проверить option bytes (WP/UBC), питание
+  MCU и повторить на другом экземпляре (см. KI-032).
+
 ### Архив закрытых записей
 
 Компактный список закрытых проблем; действующие остатки указаны в строке
@@ -1364,6 +1379,17 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   `oko-wifi set` or `/api/wifi`, and restore the factory one with
   `fw_setenv oko_wlan_ap_psk`. Status: **operational requirement**.
 
+- **KI-076. MQTT runs without TLS and keeps the broker password in plaintext.**
+  The divinus publisher (`[mqtt]`) connects to the broker over plain TCP 1883
+  with username/password from `/userdata/divinus.yaml` (same accepted
+  limitation as KI-029 for `[http_post]`), supports no TLS and no inbound
+  commands (the device never subscribes). The event queue lives in RAM only
+  (64 messages, oldest dropped with a `dropped` counter), so events produced
+  during an AOV suspend are lost. Bench profile `services/mqtt` uses the same
+  plaintext password model with public defaults `oko`/`oko` and
+  `oko-rec`/`oko-rec`. Status: **accepted limitation** for the lab; TLS,
+  protected secret storage and inbound commands are out of scope.
+
 ### Development tools
 
 - **KI-047. Pre-migration builds (Docker/Ubuntu 22.04) are not reproducible.**
@@ -1385,6 +1411,21 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   it. Without root: `apt-get download libasound2t64`, unpack with `dpkg-deb -x`
   and set `LD_LIBRARY_PATH` (see `bench/README.md`).
   Status: **host environment**.
+
+- **KI-075. STM8: the I2C update does not erase Flash (SCL hold, IWDG reset).**
+  2026-11-19, bench, STM8 application `2.1.1`, bootloader `1.0.0`.
+  `oko-motor flash app-2.3.0.ihx` reaches `PROGRESS 100` with `RC=0`, but
+  after `BOOT_RESET` the old application still runs and `BOOT_INFO` still
+  reports the old header version — the `0x11 ERASE` command is not actually
+  executed. It reproduces with the old `oko-motor` built from git HEAD, so it
+  is unrelated to the sleep changes. `dmesg` shows `rk3x-i2c ... SCL hold by
+  slave` / `timeout, ipd: 0x91`; after ~3 s (IWDG) the bootloader resets into
+  the application. A 9-byte unknown-command frame is handled normally
+  (STATUS 6), so frame reception is intact and the erase/program operation is
+  what hangs. Workaround: write `factory-<ver>.ihx` over ST-Link (SWIM).
+  Status: **open; blocks the on-target validation of the STM8 sleep mode**;
+  check the option bytes (WP/UBC), the MCU supply, and retry on another
+  sample (see KI-032).
 
 ### Closed entries archive
 

@@ -22,6 +22,20 @@
 /* Public functions ----------------------------------------------------------*/
 
 /**
+  * @brief  Auto wake-up interrupt routine (vector 1).  The AWU is the timed
+  *         wake-up source of the Active-halt sleep chain; the flag is normally
+  *         consumed by hw_sleep_exit(), but a late request must not fall
+  *         through to the default trap handler.  Clearing AWUF also resets the
+  *         internal interrupt latch (RM0016).
+  * @param  None
+  * @retval None
+  */
+INTERRUPT_HANDLER(AWU_IRQHandler, 1)
+{
+    AWU->CSR &= (uint8_t)~AWU_CSR_AWUF;
+}
+
+/**
   * @brief  I2C interrupt routine (vector 19). Delegates to the short I2C state
   *         machine which buffers data and sets flags for the main loop.
   * @param  None

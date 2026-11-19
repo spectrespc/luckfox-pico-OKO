@@ -90,6 +90,16 @@ bench/run.sh event_check.py          # сквозной тест события
 На камере включаются `[http_post]` (`host: 192.168.52.200:8090`,
 `url: /ingest/frame`) и `[event_clip]`; подробности — `services/README.md`.
 
+MQTT (только JSON: события и телеметрия) — профиль `services/mqtt/`
+(`oko-mqtt`, брокер на **1883** и рекордер на **8092**); на камере — секция
+`[mqtt]` или WebUI **Events → MQTT**:
+
+```sh
+docker compose -f services/mqtt/docker-compose.yml up -d --build
+curl -fsS http://127.0.0.1:8092/health
+bench/run.sh mqtt_check.py           # сквозной тест: событие, телеметрия, LWT
+```
+
 ## Загрузка на устройство
 
 Используется SPI NAND.

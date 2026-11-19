@@ -8,7 +8,7 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
 
 | Поле | Значение |
 |---|---|
-| Дата обновления | `2026-11-18` |
+| Дата обновления | `2026-11-19` |
 | Ответственный | `<ФИО>` |
 | Статус | активен |
 | Назначение | сборка прошивки и прошивка SPI NAND для отладки IPC |
@@ -24,6 +24,7 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
 | Корневая ФС | Buildroot, busybox init |
 | Сенсор | SC230AI (MIPI CSI, драйвер `sc230ai`, 1080p30 / 480p120; `HDR_X2` экспериментально; `divinus` кодирует 30 fps) |
 | Двигатель | `STM8S003F3P6` на I2C (адрес `0x60`, `/dev/i2c-3`, 100 кГц) — привод фокуса/зума |
+| EC | STM32C011F6P6 (`st-info`: 32 КиБ Flash, 2 КиБ страница), адрес `0x42`, proto v3, приложение 20 КиБ |
 | Питание | `<источник, напряжение, ток>` |
 | Подключение к ПК | USB host: хаб `1a40:0101` на порту DUT (gadget/adb недоступны, KI-057); UART через ESP32-C6-мост `192.168.52.17` — прошивка [ESP32-OKO-KVM](https://github.com/spectrespc/ESP32-OKO-KVM) (на стенде `1.10.0`): telnet `:23` (консоль) и REST API HTTP `:80` (§8); Maskrom — `<кнопка / перемычка>` при прямом USB |
 | Серийный номер / метка | `<S/N>` |
@@ -64,6 +65,7 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
 | Хост TFTP/NFS | `192.168.52.200` |
 | UART-мост (ESP32-C6, ESP32-OKO-KVM) | `192.168.52.17`: TCP `23` (telnet, консоль DUT, 115200 8N1), TCP `2323` (telnet UART1); HTTP `:80` — REST API (конфиг, SD-логи, питание/сброс DUT, логи ESP); мониторы UART `:2324`/`:24` (read-only, выключены по умолчанию) |
 | Хост, приёмник UDP/RTP (MediaMTX) | `192.168.52.200`: `5600/udp` (вход от камеры), `8554/tcp` (RTSP), `8000–8001/udp` (RTP/RTCP для RTSP-читателей), `8888/tcp` (HLS), `8889/tcp` (WebRTC), `8189/udp` (WebRTC ICE), `9997/tcp` — control API только на `127.0.0.1` |
+| Хост, MQTT | `192.168.52.200`: `1883/tcp` — брокер `oko-mqtt-broker` (логин обязателен), `8092/tcp` — HTTP-API рекордера `oko-mqtt-recorder` |
 | Маска | `255.255.255.0` |
 | Шлюз | `192.168.52.254` |
 
@@ -88,6 +90,8 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
 | SoftAP устройства (`OKO-XXXX`, SSID из MAC) | — | `ybrjveytljdthzq` — публичный фабричный дефолт WPA2-PSK, пока `oko_wlan_ap_psk` не задан; сменить до ввода в эксплуатацию (KI-030) |
 | divinus Web/RTSP (фабричный) | `admin` | `oko-change-me` — публичный фабричный дефолт, сменить до подключения к недоверенной сети |
 | ESP32-мост (Web UI / REST API) | `admin` | `admin` — вендорский дефолт прошивок до 1.4.2; в свежей прошивке при первой загрузке генерируется случайный пароль (печатается в USB-Serial/JTAG консоль моста). Переопределение в скриптах — `OKO_BRIDGE`, `OKO_BRIDGE_USER`, `OKO_BRIDGE_PASSWORD` |
+| MQTT-брокер стенда (`services/mqtt`) | `oko` | `oko` — публичный стендовый дефолт (`OKO_MQTT_USER`/`OKO_MQTT_PASS`) |
+| MQTT-рекордер стенда | `oko-rec` | `oko-rec` — публичный стендовый дефолт (`OKO_MQTT_REC_USER`/`OKO_MQTT_REC_PASS`), подписка только на чтение |
 | Хост | `spectre` | sudo по паролю; в репозитории и скриптах не хранится |
 
 Перед выдачей стенда наружу вендорский пароль `luckfox` необходимо сменить.
@@ -1245,6 +1249,76 @@ transfer finish timeout`, затем `UBIFS ... error -5` и перевод `/` 
 `/userdata` в `ro` (KI-071). Power cycle через ESP32 восстановил оба тома.
 При длительных прогонах сна проверять `dmesg | grep -i sfc` после каждого
 resume и держать резервный `output/image/update.img` для TFTP.
+
+### 2026-11-19: MQTT — события и телеметрия камеры (`services/mqtt`)
+
+Профиль `oko-mqtt` (`network_mode: host`): брокер `eclipse-mosquitto:2.0.20`
+на `1883` с обязательной аутентификацией и рекордер на `8092`, который
+складывает JSON в `output/srv/mqtt/recorder/` (`events/<дата>.jsonl`,
+`telemetry/<id>.json`, `status/<id>.json`, `messages.log.jsonl`, retention
+`MQTT_REC_MAX_MB`, по умолчанию 16 МиБ). TLS нет;
+пароли — переменные `OKO_MQTT_*` (стендовые дефолты в §6).
+
+```sh
+# порт должен быть свободен (иначе compose не стартует listener)
+ss -ltn 'sport = :1883 or sport = :8092'
+docker compose -f services/mqtt/docker-compose.yml up -d --build
+docker compose -f services/mqtt/docker-compose.yml ps
+docker logs --tail 20 oko-mqtt-broker
+curl -fsS http://127.0.0.1:8092/health
+# {"ok":true,"broker":"127.0.0.1:1883","topic":"oko/#",...}
+
+# аутентификация: верный пароль проходит, неверный — отказ (rc 5)
+docker exec oko-mqtt-broker mosquitto_pub -h 127.0.0.1 -u oko -P oko \
+  -t oko/bench/probe -m '{"type":"probe"}'
+docker exec oko-mqtt-broker mosquitto_pub -h 127.0.0.1 -u oko -P bad \
+  -t oko/bench/probe -m x        # Connection Refused: not authorised
+
+# подписка на всё дерево (до 10 с ждём одно сообщение)
+docker exec oko-mqtt-broker mosquitto_sub -h 127.0.0.1 -u oko-rec -P oko-rec \
+  -t 'oko/#' -W 10 -C 1
+```
+
+Настройка камеры — живьём, без рестарта и без обрыва потока:
+
+```sh
+curl -u admin:oko-change-me -X POST \
+ 'http://192.168.52.33/api/mqtt?enable=1&host=192.168.52.200%3A1883&login=oko&password=oko&keepalive_s=60&telemetry_interval_s=30&publish_events=1&publish_telemetry=1'
+curl -u admin:oko-change-me http://192.168.52.33/api/mqtt
+# enable/host/.../connected/sent/failed/queued/dropped/last_error,
+# resolved_client_id и полные темы event_topic/telemetry_topic/status_topic
+```
+
+Темы: `oko/<id>/event` (QoS1, JSON на событие motion/yolo/clip/heartbeat;
+`id` — `resolved_client_id`, по умолчанию `oko-<4 hex MAC>`),
+`oko/<id>/telemetry` (QoS0 retained, `{ts, available, data}` из
+`/tmp/oko-ec.json`; устаревший файл → `available:false`,`age`) и
+`oko/<id>/status` (retained `{online:true, fw}`; LWT брокера
+`{online:false}`). Сквозная проверка:
+
+```sh
+bench/run.sh mqtt_check.py           # положительный прогон (профиль поднят)
+bench/run.sh mqtt_check.py --deploy  # сначала bench/deploy_divinus.py
+bench/run.sh mqtt_check.py --neg     # профиль выключен: connected=false,
+                                     # last_error непустой, ретраи 30с/2мин/10мин
+docker compose -f services/mqtt/docker-compose.yml down
+```
+
+`mqtt_check.py` проверяет аутентификацию брокера, `POST /api/mqtt`,
+retained `online:true`, телеметрию, затем `kill -9` divinus → LWT
+`online:false`. Дальше скрипт поднимает divinus заново с `OKO_BENCH_API=1`
+(`cd /userdata; LD_LIBRARY_PATH=/oem/usr/lib …`), проверяет событие
+`POST /api/mqtt?test=1` (тип `test`, `cause bench`) и в конце перезапускает
+процесс уже без `OKO_BENCH_API`, чтобы bench-инъектор не остался включённым;
+отчёт — `output/bench/mqtt/report.json`. Важно: divinus запускает
+`oko-lunch.sh`, а
+`/etc/init.d/S20oko-osd` управляет только OSD-сайдкаром — для рестарта
+одного divinus используйте `LD_LIBRARY_PATH=/oem/usr/lib` и cwd `/userdata`.
+Очередь событий на камере — 64 JSON в RAM,
+переполнение теряет самое старое (`dropped`); отправка не блокирует потоки
+аналитики, PUBACK ждёт только mqtt-поток. События, возникшие во время
+suspend, теряются (память только RAM). Пароль лежит открытым в
+`/userdata/divinus.yaml` — как у `[http_post]`.
 
 ## 9. Известные особенности
 
