@@ -344,7 +344,7 @@ sudo systemctl stop tftpd-hpa nfs-server nfs-mountd rpcbind.socket rpcbind
 
 # 3. поднять контейнер и проверить TFTP/NFS + матрицу стенда
 tools/native/setup_netboot.sh
-bench/run.sh nfs_env.py on --host 192.168.52.97
+bench/run.sh nfs_env.py on --host 192.168.52.33
 bench/run.sh nfs_env.py off --host 192.168.52.150
 
 # 4. только после зелёной матрицы — удалить хостовый стек

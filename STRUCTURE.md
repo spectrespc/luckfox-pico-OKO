@@ -11,14 +11,17 @@
 .BoardConfig.mk -> project/cfg/BoardConfig_IPC/BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI.mk
 ```
 
-То есть SPI NAND, Buildroot, плата Luckfox Pico Pro Max, камера SC230AI.
+То есть SPI NAND, Buildroot, плата Luckfox Pico Pro Max, камера SC230AI — это
+продуктовый профиль. Тем же симлинком переключаются экспериментальные
+`...-IPC_FASTBOOT.mk` и `...-SC230AI-AOV.mk`; после экспериментов продуктовый
+профиль возвращается. Фактическую цель проверяйте `readlink -f .BoardConfig.mk`.
 
 ## Корневые папки
 
 | Папка | Назначение |
 |---|---|
 | `config/` | Извлечённые дефконфиги для быстрой настройки: `buildroot_defconfig`, `kernel_defconfig`, `dts_config`. |
-| `bench/` | Утилиты тестового стенда: консоль по UART (telnet-мост ESP32 или `/dev/ttyACM*`, `uart.py`/`serial_exec.py`) и SSH-команды, netboot через TFTP/NFS (`netboot.py`), прошивка SPI NAND по TFTP (`tftp_flash.py`, режим по умолчанию; раскладка читается из `output/image/.env.txt`, компоненты `idblock/uboot/env` доступны явно, перед записью idblock делается SSH-бэкап `/dev/mtdblock1` в `output/bench/backup/`, `--power-cycle` — холодный цикл питания через мост с перехватом U-Boot), питание DUT через ESP32-мост (`power.py`: `off`/`on`/`cycle`/`reset`), переключение NAND/NFS через env U-Boot (`nfs_env.py`), проверка OSD по RTSP (`osd_check.py`), сквозная проверка UDP/RTP-раздачи через MediaMTX (`stream_check.py`), сквозная проверка событий и роликов (`event_check.py`), их soak (`clip_soak.py`), heartbeat сна (`heartbeat_check.py`), сквозная проверка MQTT (`mqtt_check.py`), матрица HTTP API (`api_check.py`), WebUI в headless Chromium (`ui_check.py`), проверка mDNS сырым UDP-запросом (`mdns_check.py`), soak 2BPP-рамок с контролем fd/RSS/счётчиков ядра (`rgn_boxes_check.py`), AF-метрика и CSV (`focus_check.py`), версии/прошивка контроллеров (`firmware_check.py`), выкатка бинарника в `/oem` (`deploy_divinus.py`), 20-минутный soak двух аплинков (`uplink_soak.py`), venv. В сборке прошивки не участвует. |
+| `bench/` | Утилиты тестового стенда: консоль по UART (telnet-мост ESP32 или `/dev/ttyACM*`, `uart.py`/`serial_exec.py`) и SSH-команды (`dut.py`), netboot через TFTP/NFS (`netboot.py`), прошивка SPI NAND по TFTP (`tftp_flash.py`, режим по умолчанию; раскладка читается из `output/image/.env.txt`, компоненты `idblock/uboot/env` доступны явно, перед записью idblock делается SSH-бэкап `/dev/mtdblock1` в `output/bench/backup/`, `--power-cycle` — холодный цикл питания через мост с перехватом U-Boot), питание DUT через ESP32-мост (`power.py`: `off`/`on`/`cycle`/`reset`), переключение NAND/NFS через env U-Boot (`nfs_env.py`), проверка OSD по RTSP (`osd_check.py`), сквозная проверка UDP/RTP-раздачи через MediaMTX (`stream_check.py`), сквозная проверка событий и роликов (`event_check.py`), их soak (`clip_soak.py`), heartbeat сна (`heartbeat_check.py`), сквозная проверка MQTT (`mqtt_check.py`), матрица HTTP API (`api_check.py`), WebUI в headless Chromium (`ui_check.py`), проверка mDNS сырым UDP-запросом (`mdns_check.py`), soak 2BPP-рамок с контролем fd/RSS/счётчиков ядра (`rgn_boxes_check.py`), AF-метрика и CSV (`focus_check.py`), версии/прошивка контроллеров (`firmware_check.py`), выкатка бинарника в `/oem` (`deploy_divinus.py`), геометрия ePTZ и совмещение рамок/OSD на 0/90/180/270 (`geometry_check.py`), ночная точность YOLO по матрице `{vpss3, vi0} × {AIISP off, on}` (`yolo_night.py`), VPN WireGuard/AmneziaWG/OpenVPN (`vpn_check.py`), кадентность AOV-цикла по read-only монитору UART (`aov_cadence.py`), soak шины I2C3/STM32 EC (`ec_bus_soak.py`), 20-минутный soak двух аплинков (`uplink_soak.py`), venv. В сборке прошивки не участвует. |
 | `services/` | Docker-сервисы стенда. `services/docker-compose.yml` — контейнер `oko-services`: TFTP (`output/image`), NFS-экспорт `output/srv/nfs/rootfs`, неактивные шаблоны WireGuard/AmneziaWG/OpenVPN (`conf/`), запуск — `tools/native/setup_netboot.sh`. `services/stream/` — отдельный профиль `oko-mediamtx` (MediaMTX, host-сеть): принимает RTP камеры на `5600/udp` и отдаёт RTSP/HLS/WebRTC; `services/events/` — профиль `oko-events` (FastAPI + ffmpeg, порт 8090): принимает JPEG-пачки и fMP4-ролики событий, хранит их в `output/srv/events`, транскодирует H.265 → H.264 для браузера; `services/mqtt/` — профиль `oko-mqtt` (mosquitto 2.0.20 на 1883 + рекордер на FastAPI/paho, порт 8092): брокер с паролями из env и ACL, JSON-архив событий/телеметрии в `output/srv/mqtt`; `services/converter/` — профиль `oko-converter` (FastAPI + rknn-toolkit2 2.5.0, порт 8091): принимает ONNX 640×384 и калибровочные JPEG, конвертирует в `.rknn` для rv1106, задачи и логи — в `output/srv/converter`. В сборке прошивки не участвуют. |
 | `research/` | Архив внешних исследований: заметки о переносимости upstream-кода и минимальные read-only снимки upstream-файлов с провенансом. В сборке прошивки не участвует. |
 | `media/` | Медиастек Rockchip: кодеки, 2D-ускорение, ISP, NPU, медиафреймворк и примеры. |
@@ -291,8 +294,9 @@
   доказательство, ограничения и команды воспроизведения.
 - `KNOWN_ISSUES.md` — известные ошибки и ограничения с обходами: NPU/YOLO,
   RGA, OSD, IVS, прошивка, безопасность и инструменты.
-- `TO_DO.md` — план работ по фокусу/автофокусу (STM8) и видеоаналитике на NPU:
-  состав этапов §1–§11, статус выполнения и открытые пункты (дата 2026-11-07).
+- `TO_DO.md` — план работ по фокусу/автофокусу (STM8), видеоаналитике на NPU
+  и переносу полезного из вендорского `fastboot_client.c`:
+  состав этапов §1–§14, статус выполнения и открытые пункты (дата 2026-11-20).
 - `CHANGELOG.md` — история изменений OKO-форка (Keep a Changelog + SemVer).
 - `README.md` / `README_CN.md` — документация SDK (EN/CN).
 - `UPDATE_LOG.md` / `UPDATE_LOG_CN.md` — журнал изменений SDK (EN/CN).

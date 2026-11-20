@@ -4,8 +4,10 @@
 BootROM → U-Boot → ядро Linux → busybox init → init-скрипты → загрузка модулей ядра →
 запуск приложения `divinus`, а также зависимости между разделами, модулями и сервисами.
 
-Активная конфигурация определяется симлинком `.BoardConfig.mk`, который указывает на
-`project/cfg/BoardConfig_IPC/BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI.mk`.
+Продуктовая конфигурация задаётся симлинком `.BoardConfig.mk` →
+`project/cfg/BoardConfig_IPC/BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI.mk`;
+тем же симлинком переключаются экспериментальные профили (§1.1, §1.2), поэтому
+фактическую цель проверяйте `readlink -f .BoardConfig.mk`.
 
 Канонический источник порядка — исходные скрипты и сборочные файлы. Каталог
 `output/out/` — это артефакт последней сборки; он может устареть и используется только

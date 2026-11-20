@@ -46,13 +46,13 @@ bench/run.sh focus_check.py --enable --seconds 20 --snapshot
 bench/run.sh firmware_check.py --negative
 
 # статус платы
-curl -u admin:oko-change-me http://192.168.52.97/api/status
+curl -u admin:oko-change-me http://192.168.52.33/api/status
 
 # MQTT: брокер + рекордер и сквозная проверка камеры
 bench/run.sh mqtt_check.py
 
 # USB: роль порта, хаб и устройства за ним (нужен OTG-переходник + питание 5 В)
-bench/run.sh dut.py --host 192.168.52.97 'cat /proc/device-tree/usbdrd/usb@ffb00000/dr_mode; lsusb'
+bench/run.sh dut.py --host 192.168.52.33 'cat /proc/device-tree/usbdrd/usb@ffb00000/dr_mode; lsusb'
 ```
 
 Полный набор команд — `TESTBENCH.md` §8 и `VERIFIED_FUNCTIONS.md` §3; процедура

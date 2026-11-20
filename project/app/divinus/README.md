@@ -427,7 +427,7 @@ STM8 и загрузчик — в `project/app/stm8-motor`; первая зап�
 
 Пакет `.okp` — несжатый tar с `oko-update.conf` (манифест: версия, части,
 sha256, смещения и полные размеры разделов) и образами. Хост-утилита:
-`tools/native/make_oko_update.sh --version 0.3.0`. В v1 обновляются только
+`tools/native/make_oko_update.sh --version 0.4.0`. В v1 обновляются только
 `boot`, `oem` и `rootfs`; `env`/`idblock`/`uboot`/`userdata` не трогаются.
 
 API (все запросы требуют ту же авторизацию, что и остальной WebUI):

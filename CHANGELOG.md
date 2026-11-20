@@ -26,6 +26,67 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Добавлено
 
+- **`TO_DO.md` §14: разбор вендорского `fastboot_client.c` и план переноса.**
+  Зафиксированы результаты анализа файла (`project/app/fastboot_client/`):
+  это демо thunder-boot медиастека, а не Android fastboot; ни один
+  BoardConfig его не собирает (`RK_APP_TYPE` без `RK_FASTBOOT_CLIENT`), а
+  post-скрипт TB-образа удаляет бинарник. Описаны пригодные к переносу
+  механизмы (порядок VENC → VI → bind → AIQ, загрузка IQ из резервированной
+  памяти по `/proc/cmdline` + `mmap`, Smart IR FSM, `klog()`-маркеры стадий,
+  ленивый RTSP, лог джиттера PTS), дефекты, из-за которых файл нельзя брать
+  как есть, и семь пунктов P1–P7 с зависимостями. Код и тесты не менялись.
+- **`TO_DO.md` §14: analysis of the vendor `fastboot_client.c` and a port
+  plan.** The section records the analysis of `project/app/fastboot_client/`:
+  it is a thunder-boot media-stack demo, not Android fastboot; no BoardConfig
+  builds it (`RK_APP_TYPE` never contains `RK_FASTBOOT_CLIENT`), and the TB
+  image post-script deletes the binary. It lists the reusable mechanisms
+  (VENC → VI → bind → AIQ order, IQ from reserved memory via `/proc/cmdline`
+  plus `mmap`, the Smart IR FSM, `klog()` stage markers, lazy RTSP, the PTS
+  jitter log), the defects that prevent using the file as is, and seven items
+  P1–P7 with dependencies. No code or tests were changed.
+
+### Изменено
+
+- **`STRUCTURE.md`: описание `TO_DO.md` расширено до §1–§14.** В карту
+  документации добавлен этап переноса полезного из вендорского
+  `fastboot_client.c` (сам план — в `TO_DO.md` §14). Код не менялся.
+- **`STRUCTURE.md`: the `TO_DO.md` description now covers §1–§14.** The
+  documentation map mentions the plan for porting the useful parts of the
+  vendor `fastboot_client.c` (the plan itself is in `TO_DO.md` §14). No code
+  changes.
+- **Актуализация документации (docs-check 2026-11-20) и выпуск 0.4.0.**
+  `STRUCTURE.md`: в строке `bench/` перечислены все скрипты стенда
+  (`dut.py`, `geometry_check.py`, `yolo_night.py`, `vpn_check.py`,
+  `aov_cadence.py`, `ec_bus_soak.py`), добавлено примечание о переключении
+  экспериментальных BoardConfig, у `TO_DO.md` обновлены состав этапов
+  (§1–§14) и дата. `AGENTS.md` §2: в карту документации добавлены
+  `VERIFIED_FUNCTIONS.md` и `TO_DO.md`. `TO_DO.md`: шапка-статус
+  актуализирована на 2026-11-20 (сон привода STM8 и heartbeat-Snapshot
+  камеры; MQTT вынесен как смежная подсистема). `FEATURES.md` и
+  `services/README.md`: адрес DUT в рабочих командах — `192.168.52.33`
+  вместо устаревшего `192.168.52.97`. `INIT_ORDER.md` §1: продуктовый
+  профиль отделён от экспериментальных. Версия `/etc/oko-release` и
+  примеры сборки `.okp` (`README_RU.md`, `TESTBENCH.md`, README пакета
+  `divinus`) переведены на 0.4.0.
+- **Documentation actualization (docs-check 2026-11-20) and the 0.4.0
+  release.** `STRUCTURE.md`: the `bench/` row now lists every bench script
+  (`dut.py`, `geometry_check.py`, `yolo_night.py`, `vpn_check.py`,
+  `aov_cadence.py`, `ec_bus_soak.py`) and notes how the experimental
+  BoardConfigs are switched, while the `TO_DO.md` stage range (§1–§14) and
+  date are updated. `AGENTS.md` §2: the documentation map gained
+  `VERIFIED_FUNCTIONS.md` and `TO_DO.md`. `TO_DO.md`: the status header is
+  refreshed to 2026-11-20 (STM8 motor sleep and the camera heartbeat
+  snapshot; MQTT is listed as a neighbouring subsystem). `FEATURES.md` and
+  `services/README.md`: the DUT address in working commands is now
+  `192.168.52.33` instead of the stale `192.168.52.97`. `INIT_ORDER.md` §1:
+  the product profile is separated from the experimental ones. The
+  `/etc/oko-release` version and the `.okp` build examples (`README_RU.md`,
+  `TESTBENCH.md`, the `divinus` package README) moved to 0.4.0.
+
+## [0.4.0] — 2026-11-20
+
+### Добавлено
+
 - **MQTT: события и телеметрия камеры + стендовый брокер.** Новый
   самописный клиент MQTT 3.1.1 в divinus: чистый кодек `mqtt.c`/`mqtt.h`
   (CONNECT с LWT и учёткой, PUBLISH QoS0/QoS1, PINGREQ/DISCONNECT, разбор
