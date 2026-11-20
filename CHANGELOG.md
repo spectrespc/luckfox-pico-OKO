@@ -44,6 +44,14 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   plus `mmap`, the Smart IR FSM, `klog()` stage markers, lazy RTSP, the PTS
   jitter log), the defects that prevent using the file as is, and seven items
   P1–P7 with dependencies. No code or tests were changed.
+- **Ветка `snapshot/main-2026-11-20` — снимок `main`.** Состояние `main` на
+  2026-11-20 (коммит `a59954b1e`) зафиксировано отдельной ветвью в локальном
+  репозитории и на `origin`, чтобы сохранить точку до чистки веток. Код,
+  сборка и конфигурация не менялись.
+- **`snapshot/main-2026-11-20` — a `main` snapshot.** The `main` state of
+  2026-11-20 (commit `a59954b1e`) is preserved in a dedicated branch both
+  locally and on `origin` to keep a reference point taken before the branch
+  cleanup. No code, build or configuration changes.
 
 ### Изменено
 
@@ -82,6 +90,35 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   the product profile is separated from the experimental ones. The
   `/etc/oko-release` version and the `.okp` build examples (`README_RU.md`,
   `TESTBENCH.md`, the `divinus` package README) moved to 0.4.0.
+
+### Удалено
+
+- **Удалены слитые ветки: 10 локальных и 7 на `origin`.** Локально удалены
+  `temp-branch`, `OKO-v1-06.10.26`, `feature/buildroot-2026-08`,
+  `feature/oem-blob-nfs-env`, `feature/slim-image`, `feature/rga-dma-buf`,
+  `feature/rknn-runtime-2.x`, `feature/rknpu-0.9.8`,
+  `feature/yolo-osd-boxes` и `feat/sleep-heartbeat-snapshot`; у
+  `feature/OKO-v1-06.10.26` локальной копии не было, удалена только
+  remote-tracking ссылка. На `origin` удалены `OKO-v1-06.10.26`,
+  `feat/sleep-heartbeat-snapshot`, `feature/OKO-v1-06.10.26`,
+  `feature/rga-dma-buf`, `feature/rknn-runtime-2.x`, `feature/rknpu-0.9.8`,
+  `feature/yolo-osd-boxes`. Все ветки полностью содержались в `main`;
+  единственный уникальный коммит `feat/sleep-heartbeat-snapshot`
+  (`4842f2ac7`, MIT-лицензия `stm32_acpi-ec`) дублирует содержимое коммита
+  `main` `a59954b1e` — совпадение деревьев подтверждено `git diff`.
+- **Merged branches removed: 10 local and 7 on `origin`.** Locally removed
+  `temp-branch`, `OKO-v1-06.10.26`, `feature/buildroot-2026-08`,
+  `feature/oem-blob-nfs-env`, `feature/slim-image`, `feature/rga-dma-buf`,
+  `feature/rknn-runtime-2.x`, `feature/rknpu-0.9.8`,
+  `feature/yolo-osd-boxes` and `feat/sleep-heartbeat-snapshot`;
+  `feature/OKO-v1-06.10.26` had no local copy, only its remote-tracking ref
+  was dropped. On `origin` removed `OKO-v1-06.10.26`,
+  `feat/sleep-heartbeat-snapshot`, `feature/OKO-v1-06.10.26`,
+  `feature/rga-dma-buf`, `feature/rknn-runtime-2.x`, `feature/rknpu-0.9.8`,
+  `feature/yolo-osd-boxes`. Every branch was fully contained in `main`; the
+  only unique commit of `feat/sleep-heartbeat-snapshot` (`4842f2ac7`, the
+  `stm32_acpi-ec` MIT license) duplicates the `main` commit `a59954b1e` —
+  identical trees confirmed by `git diff`.
 
 ## [0.4.0] — 2026-11-20
 
