@@ -8,7 +8,7 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
 
 | Поле | Значение |
 |---|---|
-| Дата обновления | `2026-11-20` |
+| Дата обновления | `2026-11-21` |
 | Ответственный | `<ФИО>` |
 | Статус | активен |
 | Назначение | сборка прошивки и прошивка SPI NAND для отладки IPC |
@@ -400,7 +400,11 @@ STM8S103F3P6 на плате не имеет USB; первая запись OKO-
 платы при этом должно быть включено (общий GND), I2C на DUT можно не
 останавливать: в худшем случае `firmware_status` временно покажет `absent`.
 `stm8flash` не входит в дистрибутив и требует libusb; проверенный способ без
-root — собрать и запустить его в привилегированном контейнере с пробросом USB:
+root — собрать и запустить его в привилегированном контейнере с пробросом USB.
+Готовые образы: `factory-<ver>.ihx` — загрузчик + приложение (первичная
+запись), `app-<ver>.ihx` — только приложение (для `/api/flash` и
+`oko-motor flash`). На стенде 2026-11-21 используется тестовая сборка
+`factory-2.3.2.ihx` (продуктовая — `factory-2.2.0.ihx`).
 
 ```sh
 git clone --depth 1 https://github.com/vdudouyt/stm8flash /tmp/kilo/stm8flash
@@ -412,15 +416,28 @@ docker run --rm --privileged \
     apt-get install -y -qq build-essential libusb-1.0-0-dev pkg-config &&
     make clean && make RELEASE=1 &&
     ./stm8flash -c stlinkv2 -p stm8s103f3 -s flash \
-      -w /work/project/app/stm8-motor/build/factory-2.1.1.ihx'
+      -w /work/project/app/stm8-motor/build/factory-2.3.2.ihx &&
+    ./stm8flash -c stlinkv2 -p stm8s103f3 -s flash \
+      -v /work/project/app/stm8-motor/build/factory-2.3.2.ihx &&
+    ./stm8flash -c stlinkv2 -p stm8s103f3 -R'
 ```
 
-`factory-2.1.1.ihx` содержит загрузчик `0x8000–0x89FF` и приложение
-`0x8A10–0x9FFF`; EEPROM (позиции моторов) не стирается. Проверка после
-записи — `oko-motor -b 3 -a 0x60 version` (ожидается `2.1.1`), затем
-`enter-boot` → `info` → `boot-reset`. Восстановление при неудачной записи —
-тем же `factory-2.1.1.ihx`; приложение можно обновлять без ST-Link через
-`/api/flash` (имя с версией) или `oko-motor flash app-2.1.1.ihx`.
+`factory-<ver>.ihx` содержит загрузчик `0x8000–0x89FF` и приложение
+`0x8A10–0x9FFF`; EEPROM (позиции моторов) не стирается. **После записи
+обязателен `stm8flash -R`**: без явного сброса ядро остаётся остановленным
+(stm8flash оставляет SWIM-stall) и плата не отвечает по I2C до сброса.
+Проверка после записи — `oko-motor -b 3 -a 0x60 version` (ожидается `2.3.2`
+для тестовой платы, `2.2.0` для продуктовой), `sleep show` (тестовая сборка:
+`sleep on, slice 1 ms`), затем `enter-boot` → `info` → `boot-reset`.
+Восстановление при неудачной записи — тем же `factory-<ver>.ihx` (худший
+случай — откат на `factory-2.1.1.ihx`). Диагностика: `-s opt -r` читает
+option bytes (см. KI-075 — защита записи не выставляется).
+Обновление приложения по I2C (`/api/flash` или `oko-motor flash app-<ver>.ihx`)
+на стендовом экземпляре не работает: его IAP-стирание блока не завершается
+(KI-075, дефект чипа — там же второй отказ, AWU/KI-077). Загрузчик `1.1.0`
+больше не маскирует отказ: `oko-motor flash` возвращает `RC=1` и печатает
+`bootloader did not complete command 0x11…`, версия не меняется.
+Единственный путь обновления на этой плате — ST-Link/SWIM.
 
 ### D. Переключение NAND ↔ NFS через env U-Boot
 

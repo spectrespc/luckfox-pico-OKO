@@ -3,13 +3,16 @@
 Статус: **реализовано и проверено на стенде.** Код, прошивка STM8
 и STM32 (на 2026-11-07 CBT6: CLI 1.0.1 → WebUI 1.0.0; с 2026-11-13 прошивка
 EC перенесена на STM32C011F6P6, proto v3, `GET_POWER 0x20`/`SET_POWER 0x21`),
-WebUI и документация обновлены. Сон привода STM8 (Active-halt после 3 с тишины
-I2C, версии 2.2.0/2.3.0; стендовая проверка заблокирована KI-075) и
-heartbeat-Snapshot сна камеры (§13) реализованы 2026-11-18/19.
+WebUI и документация обновлены. Сон привода STM8 с 2026-11-21 работает и
+проверен на стенде: тестовая плата, прошивка `2.3.2`, Wait mode (`WFI`) вместо
+Active-halt (AWU стендового STM8S003F3P6 не считает — KI-077); T8 —
+`tests/hardware_test.sh` 41/0 с 30-минутным soak, T9 проверен на уровне API;
+остаётся обновление по I2C (KI-075, обход ST-Link). Heartbeat-Snapshot сна
+камеры (§13) реализован 2026-11-18/19.
 Открытые пункты: сходимость AF на реальном объективе, геометрия NN-рамок и
 OSD под поворотом, наблюдаемость кропа ePTZ, mAP и ночная точность модели,
 перенос полезного из вендорского `fastboot_client.c` (§14, запланировано).
-Дата: 2026-11-20.
+Дата: 2026-11-21.
 
 Смежные подсистемы вне состава файла: MQTT-канал событий и телеметрии
 (2026-11-19) — статусы в `FEATURES_VERIFIED.md`/`FEATURES_UNVERIFIED.md`
@@ -182,7 +185,8 @@ i2ctransfer -y 7 w2@0x60 0x05 0x00 r1         # статус focus
   русская версия — `README.ru.md`.
 - Протокол: <https://github.com/spectrespc/stm8s103_i2c_motor/blob/main/docs/PROTOCOL.md>.
 - Железо/распиновка: <https://github.com/spectrespc/stm8s103_i2c_motor/blob/main/docs/HARDWARE.md>.
-- Тестовая плата (STM8S003F3P6, `BOARD=test`, версия 2.1.1):
+- Тестовая плата (STM8S003F3P6, `BOARD=test`, версия 2.3.2 с Wait-mode сном,
+  проверена на стенде 2026-11-21):
   `project/app/stm8-motor/docs/HARDWARE_TESTBOARD.md`.
 - Сборка: `make clean && make` → `build/firmware.ihx`; прошивка `make flash`
   (STM8-SPL-SDCC, SDCC ≥ 4.0, ST-LINK/v2).
@@ -336,6 +340,11 @@ ls /oem/usr/share/iqfiles
 i2cdetect -y 3
 i2ctransfer -y 3 w1@0x60 0xFF r3              # версия прошивки
 i2ctransfer -y 3 w2@0x60 0x05 0x00 r1         # статус focus
+i2ctransfer -y 3 w1@0x60 0x0A r8              # сон: режим/состояние/счётчики
+
+# T8 (сон привода): на DUT, divinus остановлен (killall divinus)
+#   cd /userdata/stm8 && BUS=3 ADDR=0x60 FW_VERSION=2.3.2 \
+#       SLEEP_SOAK_S=1800 ./tests/hardware_test.sh
 ```
 
 ## 9. Риски и ограничения

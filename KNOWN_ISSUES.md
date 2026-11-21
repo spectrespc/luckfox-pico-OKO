@@ -293,6 +293,16 @@
   ~15-минутный прогон закончился молчанием UART и зависанием (AP не
   проснулся); после power cycle — `rw`, ошибок в новом `dmesg` нет.
   Heartbeat не добавил новых записей SFC/UBI, но и не снимает риск KI-071.
+  **2026-11-21:** в дерево добавлена защита драйвера SFC
+  (`drivers/spi/spi-rockchip-sfc.c`): при таймауте DMA контроллер
+  программно сбрасывается (`rockchip_sfc_reset` + `init`) вместо перехода в
+  «заклиненное» состояние, при resume выполняется сброс перед
+  инициализацией, а при suspend прерывания маскируются и блок выключается,
+  чтобы DMA не оставался взведённым на момент отключения тактов. Ядро
+  собирается (`./build.sh kernel`, boot.img 2026-11-21), но **стендовая
+  проверка не выполнена**: UART-мост перестал отдавать вывод DUT (KI-078),
+  поэтому netboot/tftp_flash недоступны, а прошивать непроверенное ядро в
+  SPI NAND без консоли нецелесообразно.
 
 - **KI-072. Профиль `-AOV`: 1M-раскладка и окно ядра/MCU исправлены,
   handshake MCU не отвечает.** Hpmcu (117 КБ) + SPL + DDR + usbplug дают
@@ -690,20 +700,80 @@
   `apt-get download libasound2t64`, распаковать `dpkg-deb -x` и задать
   `LD_LIBRARY_PATH` (см. `bench/README.md`). Статус: **особенность хоста**.
 
-- **KI-075. STM8: обновление по I2C не стирает Flash (SCL hold, IWDG-сброс).**
-  2026-11-19, стенд, приложение STM8 `2.1.1`, загрузчик `1.0.0`.
-  `oko-motor flash app-2.3.0.ihx` доходит до `PROGRESS 100` и `RC=0`, но
-  после `BOOT_RESET` работает прежняя прошивка, и `BOOT_INFO` показывает
-  прежнюю версию в заголовке — команда `0x11 ERASE` фактически не
-  выполняется. Повторяется и старым `oko-motor` (сборка из git HEAD), то
-  есть к изменениям сна отношения не имеет. В `dmesg`: `rk3x-i2c ...
-  SCL hold by slave` / `timeout, ipd: 0x91`; через ~3 с (IWDG) загрузчик
-  сбрасывается в приложение. 9-байтовый кадр неизвестной команды
-  обрабатывается штатно (STATUS 6), значит приём кадров цел и зависает
-  именно стирание/программирование Flash. Обход: прошить
-  `factory-<ver>.ihx` через ST-Link (SWIM). Статус: **открыто, блокирует
-  стендовую проверку сна STM8**; проверить option bytes (WP/UBC), питание
-  MCU и повторить на другом экземпляре (см. KI-032).
+- **KI-075. STM8: обновление по I2C не стирает Flash — дефект экземпляра.**
+  Впервые 2026-11-19 (приложение `2.1.1`), повторно 2026-11-21 на `2.3.0/2.3.2`.
+  Симптом: `oko-motor flash` печатал `PROGRESS 100` и `RC=0`, но работала
+  прежняя прошивка. Разбор на стенде (2026-11-21) дал следующее.
+  - **Стирание блока не завершается вообще.** Отправка `0x11 ERASE` на
+    `0x8A00` (1 блок, 64 Б) блокирует ядро: при включённом IWDG (~0,5 с)
+    МК сбрасывается, Flash не меняется; при отключённом IWDG контроллер
+    не отвечает >16 с и остаётся висеть. Проверено и с кодом стирания,
+    исполняемым из RAM (трамплин в `0x0200`, механизм подтверждён живой
+    заглушкой), и с триггером байтом/словом — результат одинаковый.
+  - **Word-программирование работает:** кадр `0x12` пишет слово по
+    `0x9FF0` (`DEADBEEF` читается обратно через SWIM). SWIM/ICP-прошивка
+    (которая тоже стирает) работает. То есть Flash и unlock исправны,
+    зависает именно IAP-стирание блока.
+  - **Option bytes не при чём:** SWIM-чтение `00 00 FF 00 FF…`, страничной
+    защиты (WRP) у STM8S003F3 нет, а слово пишется в тот же регион, что не
+    стирается.
+  - Второй неработающий узел того же экземпляра — AWU (KI-077). Два
+    независимых отказа на одном чипе указывают на дефектный/поддельный
+    экземпляр STM8S003F3P6.
+  Что исправлено в коде (bootloader `1.1.0`, хост `oko-motor`):
+  - стирание выполняется RAM-заглушкой (`src/boot/erase_stub.asm`), EOP
+    сбрасывается перед каждой операцией, отказ (`WR_PG_DIS`/таймаут)
+    возвращается как `BOOT_ST_FLASH_ERR` вместо «успеха»;
+  - ответ на write-команды стал двухбайтным: `[status][эхо команды]`;
+    хост сверяет эхо и больше не принимает устаревший статус за успех;
+  - `oko-motor flash` считает расхождение версии после прошивки ошибкой
+    (`RC=1`) с явным сообщением, а не предупреждением.
+  Статус: **открыто как ограничение экземпляра**: обновление по I2C на
+  этой плате невозможно, обход — ST-Link/SWIM (`TESTBENCH.md` §7C).
+  Дальнейшие шаги: та же проверка на заведомо исправном STM8S003F3P6
+  (замена чипа), при подтверждении — закрыть KI; как эксперимент остаётся
+  fast block programming (`FPRG`), но он использует тот же стирающий узел.
+
+- **KI-077. STM8S003F3P6: узел AWU не считает, Active-halt нечем разбудить.**
+  2026-11-21, стенд, тестовая плата привода.
+  Обнаружено при стендовой проверке сна STM8 (T8) на прошивке `2.3.0`
+  (`BOARD=test`): после входа в Active-halt контроллер через ~0,5 с
+  сбрасывался по IWDG — RAM-состояние (например, заданная `SET_SPEED`)
+  терялось, `GET_SLEEP` всегда отдавал `entries = wake_i2c = wake_awu = 0`,
+  а в `dmesg` DUT накапливались `rk3x-i2c ... SCL hold by slave`.
+  Диагностика на этом экземпляре:
+  - `AWU->APR = 24`, `AWU->TBR = 12`, `AWU->CSR = 0x10` (`AWUEN`) читаются
+    обратно корректно, но `AWUF` (0x20) не выставляется никогда — ни при
+    `AWUEN=1` в Run mode, ни после запроса `MSR` (LSI-измерение: бит `MSR`
+    остаётся 1, `AWUF` не появляется, `AWU->APR` не переписывается
+    результатом измерения);
+  - проверка «HALT без IWDG» на этом экземпляре не дала однозначного
+    результата: пока divinus опрашивал шину (~2 с), тишина не достигала
+    порога 3 с и сон не наступал; с остановленным divinus и включённым IWDG
+    контроллер уходит в сон и через ~0,5 с сбрасывается (RAM-состояние
+    теряется) — то есть за 0,5 с его не будит ни AWU, ни адресное совпадение;
+  - тактирование AWU (`CLK->PCKENR2` = 0xFF, бит AWU=1) и LSI (`LSIRDY`)
+    в порядке; IWDG на том же LSI работает.
+  Вывод: на этом экземпляре Active-halt непригоден.  Прошивка `2.3.2`
+  переведена на Wait mode (`WFI`, пробуждение по TIM4 1 мс), поэтому KI-077
+  на текущий код не влияет, но любой возврат к Active-halt потребует
+  экземпляра с рабочим AWU.  Статус: **открыто как ограничение экземпляра**
+  (проверить на другом STM8S003F3P6, см. KI-032).
+
+- **KI-078. UART-мост не отдаёт вывод DUT (только TX).**
+  2026-11-21, стенд, прошивка моста 1.10.0.
+  При попытке netboot/flash через U-Boot мост принимает команды (в SD-логе
+  и в мониторе видны только строки `TX: …`), но вывод DUT не появляется:
+  `netboot.py catch` за 120 с не увидел ни промпта U-Boot, ни строк ядра,
+  `serial_exec.py` и read-only монитор `:2324` отдают только TX, а
+  `POST /config` подтверждает `uart0_enable=1`, `telnet0_enable=1`,
+  `telnet0_mon_enable=1`, `baud 115200`.  DUT при этом жив (SSH и API
+  отвечают, power cycle по мосту работает), то есть страдает именно линия
+  RX моста/соединение TX DUT → мост.  Обход: работать по SSH/HTTP; все
+  процедуры, которым нужен консольный вывод (`netboot.py`,
+  `tftp_flash.py`, ручной U-Boot), недоступны.  Статус: **открыто**;
+  проверить жгут TX/GND, питание моста и `POST /config` после ребута
+  моста (документация — `TESTBENCH.md` §8, `docs/api.md` upstream).
 
 ### Архив закрытых записей
 
@@ -1009,6 +1079,15 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   a power cycle the volumes were `rw` and the new `dmesg` had no errors.
   Heartbeat added no new SFC/UBI records, but it does not remove the KI-071
   risk.
+  **2026-11-21:** the SFC driver now hardens these paths
+  (`drivers/spi/spi-rockchip-sfc.c`): a DMA timeout soft-resets the
+  controller (`rockchip_sfc_reset` + `init`) instead of leaving it wedged, a
+  system resume resets it before re-initialising, and suspend masks the
+  interrupts and disables the block so no DMA is armed when the clocks are
+  gated. The kernel builds (`./build.sh kernel`, boot.img 2026-11-21), but the
+  **on-target validation was not run**: the UART bridge no longer delivers DUT
+  output (KI-078), so netboot/tftp_flash are unavailable and flashing an
+  unvalidated kernel into SPI NAND without a console is not worth the risk.
 
 - **KI-072. `-AOV` profile: 1M layout and the kernel/MCU window are fixed,
   the MCU handshake does not answer.** Hpmcu (117 KB) + SPL + DDR + usbplug
@@ -1412,20 +1491,79 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   and set `LD_LIBRARY_PATH` (see `bench/README.md`).
   Status: **host environment**.
 
-- **KI-075. STM8: the I2C update does not erase Flash (SCL hold, IWDG reset).**
-  2026-11-19, bench, STM8 application `2.1.1`, bootloader `1.0.0`.
-  `oko-motor flash app-2.3.0.ihx` reaches `PROGRESS 100` with `RC=0`, but
-  after `BOOT_RESET` the old application still runs and `BOOT_INFO` still
-  reports the old header version — the `0x11 ERASE` command is not actually
-  executed. It reproduces with the old `oko-motor` built from git HEAD, so it
-  is unrelated to the sleep changes. `dmesg` shows `rk3x-i2c ... SCL hold by
-  slave` / `timeout, ipd: 0x91`; after ~3 s (IWDG) the bootloader resets into
-  the application. A 9-byte unknown-command frame is handled normally
-  (STATUS 6), so frame reception is intact and the erase/program operation is
-  what hangs. Workaround: write `factory-<ver>.ihx` over ST-Link (SWIM).
-  Status: **open; blocks the on-target validation of the STM8 sleep mode**;
-  check the option bytes (WP/UBC), the MCU supply, and retry on another
-  sample (see KI-032).
+- **KI-075. STM8: the I2C update does not erase Flash - sample defect.**
+  First seen 2026-11-19 (application `2.1.1`), reproduced 2026-11-21 on
+  `2.3.0/2.3.2`. Symptom: `oko-motor flash` printed `PROGRESS 100` and `RC=0`
+  while the old application kept running. Bench analysis (2026-11-21):
+  - **The block erase never completes.** Sending `0x11 ERASE` for `0x8A00`
+    (one 64-byte block) stalls the core: with the ~0.5 s IWDG enabled the MCU
+    resets and Flash is unchanged; with the IWDG disabled the controller stays
+    silent for more than 16 s and never recovers. Verified with the erase code
+    running from RAM (trampoline at `0x0200`, mechanism proven with a live
+    stub) and with byte and word triggers - same result.
+  - **Word programming works:** a `0x12` frame writes a word at `0x9FF0`
+    (`DEADBEEF` reads back over SWIM) and SWIM/ICP programming (which also
+    erases) works. So Flash and the unlock are fine; only the IAP block erase
+    hangs.
+  - **Option bytes are not the cause:** the SWIM read is `00 00 FF 00 FF…`,
+    the STM8S003F3 has no page write protection (WRP), and a word can be
+    programmed into the very region that refuses to erase.
+  - The same sample also has a dead AWU (KI-077). Two independent failures on
+    one die point to a defective or counterfeit STM8S003F3P6.
+  Fixed in code (bootloader `1.1.0`, host `oko-motor`):
+  - the erase runs from a RAM stub (`src/boot/erase_stub.asm`), EOP is cleared
+    before every operation, and a rejected or timed-out operation returns
+    `BOOT_ST_FLASH_ERR` instead of a fake success;
+  - write-command answers are now two bytes, `[status][command echo]`; the
+    host verifies the echo and no longer mistakes a stale status for success;
+  - `oko-motor flash` treats a post-flash version mismatch as an error
+    (`RC=1`) with an explicit message instead of a warning.
+  Status: **open as a sample limitation**: I2C updates are impossible on this
+  board; the workaround is ST-Link/SWIM (`TESTBENCH.md` §7C). Next steps:
+  repeat on a known-good STM8S003F3P6 (part replacement) and close the issue
+  if it works; fast block programming (`FPRG`) remains an experiment but uses
+  the same erase engine.
+
+- **KI-077. STM8S003F3P6: the AWU does not count, Active-halt cannot be woken.**
+  2026-11-21, bench, motor test board.
+  Found during the on-target sleep validation (T8) on firmware `2.3.0`
+  (`BOARD=test`): after entering Active-halt the controller was reset by the
+  IWDG after ~0.5 s — RAM state (for example a `SET_SPEED` value) was lost,
+  `GET_SLEEP` always returned `entries = wake_i2c = wake_awu = 0`, and the DUT
+  `dmesg` collected `rk3x-i2c ... SCL hold by slave` events.
+  Diagnostics on this sample:
+  - `AWU->APR = 24`, `AWU->TBR = 12`, `AWU->CSR = 0x10` (`AWUEN`) read back
+    correctly, but `AWUF` (0x20) never sets — neither with `AWUEN=1` in Run
+    mode nor after requesting `MSR` (the LSI measurement: the `MSR` bit stays
+    1, `AWUF` never appears and `AWU->APR` is not overwritten by the result);
+  - the "HALT with the IWDG disabled" probe was inconclusive on this sample:
+    while divinus was polling the bus (~2 s) the silence never reached the
+    3 s threshold, so no sleep happened; with divinus stopped and the IWDG
+    enabled the controller does enter the sleep and is reset after ~0.5 s
+    (RAM state lost), i.e. within those 0.5 s neither the AWU nor the I2C
+    address match wakes it;
+  - the AWU clock gate (`CLK->PCKENR2` = 0xFF, AWU bit = 1) and the LSI
+    (`LSIRDY`) are fine; the IWDG on the same LSI works.
+  Conclusion: Active-halt is unusable on this sample.  Firmware `2.3.2` uses
+  Wait mode (`WFI`, woken by the 1 ms TIM4 tick), so KI-077 does not affect
+  the current code, but any return to Active-halt needs a sample with a
+  working AWU.  Status: **open as a sample limitation** (retry on another
+  STM8S003F3P6, see KI-032).
+
+- **KI-078. The UART bridge no longer delivers DUT output (TX only).**
+  2026-11-21, bench, bridge firmware 1.10.0.
+  While trying netboot/flash through U-Boot the bridge accepts commands (the
+  SD log and the monitor show only `TX: …` lines), but no DUT output appears:
+  `netboot.py catch` saw neither the U-Boot prompt nor kernel messages within
+  120 s, `serial_exec.py` and the read-only monitor `:2324` return TX only, and
+  `POST /config` reports `uart0_enable=1`, `telnet0_enable=1`,
+  `telnet0_mon_enable=1`, `baud 115200`.  The DUT itself is alive (SSH and the
+  API answer, the bridge power cycle works), so the bridge RX line / the DUT TX
+  → bridge link is what fails.  Workaround: use SSH/HTTP; every procedure that
+  needs console output (`netboot.py`, `tftp_flash.py`, manual U-Boot) is
+  unavailable.  Status: **open**; check the TX/GND wiring, the bridge supply
+  and `POST /config` after a bridge reboot (`TESTBENCH.md` §8, upstream
+  `docs/api.md`).
 
 ### Closed entries archive
 

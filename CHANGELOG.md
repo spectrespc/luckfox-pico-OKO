@@ -55,6 +55,85 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Изменено
 
+- **STM8: основная линия сборки — тестовая плата (`BOARD=test`, 2.3.2).**
+  `project/app/stm8-motor/Makefile.stm8`: `BOARD ?= test`; `make -f
+  Makefile.stm8 all` без аргументов собирает тестовую плату, продуктовая
+  карта остаётся явной сборкой `BOARD=oko` (2.2.0).  Сон привода включён по
+  умолчанию только на основной/тестовой сборке.  Обновлены README (RU/EN),
+  `docs/HARDWARE_TESTBOARD.md`, `project/app/stm8-motor/CHANGELOG.md`.
+- **STM8: the test board is the main build line (`BOARD=test`, 2.3.2).**
+  `project/app/stm8-motor/Makefile.stm8`: `BOARD ?= test`; a plain `make -f
+  Makefile.stm8 all` builds the test board, while the production pin map
+  stays an explicit `BOARD=oko` build (2.2.0).  The drive sleep mode is
+  enabled by default only on the main/test build.  README (RU/EN),
+  `docs/HARDWARE_TESTBOARD.md` and `project/app/stm8-motor/CHANGELOG.md` were
+  updated.
+- **STM8: сон привода переведён на Wait mode (`WFI`), прошивка тестовой
+  платы `2.3.2`; линия STM8 закрыта стендовой проверкой.** Стендовая
+  проверка T8 на `2.3.0` выявила дефект: после входа в Active-halt
+  контроллер через ~0,5 с сбрасывался по IWDG (RAM-состояние терялось,
+  `GET_SLEEP` всегда отдавал нули, в `dmesg` DUT — `rk3x-i2c ... SCL hold by
+  slave`). Причина — узел AWU на стендовом STM8S003F3P6 не считает
+  (`AWUEN/TBR/APR` читаются и пишутся, `AWUF` не выставляется даже через
+  MSR-измерение LSI), поэтому HALT нечем разбудить (KI-077). `2.3.2`:
+  `hw_sleep_enter()` выполняет `WFI`, ядро просыпается по тику TIM4 (1 мс,
+  обработчик кормит IWDG), I2C-slave отвечает штатно; `system_ticks` и
+  тиковые таймауты работают как в Run mode. `GET_SLEEP` 0x0A: байт 2 —
+  гранулярность пробуждения в мс, байт 7 — таймерные пробуждения
+  (`w_timer`), `entries` считается по эпизодам сна и закрывается наверху
+  главного цикла (`sleep_note_frames`), поэтому кадр, пришедший между двумя
+  `WFI`, тоже учитывается.  Хост `oko-motor sleep show` печатает
+  `slice N ms` / `wake i2c N timer N`; divinus больше не умножает байт 2 на
+  10 (`focus_motor.c`), т.к. поле теперь в миллисекундах. `tests/hardware_test.sh` переведён на `FW_VERSION`
+  (2.3.2), сравнение статусов по коду протокола, ретраи чтений после
+  пробуждения и разбор метки `timer`; секция 12 требует остановленного
+  divinus. Документация: `TESTBENCH.md` §7C (`factory-2.3.2.ihx`,
+  обязательный `stm8flash -R`, `-s opt -r`), `KNOWN_ISSUES.md` (KI-075
+  с новым воспроизведением и проверкой option bytes, новый KI-077),
+  `FEATURES_UNVERIFIED.md` (строка сна: «заблокировано» →
+  «ограничено»), `VERIFIED_FUNCTIONS.md` (строка T8/T9), `TO_DO.md`
+  (статус и команды), `project/app/stm8-motor/*` (CHANGELOG, PROTOCOL,
+  HARDWARE, README, HARDWARE_TESTBOARD).
+  Стенд 2026-11-21: T8 — 41 PASS / 0 FAIL при `SLEEP_SOAK_S=1800` (12.4:
+  `entries=103 i2c=103 timer=255`; 12.3: 100 циклов пробуждения без отказов;
+  12.6: `entries 104→105`, счётчики не сбрасываются;
+  `dmesg` без новых `SCL hold`); T9 — `[motor] sleep_enable: true`,
+  `/api/firmware.stm8.sleep_*` и последовательность `SET_SLEEP on/off` +
+  чтение версии проверены, полный deep suspend не выполнялся (KI-071/
+  KI-074). Артефакты: `output/bench/stm8/`.
+- **STM8: motor sleep reworked to Wait mode (`WFI`), test-board firmware
+  `2.3.2`; the STM8 line is closed with an on-target validation.** The T8
+  bench run on `2.3.0` exposed a defect: after entering Active-halt the
+  controller was reset by the IWDG after ~0.5 s (RAM state lost, `GET_SLEEP`
+  always returned zeros, the DUT `dmesg` showed `rk3x-i2c ... SCL hold by
+  slave`). The cause is the AWU block of the bench STM8S003F3P6 not counting
+  (`AWUEN/TBR/APR` read and write correctly, `AWUF` never sets, not even
+  through the MSR LSI measurement), so nothing can wake HALT (KI-077).
+  `2.3.2`: `hw_sleep_enter()` executes `WFI`; the core is woken by the 1 ms
+  TIM4 tick (its handler reloads the IWDG) and the I2C slave keeps answering;
+  `system_ticks` and tick-based timeouts behave as in Run mode. `GET_SLEEP`
+  0x0A: byte 2 is the wake granularity in ms, byte 7 counts timer wakes
+  (`w_timer`), `entries` counts sleep episodes and is closed at the top of the
+  main loop (`sleep_note_frames`), so a frame served between two `WFI` calls is
+  accounted for too.  `oko-motor sleep show` prints `slice N ms` /
+  `wake i2c N timer N`; divinus no longer multiplies byte 2 by 10
+  (`focus_motor.c`) because the field is milliseconds now.
+  `tests/hardware_test.sh` now uses `FW_VERSION` (2.3.2), compares status
+  codes from the protocol, retries reads after a wake and parses the `timer`
+  label; stage 12 requires divinus to be stopped. Documentation:
+  `TESTBENCH.md` §7C (`factory-2.3.2.ihx`, mandatory `stm8flash -R`,
+  `-s opt -r`), `KNOWN_ISSUES.md` (KI-075 with a fresh reproduction and the
+  option-byte check, new KI-077), `FEATURES_UNVERIFIED.md` (sleep row:
+  "blocked" → "limited"), `VERIFIED_FUNCTIONS.md` (T8/T9 row), `TO_DO.md`
+  (status and commands), `project/app/stm8-motor/*` (CHANGELOG, PROTOCOL,
+  HARDWARE, README, HARDWARE_TESTBOARD).
+  Bench 2026-11-21: T8 — 41 PASS / 0 FAIL with `SLEEP_SOAK_S=1800` (12.4:
+  `entries=103 i2c=103 timer=255`; 12.3: 100 wake cycles with no failures;
+  12.6: `entries 104→105`, the counters never restart; no new
+  `SCL hold` in `dmesg`); T9 — `[motor] sleep_enable: true`,
+  `/api/firmware.stm8.sleep_*` and the `SET_SLEEP on/off` plus version-read
+  sequence were verified, a full deep suspend was not run (KI-071/KI-074).
+  Artifacts: `output/bench/stm8/`.
 - **`STRUCTURE.md`: описание `TO_DO.md` расширено до §1–§14.** В карту
   документации добавлен этап переноса полезного из вендорского
   `fastboot_client.c` (сам план — в `TO_DO.md` §14). Код не менялся.
@@ -649,6 +728,51 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Исправлено
 
+- **SFC (KI-071): устойчивость к таймауту DMA и к suspend/resume.**
+  `drivers/spi/spi-rockchip-sfc.c`: при таймауте DMA контроллер
+  сбрасывается и инициализируется заново (раньше оставался взведённым, и
+  все последующие операции падали с `wait sfc idle timeout`, уводя UBIFS в
+  read-only); при resume сброс выполняется до инициализации; при suspend
+  маскируются прерывания и блок выключается, чтобы DMA не оставался
+  активным на момент отключения тактов.  Ядро собирается
+  (`./build.sh kernel`), стендовая проверка отложена: UART-мост не отдаёт
+  вывод DUT (KI-078), netboot недоступен.  KI-074 (gic400_restore)
+  подтверждён в дереве без изменений.
+- **SFC (KI-071): DMA-timeout and suspend/resume robustness.**
+  `drivers/spi/spi-rockchip-sfc.c`: a DMA timeout now soft-resets and
+  re-initialises the controller (it used to stay armed, so every later
+  transfer failed with `wait sfc idle timeout` and drove UBIFS read-only); a
+  system resume resets the block before initialising it; suspend masks the
+  interrupts and disables the block so no DMA is left running when the clocks
+  are gated.  The kernel builds (`./build.sh kernel`); bench validation is
+  deferred because the UART bridge no longer delivers DUT output (KI-078) and
+  netboot is unavailable.  KI-074 (gic400_restore) is confirmed in the tree
+  unchanged.
+- **STM8: I2C-обновление больше не «проходит» вхолостую; загрузчик 1.1.0.**
+  KI-075 разобран до причины: IAP-стирание блока на стендовом STM8S003F3P6
+  не завершается вовсе (ядро стопорится, при выключенном IWDG контроллер
+  молчит >16 с), при этом word-программирование и SWIM/ICP работают —
+  дефект экземпляра (второй отказ того же чипа — неработающий AWU, KI-077).
+  Загрузчик: стирание вынесено в RAM-заглушку (`src/boot/erase_stub.asm`),
+  EOP сбрасывается перед каждой операцией, `WR_PG_DIS`/таймаут возвращаются
+  как `BOOT_ST_FLASH_ERR`, ответ на write-команды стал двухбайтным
+  `[status][эхо команды]`.  `oko-motor flash` сверяет эхо и считает
+  расхождение версии ошибкой (`RC=1`) с явным сообщением.  Документация:
+  `KNOWN_ISSUES.md` (KI-075 переписан), `PROTOCOL.md`/`PROTOCOL.ru.md`,
+  `TESTBENCH.md` §7C, `project/app/stm8-motor/CHANGELOG.md`.
+- **STM8: the I2C update no longer "succeeds" without writing; bootloader
+  1.1.0.** KI-075 is explained down to the cause: the IAP block erase of the
+  bench STM8S003F3P6 never completes (the core stalls; with the IWDG disabled
+  the controller stays silent for more than 16 s), while word programming and
+  SWIM/ICP programming work - a sample defect (the same chip also has a dead
+  AWU, KI-077).  Bootloader: the erase now runs from a RAM stub
+  (`src/boot/erase_stub.asm`), EOP is cleared before every operation,
+  `WR_PG_DIS`/timeouts are returned as `BOOT_ST_FLASH_ERR`, and write-command
+  answers are two bytes, `[status][command echo]`.  `oko-motor flash` checks
+  the echo and treats a version mismatch as an error (`RC=1`) with an explicit
+  message.  Documentation: `KNOWN_ISSUES.md` (KI-075 rewritten),
+  `PROTOCOL.md`/`PROTOCOL.ru.md`, `TESTBENCH.md` §7C,
+  `project/app/stm8-motor/CHANGELOG.md`.
 - **Диагностика resume: `pm_test` и многострочный `--uboot-command`.**
   Добавлен невключаемый по умолчанию фрагмент ядра
   `rv1106-pm-debug.config` (`CONFIG_PM_DEBUG`/`CONFIG_PM_TEST_SUSPEND`) — он
