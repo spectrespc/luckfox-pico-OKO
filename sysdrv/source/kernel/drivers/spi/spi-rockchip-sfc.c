@@ -529,6 +529,16 @@ static int rockchip_sfc_xfer_data_dma(struct rockchip_sfc *sfc,
 	ret = rockchip_sfc_fifo_transfer_dma(sfc, sfc->dma_buffer, len);
 	if (!wait_for_completion_timeout(&sfc->cp, msecs_to_jiffies(2000))) {
 		dev_err(sfc->dev, "DMA wait for transfer finish timeout\n");
+		/*
+		 * OKO (KI-071): a timed-out DMA used to leave the controller
+		 * armed, so every later transfer failed with "wait sfc idle
+		 * timeout" and the whole UBI stack gave up (rootfs/userdata
+		 * remounted read-only).  Soft-reset the controller here so the
+		 * error stays local to this request and the next one starts
+		 * from a known state.
+		 */
+		rockchip_sfc_reset(sfc);
+		rockchip_sfc_init(sfc);
 		ret = -ETIMEDOUT;
 	}
 #ifdef ROCKCHIP_SFC_VERBOSE
@@ -1025,6 +1035,15 @@ static int __maybe_unused rockchip_sfc_runtime_resume(struct device *dev)
 
 static int __maybe_unused rockchip_sfc_suspend(struct device *dev)
 {
+	struct rockchip_sfc *sfc = dev_get_drvdata(dev);
+
+	/* OKO (KI-071): do not leave the controller or its DMA armed while the
+	 * SFC clocks are gated for suspend - mask every interrupt and disable
+	 * the block so the hardware cannot hold a stale transfer across the
+	 * power transition. */
+	rockchip_sfc_irq_mask(sfc, 0xFFFFFFFF);
+	writel(0, sfc->regbase + SFC_CTRL);
+
 	pinctrl_pm_select_sleep_state(dev);
 
 	return pm_runtime_force_suspend(dev);
@@ -1047,6 +1066,14 @@ static int __maybe_unused rockchip_sfc_resume(struct device *dev)
 		return ret;
 	}
 
+	/*
+	 * OKO (KI-071): a suspend can cut the SFC clocks while the controller
+	 * (or its DMA engine) is not in the idle state, and the vendor code
+	 * only re-initialises the registers.  Reset the block first so the
+	 * resume always starts from a clean state instead of inheriting a
+	 * half-finished transfer.
+	 */
+	rockchip_sfc_reset(sfc);
 	rockchip_sfc_init(sfc);
 	for (i = 0; i < SFC_MAX_CHIPSELECT_NUM; i++) {
 		if (sfc->dll_cells[i])
