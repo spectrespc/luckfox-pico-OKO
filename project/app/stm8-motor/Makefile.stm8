@@ -8,13 +8,14 @@
 #   docker run --rm -v "$PWD:/work" -w /work/project/app/stm8-motor \
 #       oko-stm8-sdcc make -f Makefile.stm8 all
 #
-# Board variants: BOARD=oko (default, production lens pin map) or BOARD=test
-# (STM8S003F3P6 test bench wiring).  The pin map is selected at compile time;
+# Board variants: BOARD=test (default, main line: STM8S003F3P6 bench wiring)
+# or BOARD=oko (production lens pin map, explicit build).  The pin map is
+# selected at compile time;
 # build/.board records the variant and forces a full recompile when BOARD
 # changes, so a mixed build cannot silently flash the wrong pin map.
 #
-# The I2C-idle sleep mode is ON by default only on the test build; the
-# production firmware stays off and the host enables it explicitly
+# The I2C-idle sleep mode is ON by default on the main (test) build; the
+# production firmware keeps it off and the host enables it explicitly
 # (`oko-motor sleep on`, divinus before suspend).
 #
 # Layout: boot 0x8000..0x89FF, header 0x8A00..0x8A0F, app 0x8A10..0x9FFF.
@@ -26,19 +27,26 @@ DEVICE   := STM8S103
 
 CC       := sdcc
 CFLAGS   := -mstm8 --std-sdcc11 --opt-code-size -D$(DEVICE)
+CFLAGS   += $(CFLAGS_EXTRA)
 INCLUDE  := -Isrc/core -Isrc/hal -Isrc/i2c -Isrc/motor -Isrc/common \
             -I$(SPL_INC) -I$(SPL_CONF)
 BUILD    := build
 
-# The test board uses a different pin map and therefore gets a different minor
-# version: 2.3.0 can never be mistaken for the 2.2.0 production firmware, and
-# neither /api/flash nor `oko-motor check` accepts the wrong artifact.
-# Version convention: even minor = production, odd minor = test board.
-BOARD ?= oko
+# The test board is the main line and uses its own pin map, so it gets a
+# different minor version: 2.3.x can never be mistaken for the 2.2.0 production
+# firmware, and neither /api/flash nor `oko-motor check` accepts the wrong
+# artifact.
+# 2.3.1: I2C-idle sleep reworked from Active-halt to Wait mode (WFI) after the
+# bench STM8S003F3P6 turned out to have a non-counting AWU.
+# 2.3.2: sleep-episode accounting also closes on frames served between WFIs
+# (counters no longer under-report in real traffic).
+# Version convention: even minor = production, odd minor = test board (the
+# default/main line; build the product explicitly with BOARD=oko).
+BOARD ?= test
 ifeq ($(BOARD),test)
 CFLAGS      += -DBOARD_TEST -DSLEEP_DEFAULT_ON=1 \
-               -DAPP_VERSION_MAJOR=2 -DAPP_VERSION_MINOR=3 -DAPP_VERSION_PATCH=0
-APP_VERSION := 2.3.0
+               -DAPP_VERSION_MAJOR=2 -DAPP_VERSION_MINOR=3 -DAPP_VERSION_PATCH=2
+APP_VERSION := 2.3.2
 else
 CFLAGS      += -DSLEEP_DEFAULT_ON=0
 APP_VERSION := $(shell awk '/define[[:space:]]+APP_VERSION_(MAJOR|MINOR|PATCH)/{printf "%s.", $$3}' \

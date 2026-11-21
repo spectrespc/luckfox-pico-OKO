@@ -32,14 +32,6 @@
 
 /* Private typedef ---------------------------------------------------------*/
 /* Private define ----------------------------------------------------------*/
-/* AWU time base: interval = (APR + 1) << (TBR - 1) LSI periods.
- * APR = 24, TBR = 12 -> 25 * 2048 = 51200 LSI periods.
- * At the nominal 128 kHz LSI this is a 400 ms slice, i.e. 80 % of the IWDG
- * window (250 * 256 = 64000 periods).  Both dividers run from the same LSI,
- * so the ratio holds across the part-to-part LSI tolerance. */
-#define AWU_APR_VALUE      24
-#define AWU_TBR_VALUE      12
-
 /* Private macro -------------------------------------------------------------*/
 /* Private variables -----------------------------------------------------------*/
 
@@ -168,99 +160,26 @@ void hw_tim4_init(void)
 }
 
 /**
-  * @brief  Initialize the Auto Wake-Up unit (Active-halt timer).
+  * @brief  Enter Wait mode for one scheduling slice.
   *
-  * The AWU is configured once and kept disarmed; hw_sleep_enter() arms it only
-  * right before HALT, exactly like the STM32C011 reference arms its wake-up
-  * only around the Stop entry.  The LSI is shared with the IWDG.
-  * @param  None
-  * @retval None
-  */
-void hw_awu_init(void)
-{
-    /* IWDG already needs the LSI, but the AWU register block only works once
-       the oscillator is up; wait for it explicitly. */
-    CLK->ICKR |= CLK_ICKR_LSIEN;
-    while (!(CLK->ICKR & CLK_ICKR_LSIRDY))
-        ;
-
-    AWU->APR = (uint8_t)((AWU->APR & (uint8_t)~AWU_APR_APR) | AWU_APR_VALUE);
-    AWU->TBR = (uint8_t)((AWU->TBR & (uint8_t)~AWU_TBR_AWUTB) | AWU_TBR_VALUE);
-
-    AWU->CSR &= (uint8_t)~AWU_CSR_AWUEN;
-    AWU->CSR &= (uint8_t)~AWU_CSR_AWUF;
-}
-
-/**
-  * @brief  Enter Active-halt for one AWU slice.
+  * The I2C-idle sleep uses Wait (WFI), not Active-halt.  The original design
+  * used Active-halt + AWU, but the AWU of the bench STM8S003F3P6 never counts
+  * (AWUEN/TBR/APR read back correctly, yet AWUF never sets, not even through
+  * the MSR LSI measurement; checked 2026-11-21).  With HALT the only wake
+  * source left is the I2C address match, so the ~0.5 s IWDG reset the MCU a
+  * few hundred ms after every sleep entry: the RAM counters restarted from 0
+  * and the state kept being lost.
   *
-  * Preconditions: interrupts are masked by the caller (sim()), and the sleep
-  * gate has just been re-evaluated; see the halt sequence in main.c.
-  *
-  * STM8S003F3 datasheet, Table 11: the I2C address match wakes the core from
-  * both Halt and Active-halt, EXTI does too, the AWU wakes from Active-halt
-  * only, and TIM4 wakes it from neither.  TIM4 must therefore never be used as
-  * the wake source; the AWU is the timed wake-up.
+  * In Wait mode fMASTER keeps running: the TIM4 1 ms interrupt wakes the core
+  * (and its handler reloads the IWDG), the I2C slave keeps answering normally
+  * and the CPU clock is gated between ticks.  Interrupts must be enabled by
+  * the caller, otherwise WFI would never return.
   * @param  None
   * @retval None
   */
 void hw_sleep_enter(void)
 {
-    /* Fast wake-up: the application runs at 16 MHz and must resume without
-       the full HSI start-up delay. */
-    CLK->ICKR |= CLK_ICKR_FHWU;
-
-    /* Stop the 1 ms tick and clear the pending update flag.  Leaving UIF
-       pending would kick the core out of HALT immediately (the same trap was
-       found on the STM32C011 port).  CEN/UIE are restored on wake. */
-    TIM4->CR1 &= (uint8_t)~0x01;      /* CEN = 0 */
-    TIM4->IER &= (uint8_t)~0x01;      /* UIE = 0 */
-    TIM4->SR1 = (uint8_t)~0x01;       /* clear UIF (rc_w0) */
-
-    IWDG_ReloadCounter();
-
-    /* Arm the AWU (single timed wake-up source) and drop a stale flag. */
-    AWU->CSR &= (uint8_t)~AWU_CSR_AWUF;
-    AWU->CSR |= AWU_CSR_AWUEN;
-
-    __asm__("halt");
-}
-
-/**
-  * @brief  Leave Active-halt: disarm the AWU and restart the 1 ms tick.
-  * @param  None
-  * @retval None
-  */
-void hw_sleep_exit(void)
-{
-    AWU->CSR &= (uint8_t)~AWU_CSR_AWUEN;
-    AWU->CSR &= (uint8_t)~AWU_CSR_AWUF;
-
-    /* Release SCL if the core was woken by an I2C address match: the I2C
-       stretches the clock until WUFH is cleared (RM0016, I2C low power modes).
-       The ISR clears it again as a safety net. */
-    if (I2C->SR2 & I2C_SR2_WUFH)
-        I2C->SR2 = (uint8_t)~I2C_SR2_WUFH;
-
-    /* With FHWU the HSI is already running, but never return to code that
-       assumes 16 MHz without checking. */
-    while (!(CLK->ICKR & CLK_ICKR_HSIRDY))
-        ;
-
-    TIM4->CR1 &= (uint8_t)~0x01;
-    TIM4->SR1 = (uint8_t)~0x01;
-    TIM4->IER |= 0x01;
-    TIM4->CR1 |= 0x01;
-}
-
-/**
-  * @brief  Wake-cause check, valid immediately after hw_sleep_enter() returns.
-  * @retval 1 if the AWU slice elapsed, 0 if something else woke the core
-  *         (I2C address match or a stray interrupt).
-  */
-uint8_t hw_sleep_wake_awu(void)
-{
-    return (AWU->CSR & AWU_CSR_AWUF) ? 1 : 0;
+    __asm__("wfi");
 }
 
 /**
@@ -290,5 +209,4 @@ void hw_reset(void)
     hw_iwdg_init();
     hw_tim4_init();
     hw_i2c_init();
-    hw_awu_init();
 }

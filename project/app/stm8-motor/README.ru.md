@@ -58,10 +58,11 @@
 [docs/HARDWARE.md](docs/HARDWARE.md). Учтите, что PB0–PB3 отсутствуют на корпусе
 TSSOP20, поэтому все сигналы обмоток/nSLEEP/nFAULT используют порты A, C и D.
 
-Тестовая плата OKO использует другую карту и собирается командой
-`make -f Makefile.stm8 all BOARD=test` (прошивка **2.3.0**, чип
-STM8S003F3P6); см. [docs/HARDWARE_TESTBOARD.md](docs/HARDWARE_TESTBOARD.md).
-Эту сборку нельзя прошивать в продуктовый объектив.
+Основная линия STM8 — тестовая плата OKO: `make -f Makefile.stm8 all`
+(по умолчанию `BOARD=test`, прошивка **2.3.2**, чип STM8S003F3P6); см.
+[docs/HARDWARE_TESTBOARD.md](docs/HARDWARE_TESTBOARD.md).  Продуктовая карта
+собирается явно: `make -f Makefile.stm8 all BOARD=oko` (2.2.0); тестовую
+сборку нельзя прошивать в продуктовый объектив.
 
 ## 5. Краткое описание протокола I²C
 Полный справочник команд (полезная нагрузка, порядок байтов, размеры ответов)

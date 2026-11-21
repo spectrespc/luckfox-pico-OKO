@@ -290,14 +290,13 @@ void i2c_prepare_read_response(void)
         case I2C_CMD_GET_SLEEP: /* Sleep mode, state and diagnostic counters */
             i2c_tx_buf[0] = sleep_enabled ? 1 : 0;
             i2c_tx_buf[1] = g_sleep_state;
-            /* slice_ms does not fit in one byte; report it in 10 ms units
-               (40 = 400 ms). */
-            i2c_tx_buf[2] = (uint8_t)(SLEEP_SLICE_MS / 10);
+            /* Wake granularity in ms (1 = one TIM4 tick, Wait-mode sleep). */
+            i2c_tx_buf[2] = (uint8_t)SLEEP_WAKE_MS;
             i2c_tx_buf[3] = 0;
             i2c_tx_buf[4] = (uint8_t)(g_sleep_entries >> 8);
             i2c_tx_buf[5] = (uint8_t)(g_sleep_entries & 0xFF);
             i2c_tx_buf[6] = g_wake_by_i2c;
-            i2c_tx_buf[7] = g_wake_by_awu;
+            i2c_tx_buf[7] = g_wake_by_timer;
             i2c_tx_idx = 0;
             break;
         case 0xFF: /* Firmware version */

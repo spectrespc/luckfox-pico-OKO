@@ -57,10 +57,11 @@ The authoritative TSSOP20 pin map and project signal assignment is in
 [docs/HARDWARE.md](docs/HARDWARE.md). Note that PB0–PB3 are not bonded on the
 TSSOP20 package, so all coil/nSLEEP/nFAULT signals use ports A, C and D.
 
-The OKO test board uses a different pin map and is built with
-`make -f Makefile.stm8 all BOARD=test` (firmware **2.3.0**, chip
-STM8S003F3P6); see [docs/HARDWARE_TESTBOARD.md](docs/HARDWARE_TESTBOARD.md).
-That build must never be flashed into the production lens.
+The STM8 main line is the OKO test board: `make -f Makefile.stm8 all`
+(`BOARD=test` by default, firmware **2.3.2**, chip STM8S003F3P6); see
+[docs/HARDWARE_TESTBOARD.md](docs/HARDWARE_TESTBOARD.md).  The production pin
+map is built explicitly with `make -f Makefile.stm8 all BOARD=oko` (2.2.0);
+the test build must never be flashed into the production lens.
 
 ## 5. I²C Protocol Summary
 Full command reference (payloads, byte order, response sizes) is in

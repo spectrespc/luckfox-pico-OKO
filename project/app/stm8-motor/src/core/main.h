@@ -10,13 +10,13 @@
 
 /* I2C-idle sleep mode (src/motor/sleep_logic.h, src/hal/hw_config.c).
  *
- * SLEEP_SLICE_MS is the Active-halt slice length: the AWU wakes the core and
- * the main loop reloads the IWDG, so the watchdog is never allowed to expire
- * while asleep.  IWDG (PR=256, RLR=250) runs from the same 128 kHz LSI and
- * times out after 250*256 = 64000 LSI periods; the AWU slice is
- * (APR+1)<<(TBR-1) = 25*2048 = 51200 LSI periods = 80 % of that window at the
- * nominal frequency.  Because both dividers share one LSI, the ratio is
- * independent of the part-to-part LSI tolerance.
+ * The idle state is Wait mode (WFI): the CPU clock is gated until the next
+ * interrupt, while fMASTER keeps running so TIM4 (1 ms), the IWDG and the I2C
+ * stay alive.  Active-halt was the original design, but the AWU of the bench
+ * STM8S003F3P6 never counts, so HALT was only ever exited by the IWDG reset
+ * (bench finding 2026-11-21, see hw_config.c).
+ *
+ * SLEEP_WAKE_MS is the wake granularity: one TIM4 tick.
  *
  * BOARD=test enables the feature by default; the production build keeps it
  * off and the host turns it on explicitly (oko-motor sleep on). */
@@ -26,7 +26,7 @@
 #define SLEEP_IDLE_MS        3000
 #define SLEEP_IDLE_DEFAULT_S 3
 #define SLEEP_IDLE_MAX_S     60
-#define SLEEP_SLICE_MS       400    /* nominal; reported divided by 10 */
+#define SLEEP_WAKE_MS        1      /* one TIM4 tick */
 
 /* Application version reported by I2C command 0xFF and written into the
  * application header by tools/mkapp.py.  Bump it on every user-visible
@@ -63,17 +63,14 @@ extern volatile uint16_t sleep_idle_ms;
 extern volatile uint8_t g_sleep_state;
 extern volatile uint16_t g_sleep_entries;
 extern volatile uint8_t g_wake_by_i2c;
-extern volatile uint8_t g_wake_by_awu;
+extern volatile uint8_t g_wake_by_timer;
 
 void hw_clock_init(void);
 void hw_gpio_init(void);
 void hw_iwdg_init(void);
 void hw_tim4_init(void);
 void hw_i2c_init(void);
-void hw_awu_init(void);
 void hw_sleep_enter(void);
-void hw_sleep_exit(void);
-uint8_t hw_sleep_wake_awu(void);
 void hw_reset(void);
 
 void i2c_process_command(void);

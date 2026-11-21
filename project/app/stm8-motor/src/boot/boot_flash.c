@@ -12,46 +12,100 @@
 
 #define FLASH_EOP_WAIT 0xFFFFu
 
-static void flash_wait_eop(void)
+/* Result of waiting for one program/erase operation.  The previous version
+ * returned silently on WR_PG_DIS, so a rejected erase/program looked like a
+ * successful update: the host reached PROGRESS 100 while the flash kept the
+ * old application (KI-075). */
+#define FLASH_RES_OK        0u
+#define FLASH_RES_PROTECTED 1u
+#define FLASH_RES_TIMEOUT   2u
+
+/* ---------------------------------------------------------------------------
+ * Block erase from RAM.
+ *
+ * Word programming may execute from Flash (bench-verified: a word written by
+ * this bootloader lands in Flash), but a *block erase* must not: the Flash
+ * controller stops serving instruction fetches for the duration of the erase,
+ * so a wait loop running from Flash deadlocks and the IWDG resets the MCU long
+ * before the block completes.  The bench symptom was an erase that reported
+ * success while Flash kept its old content, a ~0.5 s I2C blackout and
+ * `SCL hold by slave` (KI-075).  ST's SPL documents the same rule: the call and
+ * execution of FLASH_WaitForLastOperation "must be done from RAM in case of
+ * block operation".
+ *
+ * ERASE_STUB_BYTES is assembled from src/boot/erase_stub.asm (sdasstm8 -l),
+ * copied to RAM at boot and called through a function pointer.  It is position
+ * independent and talks only to fixed SFR/RAM cells:
+ *   0x0200 flash_stub_addr   (16-bit block address)
+ *   0x0202 flash_stub_result (0 ok, 1 write protected, 2 timeout)
+ *   0x0203 flash_stub_outer  (timeout counter, private)
+ * Regenerate the array from the listing whenever the stub changes.
+ * ------------------------------------------------------------------------- */
+__at(0x0200) volatile uint16_t flash_stub_addr;
+__at(0x0202) volatile uint8_t  flash_stub_result;
+__at(0x0203) volatile uint8_t  flash_stub_outer;
+
+static const uint8_t erase_stub_bytes[] = {
+    0x72, 0x15, 0x50, 0x5F, 0x72, 0x1A, 0x50, 0x5B, 0x72, 0x1B, 0x50, 0x5C,
+    0xCE, 0x02, 0x00, 0x4F, 0xF7, 0xA6, 0x10, 0xC7, 0x02, 0x03, 0x90, 0xAE,
+    0xFF, 0xFF, 0x72, 0x00, 0x50, 0x5F, 0x13, 0x72, 0x04, 0x50, 0x5F, 0x12,
+    0x90, 0x5A, 0x26, 0xF2, 0x72, 0x5A, 0x02, 0x03, 0x26, 0xE8, 0xA6, 0x02,
+    0x20, 0x05, 0xA6, 0x01, 0x20, 0x01, 0x4F, 0xC7, 0x02, 0x02, 0x72, 0x1B,
+    0x50, 0x5B, 0x72, 0x1A, 0x50, 0x5C, 0x81
+};
+
+static uint8_t erase_stub_ram[sizeof(erase_stub_bytes)];
+
+void boot_flash_init(void)
+{
+    uint8_t i;
+
+    for (i = 0; i < (uint8_t)sizeof(erase_stub_bytes); i++)
+        erase_stub_ram[i] = erase_stub_bytes[i];
+}
+
+/* EOP is a sticky flag: it must be cleared before the operation, otherwise the
+ * first poll sees the stale bit and the loop never waits for the self-timed
+ * erase/program to finish (the next trigger is then ignored by the controller). */
+static void flash_clear_eop(void)
+{
+    FLASH->IAPSR &= (uint8_t)~FLASH_IAPSR_EOP;
+}
+
+static uint8_t flash_wait_eop(void)
 {
     uint16_t timeout = FLASH_EOP_WAIT;
 
     while (timeout--)
     {
-        if (FLASH->IAPSR & FLASH_IAPSR_EOP)
-            return;
-        if (FLASH->IAPSR & FLASH_IAPSR_WR_PG_DIS)
-            return;
+        uint8_t iapsr = FLASH->IAPSR;
+
+        if (iapsr & FLASH_IAPSR_WR_PG_DIS)
+            return FLASH_RES_PROTECTED;
+        if (iapsr & FLASH_IAPSR_EOP)
+            return FLASH_RES_OK;
     }
+    return FLASH_RES_TIMEOUT;
 }
 
 static uint8_t flash_erase_block(uint16_t address)
 {
-    volatile uint8_t *p = (volatile uint8_t *)address;
+    void (*stub)(void) = (void (*)(void))erase_stub_ram;
 
-    FLASH->CR2 |= FLASH_CR2_ERASE;
-    FLASH->NCR2 &= (uint8_t)~FLASH_NCR2_NERASE;
+    flash_stub_addr = address;
+    flash_stub_result = 3;
+    stub();
 
-    *p = 0x00;
-    flash_wait_eop();
-
-    FLASH->CR2 &= (uint8_t)~FLASH_CR2_ERASE;
-    FLASH->NCR2 |= FLASH_NCR2_NERASE;
-
-    return BOOT_ST_OK;
+    return flash_stub_result == 0 ? BOOT_ST_OK : BOOT_ST_FLASH_ERR;
 }
 
 uint8_t boot_flash_erase(uint16_t start, uint16_t length)
 {
     uint16_t addr;
 
-    if (start < OKO_HDR_BASE || start >= OKO_APP_END)
+    if (start < OKO_HDR_BASE || (start & (OKO_BLOCK_SIZE - 1)) != 0)
         return BOOT_ST_BAD_ADDR;
-    if (length == 0 || length > (OKO_APP_END - OKO_HDR_BASE))
-        return BOOT_ST_BAD_ADDR;
-    if ((start & (OKO_BLOCK_SIZE - 1)) != 0)
-        return BOOT_ST_BAD_ADDR;
-    if ((length & (OKO_BLOCK_SIZE - 1)) != 0)
+    if (length == 0 || (length & (OKO_BLOCK_SIZE - 1)) != 0)
         return BOOT_ST_BAD_ADDR;
     if ((uint32_t)start + length > OKO_APP_END)
         return BOOT_ST_BAD_ADDR;
@@ -93,6 +147,7 @@ uint8_t boot_flash_write(uint16_t address, const uint8_t *data, uint8_t length)
     {
         volatile uint8_t *p = (volatile uint8_t *)(uint16_t)(address + i);
 
+        flash_clear_eop();
         FLASH->CR2 |= FLASH_CR2_WPRG;
         FLASH->NCR2 &= (uint8_t)~FLASH_NCR2_NWPRG;
 
@@ -101,7 +156,13 @@ uint8_t boot_flash_write(uint16_t address, const uint8_t *data, uint8_t length)
         p[2] = data[i + 2];
         p[3] = data[i + 3];
 
-        flash_wait_eop();
+        if (flash_wait_eop() != FLASH_RES_OK)
+        {
+            FLASH->CR2 &= (uint8_t)~FLASH_CR2_WPRG;
+            FLASH->NCR2 |= FLASH_NCR2_NWPRG;
+            FLASH->IAPSR &= (uint8_t)~FLASH_IAPSR_PUL;
+            return BOOT_ST_FLASH_ERR;
+        }
         IWDG->KR = 0xAA;
 
         FLASH->CR2 &= (uint8_t)~FLASH_CR2_WPRG;

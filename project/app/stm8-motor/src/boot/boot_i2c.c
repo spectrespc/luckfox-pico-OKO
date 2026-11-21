@@ -82,8 +82,12 @@ static void boot_prepare_response(void)
         case BOOT_CMD_WRITE:
         case BOOT_CMD_FINISH:
         case BOOT_CMD_RESET:
+            /* Status followed by the command echo.  The echo tells the host
+               that the frame it just sent was really executed instead of
+               reading a stale status from an earlier command (KI-075). */
             i2c_tx_buf[0] = boot_last_status;
-            i2c_tx_len = 1;
+            i2c_tx_buf[1] = cmd;
+            i2c_tx_len = 2;
             break;
         default:
             i2c_tx_buf[0] = BOOT_ST_BAD_CMD;

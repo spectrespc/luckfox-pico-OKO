@@ -1022,6 +1022,13 @@ During a flash job the last snapshot is returned with `stale=true`.
 `state` is `app`, `boot` or `absent`; `boot_version` is only known while the
 STM8 bootloader is active. An absent controller is not an API error.
 
+For STM8 firmware 2.2.0+ the record also carries the I2C-idle sleep state:
+`sleep_mode` (0/1), `sleep_state` (0 awake, 1 saving EEPROM, 2 armed,
+3 asleep), `sleep_entries` (sleep episodes since reset), `sleep_wake_i2c`
+(frames served while asleep) and `sleep_wake_awu` (timer wakes, saturating at
+255 — since firmware 2.3.2 these are 1 ms TIM4 ticks of the Wait-mode sleep,
+before that AWU slices). The field name is kept for compatibility.
+
 #### `/api/models`
 
 Precompiled `.rknn` models in `/userdata/models`. Uploads are limited to

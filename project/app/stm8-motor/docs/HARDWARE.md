@@ -105,22 +105,20 @@ the `BOARD=test` build, off on `BOARD=oko` until the host enables it).
 | Mode | Entry | Wake-up | Typical current |
 |---|---|---|---|
 | Run (HSI 16 MHz, motors off) | after reset | — | `~1.7 mA` (datasheet HSI run mode) |
-| Active-halt slices (400 ms nominal) | `SLEEP_IDLE_MS` of bus silence | I2C address match or AWU | to be measured on the bench; between the Run value and the Halt value |
+| Wait mode (2.3.2+, core clock gated between 1 ms ticks) | `SLEEP_IDLE_MS` of bus silence | TIM4 tick or I2C frame | to be measured on the bench; between the Run value and the Halt value |
 | Halt (reference, not used) | — | I2C/EXTI only | `~62 µA @ 3.3 V` with Flash operating, `~4.5 µA` with Flash power-down |
 
-Why Active-halt and not Halt: the IWDG is enabled at boot and cannot be
+Why Wait and not Active-halt/Halt: the IWDG is enabled at boot and cannot be
 disabled without a reset (STM8S datasheet §4.7), and it keeps counting in
-Halt.  The AWU and the IWDG share the 128 kHz LSI, so a 51200-LSI-period slice
-(`APR=24`, `TBR=12`) is exactly 80 % of the `250*256` LSI IWDG window and the
-watchdog is reloaded on every wake-up, independent of the LSI tolerance.
+Halt.  In Active-halt only the AWU reloads it, but the AWU of the bench
+STM8S003F3P6 sample does not count (registers read/write correctly, `AWUF`
+never sets, not even through the MSR LSI measurement) — nothing can wake
+HALT, and the IWDG resets the MCU after ~0.5 s (bench, 2026-11-21; KI-077).
+2.3.2 therefore uses Wait mode: the TIM4 1 ms handler reloads the IWDG, the
+I2C slave keeps answering and the core clock is gated between ticks.
 
-Wake-up sources are fixed by the STM8S003F3 datasheet (Table 11): the I2C
-address match wakes from Halt and Active-halt, EXTI does too, the AWU wakes
-from Active-halt only, and TIM4 wakes from neither.  TIM4 is therefore
-stopped and its pending flag cleared before HALT.
-
-`system_ticks` stops during Halt, so the 2 s I2C self-reset and every other
-tick-based timeout freeze while the controller sleeps.
+`system_ticks` keeps running in Wait mode, so the 2 s I2C self-reset and every
+other tick-based timeout behave as in Run mode.
 
 ## PCB Layout Notes
 - I²C traces: keep short, avoid crosstalk

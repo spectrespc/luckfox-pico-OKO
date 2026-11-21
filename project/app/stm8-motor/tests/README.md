@@ -43,6 +43,28 @@ sync when the protocol changes:
 
 - big-endian parsing of 16/32-bit fields and the command payload offset
 
+## On-target run (`hardware_test.sh`)
+
+`hardware_test.sh` is the automated section 2–13 checklist that runs on a live
+board (it needs `i2cdetect`, `i2ctransfer` and a built `util/motorctl`).  On the
+OKO bench it runs on the DUT from a directory whose `../util/motorctl` points at
+`oko-motor`:
+
+```sh
+mkdir -p /userdata/stm8/tests /userdata/stm8/util
+ln -sf /oem/usr/bin/oko-motor /userdata/stm8/util/motorctl
+# copy hardware_test.sh into /userdata/stm8/tests/
+killall divinus                  # its ~2 s poll otherwise keeps the drive awake
+BUS=3 ADDR=0x60 FW_VERSION=2.3.2 SLEEP_SOAK_S=1800 \
+    /userdata/stm8/tests/hardware_test.sh
+```
+
+`FW_VERSION` is the expected version (the raw 0xFF reply is derived from it) and
+`SLEEP_SOAK_S` is the length of the stage 12.6 soak.  Motor statuses are compared
+by protocol code (0 IDLE, 1 RUNNING, 2 ERROR).  Stage 12 needs `divinus` stopped:
+its `firmware_status` poll runs every ~2 s, which is shorter than the 3 s sleep
+threshold.
+
 ## Files
 
 - `Makefile` — builds and runs the tests (not used by the firmware build)

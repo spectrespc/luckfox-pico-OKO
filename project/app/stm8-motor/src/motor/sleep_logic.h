@@ -17,14 +17,12 @@
  * a single source of truth for firmware and host tests without paying for a
  * function call per evaluation.
  *
- * Hardware background (STM8S003F3 datasheet, Table 11):
- *   - I2C address match wakes the core from both Halt and Active-halt;
- *   - the AWU wakes it from Active-halt only;
- *   - TIM4 wakes it from neither.
- * Therefore the sleep is a chain of short Active-halt slices woken by the AWU,
- * each of which reloads the IWDG (IWDG and AWU share the 128 kHz LSI, so the
- * slice/watchdog ratio is independent of the LSI tolerance).  TIM4 must never
- * be used as the wake source. */
+ * Hardware background: the first implementation used Active-halt slices woken
+ * by the AWU, but the AWU of the bench STM8S003F3P6 never counts (KI-077), so
+ * the IWDG reset the MCU shortly after every HALT.  2.3.1 therefore sleeps in
+ * Wait mode (WFI): the TIM4 1 ms interrupt wakes the core and its handler
+ * reloads the IWDG, while fMASTER and the I2C slave keep running.  This header
+ * only describes the decision logic and does not depend on the wake source. */
 
 /* Sleep phases, matching the reference STM32C011 power FSM shape:
  * AWAKE -> FORCE_SAVE (only while EEPROM is dirty) -> ARMED -> ASLEEP. */

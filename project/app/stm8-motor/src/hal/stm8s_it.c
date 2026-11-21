@@ -22,11 +22,12 @@
 /* Public functions ----------------------------------------------------------*/
 
 /**
-  * @brief  Auto wake-up interrupt routine (vector 1).  The AWU is the timed
-  *         wake-up source of the Active-halt sleep chain; the flag is normally
-  *         consumed by hw_sleep_exit(), but a late request must not fall
-  *         through to the default trap handler.  Clearing AWUF also resets the
-  *         internal interrupt latch (RM0016).
+  * @brief  Auto wake-up interrupt routine (vector 1).  The I2C-idle sleep no
+  *         longer uses the AWU (Wait mode is used instead: the AWU of the bench
+  *         STM8S003F3P6 sample never counts), but the vector must still be
+  *         served so a stray or leftover request cannot fall through to the
+  *         default trap handler.  Clearing AWUF also resets the internal
+  *         interrupt latch (RM0016).
   * @param  None
   * @retval None
   */

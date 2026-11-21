@@ -43,6 +43,28 @@ make test
 
 - разбор полей 16/32 бит в формате big-endian и смещение полезной нагрузки команды
 
+## Стендовый прогон (`hardware_test.sh`)
+
+`hardware_test.sh` — автоматический чек-лист секций 2–13 на живой плате
+(нужны `i2cdetect`, `i2ctransfer` и собранный `util/motorctl`).
+На стенде OKO запускается на DUT из каталога, где `../util/motorctl`
+указывает на `oko-motor`:
+
+```sh
+mkdir -p /userdata/stm8/tests /userdata/stm8/util
+ln -sf /oem/usr/bin/oko-motor /userdata/stm8/util/motorctl
+# скопировать hardware_test.sh в /userdata/stm8/tests/
+killall divinus                  # иначе его опрос ~2 с не даёт уснуть
+BUS=3 ADDR=0x60 FW_VERSION=2.3.2 SLEEP_SOAK_S=1800 \
+    /userdata/stm8/tests/hardware_test.sh
+```
+
+`FW_VERSION` задаёт ожидаемую версию (сырой ответ 0xFF выводится из неё),
+`SLEEP_SOAK_S` — длительность soak в секции 12.6. Статусы моторов
+сравниваются по кодам протокола (0 IDLE, 1 RUNNING, 2 ERROR). Секция 12
+требует остановленного `divinus`: его `firmware_status` опрашивает привод
+каждые ~2 с, что короче порога сна 3 с.
+
 ## Файлы
 
 - `Makefile` — собирает и запускает тесты (не используется сборкой прошивки)

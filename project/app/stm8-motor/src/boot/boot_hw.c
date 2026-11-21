@@ -86,4 +86,7 @@ void boot_hw_init(void)
     IWDG->KR = 0xAA;                 /* reload */
 
     boot_i2c_init();
+
+    /* Copy the RAM-resident block-erase stub before the first I2C command. */
+    boot_flash_init();
 }

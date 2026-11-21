@@ -71,7 +71,7 @@
 
 /* Application part number reported by BOOT_CMD_INFO. */
 #define OKO_BOOT_VERSION_MAJOR 1u
-#define OKO_BOOT_VERSION_MINOR 0u
+#define OKO_BOOT_VERSION_MINOR 1u
 #define OKO_BOOT_VERSION_PATCH 0u
 
 /*

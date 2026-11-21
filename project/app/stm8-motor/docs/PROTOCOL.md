@@ -25,7 +25,7 @@
 | 0x07 | [cmd] | — | Enter the I2C bootloader (OKO fork) |
 | 0x08 | [cmd] | [role][maj][min][pat] | Get role (0=app, 1=boot) and version (shared with the bootloader) |
 | 0x09 | [cmd][motor][pos_0..pos_3] | — | Force the logical position (int32 BE) without moving; ignored while RUNNING (2.0.2+) |
-| 0x0A | [cmd] | [mode][state][slice][0][ent_hi][ent_lo][w_ic2][w_awu] | Get the I2C-idle sleep state and counters (2.2.0+) |
+| 0x0A | [cmd] | [mode][state][wake_ms][0][ent_hi][ent_lo][w_i2c][w_timer] | Get the I2C-idle sleep state and counters (2.2.0+; 2.3.2: `wake_ms` granularity, `w_timer` timer wakes) |
 | 0x0B | [cmd][mode][idle_s] | — | Enable/disable I2C-idle sleep; `mode` 0=off 1=on, `idle_s` 0=default 3 s (2.2.0+); no reply, read back 0x0A |
 | 0xFF | [cmd] | [maj][min][pat] | Get firmware version (3 bytes; application only) |
 
@@ -34,7 +34,7 @@
 ### Version Request
 ```bash
 i2ctransfer -y 3 w1@0x60 0xFF r3
-# Response: 0x02 0x02 0x00 (version 2.2.0; test board 2.3.0)
+# Response: 0x02 0x02 0x00 (version 2.2.0; test board 2.3.2)
 ```
 
 ### Set Speed
@@ -92,35 +92,55 @@ negative `GET_POS` value for control; send `SET_POS(0)` after homing instead.
 ```bash
 # Enable sleep after 3 s of bus silence (idle_s = 0 selects the default)
 i2ctransfer -y 3 w3@0x60 0x0B 0x01 0x00
-# Read back: mode, state, slice/10 ms, reserved, entries (BE), wake by I2C, wake by AWU
+# Read back: mode, state, wake granularity in ms, reserved, entries (BE),
+#            wake by I2C, wake by timer
 i2ctransfer -y 3 w1@0x60 0x0A r8
-# Response: 0x01 0x03 0x28 0x00 0x00 0x2A 0x03 0x2A
+# Response: 0x01 0x00 0x01 0x00 0x00 0x2A 0x03 0xFF
 ```
 
-`state`: 0 = awake, 1 = saving EEPROM, 2 = armed (about to Halt),
-3 = asleep (reported when the address match that wakes the controller is
-being serviced).
+`state`: 0 = awake, 1 = saving EEPROM, 2 = armed, 3 = asleep (reported while
+the frame that woke the controller is being serviced).
+
+`wake_ms` (byte 2) is the wake granularity in milliseconds: 1 (one TIM4 tick)
+since 2.3.2.  In 2.2.0/2.3.0 the byte was reported in 10 ms units (`40` =
+400 ms Active-halt slice), so a host that upgrades to 2.3.2 must switch units.
+
+`w_timer` (byte 7) counts timer wakes, saturating at 255: TIM4 ticks in 2.3.2
+(it saturates quickly and acts as "the sleep really ran" evidence), the AWU
+slice in 2.2.0/2.3.0.
+
+## Write-command answers (bootloader >= 1.1.0)
+
+Write commands (`0x11`-`0x14`) answer with **two bytes**: `[status][command
+echo]`.  The host must check the echo: a status from a previous command means
+the frame never reached the bootloader.  Before 1.1.0 the answer was a single
+byte and a lost frame looked like success (KI-075).
 
 ## Power management (I2C-idle sleep)
 
 - Idle source: any completed frame.  After `idle_s` seconds of silence, with
   no motor RUNNING, no pending frame and a clean EEPROM, the application
-  enters a chain of Active-halt slices.
-- Each slice is 400 ms (nominal): the AWU wakes the core every
-  `(APR+1)<<(TBR-1) = 25*2048 = 51200` LSI periods and the main loop reloads
-  the IWDG.  The IWDG window is 250*256 = 64000 LSI periods, so the slice is
-  80 % of the window and the ratio is independent of the LSI tolerance.
-- The I2C address match wakes the controller from Halt and Active-halt, so the
-  next host frame is answered without a special wake-up command.
-- `TIM4` is stopped during Halt and cannot wake the core; the AWU is the only
-  timed wake-up source.
-- `system_ticks` stops during Halt, exactly like `millis()` on the
-  STM32C011 EC: the 2 s I2C self-reset does not advance while asleep (the bus
-  is idle and there is nothing to recover).  The host must not rely on
-  tick-based timeouts across a sleep period.
+  enters **Wait mode** (`WFI`) for one TIM4 tick.
+- fMASTER keeps running in Wait mode: the 1 ms TIM4 interrupt wakes the core
+  and its handler reloads the IWDG, while the I2C slave keeps answering, so
+  the sleep never delays a host frame.  The core clock is gated between ticks,
+  so the current is below Run but above Halt.
+- Why not Active-halt: on the bench STM8S003F3P6 sample the AWU block does not
+  count (the `AWUEN/TBR/APR` registers read and write correctly, but `AWUF`
+  never sets, not even through the MSR LSI measurement), so HALT cannot be
+  woken and the IWDG resets the MCU after ~0.5 s.  Bench-verified 2026-11-21
+  (see `KNOWN_ISSUES.md`, KI-077).
+- `system_ticks` keeps advancing in Wait mode, so tick-based timeouts
+  (including the 2 s I2C self-reset) behave exactly as in Run mode.
+- `entries` counts one sleep episode per quiet period (not per tick), `w_i2c`
+  counts frames served while asleep, `w_timer` counts timer wakes (saturating).
 - Default: off on the production build (`BOARD=oko`, 2.2.0), on for the test
-  board (`BOARD=test`, 2.3.0).  `oko-motor flash`/`/api/flash` disable the
+  board (`BOARD=test`, 2.3.2).  `oko-motor flash`/`/api/flash` disable the
   sleep before `ENTER_BOOT`.
+- Keep in mind: while the host polls the controller more often than every
+  `idle_s` (divinus polls `/api/firmware` about every 2 s with a 3 s
+  threshold), the sleep never engages.  That is expected: the feature targets
+  windows where the AP does not talk to the drive, including suspend.
 
 ## Error Handling
 - Unknown commands are ignored (no NACK); 0x07 is ENTER_BOOT in this fork.

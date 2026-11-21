@@ -2,6 +2,9 @@
 build/
 *.rel
 *.asm
+# ...кроме исходника RAM-заглушки стирания (SDCC-листинг даёт байты для
+# erase_stub_bytes[] в boot_flash.c)
+!src/boot/erase_stub.asm
 *.lst
 *.rst
 *.sym

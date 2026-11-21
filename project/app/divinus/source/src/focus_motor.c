@@ -336,7 +336,11 @@ int focus_motor_get_sleep(fm_sleep *out)
         return rc;
     out->enabled = resp[0] ? 1 : 0;
     out->state = resp[1];
-    out->slice_ms = (unsigned)resp[2] * 10u;
+    /* Byte 2 is the wake granularity in milliseconds since firmware 2.3.1
+       (one TIM4 tick = 1 ms, Wait-mode sleep); 2.2.0/2.3.0 reported it in
+       10 ms units, but no released product firmware uses that encoding with
+       this host.  Do not scale: the field is milliseconds. */
+    out->slice_ms = (unsigned)resp[2];
     out->entries = ((unsigned)resp[4] << 8) | resp[5];
     out->wake_i2c = resp[6];
     out->wake_awu = resp[7];

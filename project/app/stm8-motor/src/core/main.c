@@ -51,7 +51,7 @@ volatile uint16_t sleep_idle_ms = SLEEP_IDLE_MS;
 volatile uint8_t  g_sleep_state = SLEEP_STATE_AWAKE;
 volatile uint16_t g_sleep_entries = 0;
 volatile uint8_t  g_wake_by_i2c = 0;
-volatile uint8_t  g_wake_by_awu = 0;
+volatile uint8_t  g_wake_by_timer = 0;
 
 /**
   * @brief  Snapshot the live state for the pure sleep decision logic.
@@ -72,6 +72,39 @@ static void sleep_read_conditions(sleep_conditions *sc)
 
 /* Private function prototypes ---------------------------------------*/
 /* Private functions ---------------------------------------------------------*/
+
+/**
+  * @brief  Close the current sleep episode when a frame was served since the
+  *         last look, and count that frame once as an I2C wake.
+  *
+  * Called at the top of every loop pass, so a frame that arrives while the loop
+  * is running between two WFI calls (the address-match ISR runs immediately)
+  * is still accounted for.  Counting only around WFI would leave the episode
+  * open and under-report entries/wake_i2c in real traffic.
+  * @param  seen          Last frame timestamp already accounted for.
+  * @param  episode_open  Set to 0 when a frame closes the current episode.
+  * @retval None
+  */
+static void sleep_note_frames(uint32_t *seen, uint8_t *episode_open)
+{
+    uint32_t now;
+
+    sim();
+    now = i2c_last_frame;
+    rim();
+
+    if (now == *seen)
+        return;
+
+    *seen = now;
+    if (!*episode_open)
+        return;
+
+    *episode_open = 0;
+    if (g_wake_by_i2c != 0xFF)
+        g_wake_by_i2c++;
+}
+
 
 /**
   * @brief  Main program.
@@ -95,6 +128,8 @@ void main(void)
     uint8_t led_state = 0;
     uint32_t last_led_tick = 0;
     uint8_t sleep_state = SLEEP_STATE_AWAKE;
+    uint8_t sleep_episode_open = 0;
+    uint32_t sleep_seen_frame = i2c_last_frame;
 
     /* Infinite loop */
     while (1)
@@ -110,6 +145,11 @@ void main(void)
         if (i2c_check_timeout())
             i2c_slave_reset();
         
+        /* A frame served since the last pass ends the current sleep episode
+           and counts as an I2C wake, whether it landed during a WFI or while
+           this loop was running. */
+        sleep_note_frames(&sleep_seen_frame, &sleep_episode_open);
+
         if (i2c_cmd_ready)
         {
             __asm__("sim");
@@ -121,9 +161,10 @@ void main(void)
         eeprom_periodic_save();
 
         /* I2C-idle sleep: after SLEEP_IDLE_MS of bus silence (and with no
-           motion, transfer or pending frame) the core enters a chain of
-           Active-halt slices.  Each AWU slice reloads the IWDG, so the
-           watchdog never expires; the I2C address match wakes the core. */
+           motion, transfer or pending frame) the core enters Wait mode for one
+           TIM4 tick at a time (see hw_sleep_enter()).  The tick handler keeps
+           the IWDG reloaded and the I2C slave keeps answering, so the sleep
+           never blocks a host frame. */
         {
             sleep_conditions sc;
             uint8_t action;
@@ -140,39 +181,50 @@ void main(void)
             }
             else if (action == SLEEP_ACTION_HALT)
             {
-                /* Atomic check-then-halt window: mask interrupts, re-check,
-                   then HALT.  A frame that arrives in this window still wakes
-                   the core (the I2C slave stretches SCL) and its ISR runs
-                   after rim(), so it is not lost. */
-                __asm__("sim");
+                /* Re-check with interrupts masked, then execute one WFI.  WFI
+                   returns on the next interrupt: the 1 ms TIM4 tick, or an
+                   I2C frame.  Interrupts must be enabled for WFI to return,
+                   so the mask is released before entering. */
+                uint32_t frame_before;
+
+                sim();
                 sleep_read_conditions(&sc);
                 if (sleep_can_enter(&sc))
                 {
+                    frame_before = i2c_last_frame;
+                    rim();
+
+                    /* One episode per quiet period: it starts at the first
+                       WFI and ends when a frame is served. */
+                    if (!sleep_episode_open)
+                    {
+                        sleep_episode_open = 1;
+                        if (g_sleep_entries != 0xFFFF)
+                            g_sleep_entries++;
+                    }
+
                     g_sleep_state = SLEEP_STATE_ASLEEP;
                     GPIO_WriteLow(GPIOD, GPIO_PIN_4);   /* LED off */
                     hw_sleep_enter();
 
-                    if (hw_sleep_wake_awu())
+                    /* A frame that arrived during WFI is counted by
+                       sleep_note_frames() on the next pass, which also closes
+                       the episode; only a pure timer wake is counted here. */
+                    if (i2c_last_frame == frame_before)
                     {
-                        if (g_wake_by_awu != 0xFF)
-                            g_wake_by_awu++;
-                    }
-                    else
-                    {
-                        if (g_wake_by_i2c != 0xFF)
-                            g_wake_by_i2c++;
+                        if (g_wake_by_timer != 0xFF)
+                            g_wake_by_timer++;
                     }
 
-                    hw_sleep_exit();
-                    if (g_sleep_entries != 0xFFFF)
-                        g_sleep_entries++;
                     g_sleep_state = SLEEP_STATE_AWAKE;
                     sleep_state = SLEEP_STATE_AWAKE;
-                    /* system_ticks is frozen across Halt, so restart the LED
-                       phase from the current value. */
+                    /* Keep the LED phase continuous across the idle window. */
                     last_led_tick = system_ticks;
                 }
-                __asm__("rim");
+                else
+                {
+                    rim();
+                }
             }
             else if (action == SLEEP_ACTION_WAKE)
             {

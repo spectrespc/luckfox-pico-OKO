@@ -18,6 +18,7 @@
 extern volatile uint8_t boot_last_status;
 
 void boot_hw_init(void);
+void boot_flash_init(void);
 void boot_i2c_poll(void);
 void boot_clear_magic(void);
 

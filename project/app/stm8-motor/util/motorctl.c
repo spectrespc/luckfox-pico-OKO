@@ -212,12 +212,27 @@ static int boot_wait(int fd)
     return -1;
 }
 
+/* Write-type commands answer [status][command echo].  The echo is what makes
+ * the exchange trustworthy: without it a frame that never reached the
+ * bootloader would still return the previous command's status, which is how an
+ * update could report PROGRESS 100 without writing anything (KI-075). */
 static int boot_status_command(int fd, const uint8_t *buf, size_t len,
                                uint8_t *status, unsigned settle_us)
 {
-    if (i2c_host_transfer(fd, buf, len, status, 1, settle_us,
+    uint8_t resp[2];
+
+    if (i2c_host_transfer(fd, buf, len, resp, sizeof(resp), settle_us,
                           BOOT_RETRIES) < 0)
         return -1;
+    if (resp[1] != buf[0])
+    {
+        fprintf(stderr,
+                "bootloader did not complete command 0x%02X (echo 0x%02X): "
+                "the controller stopped answering, likely hung in a Flash "
+                "operation (KI-075). Nothing was written\n", buf[0], resp[1]);
+        return -1;
+    }
+    *status = resp[0];
     return 0;
 }
 
@@ -233,7 +248,11 @@ static int boot_erase(int fd, uint16_t start, uint16_t length)
         return -1;
     if (status != BOOT_ST_OK)
     {
-        fprintf(stderr, "boot erase failed: status %u\n", status);
+        fprintf(stderr,
+                "boot erase failed: status %u%s\n", status,
+                status == BOOT_ST_FLASH_ERR ?
+                " (Flash rejected the erase or it never completed - KI-075)" :
+                "");
         return -1;
     }
     return 0;
@@ -702,9 +721,8 @@ static int read_sleep(int fd, uint8_t out[8])
 
 static void print_sleep(const uint8_t r[8])
 {
-    printf("sleep %s, state %u, slice %u ms, entries %u, wake i2c %u awu %u\n",
-           r[0] ? "on" : "off", (unsigned)r[1],
-           (unsigned)r[2] * 10u,
+    printf("sleep %s, state %u, slice %u ms, entries %u, wake i2c %u timer %u\n",
+           r[0] ? "on" : "off", (unsigned)r[1], (unsigned)r[2],
            (unsigned)(((uint16_t)r[4] << 8) | r[5]),
            (unsigned)r[6], (unsigned)r[7]);
 }
@@ -941,10 +959,21 @@ static int cmd_flash(int fd, int verify_only)
             if (version[0] != fw_header.major ||
                 version[1] != fw_header.minor ||
                 version[2] != fw_header.patch)
-                fprintf(stderr, "warning: reported version differs from file\n");
+            {
+                fprintf(stderr,
+                        "error: reported version %u.%u.%u differs from the "
+                        "file %u.%u.%u - Flash was not updated (check the "
+                        "bootloader status; KI-075)\n",
+                        version[0], version[1], version[2],
+                        fw_header.major, fw_header.minor, fw_header.patch);
+                rc = 1;
+            }
         }
         else
-            fprintf(stderr, "warning: application did not start after reset\n");
+        {
+            fprintf(stderr, "error: application did not start after reset\n");
+            rc = 1;
+        }
     }
     return rc;
 }
