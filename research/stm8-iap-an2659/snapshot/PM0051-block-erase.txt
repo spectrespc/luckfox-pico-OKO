@@ -1,0 +1,203 @@
+Verbatim text extract, stored for reference only (not an upstream file).
+Source: PM0051 "How to program STM8S and STM8A Flash program memory and data
+EEPROM", Doc ID 14614 Rev 3, June 2011, STMicroelectronics.
+Source PDF: cd00191343 / 5670440.pdf, 197136 bytes,
+sha256 ab5d9dbf7f57c5fb435d7f9455c20c3f0cb9c656d45c3f3f5b7ec743683b1c85.
+Extracted with pypdf 7.0.1 on 2026-11-22; text is unmodified apart from
+whitespace produced by the PDF text layer. The full PDF is NOT stored: it is
+inside the 200 KB limit only barely and the topic keeps just the procedures
+that matter for KI-075 (snapshot/README rule 5 decision, see topic README).
+Pages below: document pages 16-20 (block programming, MASS/unlock, word and
+block programming, block erase).
+
+----- PDF page 16 -----
+
+Programming STM8 Flash microcontrollers PM0051
+16/27  Doc ID 14614 Rev 3
+Note: 1 The mechanism to lock and unlock unwanted memory access protection is identical for 
+option bytes and data EEPROM (see Table 7: MASS).
+2 Before starting programming program memory or data EEPROM, the software must verify 
+that the area is not write protected by checking that the PUL or DUL bit is effectively set. 
+4 Programming STM8 Flash microcontrollers
+This section describes how to program STM8 single-voltage Flash microcontrollers.
+4.1 Unlocking the Memory Ac cess Security System (MASS)
+The memory must be unlocked before attempting to perform any erase or write operation. 
+To unlock it, follow the procedure described in Section 3.3: Unwanted memory access 
+protection, and Table 7. 
+The software must poll the PUL and DUL bit, before attempting to write to program memory 
+and data EEPROM, respectively. 
+         
+4.2 Block programming
+Block write operations allow to program an entire block in one shot, thus minimizing the 
+programming time.
+There are three possible block programming modes: erase, write only (also called fast 
+programming) and combined erase/write cycle (also called standard block programming). 
+Table 7. MASS
+Microcontroller 
+family
+Data EEPROM and option bytes Program memory
+Unlock Lock Unlock Lock
+STM8S and 
+STM8A
+Write 0xAE then 
+56h in 
+FLASH_DUKR
+(0x00 5064)(1)(2)
+1. The OPT and NOPT bits of FLASH_CR2 and FLASH _NCR2 registers must be set/cleared to enable 
+access to the option bytes.
+2. If wrong keys have been entered, another key programmi ng sequence can be issued without resetting the 
+device.
+Reset bit 3 (DUL) 
+in FLASH_IAPSR
+(0x00 505F)
+Write 0x56 then 
+0xAE in 
+FLASH_PUKR
+(0x00 5062)(3)
+3. If wrong keys have been entered, the device must be reset, and a key program sequence issued.
+Reset bit 1 (PUL) 
+in FLASH_IAPSR
+(0x00 505F)
+
+----- PDF page 17 -----
+
+PM0051 Programming STM8 Flash microcontrollers
+Doc ID 14614 Rev 3 17/27
+The programming mode is selected through two complementary registers, FLASH_CR2 and 
+FLASH_NCR2. 
+The memory must be unlocked before performing any of these operations.
+Block program operations can be performed both to main program memory and DATA area:
+● Programming a block of main program memory:
+The block program operation has to be executed totally from RAM. 
+The program execution continues from RAM. If the program goes back to main program 
+memory, it is stalled until the block program operation is complete. 
+● Programming a block of data EEPROM with RWW capability:
+The block program operation can be executed from main program memory. However 
+the data loading phase has to be executed from RAM (see below). 
+Normal program execution can continue from main program memory, after checking 
+the HVOFF bit in the FLASH_IAPSR register.
+● Programming a block of data EEPROM on devices without RWW capability: 
+The block program operation must be executed totally from RAM. 
+The programming can also be performed directly through the SWIM interface. In this case, it 
+is recommended to stall the device in order to prevent the core from accessing the Flash 
+program memory during the block program or erase operation. This can be done by setting 
+the STALL bit in the DM_CSR2 debug module register. Refer to the STM8 SWIM 
+communication protocol and debug module (UM0470) for more information.
+Caution: During a block program or erase operation, it is recommended to avoid executing 
+instructions performing a read access to program memory. 
+Caution: If the number of written memory locations is higher than what is required in the block 
+program/erase sequence, the additional locations are handled as redundant byte write 
+operations. 
+If the number of written memory locations is lower than what is specified in the block 
+program/erase sequence, the block program/erase process does not start and the CPU 
+stalls waiting for the remaining operations to be performed. 
+Caution: EOP and WR_PG_DIS bits of FLASH_IAPSR register are automatically cleared when a 
+program/erase operation starts.
+Caution: If a block program or erase sequence is interrupted by a reset, the data programmed in the 
+memory may be corrupted.
+
+----- PDF page 18 -----
+
+Programming STM8 Flash microcontrollers PM0051
+18/27  Doc ID 14614 Rev 3
+Standard block programming
+The following sequence is required to perform a standard block program sequence (block 
+erased and programmed):
+1. Unlock the memory if not already done. 
+The UBC option byte can be read to check if the block to program is not in the UBC 
+area. If necessary, reprogram it to allow erasing and programming the targeted block.
+2. Write 0x01 in FLASH_CR2 (PRG bit acti ve), and 0xFE in FLASH_NCR2 (NPRG bit 
+active). 
+3. Write all the data bytes of the block you want to program starting with the very first 
+address of the block. No read or write access to the program memory is allowed during 
+these load operations as they might corrupt the values to be programmed.
+The programming cycle starts automatically when all the data in the block have been 
+written.
+4. Check the WR_PG_DIS bit in FLASH_IAPSR to verify if the block you attempted to 
+program was not write protected (optional)
+5. For devices with RWW capability, poll th e HVOFF bit in FLASH_IAPSR register for the 
+start of program operation (high voltage mode). HVOFF is reset when the program 
+operation starts, thus indicating that the memory is ready for RWW. 
+6. To check if the program operation is co mplete, poll the EOP bit in FLASH_IAPSR from 
+program memory. EOP is set to ‘1’ when the standard block program operation has 
+completed. To avoid polling the EOP bit, an interrupt can be generated when EOP is 
+set.
+Note: It is mandatory to execute steps 2 to 5 from RAM.
+Caution: EOP and WR_PG_DIS bits are cleared by reading the FLASH_IAPSR register. It is 
+consequently strongly recommended to perform one single read operation to the 
+FLASH_IAPSR register to check the values of these bits. 
+Caution: FLASH_CR2 and FLASH_NCR2 must be written consecutively to be taken into account. If 
+only one register is set, both are forced to their reset values, causing the program operation 
+to be performed at byte level.
+
+----- PDF page 19 -----
+
+PM0051 Programming STM8 Flash microcontrollers
+Doc ID 14614 Rev 3 19/27
+Fast block programming operation
+The following sequence is required to perform a fast block program sequence (block 
+programmed without previous erase): 
+1. Unlock the memory if not already done.
+The UBC option byte can be read to check if the block to program is not in the UBC 
+area. If necessary, reprogram it to allow programming the targeted block.
+2. Write 0x10 in FLASH_CR2 (FPRG bit active ), and 0xEF in FLASH_NCR2 (NFPRG bit 
+active).
+3. Write all the data bytes of the block you want to program starting with the very first 
+address of the block. No read or write access to the program memory is allowed during 
+these load operations as they might corrupt the values to be programmed.
+The programming cycle starts automatically when the complete block has been written.
+4. Check the WR_PG_DIS bit in FLASH_IAPSR to verify if the block you attempted to 
+program was not write protected (optional).
+5. For devices with RWW capability, poll th e HVOFF bit in FLASH_IAPSR register for the 
+start of program operation (high voltage mode). HVOFF is reset when the program 
+operation starts, thus indicating that the memory is ready for RWW. 
+6. To check if the program operation is co mplete, poll the EOP bit in FLASH_IAPSR from 
+program memory. EOP is set to ‘1’ when the block program operation has completed. 
+To avoid polling the EOP bit, an interrupt can be generated when EOP is set.
+Note: It is mandatory to execute steps 2 to 5 from RAM.
+Caution: FLASH_CR2 and FLASH_NCR2 must be written consecutively to be taken into account. If 
+only one register is set, both are forced to their reset values, causing the program operation 
+to be performed at byte level. 
+Caution: EOP and WR_PG_DIS bits are cleared by reading the FLASH_IAPSR register. It is 
+consequently strongly recommended to perform one single read operation to the 
+FLASH_IAPSR register to check the values of these bits. 
+Caution: The memory block must be empty when performing a fast block programming operation.
+
+----- PDF page 20 -----
+
+Programming STM8 Flash microcontrollers PM0051
+20/27  Doc ID 14614 Rev 3
+Block erase operation
+The following sequence is required to perform a block erase sequence:
+1. Unlock the memory if not already done.
+The UBC option byte can be read to check if the block to erase is not in the UBC area. 
+If necessary, reprogram it to allow erasing the targeted block.
+2. Write 0x20 in FLASH_CR2 (ERASE bit ac tive), and 0xDF in FLASH_NCR2 (NERASE 
+bit active).
+3. Write '0x00 00 00 00' to any word inside the block to be erased using a LOAD 
+instruction.
+4. Check the WR_PG_DIS bit in FLASH_IAPSR to verify if the block you attempted to 
+erase was not write protected (optional).
+5. For devices with RWW capability, poll th e HVOFF bit in FLASH_IAPSR register for the 
+start of erase operation (high voltage mode). HVOFF is reset when the erase operation 
+starts, thus indicating that the memory is ready for RWW. 
+6. To check if the erase operation is comp lete, poll the EOP bit in FLASH_IAPSR from 
+program memory. EOP is set to ‘1’ when the block erase operation has completed. To 
+avoid polling the EOP bit, an interrupt can be generated when EOP is set.
+Note: It is mandatory to execute steps 2 to 5 from RAM.
+Caution: EOP and WR_PG_DIS bits are cleared by reading the FLASH_IAPSR register. It is 
+consequently strongly recommended to perform one single read operation to the 
+FLASH_IAPSR register to check the values of these bits. 
+Caution: FLASH_CR2 and FLASH_NCR2 must be written consecutively to be taken into account. If 
+only one register is set, both are forced to their reset values, causing the erase operation to 
+be performed at byte level. 
+4.3 Word programming
+Both main program memory and data EEPROM can be programmed and erased at word 
+level. Word operations are performed in the same way as block operations. They can be 
+executed either from program memory or from RAM. 
+When a new word program operation starts, EOP and WR_PG_DIS bits of FLASH_IAPSR 
+register are automatically cleared.
+Contrary to word programming of the Flash program memory, the word programming of data 
+EEPROM with RWW feature (when available) does not stop program execution. The EOP 
+bit can then be used to know if the previous operation has completed. This bit is 
+automatically reset when reading FLASH_IAPSR.

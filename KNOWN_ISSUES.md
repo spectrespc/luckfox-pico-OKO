@@ -720,6 +720,22 @@
   - Второй неработающий узел того же экземпляра — AWU (KI-077). Два
     независимых отказа на одном чипе указывают на дефектный/поддельный
     экземпляр STM8S003F3P6.
+  - **Две оставшиеся гипотезы о последовательности регистров проверены
+    (2026-11-22) и отклонены:** ожидание `FLASH_IAPSR.PUL` после разблокировки
+    (boot `1.1.1`) и `FLASH_CR1.HALT`/`AHALT` в RAM-трамплине (boot `1.1.2`
+    и `1.1.3`) дают ровно тот же отказ: ответа на чтение нет, `SCL hold`,
+    блок не стёрт. Обе правки откачены, версия загрузчика возвращена
+    к `1.1.0`. Диагностическая сборка (`1.1.4`, в дерево не пошла) с
+    заглушкой без ожидания `EOP` тоже не ответила — значит управление не
+    возвращается из самой записи-триггера: для program memory RWW нет,
+    ядро ждёт самотируемое стирание, а оно не завершается.
+  - Сверка с документацией ST (`research/stm8-iap-an2659/`): PM0051 §4.2
+    требует ровно нашу последовательность (`CR2.ERASE` + `NCR2.NERASE`,
+    триггер записью слова в блок, шаги из RAM), SPL `FLASH_EraseBlock`
+    делает то же и `PUL` не опрашивает, AN2659/AN2737 добавляют только
+    требование исполнять блочные операции из RAM. Недостающего шага нет.
+    Артефакты замеров — `output/bench/stm8/ki075-pul-experiment-20261122.txt`
+    и `ki075-cr1-experiment-20261122.txt`.
   Что исправлено в коде (bootloader `1.1.0`, хост `oko-motor`):
   - стирание выполняется RAM-заглушкой (`src/boot/erase_stub.asm`), EOP
     сбрасывается перед каждой операцией, отказ (`WR_PG_DIS`/таймаут)
@@ -730,9 +746,9 @@
     (`RC=1`) с явным сообщением, а не предупреждением.
   Статус: **открыто как ограничение экземпляра**: обновление по I2C на
   этой плате невозможно, обход — ST-Link/SWIM (`TESTBENCH.md` §7C).
-  Дальнейшие шаги: та же проверка на заведомо исправном STM8S003F3P6
-  (замена чипа), при подтверждении — закрыть KI; как эксперимент остаётся
-  fast block programming (`FPRG`), но он использует тот же стирающий узел.
+  Дальнейшие шаги: замена чипа и повторные замеры `0x11` и теста AWU —
+  план и критерии в `TO_DO.md` §3.2. `FPRG`/fast block programming не
+  поможет: это тот же стирающий узел.
 
 - **KI-077. STM8S003F3P6: узел AWU не считает, Active-halt нечем разбудить.**
   2026-11-21, стенд, тестовая плата привода.
@@ -1510,6 +1526,24 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
     programmed into the very region that refuses to erase.
   - The same sample also has a dead AWU (KI-077). Two independent failures on
     one die point to a defective or counterfeit STM8S003F3P6.
+  - **The two remaining register-sequence hypotheses were tested
+    (2026-11-22) and rejected:** waiting for `FLASH_IAPSR.PUL` after the
+    unlock (boot `1.1.1`) and `FLASH_CR1.HALT`/`AHALT` in the RAM trampoline
+    (boot `1.1.2` and `1.1.3`) give exactly the same failure: no answer to
+    the read, `SCL hold`, block unchanged. Both patches were reverted and the
+    bootloader version went back to `1.1.0`. A diagnostic build (`1.1.4`,
+    never committed) whose stub skipped the `EOP` wait also did not answer,
+    so control never returns from the trigger write itself: program memory
+    has no RWW, the core waits for the self-timed erase, and the erase never
+    completes.
+  - Cross-check against the ST documentation (`research/stm8-iap-an2659/`):
+    PM0051 §4.2 requires exactly our sequence (`CR2.ERASE` + `NCR2.NERASE`,
+    a word write inside the block as the trigger, steps run from RAM), SPL
+    `FLASH_EraseBlock` does the same and does not poll `PUL`, and
+    AN2659/AN2737 add only the requirement to run block operations from RAM.
+    No step is missing. Measurement artifacts:
+    `output/bench/stm8/ki075-pul-experiment-20261122.txt` and
+    `ki075-cr1-experiment-20261122.txt`.
   Fixed in code (bootloader `1.1.0`, host `oko-motor`):
   - the erase runs from a RAM stub (`src/boot/erase_stub.asm`), EOP is cleared
     before every operation, and a rejected or timed-out operation returns
@@ -1520,9 +1554,9 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
     (`RC=1`) with an explicit message instead of a warning.
   Status: **open as a sample limitation**: I2C updates are impossible on this
   board; the workaround is ST-Link/SWIM (`TESTBENCH.md` §7C). Next steps:
-  repeat on a known-good STM8S003F3P6 (part replacement) and close the issue
-  if it works; fast block programming (`FPRG`) remains an experiment but uses
-  the same erase engine.
+  replace the part and repeat the `0x11` and AWU measurements - the plan and
+  acceptance criteria are in `TO_DO.md` §3.2. Fast block programming (`FPRG`)
+  will not help: it uses the same erase engine.
 
 - **KI-077. STM8S003F3P6: the AWU does not count, Active-halt cannot be woken.**
   2026-11-21, bench, motor test board.

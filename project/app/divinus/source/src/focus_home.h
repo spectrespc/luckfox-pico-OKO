@@ -26,9 +26,11 @@ void focus_home_shutdown(void);
 /* 1 while a job is running. */
 int focus_home_running(void);
 
-/* Starts a homing job: drive towards the negative stop, then SET_POS(0).
- * Returns 0 on success, -1 when a job is already running, -2 when the worker
- * could not be started. */
+/* Starts a homing job: zero the counter, drive the full configured travel
+ * (max_pos + home_margin) towards the mechanical stop and SET_POS(0) there.
+ * The current counter and the driver feedback (nFAULT is not wired) are
+ * ignored.  Returns 0 on success, -1 when a job is already running, -2 when
+ * the worker could not be started. */
 int focus_home_start(unsigned int motor_mask);
 
 /* Starts a zeroing job: SET_POS(value) without moving.  Same return codes. */

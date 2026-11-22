@@ -1,0 +1,102 @@
+Verbatim text extract, stored for reference only (not an upstream file).
+Source: AN2659 "STM8 in-application programming (IAP) using a customized
+user-bootloader", Doc ID 14153 Rev 4, November 2012, STMicroelectronics.
+Source PDF: cd00176595.pdf, 287477 bytes,
+sha256 05dacc332e62c3aa9b3a59ee313147ca72afe352e919e0ef3b4fdf8c350aa297.
+Extracted with pypdf 7.0.1 on 2026-11-22; text is unmodified apart from
+whitespace produced by the PDF text layer. The full PDF is NOT stored: it
+exceeds the 200 KB snapshot limit and the topic keeps only the memory
+management section relevant to KI-075 (rule 5 decision, see topic README).
+Pages below: document pages 15-16 (section 4.2 block versus word programming,
+section 4.3 RAM versus Flash programming code location).
+
+----- PDF page 15 -----
+
+AN2659 Memory management for IAP
+Doc ID 14153 Rev 4 15/25
+4.2 Block versus word programming 
+STM8 microcontrollers contain a Flash type program memory where firmware can be 
+written. There are two methods for writing (or erasing) Flash program memory:
+● Byte/word programming (1 or 4 bytes)
+– Advantages: offers small area programming, code can be executed directly on the 
+Flash program.
+– Disadvantages: program stops during programming, programming speed is slow
+● Block programming (128 bytes or 1 Flash block for a given STM8 device)
+– Advantages: offers large area programming with high speed (large blocks)
+– Disadvantages: programming routine must run from the RAM (need to copy 
+programming routine into the RAM).
+4.3 RAM versus Flash programming code location
+Depending on the selected programming method (see Section 4.2: Block versus word 
+programming), the programming code must run from the RAM or from the Flash memory. 
+If the programming code runs from the Flash memory, use only byte/word programming to 
+program the Flash memory. During Flash memory programming, the code cannot access 
+the Flash memory (the Flash is in programming mode). Therefore, program execution from 
+the Flash is stopped during programming (for several milliseconds) and then continues. This 
+mode is useful in situations where only a small part (a few bytes) of the Flash memory 
+needs to be updated or when it does not matter that programming is (very) slow.
+To program a large Flash memory area with optimum speed, block programming mode has 
+to be used. Block programming mode can be performed only by a code located in the RAM. 
+First, copy the programming code into the RAM and then run (jump to) this code. The RAM 
+code can then use block mode to program the Flash. In this mode, programming one block 
+takes the same time as programming one byte/word in byte/word mode. Consequently, 
+programming speed is faster and code execution is not stopped (because it is running from 
+RAM). The only disadvantage of this method is the RAM code management:
+– Copying the executable code to the RAM
+– Storing the RAM code
+– Allocating RAM space for the code
+– Compiling the code to be able to run from the RAM
+4.3.1 Programming the data EEPROM area
+For data EEPROM programming, the programming code does not have to be executed from 
+the RAM. It can be located in the Flash program memory, even if block programming is 
+used. This read-while-write (RWW) feature speeds up microcontroller performance during 
+IAP . Only the data loading phase, the part of code which loads data into the EEPROM buffer, 
+must execute from the RAM. However, during the physical programming phase, which takes 
+more time (several milliseconds), the code runs from the Flash while the data EEPROM 
+memory is programmed in the background. Completion of data EEPROM programming is 
+indicated by a flag. An interrupt can be generated when the flag is set.
+
+----- PDF page 16 -----
+
+Memory management for IAP AN2659
+16/25 Doc ID 14153 Rev 4
+4.4 Library support for Flash programming
+The STM8 firmware libraries, available from www.st.com, provide developed and verified 
+functions for programming the Flash memory of every STM8 microcontroller family. The 
+functions support byte/word and block programming and make it easier for developers to 
+write their own programming code. The library also includes functions for managing the 
+programming code execution from RAM. These functions are: copy to RAM, execution from 
+RAM, and storing functions in the Flash memory. They are contained in the following files:
+● \library\scr\stm8x_flash.c
+● \library\inc\stm8x_flash.h
+These files contain the complete source code for Flash programming. Refer to the library 
+user manual “\FWLib\stm8s_fwlib_um.chm” for help using the STM8 library.
+4.4.1 Flash programming function list
+This list gives a short description of the STM8S Flash programming functions (which are the 
+same for STM8AF , STM8AL, and STM8L devices):
+void FLASH_DeInit ( void) 
+Deinitializes the FLASH peripheral registers to their default reset values. 
+void FLASH_EraseBlock  ( u16  BlockNum, FLASH_MemType_TypeDef  MemType ) 
+Erases a block in the program or data EEPROM memory. 
+void FLASH_EraseByte  ( u32  Address ) 
+Erases one byte in the program or data EEPROM memory. 
+void FLASH_EraseOptionByte  ( u32  Address ) 
+Erases an option byte. 
+u32 FLASH_GetBootSize  ( void ) 
+Returns the boot memory size in bytes. 
+FlagStatus FLASH_GetFlagStatus  ( FLASH_Flag_TypeDef  FLASH_FLAG ) 
+Checks whether the specified Flash flag is set or not. 
+FLASH_LPMode_TypeDef FLASH_GetLowPowerMode  ( void ) 
+Returns the Flash behavior type in low power mode. 
+FLASH_ProgramTime_TypeDef FLASH_GetProgrammingTime  ( void ) 
+Returns the fixed programming time. 
+void FLASH_ITConfig  ( FunctionalState  NewState ) 
+Enables or disables the Flash interrupt mode. 
+void FLASH_Lock  ( FLASH_MemType_TypeDef  MemType ) 
+Locks the program or data EEPROM memory. 
+void FLASH_ProgramBlock  ( u16  BlockNum, FLASH_MemType_TypeDef  MemType, 
+FLASH_ProgramMode_TypeDef  ProgMode, u8 *  Buffer ) 
+Programs a memory block. 
+void FLASH_ProgramByte  ( u32  Address, u8  Data ) 
+Programs one byte in the program or data EEPROM memory. 
+void FLASH_ProgramOptionByte  ( u32  Address, u8  Data ) 
+Programs an option byte.

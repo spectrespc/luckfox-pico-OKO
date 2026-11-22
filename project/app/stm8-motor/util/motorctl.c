@@ -823,92 +823,86 @@ static int wait_idle(int fd, uint8_t motor, int timeout_ms)
     return -1;
 }
 
-/* Client-side homing for the bench: drive towards the mechanical stop in
-   negative chunks, then force the position to zero and verify the readback.
-   The firmware itself has no homing command; this mirrors the divinus job. */
+/* Client-side homing for the bench: zero the scale, then drive the full
+   travel towards the mechanical stop and zero it again.  The counter and the
+   driver feedback are ignored on purpose (nFAULT is not wired on the lens and
+   negative readbacks can be corrupted, KI-042); the firmware has no homing
+   command, so this mirrors the divinus job. */
 static int cmd_home(int fd, uint8_t motor, uint16_t speed)
 {
     static const int margin = 25;
-    static const int max_chunks = 40;
-    int32_t position = 0;
-    uint8_t status = 0xFF;
     int max_pos = motor == 0 ? 2935 : 2275;   /* datasheet travel, bench tool */
-    long remaining;
-    int chunk;
+    int travel = max_pos + margin;
+    uint8_t status = 0xFF;
+    int timeout_ms;
+    int rc;
 
-    if (read_motor_status(fd, motor, &status) < 0)
+    if (travel <= 0 || travel > 32767 || speed == 0)
     {
-        fprintf(stderr, "no application response\n");
+        fprintf(stderr, "invalid homing configuration (travel %d, speed %u)\n",
+                travel, (unsigned)speed);
         return 1;
     }
-    if (status == 2)
-    {
-        fprintf(stderr, "driver fault (status 2); clear it first\n");
-        return 1;
-    }
-    if (status == 1)
+
+    /* Drop whatever is left from a manual move; the driver status is not
+       used to gate homing (nFAULT is not wired). */
     {
         uint8_t stop_frame[2] = { I2C_CMD_STOP, motor };
         if (app_write(fd, stop_frame, sizeof(stop_frame)))
             return 1;
         usleep(20000);
     }
-    if (read_motor_position(fd, motor, &position) < 0)
+    if (read_motor_status(fd, motor, &status) < 0)
     {
-        fprintf(stderr, "cannot read the position\n");
-        return 1;
-    }
-    /* Corrupted RAM (observed after a long stall with BOR off) shows up as a
-       huge value; refuse to home rather than travel for minutes. */
-    if (position < -1000 || position > max_pos + 1000)
-    {
-        fprintf(stderr, "position %ld looks corrupted; use set-pos 0 instead\n",
-                (long)position);
+        fprintf(stderr, "no application response\n");
         return 1;
     }
     if (cmd_speed(fd, motor, speed) != 0)
         return 1;
 
-    /* Step count is open-loop after the single position read: firmware 2.0.2/
-       2.1.1 stores a wrong top byte for negative positions, so the final
-       SET_POS(0) is the source of truth. */
-    remaining = (long)position + margin;
-    for (chunk = 0; chunk < max_chunks && remaining > 0; chunk++)
-    {
-        int32_t delta = remaining > 32000 ? 32000 : (int32_t)remaining;
-        int timeout_ms;
-        int rc;
-
-        if (cmd_move(fd, motor, (int16_t)-delta) != 0)
-            return 1;
-        timeout_ms = (int)((delta * 1000) / (int)speed) + 3000;
-        rc = wait_idle(fd, motor, timeout_ms);
-        if (rc != 0)
-        {
-            fprintf(stderr, "homing stopped: %s\n",
-                    rc > 0 ? "driver fault (status 2)" : "timeout");
-            return 1;
-        }
-        remaining -= delta;
-    }
-    if (remaining > 0)
-    {
-        fprintf(stderr, "homing did not complete: %ld steps left\n",
-                remaining);
-        return 1;
-    }
-
+    /* Reset the logical scale: the move below is a fixed travel, not a
+       correction of the previous counter value. */
     if (cmd_set_pos(fd, motor, 0) != 0)
         return 1;
-    usleep(10000);
-    if (read_motor_position(fd, motor, &position) < 0 || position != 0)
+    if (cmd_move(fd, motor, (int16_t)-travel) != 0)
+        return 1;
+
+    timeout_ms = (int)(((long)travel * 1000L) / (long)speed) + 5000;
+    rc = wait_idle(fd, motor, timeout_ms);
+    if (rc < 0)
     {
-        fprintf(stderr, "SET_POS is not supported by this firmware "
-                "(position %ld); update to 2.0.2/2.1.1\n", (long)position);
+        fprintf(stderr, "homing timed out after %d steps\n", travel);
         return 1;
     }
-    printf("home: motor %u at 0\n", (unsigned)motor);
-    return 0;
+
+    /* Let the firmware persist the new position to its EEPROM first: that
+       write blocks the main loop for a few tens of milliseconds and a frame
+       that arrives meanwhile can be overwritten before it is executed. */
+    usleep(50000);
+
+    /* The final SET_POS must stick: a single frame can be lost on the I2C
+       wake path, so retry and verify the readback. */
+    {
+        int32_t position = 0;
+        int attempt;
+
+        for (attempt = 0; attempt < 3; attempt++)
+        {
+            if (cmd_set_pos(fd, motor, 0) != 0)
+                return 1;
+            usleep(20000);
+            if (read_motor_position(fd, motor, &position) == 0 &&
+                position == 0)
+            {
+                printf("home: motor %u at 0 (%d steps to the stop)\n",
+                       (unsigned)motor, travel);
+                return 0;
+            }
+        }
+        fprintf(stderr, "SET_POS(0) did not stick (position %ld); update to "
+                "2.0.2/2.1.1\n", (long)position);
+        return 1;
+    }
 }
 
 static int cmd_stop(int fd, uint8_t motor)

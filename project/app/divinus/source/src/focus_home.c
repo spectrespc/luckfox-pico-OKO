@@ -9,15 +9,11 @@
 #include "app_config.h"
 #include "focus_motor.h"
 
-/* A chunk stays below INT16_MAX because MOVE carries a signed 16-bit delta. */
-#define HOME_CHUNK_MAX   32000
-#define HOME_MAX_CHUNKS  40
 #define HOME_POLL_MS     50
 
-/* Local wait_idle() results. */
+/* Local wait results. */
 #define WAIT_OK        0
-#define WAIT_FAULT     1
-#define WAIT_TIMEOUT   2
+#define WAIT_TIMEOUT   1
 #define WAIT_IO       -1
 
 static pthread_mutex_t home_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -74,8 +70,11 @@ static void job_set_state(const char *state, int done)
     pthread_mutex_unlock(&home_lock);
 }
 
-/* Poll GET_STATUS until IDLE.  A latched driver fault aborts immediately. */
-static int wait_idle(uint8_t motor, int timeout_ms)
+/* Poll GET_STATUS until the motor is no longer RUNNING.  STATUS_ERROR is
+ * treated as "stopped" and never aborts a homing run: the nFAULT input of the
+ * DRV8833 is no longer wired on the lens, so a latched error is not a usable
+ * feedback signal here (the move itself is open-loop). */
+static int wait_motion_end(uint8_t motor, int timeout_ms)
 {
     int waited = 0;
 
@@ -85,10 +84,8 @@ static int wait_idle(uint8_t motor, int timeout_ms)
 
         if (focus_motor_get_status(motor, &status) != FM_OK)
             return WAIT_IO;
-        if (status == 0)
+        if (status != 1)
             return WAIT_OK;
-        if (status == 2)
-            return WAIT_FAULT;
         usleep(HOME_POLL_MS * 1000);
         waited += HOME_POLL_MS;
     }
@@ -126,48 +123,32 @@ static int zero_motor(uint8_t motor)
     return 0;
 }
 
+/* HOME always performs the full mechanical travel towards the negative stop,
+ * independent of the current position counter and of the driver feedback.
+ * Reasons: the counter is just an open-loop step count (negative readbacks can
+ * come back with a corrupted top byte, KI-042, and manual moves with the lens
+ * removed make the scale meaningless), and the DRV8833 nFAULT input is no
+ * longer wired, so its state must not gate or abort the run.  The counter is
+ * reset to zero before the move and zeroed again at the stop. */
 static int home_motor(uint8_t motor)
 {
     int32_t position = 0;
-    int64_t remaining;
     uint16_t speed = motor_speed(motor);
-    int margin = (int)app_config.focus_home_margin;
-    int chunk;
+    int travel = motor_max_pos(motor) + (int)app_config.focus_home_margin;
+    int timeout_ms;
+    int attempt;
+    int rc;
 
-    /* Stop whatever is left from a manual move before reading the position. */
+    if (travel <= 0 || travel > 32767 || speed == 0)
+    {
+        job_set_error("%s: invalid homing configuration (travel %d, speed %u)",
+                      motor_name(motor), travel, (unsigned int)speed);
+        return -1;
+    }
+
+    /* Drop whatever is left from a manual move. */
     focus_motor_stop(motor);
     usleep(20000);
-
-    {
-        uint8_t status = 0xFF;
-        if (focus_motor_get_status(motor, &status) != FM_OK)
-        {
-            job_set_error("%s: no response from the controller",
-                          motor_name(motor));
-            return -1;
-        }
-        if (status == 2)
-        {
-            job_set_error("%s: driver fault (status 2); power-cycle the "
-                          "lens or check the wiring", motor_name(motor));
-            return -1;
-        }
-    }
-
-    if (focus_motor_get_position(motor, &position) != FM_OK)
-    {
-        job_set_error("%s: cannot read the position", motor_name(motor));
-        return -1;
-    }
-    /* A corrupted top byte (KI-042, or garbage after a long stall with BOR
-       off) shows up as a huge value.  Travelling from such a value would run
-       for minutes, so refuse and point the operator at Zero. */
-    if (position < -1000 || position > (int32_t)motor_max_pos(motor) + 1000)
-    {
-        job_set_error("%s: position %ld looks corrupted; use Zero instead of "
-                      "Home", motor_name(motor), (long)position);
-        return -1;
-    }
 
     if (focus_motor_set_speed(motor, speed) != FM_OK)
     {
@@ -175,58 +156,57 @@ static int home_motor(uint8_t motor)
         return -1;
     }
 
-    /* Drive negative by the open-loop step count instead of reading the
-       position between chunks: firmware 2.1.1/2.0.2 stores a wrong top byte
-       for negative positions (the motor still moves the commanded number of
-       steps), so the final SET_POS(0) is the source of truth. */
-    remaining = (int64_t)position + margin;
-    for (chunk = 0; chunk < HOME_MAX_CHUNKS && remaining > 0; chunk++)
-    {
-        int32_t delta = remaining > HOME_CHUNK_MAX ? HOME_CHUNK_MAX
-                                                   : (int32_t)remaining;
-        int timeout_ms;
-        int rc;
-
-        if (focus_motor_move(motor, (int16_t)-delta) != FM_OK)
-        {
-            job_set_error("%s: MOVE failed", motor_name(motor));
-            return -1;
-        }
-        timeout_ms = (int)((delta * 1000) / (int)speed) + 3000;
-        rc = wait_idle(motor, timeout_ms);
-        if (rc != WAIT_OK)
-        {
-            job_set_error("%s: %s", motor_name(motor),
-                          rc == WAIT_FAULT ? "driver fault during homing" :
-                          (rc == WAIT_TIMEOUT ? "homing timed out" :
-                                                "I2C error during homing"));
-            return -1;
-        }
-        job_add_travel((int)delta);
-        remaining -= delta;
-    }
-
-    if (remaining > 0)
-    {
-        job_set_error("%s: homing stopped with %ld steps left",
-                      motor_name(motor), (long)remaining);
-        return -1;
-    }
-
+    /* Reset the logical scale first: the travel below is a fixed step count,
+       not a correction of the old counter value. */
     if (focus_motor_set_position(motor, 0) != FM_OK)
     {
         job_set_error("%s: cannot send SET_POS", motor_name(motor));
         return -1;
     }
-    usleep(10000);
-    if (focus_motor_get_position(motor, &position) != FM_OK || position != 0)
+
+    if (focus_motor_move(motor, (int16_t)-travel) != FM_OK)
     {
-        job_set_error("%s: firmware does not support SET_POS "
-                      "(position %ld); update to 2.0.2/2.1.1",
-                      motor_name(motor), (long)position);
+        job_set_error("%s: MOVE failed", motor_name(motor));
         return -1;
     }
-    return 0;
+
+    timeout_ms = (int)(((long)travel * 1000L) / (long)speed) + 5000;
+    rc = wait_motion_end(motor, timeout_ms);
+    if (rc == WAIT_IO)
+    {
+        job_set_error("%s: I2C error during homing", motor_name(motor));
+        return -1;
+    }
+    if (rc == WAIT_TIMEOUT)
+    {
+        job_set_error("%s: homing timed out after %d steps",
+                      motor_name(motor), travel);
+        return -1;
+    }
+    job_add_travel(travel);
+
+    /* Let the firmware persist the new position to its EEPROM first: that
+       write blocks the main loop for a few tens of milliseconds, and a frame
+       that arrives meanwhile can be overwritten before it is executed. */
+    usleep(50000);
+
+    /* The final SET_POS must stick: the scale has to read 0 at the stop.
+       A single frame can be lost on the I2C wake path, so retry and verify. */
+    for (attempt = 0; attempt < 3; attempt++)
+    {
+        if (focus_motor_set_position(motor, 0) != FM_OK)
+        {
+            job_set_error("%s: cannot send SET_POS", motor_name(motor));
+            return -1;
+        }
+        usleep(20000);
+        if (focus_motor_get_position(motor, &position) == FM_OK &&
+            position == 0)
+            return 0;
+    }
+    job_set_error("%s: SET_POS(0) did not stick (position %ld); update to "
+                  "2.0.2/2.1.1", motor_name(motor), (long)position);
+    return -1;
 }
 
 static void *home_worker(void *arg)

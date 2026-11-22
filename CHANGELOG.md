@@ -26,6 +26,23 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Добавлено
 
+- **`research/stm8-iap-an2659/`: IAP на STM8 по AN2659/AN2737/PM0051.**
+  Тема фиксирует, что именно требуют документы ST к стиранию блока
+  (`PM0051` §4.2: `CR2.ERASE` + `NCR2.NERASE`, триггер записью слова в блок,
+  шаги 2–5 из RAM, опрос `PUL`/`EOP`), что говорят AN2659/AN2737 (архитектура
+  пользовательского загрузчика, RWW только для data EEPROM) и чего из этого нет
+  в нашем коде. В `snapshot/` — дословные извлечения нужных страниц (2 файла,
+  17 540 Б); полные PDF не хранятся (лимит 200 КБ) и зафиксированы хешем.
+  Вывод: недостающего шага в нашей последовательности нет (KI-075).
+- **`research/stm8-iap-an2659/`: STM8 IAP per AN2659/AN2737/PM0051.** The
+  topic records what the ST documents actually require for a block erase
+  (`PM0051` §4.2: `CR2.ERASE` + `NCR2.NERASE`, a word write inside the block
+  as the trigger, steps 2-5 from RAM, `PUL`/`EOP` polling), what AN2659/AN2737
+  say (user-bootloader architecture, RWW for data EEPROM only) and which of
+  those our code lacks. `snapshot/` holds verbatim extracts of the relevant
+  pages (2 files, 17 540 B); the full PDFs are not stored (200 KB limit) and
+  are pinned by hash. Conclusion: no step is missing from our sequence
+  (KI-075).
 - **`TO_DO.md` §14: разбор вендорского `fastboot_client.c` и план переноса.**
   Зафиксированы результаты анализа файла (`project/app/fastboot_client/`):
   это демо thunder-boot медиастека, а не Android fastboot; ни один
@@ -55,6 +72,84 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Изменено
 
+- **OSD/телеметрия: INA3221 читается с канала 3 (RV1106 + STM8).**
+  `S21oko-ec`: `INA_CHANNEL=${OKO_EC_INA_CHANNEL:-3}` вместо канала 1, поэтому
+  строка `INA3221` в OSD, `/tmp/oko-ec.json`, `/api/telemetry` и MQTT-телеметрия
+  показывают основное потребление платы (CH3), а не малый канал 1. Утилита
+  `oko-ec ina226` по-прежнему по умолчанию читает CH1 — канал задаётся
+  `--ina-channel`; переопределение демона — `OKO_EC_INA_CHANNEL`. Обновлены
+  `INIT_ORDER.md` (демон `oko-ec`), `TESTBENCH.md` §8 и
+  `project/app/oko-ec/README.md`. Стенд 2026-11-22: после
+  `/etc/init.d/S21oko-ec restart` демон запущен с `--ina-channel 3`,
+  `/tmp/osd-dyn.txt` → `INA3221 4.66V 0.32A 1.51W` (было `4.71V 0.01A 0.04W`
+  на CH1), в `/tmp/oko-ec.json` `"channel":3`.
+- **OSD/telemetry: the INA3221 is read from channel 3 (RV1106 + STM8).**
+  `S21oko-ec` now uses `INA_CHANNEL=${OKO_EC_INA_CHANNEL:-3}` instead of
+  channel 1, so the `INA3221` OSD line, `/tmp/oko-ec.json`, `/api/telemetry`
+  and the MQTT telemetry report the main board consumption (CH3) instead of
+  the small channel 1. The `oko-ec ina226` utility still defaults to CH1 - the
+  channel is selected with `--ina-channel`; the daemon override is
+  `OKO_EC_INA_CHANNEL`. Updated `INIT_ORDER.md` (oko-ec daemon),
+  `TESTBENCH.md` §8 and `project/app/oko-ec/README.md`. Bench 2026-11-22:
+  after `/etc/init.d/S21oko-ec restart` the daemon runs with
+  `--ina-channel 3`, `/tmp/osd-dyn.txt` shows `INA3221 4.66V 0.32A 1.51W`
+  (was `4.71V 0.01A 0.04W` on CH1) and `/tmp/oko-ec.json` reports
+  `"channel":3`.
+- **Стенд: зафиксировано назначение каналов INA3221.** `TESTBENCH.md` §4/§8 и
+  `project/app/oko-ec/README.md`: CH1 — DRV8833 + двигатели focus/zoom,
+  CH2 — STM32 ACPI-EC, CH3 — RV1106 + STM8. Добавлены опорные значения замера
+  2026-11-22 при простое (CH1 ≈ 11 мА / 51 мВт, CH2 ≈ 2 мА / 9 мВт,
+  CH3 ≈ 380 мА / 1.8 Вт при шине ≈ 4.6 В) и оговорка про `--shunt-mohm`
+  (по умолчанию 100 мОм). В `TESTBENCH.md` убрана устаревшая пометка «силовые
+  входы пока не подключены», дата обновления — 2026-11-22;
+  `FEATURES_UNVERIFIED.md` (RU+EN) исправлен: каналы подключены и размечены,
+  ограничение — непроверенный номинал шунта и отсутствие калибровки по
+  эталонной нагрузке. Код не менялся.
+- **Bench: the INA3221 channel assignment is now documented.** `TESTBENCH.md`
+  §4/§8 and `project/app/oko-ec/README.md`: CH1 is the DRV8833 plus the
+  focus/zoom motors, CH2 is the STM32 ACPI-EC, CH3 is the RV1106 plus the
+  STM8. The entries add reference values measured on 2026-11-22 while idle
+  (CH1 ≈ 11 mA / 51 mW, CH2 ≈ 2 mA / 9 mW, CH3 ≈ 380 mA / 1.8 W at a bus of
+  ≈ 4.6 V) and a note about `--shunt-mohm` (100 mΩ by default).
+  `TESTBENCH.md` drops the stale "power inputs not connected" note and its
+  update date is now 2026-11-22; `FEATURES_UNVERIFIED.md` (RU+EN) is fixed:
+  the channels are wired and mapped, and the remaining limitation is the
+  unverified shunt value plus the lack of reference-load calibration. No code
+  changes.
+- **KI-075: гипотезы `PUL` и `FLASH_CR1.HALT` проверены на стенде и
+  отклонены.** 2026-11-22 собраны три опытных загрузчика: `1.1.1` (ожидание
+  `FLASH_IAPSR.PUL` в `boot_flash_erase`, boot 2550 Б), `1.1.2` (`CR1.HALT=1`
+  в RAM-трамплине, 2536 Б) и `1.1.3` (`HALT=1` + `AHALT=1`, 2544 Б). Ни один
+  не изменил поведение: `0x11` принимается, ответа на чтение нет, в `dmesg`
+  `SCL hold`, блок не стёрт (SWIM-ридбэк). Диагностическая сборка `1.1.4`
+  (заглушка без ожидания `EOP`) тоже не ответила — управление не возвращается
+  из записи-триггера. Все правки откачены, версия загрузчика снова `1.1.0`,
+  трамплин — исходные 67 Б. Сверка с PM0051/SPL/AN2659/AN2737 недостающего
+  шага не выявила: отказ IAP-стирания — дефект экземпляра STM8S003F3P6.
+  Обновлены `KNOWN_ISSUES.md` (KI-075, RU+EN), `TESTBENCH.md` §7C,
+  `TO_DO.md` §3.2 (план замены чипа с критериями), `project/app/stm8-motor/
+  docs/BOOTLOADER.md` (устаревший тезис «стирание как слово из Flash» и
+  размеры образа), `project/app/stm8-motor/CHANGELOG.md`. Артефакты:
+  `output/bench/stm8/ki075-pul-experiment-20261122.txt`,
+  `ki075-cr1-experiment-20261122.txt`.
+- **KI-075: the `PUL` and `FLASH_CR1.HALT` hypotheses were tested and
+  rejected.** On 2026-11-22 three experimental bootloaders were built:
+  `1.1.1` (`FLASH_IAPSR.PUL` wait in `boot_flash_erase`, boot 2550 B), `1.1.2`
+  (`CR1.HALT=1` in the RAM trampoline, 2536 B) and `1.1.3` (`HALT=1` +
+  `AHALT=1`, 2544 B). None changed the behaviour: `0x11` is accepted, the read
+  never answers, `dmesg` shows `SCL hold`, the block stays unchanged in the
+  SWIM read-back. The diagnostic build `1.1.4` (stub without the `EOP` wait)
+  did not answer either - control never returns from the trigger write. All
+  patches were reverted, the bootloader version is `1.1.0` again and the
+  trampoline is back to its 67 bytes. A cross-check against
+  PM0051/SPL/AN2659/AN2737 found no missing step: the IAP block erase fails
+  because of the STM8S003F3P6 sample. Updated `KNOWN_ISSUES.md` (KI-075,
+  RU+EN), `TESTBENCH.md` §7C, `TO_DO.md` §3.2 (part-replacement plan with
+  acceptance criteria), `project/app/stm8-motor/docs/BOOTLOADER.md` (the
+  stale "erase runs from Flash like a word" claim and the image sizes) and
+  `project/app/stm8-motor/CHANGELOG.md`. Artifacts:
+  `output/bench/stm8/ki075-pul-experiment-20261122.txt`,
+  `ki075-cr1-experiment-20261122.txt`.
 - **STM8: основная линия сборки — тестовая плата (`BOARD=test`, 2.3.2).**
   `project/app/stm8-motor/Makefile.stm8`: `BOARD ?= test`; `make -f
   Makefile.stm8 all` без аргументов собирает тестовую плату, продуктовая
@@ -170,8 +265,44 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   `/etc/oko-release` version and the `.okp` build examples (`README_RU.md`,
   `TESTBENCH.md`, the `divinus` package README) moved to 0.4.0.
 
-### Удалено
+### Исправлено
 
+- **HOME FOCUS/ZOOM: полный ход до упора вместо коррекции счётчика.**
+  `POST /api/focus?home=focus|zoom` в divinus (`focus_home.c`) раньше ехал на
+  `|position| + home_margin`: из нуля это 25 шагов, поэтому каждое нажатие
+  кнопки в WebUI давало лишь частичное смещение (после первого HOME
+  `home.travel` = 25). Теперь команда не зависит от текущего счётчика и от
+  обратной связи: счётчик обнуляется, объектив идёт полным ходом
+  `max_pos + home_margin` одним `MOVE` (2960 шагов focus, 2300 zoom), затем
+  `SET_POS(0)` с паузой 50 мс (запись позиции в EEPROM блокирует главный цикл
+  и может «съесть» кадр), проверкой чтением и до трёх повторов (потеря кадра
+  на пробуждении I2C). Убраны отказ из-за `status=2` (`nFAULT`
+  DRV8833 больше не подключён) и проверка «позиция испорчена» — на неё
+  опираться больше не нужно. Та же логика в стендовой утилите
+  `oko-motor home` (`util/motorctl.c`). Стенд 2026-11-22: HOME focus →
+  `travel 2960`, HOME zoom → `travel 2300`, позиция после job’а 0, повторный
+  HOME снова даёт полный ход, `dmesg` без `SCL hold`. Обновлены
+  `project/app/divinus/README.md` и
+  `project/app/stm8-motor/docs/HARDWARE_TESTBOARD.md`, комментарий
+  `focus.home_margin`.
+- **HOME FOCUS/ZOOM: full travel to the stop instead of a counter
+  correction.** `POST /api/focus?home=focus|zoom` in divinus
+  (`focus_home.c`) used to move `|position| + home_margin` steps: from zero
+  that is 25 steps, so every WebUI button press only nudged the lens (after
+  the first HOME `home.travel` was 25). The command now ignores both the
+  current counter and the driver feedback: the counter is zeroed, the lens is
+  driven the full `max_pos + home_margin` travel with a single `MOVE`
+  (2960 steps for focus, 2300 for zoom) and then `SET_POS(0)` is sent after a
+  50 ms pause (the position EEPROM write blocks the main loop and can swallow
+  a frame), verified by read-back and retried up to three times (a frame can
+  be lost on the I2C wake path). The `status=2` abort (the DRV8833 `nFAULT` is no longer wired) and
+  the "corrupted position" guard are gone. The bench utility `oko-motor home`
+  (`util/motorctl.c`) mirrors the same logic. Bench 2026-11-22: HOME focus →
+  `travel 2960`, HOME zoom → `travel 2300`, position 0 after the job, a
+  repeated HOME still performs the full travel, and `dmesg` shows no
+  `SCL hold`. Updated `project/app/divinus/README.md`,
+  `project/app/stm8-motor/docs/HARDWARE_TESTBOARD.md` and the
+  `focus.home_margin` comment.
 - **Удалены слитые ветки: 10 локальных и 7 на `origin`.** Локально удалены
   `temp-branch`, `OKO-v1-06.10.26`, `feature/buildroot-2026-08`,
   `feature/oem-blob-nfs-env`, `feature/slim-image`, `feature/rga-dma-buf`,
