@@ -411,6 +411,21 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   failure. Touches `bench/sleep_power.py`, `TESTBENCH.md`,
   `KNOWN_ISSUES.md` KI-073/KI-080, `bench/README.md`.
 
+- **Экспериментальный H2-патч rk3x (2026-11-23, не устранил отказ).**
+  Для i2c3 добавлен `resets = <&cru SRST_I2C3>`, в
+  `rk3x_i2c_resume` — полный reset контроллера (reset-on-resume), плюс
+  предупреждение о busy-transfer на suspend. Ядро #29 собрано и прошито
+  через TFTP/U-Boot. V1 (`aov_mcu=1`, `keep_isp=1`) по-прежнему теряет
+  I2C3 за 60 с, `busy`-предупреждений нет; патч оставлен как страховка,
+  но H2 не закрывает. Рабочий обход — unbind/rebind `ff460000.i2c`.
+- **Experimental rk3x H2 patch (2026-11-23, did not fix the failure).**
+  i2c3 now has `resets = <&cru SRST_I2C3>` and `rk3x_i2c_resume` performs a
+  full controller reset (reset-on-resume), plus a busy-transfer warning on
+  suspend. Kernel #29 was built and flashed over TFTP/U-Boot. V1
+  (`aov_mcu=1`, `keep_isp=1`) still loses I2C3 within 60 s and there are no
+  busy warnings; the patch remains a safety net but does not close H2. The
+  working workaround is unbind/rebind of `ff460000.i2c`.
+
 ### Исправлено
 
 - **HOME FOCUS/ZOOM: полный ход до упора вместо коррекции счётчика.**

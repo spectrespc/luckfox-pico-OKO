@@ -878,6 +878,13 @@
   (`--no-ladder-rebind` отключает); `oko-motor reset` и `oko-ec reset` на
   мёртвой шине не проходят. Артефакт:
   `output/bench/stm8/20261123-160739-v1-correct-unbind/result.json`.
+  **2026-11-23 16:35, ядро #29:** в DTS добавлен `resets` для i2c3, в
+  `rk3x_i2c_resume` — полный reset контроллера (reset-on-resume), ядро
+  собрано и прошито. V1 всё равно теряет I2C3 за 60 с; предупреждений
+  «suspend with a busy transfer» нет, то есть сброс контроллера сам по себе
+  отказ не устраняет. Остаются H1/H3 (удержание slave) или транзакция,
+  начатая после resume; рабочий обход — unbind/rebind i2c3. Патч оставлен
+  как страховка, но T2.2 не закрывает проблему.
   V2 (`aov_mcu=1`, `aov_keep_isp=0`, 60 с): AP после suspend не отвечает
   более 8 мин (логгер отработал 476 с, `/api/status` = `000`), нужен power
   cycle. V3 (`aov_mcu=0`) на исправной ФС даёт тихий цикл: deep suspend
@@ -1787,6 +1794,14 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   disables it); `oko-motor reset` and `oko-ec reset` cannot run on a dead
   bus. Artifact:
   `output/bench/stm8/20261123-160739-v1-correct-unbind/result.json`.
+  **2026-11-23 16:35, kernel #29:** the board DTS now wires `resets` for
+  i2c3 and `rk3x_i2c_resume` performs a full controller reset
+  (reset-on-resume); the kernel was built and flashed. V1 still loses I2C3
+  within 60 s and there are no "suspend with a busy transfer" warnings, so
+  the controller reset alone does not fix the failure. It is still an
+  external-slave hold (H1/H3) or a transaction started after resume; the
+  working workaround is unbind/rebind of i2c3. The patch remains as a safety
+  net, but T2.2 does not close the issue.
   V2 (`aov_mcu=1`, `aov_keep_isp=0`, 60 s): the AP does not answer for more
   than 8 minutes after suspend (logger ran 476 s, `/api/status` = `000`);
   a power cycle is required. V3 (`aov_mcu=0`) on a healthy filesystem gives

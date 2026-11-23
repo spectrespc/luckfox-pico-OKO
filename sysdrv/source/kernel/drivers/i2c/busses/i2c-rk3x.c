@@ -1414,6 +1414,15 @@ static __maybe_unused int rk3x_i2c_suspend_noirq(struct device *dev)
 	struct rk3x_i2c *i2c = dev_get_drvdata(dev);
 
 	/*
+	 * A transfer in flight at the WFI boundary can leave the controller
+	 * driving SCL low across the suspend.  This is the H2 failure from
+	 * KI-080; resume clears the stale state below.
+	 */
+	if (READ_ONCE(i2c->busy))
+		dev_warn(i2c->dev, "suspend with a busy transfer, state %d\n",
+			 i2c->state);
+
+	/*
 	 * Below code is needed only to ensure that there are no
 	 * activities on I2C bus. if at this moment any driver
 	 * is trying to use I2C bus - this may cause i2c timeout.
@@ -1437,6 +1446,29 @@ static __maybe_unused int rk3x_i2c_resume_noirq(struct device *dev)
 	i2c_lock_bus(&i2c->adap, I2C_LOCK_ROOT_ADAPTER);
 	i2c->suspended = 0;
 	i2c_unlock_bus(&i2c->adap, I2C_LOCK_ROOT_ADAPTER);
+
+	return 0;
+}
+
+static __maybe_unused int rk3x_i2c_resume(struct device *dev)
+{
+	struct rk3x_i2c *i2c = dev_get_drvdata(dev);
+
+	/*
+	 * H2/KI-080: an I2C transaction interrupted by system suspend can
+	 * leave the RV1106 controller driving SCL low.  A full controller
+	 * reset releases the pads; this runs in the regular resume callback
+	 * because reset_control_assert() may sleep.  The reset controls are
+	 * wired for i2c3 in the board DTS.
+	 */
+	if (IS_ERR_OR_NULL(i2c->reset)) {
+		dev_warn_once(i2c->dev,
+			      "no i2c reset control; H2 resume reset disabled\n");
+	} else {
+		rk3x_i2c_reset_controller(i2c);
+	}
+
+	rk3x_i2c_adapt_div(i2c, clk_get_rate(i2c->clk));
 
 	return 0;
 }
@@ -1739,8 +1771,9 @@ static int rk3x_i2c_remove(struct platform_device *pdev)
 }
 
 static const struct dev_pm_ops rk3x_i2c_pm_ops = {
-	SET_NOIRQ_SYSTEM_SLEEP_PM_OPS(rk3x_i2c_suspend_noirq,
-				      rk3x_i2c_resume_noirq)
+	.suspend_noirq = rk3x_i2c_suspend_noirq,
+	.resume_noirq = rk3x_i2c_resume_noirq,
+	.resume = rk3x_i2c_resume,
 };
 
 static struct platform_driver rk3x_i2c_driver = {
