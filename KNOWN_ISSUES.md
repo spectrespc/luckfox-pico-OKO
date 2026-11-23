@@ -134,10 +134,15 @@
   (`aic8800dc`/`aic8800_fdrv`) и одновременный AP+STA не тестировались.
   Статус: **ограничено** (SDIO и AP+STA).
 
-- **KI-020. У INA3221 не подключены силовые входы.**
-  Обмен по I2C работает, но `VIN+`/`VIN-`/`VBUS` не подключены к нагрузке,
-  поэтому ток/мощность могут быть нулевыми. Канал выбирается `--ina-channel`.
-  Статус: **особенность стенда**.
+- **KI-020. Силовые входы INA3221 подключены (актуализировано 2026-11-22).**
+  Ранее считалось, что `VIN+`/`VIN-`/`VBUS` не подключены и ток/мощность могут
+  быть нулевыми. Замеры 2026-11-22 показали рабочие каналы: CH1 (моторы) ≈11 мА,
+  CH2 (STM32) ≈2 мА, CH3 (RV1106+STM8) ≈380 мА / 1.8 Вт при шине ≈4.6 В; канал
+  выбирается `--ina-channel`. Второй INA3221 на ESP32-мосту подтвердил, что его
+  CH3 — вход 5 В всего DUT: расхождение с бортовым CH3 −6.7 % по току на
+  STM8-soak. Остаточное ограничение: ток считается по номиналу шунта
+  (`--shunt-mohm`, по умолчанию 100 мОм), отдельной калибровки не было.
+  Статус: **закрыто (актуализировано)**.
 
 - **KI-022. `post_chk` использует `rkipc-300w.ini` для SC230AI.**
   Шаблон рассчитан на сенсор 3 МП; при некорректной геометрии кадра ini нужно
@@ -302,7 +307,14 @@
   собирается (`./build.sh kernel`, boot.img 2026-11-21), но **стендовая
   проверка не выполнена**: UART-мост перестал отдавать вывод DUT (KI-078),
   поэтому netboot/tftp_flash недоступны, а прошивать непроверенное ядро в
-  SPI NAND без консоли нецелесообразно.
+  SPI NAND без консоли нецелесообразно. **2026-11-22:** после серии замеров
+  сна (два 60-мин soak, суммарно >500 циклов) во время восстановления конфига
+  `/userdata` ушёл в `ro`: `POST /api/sleep` отвечал
+  `the sleep settings could not be saved`, запись тестового файла —
+  `Read-only file system`, `dmesg | tail` — `Input/output error`. Power cycle
+  через мост вернул `rw` и сохранил настройки; артефакт
+  `output/bench/power/20261122-soak3/`. Это тот же сценарий KI-071; защита
+  драйвера SFC от 2026-11-21 в стендовое ядро ещё не прошита.
 
 - **KI-072. Профиль `-AOV`: 1M-раскладка и окно ядра/MCU исправлены,
   handshake MCU не отвечает.** Hpmcu (117 КБ) + SPL + DDR + usbplug дают
@@ -423,7 +435,30 @@
   `quiet_keepisp{0,1}.*`, `quiet_motion.*`, `quiet_{mcuonce,mcunotify,hybrid,gpiomask,viidle}.*`,
   `output/bench/aov-image-1m/`, `output/bench/uar0-aov-fit-boot-20261117.log`.
 
-- **KI-073. Паника ядра в `rk3x_i2c_irq` на I2C3 при циклах `[sleep]`.**
+  **2026-11-22, интервал 1 мин:** `wake_interval_s=60` (PMU-only и
+  `aov_mcu=1`+`keep_isp=1`) программирует `0xff300048=0x780` (60 с), но
+  deep suspend длится 2.4 с, цикл 12–18 с (медиана 18.3 с); `aov_state`
+  после resume `off`, `mcu_run_count=0`; форсирование meta `ae_mode=1` не
+  изменило поведение. Интервал 1 мин и MCU-детекция не подтверждены;
+  артефакты `output/bench/power/20261122-aov-*`, `aov-*-motion.csv`.
+  Повтор 2026-11-22 19:45 (`20261122-aov-repeat`): 9 интервалов, медиана
+  16.8 с, deep suspend 2.40 с, `aov_state=off`, `mcu_run_count=0` —
+  воспроизводится. После AOV-прогона STM8 не отвечает на I2C
+  (`present=false`), power cycle восстанавливает (2.3.2).
+
+  **2026-11-23, локализация (KI-080):** чистый контроль 300 циклов I2C без
+  suspend проходит (0 ошибок, `0x60` отвечает). При `aov_mcu=1` +
+  `keep_isp=1` один 60-с цикл оставляет I2C3 мёртвой: нет
+  `0x40/0x41/0x42/0x60`, SCL=0, unbind мастера линию не отпускает; при
+  `aov_mcu=1` + `keep_isp=0` AP не выходит из suspend более 8 мин;
+  `aov_mcu=0` даёт тихий цикл 2.26–2.40 с. Сводка по артефактам:
+  `wake_interval_s` 10/20/60/120 не масштабирует окно (2.39–2.42 с при
+  10/60, 2.26 с при 20; цикл 16.8–18.3 с при 60). Sweep 10/40/120 закрыть
+  не удалось: `/userdata` уходил в `ro` (KI-071), а пул сессий моста
+  исчерпан (3/3, `429`). Gate: **AOV = NO-GO до вендорского
+  ISP-handover**; quiet-тесты — только `aov_mcu=0`.
+
+- **KI-073. в `rk3x_i2c_irq` на I2C3 при циклах `[sleep]`.**
   2026-11-17 в AOV-прогоне (idle 30 s, `aov_mcu=1`) шина I2C3
   (`ff470000.i2c`, STM32 EC) выдала серию `rk3x-i2c ... irq in STATE_IDLE,
   ipd = 0x10` и `unexpected irq in STOP: 0x10`, затем
@@ -790,6 +825,59 @@
   `tftp_flash.py`, ручной U-Boot), недоступны.  Статус: **открыто**;
   проверить жгут TX/GND, питание моста и `POST /config` после ребута
   моста (документация — `TESTBENCH.md` §8, `docs/api.md` upstream).
+  **2026-11-23:** RX не восстановился: `uar0.log` заканчивается TX-строками
+  2026-11-21, read-only монитор `:2324` отдаёт только TX, поэтому
+  kernel/MCU-перепрошивки по-прежнему недоступны. Дополнительно исчерпан
+  пул сессий моста: скрипты восстановления создали 3 cookie-сессии
+  (`Too many active sessions`, `429`) и не вышли из них; освободить сессии
+  без валидной cookie нельзя (TTL 24 ч), поэтому `POST /ext/power` и
+  `/ext/reset` тоже недоступны. Правило: один `--cookie-file` на прогон,
+  logout в `finally`, не логиниться заново на каждый power cycle; при `429`
+  — ребут моста вручную.
+
+- **KI-079. IVS при пробуждении из `[sleep]` даёт полнокадровое движение и
+  не даёт короткому probe завершиться.**
+  2026-11-22, стенд, ESP32 INA3221: `bench/sleep_power.py --scenario motion`,
+  IVS `min_area=30`, `sensitivity=3`, `idle_timeout_s=30`,
+  `wake_interval_s=10`, `wake_check_s=30`. В 3/3 циклах после PMU wake
+  состояние сразу `awake`; `/api/ivs` отдаёт событие `md`, `area=1000‰`,
+  bbox на весь кадр (`[0,0,640,352]`) — вероятно, переход ISP/экспозиции.
+  Камера бодрствует 24–26 с, энергия цикла 15.25–17.94 мВт·ч (среднее
+  16.85) против 4.9 мВт·ч при `wake_check=5`. Парный цикл без IVS при
+  `wake_check=30` даёт сопоставимые ~17–20 мВт·ч, т.е. основной вклад —
+  длинное окно проверки, а IVS лишь переводит `probe → awake`. Снижение
+  `sensitivity` до 1 и `min_area` до 50 не помогло. Обход: для тихого сна
+  выключать IVS (или уменьшать `wake_check`); артефакты
+  `output/bench/power/20261122-motion14/`, `...-cycle-wc30/`.
+  Статус: **открыто**.
+
+- **KI-080. AOV-MCU (`aov_mcu=1`) оставляет шину I2C3 мёртвой или AP не
+  выходит из suspend; пропажа STM8 — следствие отказа шины, не отдельный
+  баг привода.**
+  2026-11-23, стенд, AOV-образ (`aov_available=true`, ядро `5.10.160 #26`).
+  Контроль T1.1: 300 циклов `oko-motor sleep show` + `move zoom ±5` без
+  suspend — 0 ошибок команд, `0x60` отвечает, `motor.present=true`,
+  артефакт `output/bench/power/20261123-101015-i2c/`.
+  V1 (`aov_mcu=1`, `aov_keep_isp=1`, `wake_interval_s=60`, 60 с): после
+  чистого старта `i2cdetect -r -y 3` пуст — нет `0x40/0x41/0x42/0x60`;
+  GPIO1_D2/SDA=1, GPIO1_D3/SCL=0. Unbind мастера `ff470000.i2c`
+  (`rk3x-i2c`) SCL не отпускает, то есть линию держит внешний slave
+  (кандидаты H1/H3, не H2). Повторный bind перепробегает `sc230ai` и роняет
+  `rkcif_set_default_fmt` (Oops), поэтому шаг unbind/rebind в лестнице
+  теперь только по `--ladder-rebind`. `oko-motor reset` и `oko-ec reset`
+  не проходят (шина мертва), power cycle восстанавливает STM8 `2.3.2`.
+  V2 (`aov_mcu=1`, `aov_keep_isp=0`, 60 с): AP после suspend не отвечает
+  более 8 мин (логгер отработал 476 с, `/api/status` = `000`), нужен power
+  cycle. V3 (`aov_mcu=0`) на исправной ФС даёт тихий цикл: deep suspend
+  2.26–2.40 с, STM8 на месте; часть прогонов испорчена KI-071 (`/userdata`
+  ушёл в `ro`) и исчерпанием пула сессий моста, поэтому критерий «10 циклов
+  подряд» не закрыт.
+  Слой отказа — HPMCU wake proxy / AP suspend, а не `motor.sleep_enable`
+  и не прошивка STM8. Артефакты:
+  `output/bench/stm8/20261123-101042-matrix/` (V1, V2, V3 и
+  `layer/dmesg-dead-bus.txt`), `output/bench/power/20261123-100835-aov/`.
+  Статус: **открыто**; для закрытия нужны консоль (KI-078) и вендорский
+  ISP-handover, gate — в `FEATURES_UNVERIFIED.md` §AOV.
 
 ### Архив закрытых записей
 
@@ -934,9 +1022,14 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   (`aic8800dc`/`aic8800_fdrv`) and concurrent AP+STA were not tested. Status:
   **limited** (SDIO and AP+STA).
 
-- **KI-020. INA3221 power inputs are not connected.** I2C works, but
-  `VIN+`/`VIN-`/`VBUS` are not wired to a load, so current/power may read zero.
-  Status: **bench limitation**.
+- **KI-020. INA3221 power inputs are connected (updated 2026-11-22).** I2C
+  works and measurements on 2026-11-22 show live channels: CH1 (motors) ≈11 mA,
+  CH2 (STM32) ≈2 mA, CH3 (RV1106+STM8) ≈380 mA / 1.8 W at ≈4.6 V; the channel is
+  selected by `--ina-channel`. The second INA3221 on the ESP32 bridge confirmed
+  that its CH3 is the whole DUT 5 V input: −6.7 % current vs the onboard CH3 on
+  the STM8 soak. Remaining limitation: current uses the shunt value
+  (`--shunt-mohm`, 100 mOhm default) and no separate calibration was done.
+  Status: **closed (updated)**.
 
 - **KI-022. `post_chk` uses `rkipc-300w.ini` for SC230AI.** The template
   targets a 3 MP sensor; choose another ini if the frame geometry is wrong.
@@ -1105,6 +1198,14 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   output (KI-078), so netboot/tftp_flash are unavailable and flashing an
   unvalidated kernel into SPI NAND without a console is not worth the risk.
 
+  **2026-11-22:** after the sleep measurement series (two 60-minute soaks,
+  >500 cycles in total) `/userdata` switched to `ro` during config restore:
+  `POST /api/sleep` returned `the sleep settings could not be saved`, a test
+  file write failed with `Read-only file system`, and `dmesg | tail` returned
+  `Input/output error`. A power cycle restored `rw` and kept the settings;
+  artifact `output/bench/power/20261122-soak3/`. This is the KI-071 scenario;
+  the SFC driver fix from 2026-11-21 is not flashed on the bench yet.
+
 - **KI-072. `-AOV` profile: 1M layout and the kernel/MCU window are fixed,
   the MCU handshake does not answer.** Hpmcu (117 KB) + SPL + DDR + usbplug
   make a ~300 KB idblock; the product 256K idblock is enlarged to 1M and every
@@ -1229,7 +1330,30 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   `quiet_{mcuonce,mcunotify,hybrid,gpiomask,viidle}.*`,
   `output/bench/aov-image-1m/`, `output/bench/uar0-aov-fit-boot-20261117.log`.
 
-- **KI-073. Kernel panic in `rk3x_i2c_irq` on I2C3 during `[sleep]` cycles.**
+  **2026-11-22, 1-minute interval:** `wake_interval_s=60` (PMU-only and
+  `aov_mcu=1`+`keep_isp=1`) programs `0xff300048=0x780` (60 s), but deep
+  suspend lasts 2.4 s and the cycle is 12–18 s (median 18.3 s);
+  `aov_state` after resume is `off`, `mcu_run_count=0`; forcing meta
+  `ae_mode=1` did not change the behaviour. The 1-minute interval and MCU
+  detection are not confirmed; artifacts `output/bench/power/20261122-aov-*`,
+  `aov-*-motion.csv`. Repeat on 2026-11-22 19:45
+  (`20261122-aov-repeat`): 9 intervals, median 16.8 s, deep suspend 2.40 s,
+  `aov_state=off`, `mcu_run_count=0` — reproducible.
+
+  **2026-11-23, localisation (KI-080):** the clean 300-cycle I2C control
+  without suspend passes (0 errors, `0x60` answers). With `aov_mcu=1` +
+  `keep_isp=1` a single 60 s cycle leaves I2C3 dead: no
+  `0x40/0x41/0x42/0x60`, SCL=0, and unbinding the master does not release
+  the line; with `aov_mcu=1` + `keep_isp=0` the AP does not leave suspend
+  for more than 8 minutes; `aov_mcu=0` gives a quiet 2.26–2.40 s cycle.
+  Across the artifacts `wake_interval_s` 10/20/60/120 does not scale the
+  window (2.39–2.42 s at 10/60, 2.26 s at 20; cycle 16.8–18.3 s at 60).
+  The 10/40/120 sweep could not be completed: `/userdata` went `ro`
+  (KI-071) and the bridge session pool was exhausted (3/3, `429`). Gate:
+  **AOV = NO-GO until a vendor ISP-handover**; quiet tests only with
+  `aov_mcu=0`.
+
+- **KI-073. in `rk3x_i2c_irq` on I2C3 during `[sleep]` cycles.**
   On 2026-11-17 an AOV run (idle 30 s, `aov_mcu=1`) got a burst of
   `rk3x-i2c ... irq in STATE_IDLE, ipd = 0x10` and
   `unexpected irq in STOP: 0x10` on I2C3 (`ff470000.i2c`, STM32 EC),
@@ -1598,6 +1722,58 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   unavailable.  Status: **open**; check the TX/GND wiring, the bridge supply
   and `POST /config` after a bridge reboot (`TESTBENCH.md` §8, upstream
   `docs/api.md`).
+  **2026-11-23:** RX is still dead: `uar0.log` ends with TX lines from
+  2026-11-21, the `:2324` read-only monitor returns TX only, so kernel/MCU
+  flashing remains unavailable. In addition, the bridge session pool was
+  exhausted: recovery scripts created 3 cookie sessions
+  (`Too many active sessions`, `429`) and never logged out; the sessions
+  cannot be freed without a valid cookie (24 h TTL), so `POST /ext/power`
+  and `/ext/reset` are unavailable too. Rule: one `--cookie-file` per run,
+  logout in `finally`, do not log in again on every power cycle; on `429`
+  reboot the bridge manually.
+
+- **KI-079. IVS reports full-frame motion on every `[sleep]` wake, so the
+  short probe never completes.**
+  2026-11-22, bench, ESP32 INA3221: `bench/sleep_power.py --scenario motion`,
+  IVS `min_area=30`, `sensitivity=3`, `idle_timeout_s=30`,
+  `wake_interval_s=10`, `wake_check_s=30`. In 3/3 cycles the state is
+  `awake` immediately after the PMU wake; `/api/ivs` returns an `md` event
+  with `area=1000‰` and a full-frame bbox (`[0,0,640,352]`) — likely an
+  ISP/exposure transition. The camera stays awake for 24–26 s and the cycle
+  costs 15.25–17.94 mWh (mean 16.85) versus 4.9 mWh at `wake_check=5`.
+  A matched cycle without IVS at `wake_check=30` gives a comparable
+  ~17–20 mWh, so the long check window dominates and IVS only changes
+  `probe → awake`. Lowering `sensitivity` to 1 and `min_area` to 50 did not
+  help. Workaround: disable IVS for quiet sleep (or shorten
+  `wake_check`); artifacts `output/bench/power/20261122-motion14/`,
+  `...-cycle-wc30/`. Status: **open**.
+
+- **KI-080. AOV-MCU (`aov_mcu=1`) leaves the I2C3 bus dead or the AP
+  suspended; the missing STM8 is a bus failure, not a separate motor bug.**
+  2026-11-23, bench, AOV image (`aov_available=true`, kernel `5.10.160 #26`).
+  Control T1.1: 300 cycles of `oko-motor sleep show` + `move zoom ±5` without
+  suspend — 0 command errors, `0x60` answers, `motor.present=true`
+  (`output/bench/power/20261123-101015-i2c/`).
+  V1 (`aov_mcu=1`, `aov_keep_isp=1`, `wake_interval_s=60`, 60 s): after one
+  clean run `i2cdetect -r -y 3` is empty — no `0x40/0x41/0x42/0x60`;
+  GPIO1_D2/SDA=1, GPIO1_D3/SCL=0. Unbinding the `ff470000.i2c` master
+  (`rk3x-i2c`) does not release SCL, so an external slave holds the line
+  (candidates H1/H3, not H2). Binding the master again re-probes `sc230ai`
+  and crashes `rkcif_set_default_fmt` (Oops), so the ladder skips
+  unbind/rebind unless `--ladder-rebind` is passed. `oko-motor reset` and
+  `oko-ec reset` cannot run (bus dead); a power cycle restores STM8 `2.3.2`.
+  V2 (`aov_mcu=1`, `aov_keep_isp=0`, 60 s): the AP does not answer for more
+  than 8 minutes after suspend (logger ran 476 s, `/api/status` = `000`);
+  a power cycle is required. V3 (`aov_mcu=0`) on a healthy filesystem gives
+  a quiet cycle: deep suspend 2.26–2.40 s and the STM8 stays present; some
+  runs were spoiled by KI-071 (`/userdata` became `ro`) and by bridge session
+  exhaustion, so the "10 cycles in a row" criterion is not closed.
+  The failing layer is the HPMCU wake proxy / AP suspend, not
+  `motor.sleep_enable` and not STM8 firmware. Artifacts:
+  `output/bench/stm8/20261123-101042-matrix/` (V1, V2, V3 and
+  `layer/dmesg-dead-bus.txt`), `output/bench/power/20261123-100835-aov/`.
+  Status: **open**; closing needs the console (KI-078) and a vendor
+  ISP-handover; the gate is in `FEATURES_UNVERIFIED.md` §AOV.
 
 ### Closed entries archive
 

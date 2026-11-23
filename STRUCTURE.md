@@ -11,10 +11,11 @@
 .BoardConfig.mk -> project/cfg/BoardConfig_IPC/BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI.mk
 ```
 
-То есть SPI NAND, Buildroot, плата Luckfox Pico Pro Max, камера SC230AI — это
-продуктовый профиль. Тем же симлинком переключаются экспериментальные
-`...-IPC_FASTBOOT.mk` и `...-SC230AI-AOV.mk`; после экспериментов продуктовый
-профиль возвращается. Фактическую цель проверяйте `readlink -f .BoardConfig.mk`.
+Продуктовый профиль — SPI NAND, Buildroot, Luckfox Pico Pro Max, SC230AI
+(`...-SC230AI.mk`). Тем же симлинком переключаются экспериментальные
+`...-IPC_FASTBOOT.mk` и `...-SC230AI-AOV.mk`; на 2026-11-23 активен
+AOV-профиль, после экспериментов возвращается продуктовый.
+Фактическую цель проверяйте `readlink -f .BoardConfig.mk`.
 
 ## Корневые папки
 
@@ -30,6 +31,7 @@
 | `tools/` | Хостовые инструменты: кросс-тулчейн, утилиты упаковки и прошивки образов. |
 | `output/` | Результаты сборки: готовые образы в `image/`, промежуточные артефакты в `out/`, лог `build_all.log`. В `output/srv/` — данные сервисов контейнера: NFS-экспорт `nfs/rootfs/`, секреты VPN `vpn/` и архив событий `events/` (`oko-events`, gitignore). В `output/bench/` — venv, кадры OSD-проверок, CSV/снимки фокуса в `focus/`, скриншоты WebUI `ui/` (gitignore). |
 | `IMAGE/` | Готовые релизные образы: папка текущего релиза с `IMAGES/`, `PATCHES/`, `DEBUG_FILES/` и `build_info.txt`. |
+| `presentation/` | Материалы презентации проекта: `FUNCTIONS.md`, `SLIDES.md`, `OKO_DEVICE_PASSPORT.docx`, `OKO_FUNCTIONS.docx`, `img/`. В сборке прошивки не участвует. |
 | `.kilo/` | Служебная конфигурация Kilo: команды (`command/`), skill `oko-docs` (`skills/`), планы (`plans/`), настройки (`kilo.jsonc`). Проектных агентов здесь нет. |
 
 ## Ключевые вложенные папки

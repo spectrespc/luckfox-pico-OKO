@@ -39,6 +39,8 @@ U-Boot — Maskrom, USB-порт занят хабом (TESTBENCH §7).
 |---|---|
 | `serial_exec.py` | вход в консоль по UART (telnet-мост `192.168.52.17:23` или `/dev/ttyACM*`, 115200 8N1) и выполнение команд на DUT; `--listen N` — зеркало консоли без логина на N секунд (окно простоя перед suspend/resume, когда вывод после приглашения `login:` уже не пишется в `uar0.log`) |
 | `power.py` | питание DUT через ESP32-мост: `off`, `on`, `cycle --off-seconds N`, `reset`; вход `admin`/`admin` (env `OKO_BRIDGE*`) и обязательный logout — мост держит не больше трёх сессий, иначе логин отвечает `429 Too many active sessions`; `--cookie-file` переиспользует готовую сессию |
+| `ina_log.py` | опрос `GET /sensor` ESP32-моста и запись INA3221 CH1..CH3 в CSV: `ts_host_epoch_ms`, `ts_bridge_uptime_ms`, `phase`, `ch`, `bus_mv`, `shunt_uv`, `cur_ma`, `power_mw`, `err`; keep-alive, `--hz` (по умолчанию 2), `--duration`, `--until-marker`, `--channel`, `--summary-json`; импортируемый API `start_logging()`/`set_phase()`/`stop()`, logout по умолчанию; артефакты в `output/bench/power/` |
+| `sleep_power.py` | матрица замеров сна и потребления: `--scenario levels` (off/boot/idle/полка), `cycle` (один цикл), `motion` (сон с включённой IVS), `aov` (PMU/AOV-MCU: интервал пробуждения, `aov_state`, meta, проба STM8/I2C/EC на старте и каждом пробуждении), `i2c` (T1.1: N циклов `oko-motor sleep show` + `move` без suspend), `soak` (heartbeat + энергия на цикл + пост-проверки), `peaks` (YOLO/мотор/поток), `stm8` (T8, сверка с бортовым INA3221); окна deep suspend — из `dmesg`, границы циклов — по провалам тока; поднимает и восстанавливает `[sleep]`/`[http_post]`/аналитику, одна cookie-сессия моста; `--expect-present` — код 3 и запись `stm8-recovery.md` при пропаже `0x60`, `--motor-sleep keep|on|off` — правка `[motor] sleep_enable` с перезапуском divinus, `--ladder-rebind` — разрешить опасный unbind/rebind `rk3x-i2c`; SSH с баннер-ретраями; артефакты — `output/bench/power/<stamp>-<scenario>/` |
 | `dut.py` | выполнение команд по SSH через `paramiko` |
 | `netboot.py` | управление U-Boot (та же консоль: telnet-мост или `/dev/ttyACM*`): `catch` (спам Ctrl-C до `=>`, затем netboot-команды), `reboot` (перезагрузка DUT с перехватом U-Boot), `cmd '<команда>'` (одна команда в U-Boot); ядро берётся по TFTP из `output/image/boot.img`, rootfs — по NFS |
 | `tftp_flash.py` | прошивка SPI NAND по TFTP из U-Boot (режим по умолчанию): входит в prompt, грузит `output/image/*.img` на `ramdisk_addr_r`, `mtd erase` + `mtd write` с явным размером, восстанавливает NAND-`sys_bootargs` и `mtdparts`, `saveenv` и `reset`; раскладка читается из `output/image/.env.txt` (работают и продуктовый 256K idblock, и `-AOV` 1M); `--components` (`env,idblock,uboot,boot,oem,rootfs,userdata`, по умолчанию `boot,oem,rootfs`), `--userdata`, `--no-reset`; при `idblock` обязателен SSH-бэкап `/dev/mtdblock1` в `output/bench/backup/` (`--dut-host`, `--skip-backup` — только для восстановления из U-Boot); `--power-cycle` — холодный цикл питания через мост и перехват U-Boot на подъёме (нужно после зависшего HPMCU); если консольный логин недоступен, плата перезагружается по SSH и Ctrl-C начинает бить сразу |
@@ -379,8 +381,11 @@ TESTBENCH.md §7D.
 | `OKO_BENCH_OUT` | `output/bench` | каталог логов, кадров и кропов |
 | `OKO_BENCH_VENV` | `$OKO_BENCH_OUT/venv` | путь к virtualenv |
 | `OKO_SERIAL_PORT` | `telnet://192.168.52.17:23` | консоль: `telnet://host:port` (ESP32-мост) или `/dev/ttyACM*` |
+| `OKO_BRIDGE` | `192.168.52.17` | адрес ESP32-моста (REST, `/sensor`, питание DUT) |
+| `OKO_BRIDGE_USER` / `OKO_BRIDGE_PASSWORD` | `admin` / `admin` | учётка моста; в свежей прошивке пароль может быть сгенерирован при первом старте |
 | `OKO_DUT_HOST` | `192.168.52.150` | адрес DUT по умолчанию (SSH/RTSP; текущий DHCP-адрес — `192.168.52.33`, см. TESTBENCH.md §5) |
-| `OKO_DUT_PASSWORD` | `luckfox` | пароль root (публичный вендорский дефолт) |
+| `OKO_DUT_PASSWORD` | `oko-change-me` | пароль HTTP Basic/WebUI (как в `api_check.py`) |
+| `OKO_DUT_SSH_PASSWORD` | `luckfox` | пароль root для SSH (публичный вендорский дефолт) |
 | `OKO_RTSP_USER` / `OKO_RTSP_PASS` | `admin` / `oko-change-me` | учётка divinus (фабричный дефолт) |
 | `OKO_EVENTS_URL` | `http://127.0.0.1:8090` | адрес `services/events` с хоста (проверки в `event_check.py`/`heartbeat_check.py`) |
 | `OKO_EVENTS_ADDR` | `192.168.52.200:8090` | адрес приёмника, который прописывается камере в `http_post.host` для heartbeat |
@@ -416,6 +421,9 @@ TESTBENCH.md §7D.
 - Soak шины EC: `output/bench/ec_bus_soak-<YYYYmmdd-HHMMSS>.json` и `.log`.
 - Heartbeat сна: `output/bench/heartbeat/report.json` и полученные `hb-<ts>.jpg`.
 - MQTT: `output/bench/mqtt/report.json`.
+- Мощность и сон: `output/bench/power/<stamp>-<scenario>/` (`raw.csv`,
+  `events.log`, `summary.json`, `report.md`); одиночный `ina_log.py` —
+  `output/bench/power/<stamp>-raw.csv` и `<stamp>-raw.summary.json`.
 - Каталог создаётся автоматически; `output/` в `.gitignore`.
 
 ## Heartbeat сна (Snapshot)
@@ -451,6 +459,54 @@ bench/run.sh heartbeat_check.py --neg           # приёмник выключ�
   коротком окне проверка помечается `SKIP`, а не падает.
 - `--neg` останавливает приёмник: камера всё равно засыпает, а
   `heartbeat_fail_streak` в `/api/status.sleep` растёт.
+
+## Мощность и сон (INA3221 ESP32-моста)
+
+Второй INA3221 на мосту измеряет вход 5 В всего DUT (CH3; CH2 и CH1 —
+вспомогательные ветви, их ток тоже зависит от питания DUT). Прошивка моста 1.11.1 отдаёт показания в
+`GET /sensor`; собственный SD-лог `ina3221_chN.csv` пишет раз в ≈10.2 с, поэтому
+профили сна снимаются хост-опросом.
+
+`ina_log.py` пишет CSV с метками фаз; `sleep_power.py` управляет сценарием и
+сводит отчёт. Окна глубокого сна берутся из `dmesg` (`PM: suspend entry/exit`),
+потому что по HTTP DUT недоступен за секунды до и после реального suspend.
+
+```sh
+bench/run.sh ina_log.py --duration 30 --label idle
+bench/run.sh sleep_power.py --scenario levels --hz 5   # off/boot/idle/полка
+bench/run.sh sleep_power.py --scenario cycle --hz 5    # один цикл сна
+bench/run.sh sleep_power.py --scenario motion          # сон с IVS (движение)
+bench/run.sh sleep_power.py --scenario aov --aov-seconds 150  # PMU, интервал 60 с
+bench/run.sh sleep_power.py --scenario aov --aov-mcu --aov-keep-isp  # AOV MCU
+bench/run.sh sleep_power.py --scenario i2c --i2c-cycles 300 --expect-present
+bench/run.sh sleep_power.py --scenario aov --aov-seconds 60 --expect-present
+bench/run.sh sleep_power.py --scenario aov --aov-mcu --motor-sleep on
+bench/run.sh sleep_power.py --scenario peaks           # YOLO/мотор/поток
+bench/run.sh sleep_power.py --scenario stm8 --stm8-soak 300
+docker compose -f services/events/docker-compose.yml up -d
+bench/run.sh sleep_power.py --scenario soak --soak-minutes 60
+```
+
+Базовая линия 2026-11-22: `off` 0.8 мА, `idle` 364 мА / 1.72 Вт, полка deep
+suspend 86 мА (min 47, p05 124), окно 2.4 с за цикл ≈13 с, 4.9 мВт·ч/цикл
+(медиана), 60-мин soak — 279 циклов и ≥200 heartbeat; подробности и ограничения
+— `TESTBENCH.md` §8.
+
+2026-11-23: сценарий `i2c` — 300 циклов к STM8 без suspend, 0 ошибок и
+`present=true`; `aov` с `--expect-present` при `aov_mcu=1` фиксирует отказ
+(I2C3 мертва при `keep_isp=1`, AP не просыпается при `keep_isp=0`, код 3,
+`stm8-recovery.md`); `aov_mcu=0` даёт тихий цикл. Гейт и артефакты — KI-080,
+KI-072, `TESTBENCH.md` §7-AOV. Сценарий `motion` (IVS включена) на стенде 2026-11-22:
+3 цикла, каждый wake → `awake` из-за полнокадрового IVS-события (area 1000‰),
+бодрствование 24–26 с и энергия цикла 15.3–17.9 мВт·ч (среднее 16.85) против
+4.9 мВт·ч при `wake_check=5`; парный цикл без IVS при `wake_check=30` — того же
+порядка, т.е. основной вклад даёт длинное окно проверки. Сценарий `aov`
+(2026-11-22): при `wake_interval_s=60` PMU-счётчик `0x780`, но deep suspend
+2.4 с и цикл 12–18 с; AOV MCU (`--aov-mcu --aov-keep-isp`) даёт `aov_state=off`
+после resume и `mcu_run_count=0`, форсирование meta `ae_mode=1` не помогает
+(KI-072). Мост держит не больше трёх сессий: `sleep_power.py` держит
+одну cookie-сессию на логгер и питание и делает logout в конце; параллельные
+ручные `curl`-сессии дают `429`.
 
 ## Wi-Fi на стенде
 

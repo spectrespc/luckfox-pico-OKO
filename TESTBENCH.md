@@ -8,7 +8,7 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
 
 | Поле | Значение |
 |---|---|
-| Дата обновления | `2026-11-22` |
+| Дата обновления | `2026-11-23` |
 | Ответственный | `<ФИО>` |
 | Статус | активен |
 | Назначение | сборка прошивки и прошивка SPI NAND для отладки IPC |
@@ -52,6 +52,7 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
 | Ethernet | лабораторная сеть `192.168.52.0/24` | через порт устройства |
 | USB | DUT — host: хаб `1a40:0101` (4 порта), питание платы отдельное 5 В | хаб подключён (2026-11-11), за ним — `0bda:c811` (Realtek 802.11ac NIC, RTL8821CU); с 2026-11-12 драйвер `8821cu.ko` входит в образ. Порт закреплён в host-режиме (`dr_mode = "host"`), устройство за хабом видно сразу после загрузки; Maskrom-прошивка по этому порту возможна только при прямом кабеле к хосту (хаб скрывает загрузчик), по умолчанию прошивка — TFTP (§7-TFTP). VBUS SoC не управляет |
 | I2C3-M1 | `/dev/i2c-3`, 100 кГц, `GPIO1_D2`/`GPIO1_D3` | SHT21 `0x40`, INA3221 `0x41` (`A0` = VS; die ID `0x3220`), STM32 ACPI-EC `0x42`; нужны внешние pull-up 2.2–4.7 кОм к 3.3 В (в DTS `pcfg_pull_none_smt`). Каналы INA3221: **CH1 — DRV8833 + двигатели focus/zoom, CH2 — STM32 ACPI-EC, CH3 — RV1106 + STM8** (замер 2026-11-22: CH1 ≈ 11 мА / 51 мВт, CH2 ≈ 2 мА / 9 мВт, CH3 ≈ 380 мА / 1.8 Вт при шине ≈ 4.6 В; ток считается по шунту `--shunt-mohm`, по умолчанию 100 мОм) |
+| INA3221 на ESP32-мосту | I2C моста, адрес `0x41`, шунт 100 мОм | второй измеритель на мосту `192.168.52.17` (прошивка `1.11.1`): **CH3 — вход 5 В всего DUT**, CH2 — вспомогательная ветвь, зависит от питания DUT (≈170 мА при включённом DUT и ≈11 мА при выключенном), CH1 — вспомогательная ветвь (≈20 мА при включённом DUT); `GET /sensor` отдаёт `ina3221.chN.{bus_mv,shunt_uv,cur_01ma,pwr_01mw}` в 0.01 мА / 0.01 мВт (LSB 0.4 мА по шунту 100 мОм). CH3 выключается в `0.8 мА` при `POST /ext/power {"on":false}`. Собственный SD-лог `ina3221_chN.csv` пишет раз в ≈10.2 с; для профилей сна используется хост-опрос `bench/ina_log.py` |
 
 Требования к хосту: Python 3 и зависимости из `bench/requirements.txt`;
 `bench/setup.sh` создаёт venv в `output/bench/venv`, запуск — `bench/run.sh`.
@@ -231,6 +232,38 @@ start SDK!` встречается на этом стенде при `audio.enab
 PMU-таймаут (~16 с при окне mailbox 6000 мс; с окном 1000 мс ожидается ~11 с,
 отдельно не измерялось). Длинный тихий сон — NO-GO на стороне AP,
 AOV = motion-resume; подробности и артефакты — KI-072.
+
+**2026-11-22, проверка интервала 1 минута.** `bench/sleep_power.py --scenario aov`
+с `wake_interval_s=60` (PMU-only и `aov_mcu=1` + `aov_keep_isp=1`): регистр
+PMU `0xff300048` = `0x780` (1920 тика = 60 с), но фактический deep suspend
+2.39–2.41 с, а цикл 12–18 с (медиана 18.3 с, n=7); `aov_state` после resume
+= `off`, `mcu_run_count` (`0x01001C10`) = 0. Форсирование MCU motion через
+meta (`ae_mode=1`, файл `/oem/usr/share/oko/meta.img` + перезапуск divinus)
+не изменило ни кадентность, ни `aov_state`; после теста meta восстановлена.
+Вывод: интервал 1 минута на этом образе не выдерживается, MCU-детекцию по
+доступной телеметрии подтвердить не удалось (живой UART недоступен, KI-078).
+Артефакты: `output/bench/power/20261122-aov-pmu60/`,
+`20261122-aov-mcu-keepisp/`, `aov-force-motion.csv`, `aov-meta-motion.csv`.
+Повтор 2026-11-22 19:45 (`20261122-aov-repeat`, 180 с): 9 интервалов,
+медиана 16.8 с, deep suspend 2.40 с, `aov_state=off` на всех пробуждениях,
+`mcu_run_count=0` — результат воспроизводится. Побочный эффект: после
+AOV-прогона STM8 (focus/zoom) не отвечает на I2C (`present=false`), power cycle
+восстанавливает (`2.3.2`); это учитывать при AOV-тестах.
+
+**2026-11-23, локализация (KI-080).** Контроль вне suspend: 300 циклов
+`oko-motor sleep show` + `move zoom ±5` — 0 ошибок, `0x60` отвечает
+(`output/bench/power/20261123-101015-i2c/`). В матрице 60-с прогонов:
+`aov_mcu=1` + `aov_keep_isp=1` (V1) после чистого старта оставляет I2C3
+мёртвой — `i2cdetect` пуст, SCL=0, unbind мастера линию не отпускает;
+`aov_mcu=1` + `keep_isp=0` (V2) — AP не выходит из suspend >8 мин;
+`aov_mcu=0` (V3) на исправной ФС даёт тихий цикл 2.26–2.40 с, STM8 на
+месте. Unbind/rebind `rk3x-i2c` перепробегает `sc230ai` и роняет
+`rkcif_set_default_fmt` (Oops) — в лестнице `bench/sleep_power.py` шаг
+пропускается без `--ladder-rebind`. Вывод: слой — HPMCU wake proxy/AP
+suspend; AOV с `aov_mcu=1` — NO-GO, закрытие требует консоли (KI-078) и
+вендорского ISP-handover. Артефакты:
+`output/bench/stm8/20261123-101042-matrix/` (включая
+`layer/dmesg-dead-bus.txt`, `V1-1/stm8-recovery.md`).
 
 Диагностика resume (KI-074): в `-AOV` можно собрать ядро с фрагментом
 `rv1106-pm-debug.config` (по умолчанию он не включён) — появляется
@@ -602,6 +635,31 @@ curl -s -u admin:oko-change-me http://127.0.0.1/api/sleep
 # перед AOV-циклом: dmesg -c; после resume: dmesg | grep -iE 'sfc|ubi.*error'
 # KI-071: при sfc timeout/ro-rootfs — power cycle, при повторе — перепрошивка
 
+# Гигиена сессий моста: пул 3, TTL 24 ч, переполнение — 429.
+# На каждый прогон один cookie-файл, logout в finally; не логиниться заново
+# на каждый power cycle. При 429 — ребут моста вручную (сетевого способа
+# освободить чужие cookie нет).
+bench/run.sh power.py cycle --off-seconds 5 --cookie-file output/bench/bridge.cookie
+
+# Зависший [sleep] (AP/API не отвечает, SCL=0): power cycle. Если после
+# загрузки в /userdata/divinus.yaml остался enable:true, камера уснёт через
+# idle_timeout_s и снова не ответит. Успеть в первые ~15 с:
+curl -s -u admin:oko-change-me -X POST \
+  'http://192.168.52.33/api/sleep?enable=false&idle_timeout_s=3600'
+# затем поправить файл и перезапустить приложение:
+#   [sleep] enable:false, idle_timeout_s:15
+/etc/init.d/S21appinit stop; /etc/init.d/S21appinit start
+
+# Слой отказа I2C3 (KI-080):
+i2cdetect -r -y 3                      # 40/41/42/60 должны отвечать
+devmem 0xff530070 32                   # бит26 = SDA, бит27 = SCL (GPIO1_D2/D3)
+# unbind/rebind мастера ОПАСЕН: повторный probe sc230ai роняет
+# rkcif_set_default_fmt (Oops). Только вручную и с пониманием:
+#   echo ff470000.i2c > /sys/bus/platform/drivers/rk3x-i2c/unbind
+#   echo ff470000.i2c > /sys/bus/platform/drivers/rk3x-i2c/bind
+# сырая лестница с записью шагов: bench/run.sh sleep_power.py --scenario aov \
+#   --aov-seconds 60 --expect-present   (при пропаже создаёт stm8-recovery.md)
+
 # Счётчики DEBUG_BUILD (-DEC_DEBUG_BUILD=ON): 60 байт ответа 0x28
 /usr/sbin/i2ctransfer -y 3 w3@0x42 0x01 0x00 0x28
 sleep 0.2
@@ -924,13 +982,14 @@ docker exec oko-mediamtx ffprobe -v error -show_streams rtsp://127.0.0.1:8554/ca
 | `codecProps.width/height` = 0, `ffprobe` не даёт разрешение | параметры VPS/SPS/PPS идут не отдельными NAL-юнитами (склеены в один RTP-пакет) — проверить сборку `divinus` |
 | Поток рвётся раз в несколько минут | перезапуск `divinus` (`kill -HUP`) рвёт последовательность RTP: приёмник пересобирает путь за 1–2 с |
 
-### 2026-11-14: ESP32-мост ESP32-OKO-KVM — REST API и лог UART (сверено 2026-11-17)
+### 2026-11-14: ESP32-мост ESP32-OKO-KVM — REST API и лог UART (сверено 2026-11-22)
 
 К UART0 RV1106 подключён ESP32-C6-мост `192.168.52.17`; прошивка —
 [ESP32-OKO-KVM](https://github.com/spectrespc/ESP32-OKO-KVM) (на стенде
-`1.10.0`, слот `ota_1`; в `ota_0` лежит `1.9.0`). Документация API upstream —
-`docs/api.md` того же репозитория; ниже — только то, что проверено на стенде.
-Мост отдаёт консоль DUT по telnet `:23` и REST API по HTTP `:80` с cookie-сессией:
+`1.11.1`, слот `ota_1`; в `ota_0` лежит `1.9.0`). Документация API upstream —
+`docs/api.md` того же репозитория (описывает 1.10.0 и одиночный INA219/INA226);
+ниже — только то, что проверено на стенде. Мост отдаёт консоль DUT по telnet
+`:23` и REST API по HTTP `:80` с cookie-сессией:
 
 ```bash
 curl -s -c /tmp/c -X POST http://192.168.52.17/auth/login \
@@ -973,6 +1032,7 @@ Destructive-запросы (`/system/*`, `/ext/*`, `/ota/*`) сверяют `Ori
 | `GET /sd/download?path=<name>` | скачать файл с microSD (в т.ч. ротированные `uar0.log.N`) |
 | `GET /uart/monitor/status` | состояние read-only мониторов: `enabled`, `port`, `fmt`, `max_clients`, `clients`, `dropped` |
 | `GET /uart/monitor?uart=0&fmt=1&cursor=N` | чанк лога с курсором (только при включённом мониторе) |
+| `GET /sensor` | SHT21 (`temperature`, `humidity` в 0.1 °C / 0.1 %) и INA3221: `ina3221.ch1..ch3.{bus_mv, shunt_uv, cur_01ma, pwr_01mw}`; `cur_01ma`/`pwr_01mw` — целые в 0.01 мА / 0.01 мВт, LSB 0.4 мА при шунте 100 мОм. На 1.11.1 `ch3` — вход 5 В DUT, `ch2` — питание моста, `ch1` — вспомогательная ветвь. Отклик keep-alive ≈50 мс, новое TCP-соединение ≈130 мс; 20 Гц опрос не throttling-ится |
 
 Danger: `POST /ext/power {"on":false}` **снимает питание DUT**, а состояние
 хранится в NVS — после перезагрузки моста DUT останется обесточенным, пока не
@@ -992,7 +1052,16 @@ CS18/MOSI1/MISO3/SCLK0.
 `serial_exec.py`). Проверено на 1.10.0: файл растёт и ротируется **без
 подключённого telnet-клиента**, т.е. `uart0_sd_log` включает запись постоянно;
 upstream-архитектура описывает запись только при подключённом клиенте моста —
-при обновлении прошивки моста это утверждение перепроверить.
+при обновлении прошивки моста это утверждение перепроверить. На 1.11.1
+(2026-11-22) без telnet-клиента `uar0.log` не обновлялся (последняя запись
+датировалась предыдущим подключением), поэтому фазы сна в этом плане сняты
+через `/api/sleep` и `dmesg`, а не через UART-лог.
+
+С `ina3221_sd_log=1` мост пишет и показания второго INA3221 в
+`ina3221_ch1.csv`…`ina3221_ch3.csv` (поля `ts_ms,bus_mv,shunt_uv,cur_01ma,
+pwr_01mw`, интервал ≈10.2 с). Для циклов сна этот лог слишком редкий: профили
+снимаются хост-опросом `GET /sensor` (`bench/ina_log.py`), SD-CSV годится как
+грубая сверка.
 
 Read-only мониторы UART (прошивка ≥ 1.9.0; на 1.10.0 эндпоинты есть): telnet
 `:2324` (UART0) и `:24` (UART1), до `telnetN_mon_clients` клиентов (на стенде
@@ -1269,6 +1338,93 @@ transfer finish timeout`, затем `UBIFS ... error -5` и перевод `/` 
 `/userdata` в `ro` (KI-071). Power cycle через ESP32 восстановил оба тома.
 При длительных прогонах сна проверять `dmesg | grep -i sfc` после каждого
 resume и держать резервный `output/image/update.img` для TFTP.
+
+### 2026-11-22: замер потребления DUT и `[sleep]` через INA3221 моста
+
+Методика: `bench/ina_log.py` опрашивает `GET /sensor` (CH3 — вход 5 В DUT,
+шунт 100 мОм, LSB 0.4 мА), `bench/sleep_power.py` управляет сценарием и пишет
+метки фаз в CSV. Окна глубокого сна берутся из `dmesg`
+(`PM: suspend entry/exit`), границы циклов — по локальным минимумам тока; фаза `offline`
+в CSV означает «DUT недоступен по HTTP», а не обязательно глубокий сон.
+
+Базовая линия (2026-11-22, SC230AI, loadavg 5–10, напряжение шины ≈4.6–4.8 В).
+Образ на DUT — AOV-совместимый (`/api/sleep`: `aov_available=true`), но замеры
+сняты с `aov_mcu=false`, `pmu_timer_wake=true`, т.е. в обычном PMU-режиме:
+
+| Сценарий | Условие | Ток | Мощность |
+|---|---|---|---|
+| `off` | реле 5 В выключено | 0.8 мА (медиана; переходный отсчёт 344 мА исключён) | ≈4 мВт |
+| `boot` | от включения до API | 308 мА (среднее) | 1.46 Вт |
+| `idle` | divinus активен, `[sleep]` выключен | 364 мА | 1.72 Вт |
+| `suspend floor` | deep suspend, низкая мода | 86 мА (min 47, p05 124, p10 160) | ≈0.40 Вт |
+| окно deep suspend | `PM: suspend entry/exit` | — | 2.4 с за цикл ≈12–13 с |
+| цикл сна | idle 30 с, wake_interval 10 с, wake_check 5 с | — | 4.9 мВт·ч (медиана), 1.03 мА·ч |
+| 60-мин soak | 279 циклов, heartbeat | 282 мА (среднее), 86 мА полка | 4.88 мВт·ч/цикл (медиана), среднее 4.73, σ 0.87 |
+| STM8 T8 | divinus остановлен, soak 300 с | 225 мА | 1.08 Вт; 41 PASS / 0 FAIL |
+| peaks | awake, 8 Гц | база 355 мА; поток +0.7 %; мотор <1 % | YOLO недоступен: нет `.rknn` |
+
+Sanity-сверка с бортовым INA3221 RV1106 (одновременный опрос): на STM8-soak
+ESP32 CH3 225.4 мА против бортового CH3 232.0 мА — расхождение −6.7 % по току
+и −5.4 % по мощности (порог плана 15 %). При `POST /ext/power {"on":false}`
+CH3 падает до 0.8 мА; CH1/CH2 тоже падают (≈0.5 и ≈11 мА), т.е. это вспомогательные ветви с нагрузкой DUT, а не питание моста.
+
+Отдельно: во время восстановления после 60-мин soak `/userdata` ушёл в `ro`
+(`the sleep settings could not be saved`, `Input/output error`), power cycle
+вернул `rw` — это KI-071; учитывать при длинных сериях.
+
+Ограничения: разрешение 2 Гц не видит миллисекундные пики статора (для
+`peaks` используется 8 Гц, дискретность 125 мс); окно deep suspend ≈2.4 с,
+поэтому полка оценивается по распределению тока, а не по среднему фазы
+`offline`; YOLO-пик не измерен — на стенде нет модели; мост держит не больше
+трёх сессий, поэтому `sleep_power.py` использует одну cookie-сессию на логгер и
+питание и делает logout в конце.
+
+```sh
+bench/run.sh ina_log.py --duration 30 --label idle
+bench/run.sh sleep_power.py --scenario levels --hz 5
+bench/run.sh sleep_power.py --scenario cycle --hz 5
+bench/run.sh sleep_power.py --scenario peaks
+bench/run.sh sleep_power.py --scenario stm8 --stm8-soak 300
+# soak: приёмник heartbeat и 60 минут
+docker compose -f services/events/docker-compose.yml up -d
+bench/run.sh sleep_power.py --scenario soak --soak-minutes 60
+```
+
+Артефакты: `output/bench/power/<stamp>-<scenario>/` — `raw.csv`,
+`events.log`, `summary.json`, `report.md`.
+
+### 2026-11-22: сон с детекцией движения (IVS)
+
+Сценарий `bench/sleep_power.py --scenario motion` включает IVS
+(`min_area=30`, `sensitivity=3`), `[sleep]` с `idle_timeout_s=30`,
+`wake_interval_s=10`, `wake_check_s=30`, и снимает 3 цикла. Движение
+инъецируется зум-мотором (`scale=zoom`, ±800 шагов), но на этом стенде IVS
+срабатывает **на каждом пробуждении**: событие `md`, `area=1000‰`, bbox на
+весь кадр. Политика сразу переходит `probe → awake`, короткого probe нет.
+
+| Показатель | Значение |
+|---|---|
+| Сон в цикле | 11–14 с (deep suspend 2.39–2.41 с по `dmesg`) |
+| Бодрствование | 24–26 с, среднее 1.6–1.8 Вт |
+| Энергия цикла с IVS | 15.25–17.94 мВт·ч, среднее 16.85 (n=3) |
+| Полка deep suspend | 112.4 мА (min 88.8, p05 165.6, p10 217.6) |
+| Сравнение: `wake_check=5`, IVS off | 4.9 мВт·ч/цикл, ≈13 с |
+| Парный цикл: `wake_check=30`, IVS off | probe 24.7 с / 12.32 мВт·ч + offline 23 с / 7.85 мВт·ч |
+
+Вывод: включение IVS само по себе почти не меняет энергию цикла по сравнению
+с тем же `wake_check=30` без IVS; основной вклад даёт длинное окно проверки
+(24–26 с бодрствования). Но IVS на этом кадре фиксирует полнокадровое
+«движение» при каждом wake (вероятно, переход ISP/экспозиции), поэтому
+камера никогда не использует короткий probe и выдерживает `idle_timeout_s`.
+Для тихого сна IVS нужно выключать (или уменьшать `wake_check`); понижение
+`sensitivity` до 1 и `min_area` до 50 не помогло — событие всё равно 1000‰.
+Артефакты: `output/bench/power/20261122-motion14/`,
+`output/bench/power/20261122-cycle-wc30/`.
+
+```sh
+bench/run.sh sleep_power.py --scenario motion
+bench/run.sh sleep_power.py --scenario cycle --wake-check 30  # парный baseline
+```
 
 ### 2026-11-19: MQTT — события и телеметрия камеры (`services/mqtt`)
 

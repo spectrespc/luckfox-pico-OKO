@@ -79,13 +79,15 @@
 | Фокус: AF-метрика (A6) | работает | 2026-11-06, после `POST /api/focus?enable=1`: `status=running`, `af_hw_ver=2`, `cells_used=225`, 20 отсчётов `metric_avg` 527427–530023 (std 1124) в `output/bench/focus/focus-20261106-111557.csv` + снимок. ROI top-left 0,0,2000,2000 → `metric_avg=2635599` (9 ячеек), центр 2500,2500,5000,5000 → 0 (плоская область). Без `af_v31.TuningPara.contrast_af.enable=1` в IQ все ячейки нулевые | AFM-карта остаётся полнокадровой, ROI применяется выбором ячеек в `focus.c`; малые ходы мотора метрику не меняют — оптическая связь объектива не подтверждена |
 | Фокус: мотор STM8 | работает | `oko-motor -b 3 -a 0x60 speed 0 300`, `move 0 10` → `position 5012`, `move 0 -10` → `5002`, `status 0`; `move ±200` и `stop` без ошибок | Позиция — счётчик шагов; фактическое движение объектива не подтверждено |
 | STM8: загрузчик и обновление | работает | 2026-11-07, прошивка `2.1.1` (релиз `7969e922f`): исходный upstream `2.0.0` заменён `factory.ihx` по ST-Link; `enter-boot` → `info` = `bootloader: 1.0.0, application header: 2.1.1`, `version` в загрузчике → ошибка с подсказкой, `boot-reset` → `app 2.1.1`; `POST /api/flash` (target=stm8, `app-2.1.1.ihx`, confirm=FLASH) → 202, `state=done`, `oko-motor version` = `2.1.1`; сервер сверил версию из имени с заголовком OKO8 (`oko-motor check FILE 2.1.1`); power-cycle сохраняет `2.1.1`; kill -9 хостового `oko-motor flash` оставляет загрузчик, повторная загрузка успешна | Первая запись — только ST-Link/SWIM; обрыв питания при стирании не имитировался (KI-032) |
-| STM8: сон привода по тишине I2C | работает (ограничено по объёму проверки) | 2026-11-21, тестовая плата, прошивка `2.3.2` (`BOARD=test`): ST-Link/SWIM `factory-2.3.2.ihx` + `stm8flash -R`; `oko-motor sleep show` до/после тишины — `entries`/`wake i2c`/`timer` растут; `tests/hardware_test.sh` (`BUS=3 ADDR=0x60`, soak 1800 с) 41 PASS / 0 FAIL, включая 12.3 (100 циклов пробуждения, 0 отказов), 12.4 (`entries=103 i2c=103 timer=255`), 12.6 (`entries 104→105`, без IWDG-сброса), 12.7 (позиция стабильна под WDT со сном); `dmesg` DUT без новых `SCL hold by slave`; `/api/firmware.stm8.sleep_*` = `mode 1, state 0, entries, wake_i2c, wake_awu`; `[motor] sleep_enable: true` + HUP принят divinus, последовательность `SET_SLEEP on 3` → тишина → `SET_SLEEP off` + чтение версии проходит. Артефакты: `output/bench/stm8/t8-final-2.3.2.log`, `t8-run-wfi-full.log` (прогон предыдущей ревизии 2.3.0), `ki075-repro-20261121.txt`, `opt-before.ihx` | Режим — Wait (`WFI`), а не Active-halt: AWU стендового STM8S003F3P6 не считает (KI-077), выигрыш по току уровня Wait. Пока хост опрашивает `0x60` чаще `idle_s` (divinus ~2 с при пороге 3 с), сон не наступает. Полный deep suspend/resume с включённым сном не выполнялся (KI-071/KI-074). Обновление прошивки по I2C — KI-075 |
+| STM8: сон привода по тишине I2C | работает (ограничено по объёму проверки) | 2026-11-21, тестовая плата, прошивка `2.3.2` (`BOARD=test`): ST-Link/SWIM `factory-2.3.2.ihx` + `stm8flash -R`; `oko-motor sleep show` до/после тишины — `entries`/`wake i2c`/`timer` растут; `tests/hardware_test.sh` (`BUS=3 ADDR=0x60`, soak 1800 с) 41 PASS / 0 FAIL, включая 12.3 (100 циклов пробуждения, 0 отказов), 12.4 (`entries=103 i2c=103 timer=255`), 12.6 (`entries 104→105`, без IWDG-сброса), 12.7 (позиция стабильна под WDT со сном); `dmesg` DUT без новых `SCL hold by slave`; `/api/firmware.stm8.sleep_*` = `mode 1, state 0, entries, wake_i2c, wake_awu`; `[motor] sleep_enable: true` + HUP принят divinus, последовательность `SET_SLEEP on 3` → тишина → `SET_SLEEP off` + чтение версии проходит. Артефакты: `output/bench/stm8/t8-final-2.3.2.log`, `t8-run-wfi-full.log` (прогон предыдущей ревизии 2.3.0), `ki075-repro-20261121.txt`, `opt-before.ihx`; 2026-11-22: повтор T8 с soak 300 с — 41 PASS / 0 FAIL при одновременном замере ESP32 INA3221, артефакт `output/bench/power/20261122-stm8c/` | Режим — Wait (`WFI`), а не Active-halt: AWU стендового STM8S003F3P6 не считает (KI-077), выигрыш по току уровня Wait. Пока хост опрашивает `0x60` чаще `idle_s` (divinus ~2 с при пороге 3 с), сон не наступает. Полный deep suspend/resume с включённым сном не выполнялся (KI-071/KI-074). Обновление прошивки по I2C — KI-075 |
 | Прошивка: валидация и блокировки | работает | `/api/flash`: без `confirm`, неизвестный target, `.txt`, битый `OKO8`, 300 КиБ, без версии в имени (`app.bin`), несовпадение имени с заголовком STM8 (`app-9.9.9.ihx`), `.ihx` для STM32 и >120 КиБ → HTTP 400; второй POST во время работы → 409 `{"error":"busy"}`; `firmware_check.py --negative` — 9/9 | Реальная запись STM32 проверена (см. ниже) |
 | Прошивка: реальная прошивка STM32 | работает | 2026-11-06, CBT6: CLI `app-1.0.1.bin` (`0x00010001`) → `Application started`; WebUI `/api/flash` `app-1.0.1.bin` (версия из имени, без поля version) → job `done`, `/api/firmware` = `1.0.1`; rollback `app-1.0.0.bin` → `1.0.0` (progress 0→100); `oko-ec info` `img_size=2324`, `flags=0`; `battery/cells/temp` живы; после reboot — app 1.0.0; oversize 130 КиБ → `ERR_PARAM`, автоматический `RESET`, app 1.0.0 | Установленный MCU — CBT6 (128 КиБ, слот 120 КиБ); C8T6-сборка даёт `img_size=0`, использовать `-DMCU=CBT6`. Обрыв питания в момент стирания не имитировался |
 | Прошивка: версии контроллеров | работает | `GET /api/firmware` → STM32 `1.0.0`, STM8 `2.1.1` (точечно, без `0x`); сырой hex STM32 остаётся в `oko-ec info`; после flash и power-cycle значения сохраняются; карточка System в `ui_check.py` | STM32 `state` берётся из `/tmp/oko-ec.json` и считается устаревшим через 15 с |
 | OSD: NPU в строке CPU | работает | `/tmp/osd-sys.txt` — literal `\n` (backslash + n) и реальный перевод строки в конце: `CPU 20% NPU 0%\nMEM FREE 81%\nT 61.8C` (`od -c`); три текст-полосы в вырезке sys-региона `output/bench/osd-fix2/`; `GET /api/yolo?enable=1` → `NPU 17%`, после disable — 0%; регион 4 `text=@/tmp/osd-sys.txt` | Текст в кадре не распознавался OCR; проверка по байтам файла и полосам яркости |
 | UDP/RTP-раздача `[stream]` | работает | 2026-11-10, стенд `192.168.52.15` → `192.168.52.200:5600`, MediaMTX 1.21.3 (`services/stream/`): в консоли `UDP streaming initialized on port 5600`, `Added UDP client 192.168.52.200:5600 (ID 0)`, `Starting streaming to udp://192.168.52.200:5600...`; `ffprobe` без пароля: `hevc Main 1920x1080 30/1`; 10 мин (`output/bench/stream/20261110-193242/`): 17 922 кадра 29.87 fps против 29.85 fps у RTSP камеры, задержка ретрансляции 1–7 мс (медиана; 6.5 мс на 10-минутном прогоне, 15 699 совпадений, 1 мс после перехода на монотонное сопоставление кадров), 82 кадра в ошибке (0.46 %); `reboot` — поток поднялся сам; два `dest` (unicast + multicast) — `ID 0`/`ID 1`, multicast вторым адресом `seq` 59648→62536 без разрывов (`/tmp`-проба, 2889 пакетов) | Multicast первым адресом — `seq/ssrc=0` (KI-052); H.265 не играет в Chromium (KI-053); потери без FEC (KI-051) |
 | Два аплинка eth0 + Wi-Fi STA | работает | 2026-11-12: одновременно два default (`eth0` 100, `wlan0` 600), WebUI/API доступны с `192.168.52.33` и `192.168.44.50`; dead-шлюз eth → `eth0` demote до 10100, `ip route get 8.8.8.8` → `wlan0`, возврат после восстановления шлюза; dead-шлюз wlan → demote до 10600 и возврат; `ip link set eth0 down` → трафик через wlan, после up — снова eth0; equal metric 100/100 разведён до 100/101; пустой `oko_wlan_mode` нормализуется в `sta` и STA считается аплинком; fake `root=/dev/nfs` не меняет eth-метрику и resolv; `bench/uplink_soak.py` — 41 проверка / 0 сбоев за 20,8 мин с чередованием линков | Ручной тест Wi-Fi-аплинка использовал временную открытую точку доступа на host `wlan0` (hostapd в контейнере `oko-services`), в образ не входит; netboot-ветка проверена подменой `/proc/cmdline`, реальный NFS-boot не гонялся |
+| Питание: DUT и `[sleep]` через INA3221 моста | работает | 2026-11-22: `bench/ina_log.py` + `bench/sleep_power.py`, CH3 = вход 5 В DUT; `off` 0.8 мА (медиана, переходный отсчёт исключён), `boot` 308 мА, `idle` 364 мА / 1.72 Вт, полка deep suspend 86 мА (min 47, p05 124, p10 160), окно deep suspend 2.4 с за цикл ≈13 с (dmesg `PM: suspend entry/exit`), цикл 4.9 мВт·ч / 1.03 мА·ч (медиана); 60-мин soak: 279 циклов, ≥200 heartbeat, `fail_streak=0`, `api_check` и `ui_check` код 0; во время restore `/userdata` ушёл в `ro` (KI-071, power cycle вернул `rw`); сверка с бортовым INA3221 на STM8-soak: 232.0 мА против 225.4 мА (−6.7 % тока, −5.4 % мощности). Артефакты: `output/bench/power/20261122-{levels,cycle,peaks,stm8c,soak3}/` | Разрешение 2 Гц не видит миллисекундные пики (для `peaks` — 8 Гц, 125 мс); полка оценивается по распределению из-за окна 2.4 с; YOLO-пик не измерен — на стенде нет `.rknn`; мост держит ≤3 сессий, скрипт использует одну |
+| Сон с IVS (движение) | работает (ограничено) | 2026-11-22, `bench/sleep_power.py --scenario motion`, IVS `min_area=30`, `sensitivity=3`, `idle_timeout=30`, `wake_check=30`: 3/3 цикла после wake → `awake`, `/api/ivs` даёт `md area=1000‰` (полный кадр), бодрствование 24–26 с, энергия цикла 15.25–17.94 мВт·ч (среднее 16.85) против 4.9 мВт·ч при `wake_check=5`; парный цикл без IVS при `wake_check=30` — ~17–20 мВт·ч, т.е. основной вклад даёт длинное окно проверки. Артефакты: `output/bench/power/20261122-motion14/`, `20261122-cycle-wc30/` | IVS на этом кадре фиксирует полнокадровое «движение» при каждом wake (вероятно ISP/экспозиция), поэтому короткий probe не используется; снижение `sensitivity` до 1 и `min_area` до 50 не помогло; для тихого сна IVS выключать или уменьшать `wake_check` (KI-079) |
 
 ### Причина смены DHCP-адреса
 
@@ -256,6 +258,48 @@ curl -s -u admin:oko-change-me \
 curl -s -u admin:oko-change-me \
   'http://192.168.52.220/api/network?mode=dhcp&ipaddr=192.168.52.220&netmask=255.255.255.0&gateway=192.168.52.254&dns=192.168.52.254'
 ```
+
+### Питание и сон (2026-11-22)
+
+```sh
+# быстрый замер входа 5 В DUT (CH3) с хоста
+bench/run.sh ina_log.py --duration 30 --label idle
+
+# baseline: off → boot → idle → suspend floor
+bench/run.sh sleep_power.py --scenario levels --hz 5
+
+# один цикл сна (idle 30 с, wake 10 с, probe 5 с)
+bench/run.sh sleep_power.py --scenario cycle --hz 5
+
+# сон с включённой IVS: 3 цикла, зум-инъекция, IVS-события
+bench/run.sh sleep_power.py --scenario motion
+
+# парный baseline без IVS при том же wake_check
+bench/run.sh sleep_power.py --scenario cycle --wake-check 30
+
+# 60-мин soak с heartbeat: приёмник обязателен
+docker compose -f services/events/docker-compose.yml up -d
+bench/run.sh sleep_power.py --scenario soak --soak-minutes 60
+
+# окна deep suspend на DUT (после прогона)
+dmesg | grep 'PM: suspend' | tail
+```
+
+Артефакты: `output/bench/power/<stamp>-<scenario>/` (`raw.csv`,
+`events.log`, `summary.json`, `report.md`); подробности — `TESTBENCH.md` §8.
+
+**2026-11-23, STM8/I2C без suspend (проверено):**
+
+```sh
+bench/run.sh sleep_power.py --scenario i2c --i2c-cycles 300 --expect-present
+```
+
+300 циклов `oko-motor sleep show` + `move zoom ±5`: 0 ошибок команд,
+`0x60` отвечает, `motor.present=true`, артефакт
+`output/bench/power/20261123-101015-i2c/`. Это чистый контроль для KI-080:
+вне suspend шина и привод не деградируют. Прогоны `aov` с `aov_mcu=1`
+наоборот дают отказ I2C3/AP (KI-080), поэтому в реестр как «работает» не
+вносятся.
 
 ### Запись и защита от NAND
 

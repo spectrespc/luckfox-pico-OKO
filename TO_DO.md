@@ -370,7 +370,24 @@ i2ctransfer -y 3 w1@0x60 0x0A r8              # сон: режим/состоя�
 # T8 (сон привода): на DUT, divinus остановлен (killall divinus)
 #   cd /userdata/stm8 && BUS=3 ADDR=0x60 FW_VERSION=2.3.2 \
 #       SLEEP_SOAK_S=1800 ./tests/hardware_test.sh
+# 2026-11-22: повтор с SLEEP_SOAK_S=300 — 41 PASS / 0 FAIL при одновременном
+#   замере ESP32 INA3221 (CH3, вход 5 В DUT); сверка −6.7 %:
+#   bench/run.sh sleep_power.py --scenario stm8 --stm8-soak 300
 ```
+
+### 8.1. AOV: отложенная задача (gate KI-072/KI-080)
+
+- [ ] Порт MCU `battery-ipc` с самостоятельным захватом ISP (вендорский
+      thunder-boot/AOV). Условие входа: живая консоль стенда (KI-078) и
+      вендорский ISP-handover. До этого AOV не используется; quiet-тесты
+      `[sleep]` — только с `aov_mcu=0`.
+- [ ] После порта: матрица `aov_keep_isp` × ≥10 циклов, sweep
+      `wake_interval_s`, диагностический `pm_wake_diag` (T3.2 плана
+      2026-11-23) и повторная проверка кадентности.
+- [ ] STM8: после отказа шины I2C3 (`aov_mcu=1`) добавить в прошивку
+      счётчик залипаний/восстановление PE-toggle для состояния «адрес принят,
+      данных нет» (ветка H1, KI-080) — только после подтверждения на
+      тестовой плате со ST-Link.
 
 ## 9. Риски и ограничения
 
@@ -546,6 +563,25 @@ NPU 28%, `librkpostisp.so` загружен, пропусков в `/live/0` н�
       `/api/sleep`, приёмник `PUT /ingest/heartbeat` +
       `GET /api/heartbeats`, `bench/heartbeat_check.py`. Сбой отправки не
       мешает сну (`fail_streak`). Проверка и soak — на стенде.
+- [x] **Энергопрофиль `[sleep]` (2026-11-22).** Внешний INA3221 ESP32-моста
+      (CH3 = вход 5 В DUT) + `bench/ina_log.py`/`bench/sleep_power.py`:
+      `off` 0.8 мА, `idle` 364 мА / 1.72 Вт, полка deep suspend 86 мА
+      (min 47, p05 124), окно 2.4 с за цикл ≈13 с, 4.9 мВт·ч/цикл (медиана);
+      60-мин soak — 279 циклов, ≥200 heartbeat, `fail_streak=0`, `api_check` и
+      `ui_check` 0; во время restore `/userdata` ушёл в `ro` (KI-071,
+      power cycle вернул `rw`). Сверка с бортовым INA3221: −6.7 % тока.
+      Артефакты — `output/bench/power/20261122-*`; методика — `TESTBENCH.md` §8.
+- [ ] **AOV MCU + интервал пробуждения 1 мин (2026-11-22).**
+      `wake_interval_s=60` даёт PMU-счётчик 1920, но deep suspend 2.4 с и цикл
+      12–18 с; `aov_state=off`, `mcu_run_count=0`, meta `ae_mode=1` не меняет
+      поведение. MCU-детекция и интервал 1 мин не подтверждены (KI-072);
+      нужен живой UART/MCU-лог или исправление AOV на стороне MCU/ISP.
+- [x] **Сон с детекцией движения (IVS), 2026-11-22.** `motion`-сценарий:
+      3 цикла, IVS `area=1000‰` на каждом wake → `awake`, бодрствование
+      24–26 с, 15.25–17.94 мВт·ч/цикл (среднее 16.85) против 4.9 мВт·ч при
+      `wake_check=5`; парный цикл без IVS при `wake_check=30` — ~17–20 мВт·ч,
+      т.е. основной вклад даёт длинное окно проверки (KI-079). Артефакты —
+      `output/bench/power/20261122-motion14/`, `...-cycle-wc30/`.
 - [ ] **MCU-frame heartbeat (v2, следующий шаг).** MCU пишет low-res
       JPEG/raw + статистику (площадь, счётчик кадров) в shared DDR (адрес
       meta/ISP-окна, протокол shared-буфера), AP на timer-wake читает

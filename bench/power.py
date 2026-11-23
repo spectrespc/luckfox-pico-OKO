@@ -54,6 +54,10 @@ def open_session(base, cookie_file):
             raise RuntimeError(f"bridge login failed: {answer}")
         if cookie_file:
             jar.save(ignore_discard=True, ignore_expires=True)
+            try:
+                os.chmod(cookie_file, 0o600)
+            except OSError as exc:
+                print(f"cookie chmod failed: {exc}", file=sys.stderr)
     return opener, jar
 
 

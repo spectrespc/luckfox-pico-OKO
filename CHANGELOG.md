@@ -26,6 +26,50 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Добавлено
 
+- **`bench/ina_log.py` + `bench/sleep_power.py`: замер DUT через INA3221
+  ESP32-моста.** Второй INA3221 на мосту измеряет вход 5 В всего DUT (CH3;
+  прошивка 1.11.1, `GET /sensor`, LSB 0.4 мА). `ina_log.py` пишет CSV с
+  метками фаз и импортируемым API, `sleep_power.py` прогоняет сценарии
+  `levels`/`cycle`/`soak`/`peaks`/`stm8`, берёт окна deep suspend из `dmesg`,
+  считает энергию цикла и сверяется с бортовым INA3221; мост держит одну
+  cookie-сессию и логинится/выходит сам. Базовая линия: `off` 0.8 мА, `idle`
+  364 мА / 1.72 Вт, полка deep suspend 86 мА, 4.9 мВт·ч/цикл (медиана),
+  60-мин soak 279 циклов / ≥200 heartbeat; во время restore `/userdata`
+  ушёл в `ro` (KI-071), power cycle вернул `rw`.
+- **`bench/ina_log.py` + `bench/sleep_power.py`: DUT power via the bridge
+  INA3221.** The second INA3221 on the bridge measures the whole DUT 5 V input
+  (CH3; firmware 1.11.1, `GET /sensor`, 0.4 mA LSB). `ina_log.py` writes a
+  phase-labelled CSV with an importable API; `sleep_power.py` runs
+  `levels`/`cycle`/`soak`/`peaks`/`stm8`, reads deep-suspend windows from
+  `dmesg`, integrates cycle energy and cross-checks the onboard INA3221; the
+  bridge keeps one cookie session and logs in/out itself. Baseline: `off`
+  0.8 mA, `idle` 364 mA / 1.72 W, deep-suspend floor 86 mA, 4.9 mWh/cycle
+  (median), 60-min soak 279 cycles / ≥200 heartbeats; `/userdata` went
+  `ro` during restore (KI-071), a power cycle restored `rw`.
+- **`bench/sleep_power.py`: сценарий `motion` — сон с детекцией движения.**
+  Включает IVS (`min_area`, `sensitivity`), `[sleep]` с `wake_check_s`, снимает
+  N циклов «сон/бодрствование», инъецирует движение зум-мотором и пишет
+  IVS-событие; на стенде 2026-11-22 IVS даёт полнокадровое `area=1000‰` при
+  каждом wake, камера бодрствует 24–26 с, 15.25–17.94 мВт·ч/цикл (среднее
+  16.85) против 4.9 мВт·ч при `wake_check=5` (KI-079).
+- **`bench/sleep_power.py`: `motion` scenario — sleep with motion detection.**
+  Enables IVS (`min_area`, `sensitivity`), `[sleep]` with `wake_check_s`,
+  records N sleep/awake cycles, injects motion with the zoom motor and logs the
+  IVS event; on the 2026-11-22 bench IVS reports a full-frame `area=1000‰` on
+  every wake, the camera stays awake for 24–26 s and a cycle costs
+  15.25–17.94 mWh (mean 16.85) versus 4.9 mWh at `wake_check=5` (KI-079).
+- **`bench/sleep_power.py`: сценарий `aov` — PMU/AOV-MCU и интервал
+  пробуждения.** Задаёт `wake_interval_s` (по умолчанию 60 для `aov`),
+  `aov_mcu`/`aov_keep_isp`, пишет переходы состояния, интервалы wake,
+  `aov_state` и энергию. На стенде 2026-11-22 интервал 60 с не выдержан
+  (фактически 12–18 с при deep suspend 2.4 с), MCU-детекция не подтверждена
+  (`aov_state=off`, `mcu_run_count=0`, meta `ae_mode=1` не помог) — KI-072.
+- **`bench/sleep_power.py`: `aov` scenario — PMU/AOV-MCU and wake interval.**
+  Sets `wake_interval_s` (60 by default for `aov`), `aov_mcu`/`aov_keep_isp`,
+  logs state transitions, wake intervals, `aov_state` and energy. On the
+  2026-11-22 bench the 60 s interval was not honoured (actual 12–18 s with a
+  2.4 s deep suspend), and MCU detection was not confirmed (`aov_state=off`,
+  `mcu_run_count=0`, meta `ae_mode=1` did not help) — KI-072.
 - **`research/stm8-iap-an2659/`: IAP на STM8 по AN2659/AN2737/PM0051.**
   Тема фиксирует, что именно требуют документы ST к стиранию блока
   (`PM0051` §4.2: `CR2.ERASE` + `NCR2.NERASE`, триггер записью слова в блок,
@@ -70,8 +114,57 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   locally and on `origin` to keep a reference point taken before the branch
   cleanup. No code, build or configuration changes.
 
+- **`bench/sleep_power.py`: сценарий `i2c` и лестница STM8/AOV (2026-11-23).**
+  `--scenario i2c` — N циклов `oko-motor sleep show` + `move` без suspend;
+  `aov` снимает `i2cdetect`/`GET /api/focus`/`oko-ec battery`/`aov_*`/
+  `devmem 0x01001C0C/0x01001C10` на старте и пробуждениях, при пропаже
+  `0x60` выполняет лестницу (dmesg/скан, безопасный unbind/rebind,
+  GPIO1_D2/D3, `oko-motor reset`, `oko-ec reset`) и пишет
+  `stm8-recovery.md`; `--expect-present` возвращает код 3, `--motor-sleep`,
+  `--ladder-rebind`, SSH с баннер-ретраями. Стенд: 300 циклов I2C — 0
+  ошибок и `present=true`; `aov_mcu=1` даёт отказ I2C3/AP (KI-080).
+- **`bench/sleep_power.py`: `i2c` scenario and the STM8/AOV ladder
+  (2026-11-23).** `--scenario i2c` runs N `oko-motor sleep show` + `move`
+  cycles without suspend; `aov` captures `i2cdetect`, `GET /api/focus`,
+  `oko-ec battery`, `aov_*` and `devmem 0x01001C0C/0x01001C10` at start and
+  on every wake, and on a missing `0x60` runs the ladder (dmesg/scan, safe
+  unbind/rebind, GPIO1_D2/D3, `oko-motor reset`, `oko-ec reset`) writing
+  `stm8-recovery.md`; `--expect-present` exits 3, plus `--motor-sleep`,
+  `--ladder-rebind` and SSH banner retries. Bench: 300 I2C cycles — 0 errors
+  and `present=true`; `aov_mcu=1` fails I2C3/AP (KI-080).
+
 ### Изменено
 
+- **Документация: AOV-MCU и интервал 60 с (2026-11-22).**
+  `TESTBENCH.md` §7-AOV, `bench/README.md`, `FEATURES_UNVERIFIED.md`,
+  `KNOWN_ISSUES.md` KI-072: интервал 1 минута не выдержан (12–18 с),
+  MCU-детекция не подтверждена.
+- **Docs: AOV MCU and the 60 s interval (2026-11-22).**
+  `TESTBENCH.md` §7-AOV, `bench/README.md`, `FEATURES_UNVERIFIED.md`,
+  `KNOWN_ISSUES.md` KI-072: the 1-minute interval is not honoured (12–18 s)
+  and MCU detection is not confirmed.
+- **Документация: сон с детекцией движения (IVS, 2026-11-22).**
+  `TESTBENCH.md` §8 (motion-сценарий, 3 цикла, IVS `area=1000‰`, 16.85 мВт·ч),
+  `bench/README.md`, `FEATURES_VERIFIED.md`/`FEATURES_UNVERIFIED.md`,
+  `VERIFIED_FUNCTIONS.md`, `TO_DO.md` §13, `KNOWN_ISSUES.md` KI-079.
+- **Docs: sleep with motion detection (IVS, 2026-11-22).**
+  `TESTBENCH.md` §8 (motion scenario, 3 cycles, IVS `area=1000‰`, 16.85 mWh),
+  `bench/README.md`, `FEATURES_VERIFIED.md`/`FEATURES_UNVERIFIED.md`,
+  `VERIFIED_FUNCTIONS.md`, `TO_DO.md` §13, `KNOWN_ISSUES.md` KI-079.
+- **Документация: питание и сон DUT через INA3221 моста (2026-11-22).**
+  `TESTBENCH.md` §4 (второй INA3221 на ESP32-мосту, CH3 — вход 5 В DUT), §8
+  (поля `GET /sensor`, прошивка 1.11.1, SD-CSV `ina3221_chN.csv`, базовая
+  линия `[sleep]`); `bench/README.md` (скрипты, примеры, артефакты,
+  `OKO_BRIDGE*`); `FEATURES_VERIFIED.md`/`FEATURES_UNVERIFIED.md` (замер
+  выполнен, сверка с эталоном), `VERIFIED_FUNCTIONS.md` (строка и команды),
+  `TO_DO.md` §8/§13, `KNOWN_ISSUES.md` KI-020 (силовые входы подключены).
+- **Docs: DUT power and sleep via the bridge INA3221 (2026-11-22).**
+  `TESTBENCH.md` §4 (second INA3221 on the ESP32 bridge, CH3 is the DUT 5 V
+  input), §8 (`GET /sensor` fields, firmware 1.11.1, `ina3221_chN.csv` SD log,
+  the `[sleep]` baseline); `bench/README.md` (scripts, examples, artifacts,
+  `OKO_BRIDGE*`); `FEATURES_VERIFIED.md`/`FEATURES_UNVERIFIED.md` (measurement
+  done, reference cross-check), `VERIFIED_FUNCTIONS.md` (row and commands),
+  `TO_DO.md` §8/§13, `KNOWN_ISSUES.md` KI-020 (power inputs are connected).
 - **OSD/телеметрия: INA3221 читается с канала 3 (RV1106 + STM8).**
   `S21oko-ec`: `INA_CHANNEL=${OKO_EC_INA_CHANNEL:-3}` вместо канала 1, поэтому
   строка `INA3221` в OSD, `/tmp/oko-ec.json`, `/api/telemetry` и MQTT-телеметрия
@@ -264,6 +357,17 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   the product profile is separated from the experimental ones. The
   `/etc/oko-release` version and the `.okp` build examples (`README_RU.md`,
   `TESTBENCH.md`, the `divinus` package README) moved to 0.4.0.
+
+- **Документация: KI-080 и gate AOV (2026-11-23).**
+  `KNOWN_ISSUES.md` KI-072/078/080, `TESTBENCH.md` §1/§7-AOV/§8,
+  `FEATURES_UNVERIFIED.md` §AOV, `VERIFIED_FUNCTIONS.md` (контроль 300
+  циклов I2C), `TO_DO.md` §8.1, `bench/README.md`; AOV с `aov_mcu=1`
+  признан NO-GO до вендорского ISP-handover.
+- **Docs: KI-080 and the AOV gate (2026-11-23).**
+  `KNOWN_ISSUES.md` KI-072/078/080, `TESTBENCH.md` §1/§7-AOV/§8,
+  `FEATURES_UNVERIFIED.md` §AOV, `VERIFIED_FUNCTIONS.md` (300-cycle I2C
+  control), `TO_DO.md` §8.1, `bench/README.md`; AOV with `aov_mcu=1` is
+  NO-GO until a vendor ISP-handover.
 
 ### Исправлено
 
