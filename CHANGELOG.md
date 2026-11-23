@@ -388,6 +388,29 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   conclusion now states that unbind alone does not rule out H2 (rk3x output
   stage); a full controller reset is required.
 
+- **I2C3: исправлен адрес мастера и подтверждён H2 (2026-11-23).**
+  Лестница `sleep_power.py` разбирала `ff470000.i2c`, но это i2c4/сенсор
+  (`sc230ai`), а STM8/EC/INA/SHT сидят на `ff460000.i2c` (i2c3); ошибочный
+  unbind i2c4 давал Oops `rkcif_set_default_fmt`. После исправления
+  воспроизведён V1 (`aov_mcu=1`, `keep_isp=1`): `SCL=0` удерживает сам
+  контроллер rk3x — unbind i2c3 меняет GPIO `0x06000800 → 0x06000C00`
+  (SCL=1), bind возвращает `0x40/0x41/0x42/0x60` без Oops. H2 подтверждён;
+  unbind/rebind i2c3 теперь шаг лестницы по умолчанию
+  (`--no-ladder-rebind` отключает), power cycle для этого отказа не нужен.
+  Затронуты `bench/sleep_power.py`, `TESTBENCH.md`, `KNOWN_ISSUES.md`
+  KI-073/KI-080, `bench/README.md`.
+- **I2C3: corrected the master address and confirmed H2 (2026-11-23).**
+  The `sleep_power.py` ladder used `ff470000.i2c`, which is i2c4/the sensor
+  (`sc230ai`), while the STM8/EC/INA/SHT sit on `ff460000.i2c` (i2c3); the
+  wrong i2c4 unbind produced an `rkcif_set_default_fmt` Oops. After the fix
+  V1 (`aov_mcu=1`, `keep_isp=1`) was reproduced: the rk3x controller holds
+  `SCL=0` — unbinding i2c3 changes GPIO `0x06000800 → 0x06000C00` (SCL=1)
+  and binding restores `0x40/0x41/0x42/0x60` without an Oops. H2 is
+  confirmed; the i2c3 unbind/rebind is now a default ladder step
+  (`--no-ladder-rebind` disables it) and no power cycle is needed for this
+  failure. Touches `bench/sleep_power.py`, `TESTBENCH.md`,
+  `KNOWN_ISSUES.md` KI-073/KI-080, `bench/README.md`.
+
 ### Исправлено
 
 - **HOME FOCUS/ZOOM: полный ход до упора вместо коррекции счётчика.**

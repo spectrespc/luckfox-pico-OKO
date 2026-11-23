@@ -460,7 +460,8 @@
 
 - **KI-073. в `rk3x_i2c_irq` на I2C3 при циклах `[sleep]`.**
   2026-11-17 в AOV-прогоне (idle 30 s, `aov_mcu=1`) шина I2C3
-  (`ff470000.i2c`, STM32 EC) выдала серию `rk3x-i2c ... irq in STATE_IDLE,
+  (`ff460000.i2c`, STM32 EC; в исходной записи было ошибочно указано
+  `ff470000`, это i2c4) выдала серию `rk3x-i2c ... irq in STATE_IDLE,
   ipd = 0x10` и `unexpected irq in STOP: 0x10`, затем
   `Unable to handle kernel NULL pointer dereference at virtual address
   00000002`, `PC is at rk3x_i2c_irq+0x4a/0x1be`, `Internal error: Oops - BUG:
@@ -834,6 +835,13 @@
   `/ext/reset` тоже недоступны. Правило: один `--cookie-file` на прогон,
   logout в `finally`, не логиниться заново на каждый power cycle; при `429`
   — ребут моста вручную.
+  **2026-11-23 16:00, RX снова работает:** telnet `:23` отдаёт kernel log и
+  приглашение `luckfox login:`, read-only монитор `:2324` — поток RX/TX;
+  консолью восстановлен DUT (правка `divinus.yaml`, перезапуск divinus) и
+  подтверждён H2 (KI-080). Причина прежнего отказа RX не установлена
+  (возможно, жгут/перезагрузка моста); до полного цикла netboot/flash
+  запись остаётся открытой. Пул HTTP-сессий моста по-прежнему 3/3 (`429`),
+  это отдельная проблема, на telnet не влияет.
 
 - **KI-079. IVS при пробуждении из `[sleep]` даёт полнокадровое движение и
   не даёт короткому probe завершиться.**
@@ -860,14 +868,16 @@
   артефакт `output/bench/power/20261123-101015-i2c/`.
   V1 (`aov_mcu=1`, `aov_keep_isp=1`, `wake_interval_s=60`, 60 с): после
   чистого старта `i2cdetect -r -y 3` пуст — нет `0x40/0x41/0x42/0x60`;
-  GPIO1_D2/SDA=1, GPIO1_D3/SCL=0. Unbind мастера `ff470000.i2c`
-  (`rk3x-i2c`) SCL не отпускает, но это лишь отвергает «сброс одним
-  unbind»: линию может держать внешний slave (H1/H3) либо не сброшенный
-  выходной каскад rk3x (H2); для разделения нужен полный reset
-  контроллера/питания. Повторный bind перепробегает `sc230ai` и роняет
-  `rkcif_set_default_fmt` (Oops), поэтому шаг unbind/rebind в лестнице
-  теперь только по `--ladder-rebind`. `oko-motor reset` и `oko-ec reset`
-  не проходят (шина мертва), power cycle восстанавливает STM8 `2.3.2`.
+  GPIO1_D2/SDA=1, GPIO1_D3/SCL=0. Unbind мастера `ff460000.i2c` (i2c3)
+  отпускает SCL: `devmem 0xff530070` меняется с `0x06000800` (SCL=0) на
+  `0x06000C00` (SCL=1), а повторный bind возвращает `0x40/0x41/0x42/0x60`
+  без Oops и ошибок в dmesg — **H2 подтверждён**: линию удерживает сам
+  контроллер rk3x, а не внешний slave. Ошибочный unbind `ff470000.i2c`
+  (i2c4/сенсор) 2026-11-23 дал Oops `rkcif_set_default_fmt`; его трогать
+  нельзя. Шаг unbind/rebind i2c3 теперь в лестнице по умолчанию
+  (`--no-ladder-rebind` отключает); `oko-motor reset` и `oko-ec reset` на
+  мёртвой шине не проходят. Артефакт:
+  `output/bench/stm8/20261123-160739-v1-correct-unbind/result.json`.
   V2 (`aov_mcu=1`, `aov_keep_isp=0`, 60 с): AP после suspend не отвечает
   более 8 мин (логгер отработал 476 с, `/api/status` = `000`), нужен power
   cycle. V3 (`aov_mcu=0`) на исправной ФС даёт тихий цикл: deep suspend
@@ -1358,7 +1368,8 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
 - **KI-073. in `rk3x_i2c_irq` on I2C3 during `[sleep]` cycles.**
   On 2026-11-17 an AOV run (idle 30 s, `aov_mcu=1`) got a burst of
   `rk3x-i2c ... irq in STATE_IDLE, ipd = 0x10` and
-  `unexpected irq in STOP: 0x10` on I2C3 (`ff470000.i2c`, STM32 EC),
+  `unexpected irq in STOP: 0x10` on I2C3 (`ff460000.i2c`, STM32 EC; the
+  original entry said `ff470000`, which is i2c4),
   followed by `Unable to handle kernel NULL pointer dereference at virtual
   address 00000002`, `PC is at rk3x_i2c_irq+0x4a/0x1be`,
   `Internal error: Oops - BUG: 17 [#1] THUMB2` and
@@ -1733,6 +1744,13 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   and `/ext/reset` are unavailable too. Rule: one `--cookie-file` per run,
   logout in `finally`, do not log in again on every power cycle; on `429`
   reboot the bridge manually.
+  **2026-11-23 16:00, RX works again:** telnet `:23` returns the kernel log
+  and the `luckfox login:` prompt, the `:2324` read-only monitor carries
+  RX/TX, and the console was used to restore the DUT (edit `divinus.yaml`,
+  restart divinus) and to confirm H2 (KI-080). The original RX failure cause
+  is unknown (wiring or a bridge reboot); the entry stays open until a full
+  netboot/flash cycle. The bridge HTTP session pool is still 3/3 (`429`);
+  that is a separate problem and does not affect telnet.
 
 - **KI-079. IVS reports full-frame motion on every `[sleep]` wake, so the
   short probe never completes.**
@@ -1758,14 +1776,17 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   (`output/bench/power/20261123-101015-i2c/`).
   V1 (`aov_mcu=1`, `aov_keep_isp=1`, `wake_interval_s=60`, 60 s): after one
   clean run `i2cdetect -r -y 3` is empty — no `0x40/0x41/0x42/0x60`;
-  GPIO1_D2/SDA=1, GPIO1_D3/SCL=0. Unbinding the `ff470000.i2c` master
-  (`rk3x-i2c`) does not release SCL, but this only rules out "unbind as
-  a reset": an external slave (H1/H3) or an unreset rk3x output stage
-  (H2) can hold the line; a full controller/power reset is needed to
-  separate them. Binding the master again re-probes `sc230ai`
-  and crashes `rkcif_set_default_fmt` (Oops), so the ladder skips
-  unbind/rebind unless `--ladder-rebind` is passed. `oko-motor reset` and
-  `oko-ec reset` cannot run (bus dead); a power cycle restores STM8 `2.3.2`.
+  GPIO1_D2/SDA=1, GPIO1_D3/SCL=0. Unbinding the `ff460000.i2c` master
+  (i2c3) releases SCL: `devmem 0xff530070` changes from `0x06000800`
+  (SCL=0) to `0x06000C00` (SCL=1), and binding it again restores
+  `0x40/0x41/0x42/0x60` without an Oops or dmesg errors — **H2 is
+  confirmed**: the rk3x controller itself holds the line, not an external
+  slave. The mistaken unbind of `ff470000.i2c` (i2c4/the sensor) on
+  2026-11-23 produced an `rkcif_set_default_fmt` Oops; do not touch it. The
+  i2c3 unbind/rebind is now a default ladder step (`--no-ladder-rebind`
+  disables it); `oko-motor reset` and `oko-ec reset` cannot run on a dead
+  bus. Artifact:
+  `output/bench/stm8/20261123-160739-v1-correct-unbind/result.json`.
   V2 (`aov_mcu=1`, `aov_keep_isp=0`, 60 s): the AP does not answer for more
   than 8 minutes after suspend (logger ran 476 s, `/api/status` = `000`);
   a power cycle is required. V3 (`aov_mcu=0`) on a healthy filesystem gives

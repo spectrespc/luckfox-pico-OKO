@@ -254,9 +254,10 @@ AOV-прогона STM8 (focus/zoom) не отвечает на I2C (`present=fa
 `oko-motor sleep show` + `move zoom ±5` — 0 ошибок, `0x60` отвечает
 (`output/bench/power/20261123-101015-i2c/`). В матрице 60-с прогонов:
 `aov_mcu=1` + `aov_keep_isp=1` (V1) после чистого старта оставляет I2C3
-мёртвой — `i2cdetect` пуст, SCL=0, unbind мастера линию не отпускает
-(H2 не исключён: нужен полный reset контроллера, а не только unbind);
-`aov_mcu=1` + `keep_isp=0` (V2) — AP не выходит из suspend >8 мин;
+мёртвой — `i2cdetect` пуст, SCL=0. Unbind `ff460000.i2c` (i2c3) отпускает
+SCL (`0x06000800` → `0x06000C00`), bind возвращает `0x40/0x41/0x42/0x60`
+без Oops → **H2 подтверждён** (линию держит rk3x); `aov_mcu=1` +
+`keep_isp=0` (V2) — AP не выходит из suspend >8 мин;
 `aov_mcu=0` (V3) на исправной ФС даёт тихий цикл 2.26–2.40 с, STM8 на
 месте. Unbind/rebind `rk3x-i2c` перепробегает `sc230ai` и роняет
 `rkcif_set_default_fmt` (Oops) — в лестнице `bench/sleep_power.py` шаг
@@ -654,11 +655,12 @@ bench/run.sh recover_dut.py --ssh --restart
 # Слой отказа I2C3 (KI-080):
 i2cdetect -r -y 3                      # 40/41/42/60 должны отвечать
 devmem 0xff530070 32                   # бит26 = SDA, бит27 = SCL (GPIO1_D2/D3)
-# unbind/rebind мастера ОПАСЕН: повторный probe sc230ai роняет
-# rkcif_set_default_fmt (Oops). Только вручную и с пониманием:
-#   echo ff470000.i2c > /sys/bus/platform/drivers/rk3x-i2c/unbind
-#   echo ff470000.i2c > /sys/bus/platform/drivers/rk3x-i2c/bind
-# сырая лестница с записью шагов: bench/run.sh sleep_power.py --scenario aov \
+# i2c3 = ff460000.i2c; unbind/rebind его безопасен и снимает H2.
+#   echo ff460000.i2c > /sys/bus/platform/drivers/rk3x-i2c/unbind
+#   echo ff460000.i2c > /sys/bus/platform/drivers/rk3x-i2c/bind
+# НЕ ПУТАТЬ с ff470000.i2c (i2c4/сенсор): его unbind перепробегает
+# sc230ai и роняет rkcif_set_default_fmt (Oops, 2026-11-23).
+# Лестница с записью шагов: bench/run.sh sleep_power.py --scenario aov \
 #   --aov-seconds 60 --expect-present   (при пропаже создаёт stm8-recovery.md)
 
 # Счётчики DEBUG_BUILD (-DEC_DEBUG_BUILD=ON): 60 байт ответа 0x28

@@ -297,7 +297,7 @@ def ssh_run(client, command, timeout=120):
 
 AOV_SYSFS = "/sys/devices/platform/rockchip-suspend"
 I2C_BUS = 3
-I2C_MASTER = "ff470000.i2c"
+I2C_MASTER = "ff460000.i2c"
 GPIO1_EXT_PORT = 0xff530070
 I2C_DEVICES = {0x40: "sht21", 0x41: "ina", 0x42: "ec", 0x60: "stm8"}
 
@@ -338,31 +338,11 @@ def focus_probe(timeout=4):
             "bootloader": motor.get("bootloader")}
 
 
-def stm8_probe(client=None):
-    """I2C scan, AOV mailbox state and EC battery in one SSH round trip."""
-    own = client is None
-    if own:
-        client = ssh_client()
-    try:
-        code, out, err = ssh_run(client, PROBE_CMD, timeout=30)
-    except Exception as exc:                                # noqa: BLE001
-        if own:
-            try:
-                client.close()
-            except Exception:                               # noqa: BLE001
-                pass
-        return {"ssh": None, "error": str(exc), "present": None,
-                "i2c": [], "ec": None, "ina": None, "sht": None}
-    finally:
-        if own:
-            try:
-                client.close()
-            except Exception:                               # noqa: BLE001
-                pass
+def _parse_probe(out, code, err=""):
     result = {"ssh": code, "present": None, "i2c": [], "aov_state": None,
               "aov_wakeproxy": None, "mcu_run_count": None,
               "mcu_counter": None, "gpio": None, "ec": None,
-              "ec_error": err.strip() or None}
+              "ec_error": (err or "").strip() or None}
     scan_text = ""
     for line in out.splitlines():
         if line.startswith("SCAN:"):
@@ -396,7 +376,46 @@ def stm8_probe(client=None):
     return result
 
 
-def stm8_recovery(outdir, events, notes, reason="", allow_rebind=False,
+def stm8_probe(client=None, attempts=4):
+    """I2C/AOV/EC probe with retries: a busy bus can fail one scan."""
+    own = client is None
+    last = {"ssh": None, "present": None, "i2c": [], "error": "no attempt"}
+    try:
+        for attempt in range(attempts):
+            if own:
+                try:
+                    client = ssh_client()
+                except Exception as exc:                    # noqa: BLE001
+                    last = _parse_probe("", None, str(exc))
+                    last["error"] = str(exc)
+                    time.sleep(0.5)
+                    continue
+            try:
+                code, out, err = ssh_run(client, PROBE_CMD, timeout=30)
+                last = _parse_probe(out, code, err)
+            except Exception as exc:                        # noqa: BLE001
+                last = _parse_probe("", None, str(exc))
+                last["error"] = str(exc)
+            if own:
+                try:
+                    client.close()
+                except Exception:                           # noqa: BLE001
+                    pass
+                client = None
+            if last.get("present"):
+                break
+            if attempt + 1 < attempts:
+                time.sleep(1.0)
+        return last
+    finally:
+        if own and client is not None:
+            try:
+                client.close()
+            except Exception:                               # noqa: BLE001
+                pass
+
+
+def stm8_recovery(outdir, events, notes, reason="", allow_rebind=True,
                   allow_ec_reset=False):
     """Recovery ladder from T1.3; returns the first step that revived the bus."""
     lines = ["# Лестница восстановления STM8", "", "Причина: %s" % reason, ""]
@@ -447,9 +466,8 @@ def stm8_recovery(outdir, events, notes, reason="", allow_rebind=False,
                 return verdict
         else:
             record("Шаг 2. unbind/rebind rk3x-i2c",
-                   "пропущен: повторный bind перепробегает sc230ai и "
-                   "роняет rkcif_set_default_fmt (Oops 2026-11-23); "
-                   "включать только с --ladder-rebind", base)
+                   "пропущен по --no-ladder-rebind; на i2c3 "
+                   "(ff460000.i2c) шаг безопасен и восстанавливает шину", base)
         sda, scl = base.get("sda_level"), base.get("scl_level")
         detail = "GPIO1_D2/SDA=%s, GPIO1_D3/SCL=%s (devmem 0x%08x)" % (
             sda, scl, GPIO1_EXT_PORT)
@@ -762,7 +780,25 @@ def write_report(path, scenario, args, summary, extras):
 # Scenarios
 
 
+class NullLogger:
+    """No bridge INA session: scenarios still run over DUT API/SSH only."""
+
+    def __init__(self):
+        self.phase = None
+        self.started = time.time()
+
+    def set_phase(self, phase):
+        self.phase = phase
+
+    def stop(self):
+        return {"duration_s": round(time.time() - self.started, 1),
+                "rows": 0, "samples": 0, "errors": 0, "missed_polls": 0,
+                "csv": None, "stats": {}, "phases_s": {}}
+
+
 def start_logger(args, outdir, label):
+    if getattr(args, "no_power_logger", False):
+        return NullLogger()
     csv_path = outdir / "raw.csv"
     summary_path = outdir / "logger.json"
     return ina_log.start_logging(
@@ -2078,6 +2114,8 @@ def main():
                         help="INA3221 channel of the DUT input (default 3)")
     parser.add_argument("--hz", type=float, default=None,
                         help="poll rate (default 2, peaks 8)")
+    parser.add_argument("--no-power-logger", action="store_true",
+                        help="do not open a bridge INA session (DUT-only run)")
     parser.add_argument("--bridge", default=BRIDGE)
     parser.add_argument("--cookie-file", default=None,
                         help="reuse this bridge session for the logger")
@@ -2125,9 +2163,12 @@ def main():
     parser.add_argument("--motor-sleep", default="keep",
                         choices=["keep", "on", "off"],
                         help="set [motor] sleep_enable and restart divinus")
-    parser.add_argument("--ladder-rebind", action="store_true",
-                        help="allow i2c master unbind/rebind in the ladder "
-                             "(unsafe: re-probes sc230ai)")
+    parser.add_argument("--ladder-rebind", action="store_true", default=True,
+                        help="unbind/rebind i2c3 in the ladder (default; "
+                             "safe on ff460000.i2c)")
+    parser.add_argument("--no-ladder-rebind", dest="ladder_rebind",
+                        action="store_false",
+                        help="skip the i2c3 unbind/rebind ladder step")
     parser.add_argument("--ladder-ec-reset", action="store_true",
                         help="allow EC reboot as the last ladder step")
     parser.add_argument("--i2c-cycles", type=int, default=300)
@@ -2202,6 +2243,13 @@ def main():
                 reason="после завершения сценария %s" % args.scenario,
                 allow_rebind=args.ladder_rebind,
                 allow_ec_reset=args.ladder_ec_reset)
+            time.sleep(2)
+            final = stm8_probe(attempts=5)
+            result["stm8_final"] = final
+            if final.get("present"):
+                log("recovery ladder restored the STM8 bus")
+            else:
+                log("recovery ladder did not restore the bus")
         if gate_notes:
             result["gate_notes"] = gate_notes
         result["stm8_lost"] = lost
