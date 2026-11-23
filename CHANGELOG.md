@@ -369,6 +369,25 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   control), `TO_DO.md` §8.1, `bench/README.md`; AOV with `aov_mcu=1` is
   NO-GO until a vendor ISP-handover.
 
+- **Стенд: безопасное восстановление после зависшего `[sleep]` (2026-11-23).**
+  Новый `bench/recover_dut.py`: один power cycle через мост (одна
+  cookie-сессия, logout), немедленное выключение сна с
+  `idle_timeout_s=3600`, `--ssh` правит YAML, `--restart` перезапускает
+  divinus; при `429` не пытается логиниться снова. В `sleep_power.py`
+  стартовая проба AOV больше не валит прогон при сбое SSH, а `oko-ec reset`
+  в лестнице только по `--ladder-ec-reset`; `power.py` принимает `logout`
+  явно. Вывод KI-080 уточнён: отказ после unbind не исключает H2 (выходной
+  каскад rk3x), нужен полный reset контроллера.
+- **Bench: safe recovery after a hung `[sleep]` (2026-11-23).**
+  New `bench/recover_dut.py`: one bridge power cycle (one cookie session,
+  logout), immediate sleep disable with `idle_timeout_s=3600`, `--ssh`
+  normalises the YAML and `--restart` restarts divinus; on `429` it does not
+  retry the login. In `sleep_power.py` the AOV start probe no longer aborts a
+  run on an SSH failure, and `oko-ec reset` is opt-in via
+  `--ladder-ec-reset`; `power.py` accepts `logout` explicitly. The KI-080
+  conclusion now states that unbind alone does not rule out H2 (rk3x output
+  stage); a full controller reset is required.
+
 ### Исправлено
 
 - **HOME FOCUS/ZOOM: полный ход до упора вместо коррекции счётчика.**

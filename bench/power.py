@@ -85,6 +85,8 @@ def run(action, bridge=BRIDGE, off_seconds=5.0, cookie_file=None,
             post(opener, base, "/ext/power", {"on": True})
         if action == "reset":
             post(opener, base, "/ext/reset")
+        if action not in ("off", "cycle", "on", "reset", "logout"):
+            raise ValueError("unknown action: %s" % action)
     finally:
         if not keep_session:
             try:
@@ -108,7 +110,6 @@ def main():
 
     run(args.action, args.bridge, args.off_seconds, args.cookie_file,
         args.keep_session)
-    return 0
     return 0
 
 

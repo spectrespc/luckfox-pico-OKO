@@ -39,6 +39,7 @@ U-Boot — Maskrom, USB-порт занят хабом (TESTBENCH §7).
 |---|---|
 | `serial_exec.py` | вход в консоль по UART (telnet-мост `192.168.52.17:23` или `/dev/ttyACM*`, 115200 8N1) и выполнение команд на DUT; `--listen N` — зеркало консоли без логина на N секунд (окно простоя перед suspend/resume, когда вывод после приглашения `login:` уже не пишется в `uar0.log`) |
 | `power.py` | питание DUT через ESP32-мост: `off`, `on`, `cycle --off-seconds N`, `reset`; вход `admin`/`admin` (env `OKO_BRIDGE*`) и обязательный logout — мост держит не больше трёх сессий, иначе логин отвечает `429 Too many active sessions`; `--cookie-file` переиспользует готовую сессию |
+| `recover_dut.py` | аварийное восстановление DUT после неудачного `[sleep]`: ровно один power cycle через мост (одна cookie-сессия, logout), затем немедленное `POST /api/sleep?enable=false&idle_timeout_s=3600`, чтобы камера не уснула снова; `--ssh` правит `[sleep] enable:false` и `idle_timeout_s:15` в `/userdata/divinus.yaml`, `--restart` перезапускает divinus; при `429` не логинится повторно, а просит ручной ребут моста |
 | `ina_log.py` | опрос `GET /sensor` ESP32-моста и запись INA3221 CH1..CH3 в CSV: `ts_host_epoch_ms`, `ts_bridge_uptime_ms`, `phase`, `ch`, `bus_mv`, `shunt_uv`, `cur_ma`, `power_mw`, `err`; keep-alive, `--hz` (по умолчанию 2), `--duration`, `--until-marker`, `--channel`, `--summary-json`; импортируемый API `start_logging()`/`set_phase()`/`stop()`, logout по умолчанию; артефакты в `output/bench/power/` |
 | `sleep_power.py` | матрица замеров сна и потребления: `--scenario levels` (off/boot/idle/полка), `cycle` (один цикл), `motion` (сон с включённой IVS), `aov` (PMU/AOV-MCU: интервал пробуждения, `aov_state`, meta, проба STM8/I2C/EC на старте и каждом пробуждении), `i2c` (T1.1: N циклов `oko-motor sleep show` + `move` без suspend), `soak` (heartbeat + энергия на цикл + пост-проверки), `peaks` (YOLO/мотор/поток), `stm8` (T8, сверка с бортовым INA3221); окна deep suspend — из `dmesg`, границы циклов — по провалам тока; поднимает и восстанавливает `[sleep]`/`[http_post]`/аналитику, одна cookie-сессия моста; `--expect-present` — код 3 и запись `stm8-recovery.md` при пропаже `0x60`, `--motor-sleep keep|on|off` — правка `[motor] sleep_enable` с перезапуском divinus, `--ladder-rebind` — разрешить опасный unbind/rebind `rk3x-i2c`; SSH с баннер-ретраями; артефакты — `output/bench/power/<stamp>-<scenario>/` |
 | `dut.py` | выполнение команд по SSH через `paramiko` |
@@ -478,6 +479,7 @@ bench/run.sh sleep_power.py --scenario cycle --hz 5    # один цикл сн�
 bench/run.sh sleep_power.py --scenario motion          # сон с IVS (движение)
 bench/run.sh sleep_power.py --scenario aov --aov-seconds 150  # PMU, интервал 60 с
 bench/run.sh sleep_power.py --scenario aov --aov-mcu --aov-keep-isp  # AOV MCU
+bench/run.sh recover_dut.py --ssh --restart             # после зависшего сна
 bench/run.sh sleep_power.py --scenario i2c --i2c-cycles 300 --expect-present
 bench/run.sh sleep_power.py --scenario aov --aov-seconds 60 --expect-present
 bench/run.sh sleep_power.py --scenario aov --aov-mcu --motor-sleep on

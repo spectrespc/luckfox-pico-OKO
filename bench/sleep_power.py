@@ -396,16 +396,8 @@ def stm8_probe(client=None):
     return result
 
 
-def read_aov_debug(client=None):
-    """AOV state, wake proxy and MCU counters during an awake window."""
-    probe = stm8_probe(client)
-    return {"aov_state": probe.get("aov_state"),
-            "aov_wakeproxy": probe.get("aov_wakeproxy"),
-            "mcu_run_count": probe.get("mcu_run_count"),
-            "mcu_counter": probe.get("mcu_counter")}
-
-
-def stm8_recovery(outdir, events, notes, reason="", allow_rebind=False):
+def stm8_recovery(outdir, events, notes, reason="", allow_rebind=False,
+                  allow_ec_reset=False):
     """Recovery ladder from T1.3; returns the first step that revived the bus."""
     lines = ["# Лестница восстановления STM8", "", "Причина: %s" % reason, ""]
     verdict = {"layer": "unknown", "recovered": False, "step": None,
@@ -476,15 +468,20 @@ def stm8_recovery(outdir, events, notes, reason="", allow_rebind=False):
             verdict.update(layer="stm8-stuck", recovered=True,
                            step="motor-reset")
             return verdict
-        code, out, err = ssh_run(
-            client, "/oem/usr/bin/oko-ec reset; sleep 3; "
-                    "/oem/usr/bin/oko-motor sleep show", timeout=40)
-        after = stm8_probe(client)
-        record("Шаг 5. oko-ec reset (EC reboot)", out + err, after)
-        if after["present"]:
-            verdict.update(layer="stm8-stuck/ec-reset", recovered=True,
-                           step="ec-reset")
-            return verdict
+        if allow_ec_reset:
+            code, out, err = ssh_run(
+                client, "/oem/usr/bin/oko-ec reset; sleep 3; "
+                        "/oem/usr/bin/oko-motor sleep show", timeout=40)
+            after = stm8_probe(client)
+            record("Шаг 5. oko-ec reset (EC reboot)", out + err, after)
+            if after["present"]:
+                verdict.update(layer="stm8-stuck/ec-reset", recovered=True,
+                               step="ec-reset")
+                return verdict
+        else:
+            record("Шаг 5. oko-ec reset (EC reboot)",
+                   "пропущен: перезагрузка EC может нарушить питание/шину; "
+                   "включать только с --ladder-ec-reset", base)
         notes.append("Лестница не восстановила STM8: нужен power cycle и "
                      "SWIM-диагностика на тестовой плате.")
         verdict["layer"] = verdict["layer"] + "/unrecovered"
@@ -1234,22 +1231,6 @@ def scenario_soak(args, outdir, events):
     return result
 
 
-def read_aov_state():
-    try:
-        client = ssh_client()
-        try:
-            code, out, _err = ssh_run(
-                client, "cat /sys/devices/platform/rockchip-suspend/"
-                        "aov_state")
-        finally:
-            client.close()
-        if code == 0 and out.strip():
-            return out.strip()
-    except Exception:                                        # noqa: BLE001
-        pass
-    return "?"
-
-
 def scenario_aov(args, outdir, events):
     """MCU/AOV wake proxy and interval wake cadence."""
     handle = start_logger(args, outdir, "setup")
@@ -1261,11 +1242,15 @@ def scenario_aov(args, outdir, events):
     lost_at = None
     start_probe = {}
     try:
-        client = ssh_client()
         try:
-            start_probe = stm8_probe(client)
-        finally:
-            client.close()
+            client = ssh_client()
+            try:
+                start_probe = stm8_probe(client)
+            finally:
+                client.close()
+        except Exception as exc:                            # noqa: BLE001
+            start_probe = {"present": None, "error": str(exc)}
+            notes.append("Стартовая проба STM8 не выполнена: %s" % exc)
         events.write("stm8-start", **start_probe)
         if start_probe.get("present") is False:
             lost_at = now_ms()
@@ -2143,6 +2128,8 @@ def main():
     parser.add_argument("--ladder-rebind", action="store_true",
                         help="allow i2c master unbind/rebind in the ladder "
                              "(unsafe: re-probes sc230ai)")
+    parser.add_argument("--ladder-ec-reset", action="store_true",
+                        help="allow EC reboot as the last ladder step")
     parser.add_argument("--i2c-cycles", type=int, default=300)
     parser.add_argument("--i2c-step", type=int, default=5)
     parser.add_argument("--motion-sensitivity", type=int, default=3)
@@ -2213,7 +2200,8 @@ def main():
             result["stm8_recovery"] = stm8_recovery(
                 outdir, events, gate_notes,
                 reason="после завершения сценария %s" % args.scenario,
-                allow_rebind=args.ladder_rebind)
+                allow_rebind=args.ladder_rebind,
+                allow_ec_reset=args.ladder_ec_reset)
         if gate_notes:
             result["gate_notes"] = gate_notes
         result["stm8_lost"] = lost

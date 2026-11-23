@@ -254,7 +254,8 @@ AOV-прогона STM8 (focus/zoom) не отвечает на I2C (`present=fa
 `oko-motor sleep show` + `move zoom ±5` — 0 ошибок, `0x60` отвечает
 (`output/bench/power/20261123-101015-i2c/`). В матрице 60-с прогонов:
 `aov_mcu=1` + `aov_keep_isp=1` (V1) после чистого старта оставляет I2C3
-мёртвой — `i2cdetect` пуст, SCL=0, unbind мастера линию не отпускает;
+мёртвой — `i2cdetect` пуст, SCL=0, unbind мастера линию не отпускает
+(H2 не исключён: нужен полный reset контроллера, а не только unbind);
 `aov_mcu=1` + `keep_isp=0` (V2) — AP не выходит из suspend >8 мин;
 `aov_mcu=0` (V3) на исправной ФС даёт тихий цикл 2.26–2.40 с, STM8 на
 месте. Unbind/rebind `rk3x-i2c` перепробегает `sc230ai` и роняет
@@ -641,14 +642,14 @@ curl -s -u admin:oko-change-me http://127.0.0.1/api/sleep
 # освободить чужие cookie нет).
 bench/run.sh power.py cycle --off-seconds 5 --cookie-file output/bench/bridge.cookie
 
-# Зависший [sleep] (AP/API не отвечает, SCL=0): power cycle. Если после
-# загрузки в /userdata/divinus.yaml остался enable:true, камера уснёт через
-# idle_timeout_s и снова не ответит. Успеть в первые ~15 с:
-curl -s -u admin:oko-change-me -X POST \
-  'http://192.168.52.33/api/sleep?enable=false&idle_timeout_s=3600'
-# затем поправить файл и перезапустить приложение:
-#   [sleep] enable:false, idle_timeout_s:15
-/etc/init.d/S21appinit stop; /etc/init.d/S21appinit start
+# Зависший [sleep] (AP/API не отвечает, SCL=0): один power cycle и быстрое
+# выключение сна, пока камера не ушла в suspend по idle_timeout_s:
+bench/run.sh recover_dut.py --ssh --restart
+# вручную то же самое: power cycle, затем в первые ~15 с
+#   curl -s -u admin:oko-change-me -X POST \
+#     'http://192.168.52.33/api/sleep?enable=false&idle_timeout_s=3600'
+#   [sleep] enable:false, idle_timeout_s:15 в /userdata/divinus.yaml
+#   /etc/init.d/S21appinit stop; /etc/init.d/S21appinit start
 
 # Слой отказа I2C3 (KI-080):
 i2cdetect -r -y 3                      # 40/41/42/60 должны отвечать

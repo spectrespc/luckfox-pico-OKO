@@ -861,8 +861,10 @@
   V1 (`aov_mcu=1`, `aov_keep_isp=1`, `wake_interval_s=60`, 60 с): после
   чистого старта `i2cdetect -r -y 3` пуст — нет `0x40/0x41/0x42/0x60`;
   GPIO1_D2/SDA=1, GPIO1_D3/SCL=0. Unbind мастера `ff470000.i2c`
-  (`rk3x-i2c`) SCL не отпускает, то есть линию держит внешний slave
-  (кандидаты H1/H3, не H2). Повторный bind перепробегает `sc230ai` и роняет
+  (`rk3x-i2c`) SCL не отпускает, но это лишь отвергает «сброс одним
+  unbind»: линию может держать внешний slave (H1/H3) либо не сброшенный
+  выходной каскад rk3x (H2); для разделения нужен полный reset
+  контроллера/питания. Повторный bind перепробегает `sc230ai` и роняет
   `rkcif_set_default_fmt` (Oops), поэтому шаг unbind/rebind в лестнице
   теперь только по `--ladder-rebind`. `oko-motor reset` и `oko-ec reset`
   не проходят (шина мертва), power cycle восстанавливает STM8 `2.3.2`.
@@ -1757,8 +1759,10 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   V1 (`aov_mcu=1`, `aov_keep_isp=1`, `wake_interval_s=60`, 60 s): after one
   clean run `i2cdetect -r -y 3` is empty — no `0x40/0x41/0x42/0x60`;
   GPIO1_D2/SDA=1, GPIO1_D3/SCL=0. Unbinding the `ff470000.i2c` master
-  (`rk3x-i2c`) does not release SCL, so an external slave holds the line
-  (candidates H1/H3, not H2). Binding the master again re-probes `sc230ai`
+  (`rk3x-i2c`) does not release SCL, but this only rules out "unbind as
+  a reset": an external slave (H1/H3) or an unreset rk3x output stage
+  (H2) can hold the line; a full controller/power reset is needed to
+  separate them. Binding the master again re-probes `sc230ai`
   and crashes `rkcif_set_default_fmt` (Oops), so the ladder skips
   unbind/rebind unless `--ladder-rebind` is passed. `oko-motor reset` and
   `oko-ec reset` cannot run (bus dead); a power cycle restores STM8 `2.3.2`.
