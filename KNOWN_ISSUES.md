@@ -315,6 +315,14 @@
   через мост вернул `rw` и сохранил настройки; артефакт
   `output/bench/power/20261122-soak3/`. Это тот же сценарий KI-071; защита
   драйвера SFC от 2026-11-21 в стендовое ядро ещё не прошита.
+  **2026-11-23, ядра #28/#29:** во время итераций с kernel-патчем H2
+  `rootfs` и `/userdata` ушли в `ro` (`rockchip-sfc ... DMA wait ...
+  timeout`, `ubi0/ubi5 error -5`); тёплый `reboot` и watchdog-reset `ro`
+  не сняли, нужен холодный power cycle. Пул HTTP-сессий моста 3/3
+  (`429`), поэтому power cycle не выполнен. После ребута моста:
+  `bench/run.sh recover_dut.py --ssh --restart`, затем проверить
+  `mount`/`dmesg`; при повторе — перепрошивка. Ядро #29 уже содержит
+  SFC-фикс от 2026-11-21, то есть одного фикса недостаточно.
 
 - **KI-072. Профиль `-AOV`: 1M-раскладка и окно ядра/MCU исправлены,
   handshake MCU не отвечает.** Hpmcu (117 КБ) + SPL + DDR + usbplug дают
@@ -1224,6 +1232,14 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   `Input/output error`. A power cycle restored `rw` and kept the settings;
   artifact `output/bench/power/20261122-soak3/`. This is the KI-071 scenario;
   the SFC driver fix from 2026-11-21 is not flashed on the bench yet.
+  **2026-11-23, kernels #28/#29:** while iterating on the H2 kernel patch
+  both `rootfs` and `/userdata` became `ro` (`rockchip-sfc ... DMA wait ...
+  timeout`, `ubi0/ubi5 error -5`); a warm `reboot` and a watchdog reset did
+  not clear `ro`, a cold power cycle is required. The bridge HTTP session
+  pool is 3/3 (`429`), so the power cycle was not performed. After the
+  bridge reboot: `bench/run.sh recover_dut.py --ssh --restart`, then check
+  `mount`/`dmesg`; if it repeats, reflash. Kernel #29 already contains the
+  2026-11-21 SFC fix, so the fix alone is not enough.
 
 - **KI-072. `-AOV` profile: 1M layout and the kernel/MCU window are fixed,
   the MCU handshake does not answer.** Hpmcu (117 KB) + SPL + DDR + usbplug
