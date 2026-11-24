@@ -922,6 +922,18 @@
   `api_check` 139/0. V1 (`aov_mcu=1`, `keep_isp=1`) всё ещё теряет I2C3
   за 60 с, лестница восстанавливает. То есть backport снял зависание
   AP/тихого цикла, но H2 не закрыл.
+  **2026-11-24, проверка гипотезы «MCU блокирует I2C3»:** в вендорских
+  примерах MCU работает только с i2c4. Плата
+  `oko-wakeup-sc230ai-ADC` имеет `CONFIG_RT_USING_I2C3` **не установлен**,
+  `CONFIG_RT_USING_I2C4=y`, iomux настраивает только `i2c4_m2`, а приложение
+  `battery-ipc` i2c3 не трогает. Собранный `rtthread.bin` содержит только
+  `i2c4`. Значит, MCU не занимает шину STM8/EC; SC230AI продолжает работать
+  потому, что MCU владеет i2c4/ISP. H2 остаётся на стороне AP: AOV-fast-wake
+  и состояние контроллера i2c3, а не арбитраж с MCU.
+  **2026-11-24, #33:** в `rk3x_i2c_suspend_noirq` добавлен `-EBUSY` при
+  `busy`; V1 по-прежнему теряет I2C3, сообщений об отмене suspend нет
+  (`busy=false` в момент входа), тихий `cycle` работает (2.26–2.27 с).
+  То есть отказ не ловится на границе suspend с активной транзакцией.
   V2 (`aov_mcu=1`, `aov_keep_isp=0`, 60 с): AP после suspend не отвечает
   более 8 мин (логгер отработал 476 с, `/api/status` = `000`), нужен power
   cycle. V3 (`aov_mcu=0`) на исправной ФС даёт тихий цикл: deep suspend
@@ -1876,6 +1888,19 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   139/0. V1 (`aov_mcu=1`, `keep_isp=1`) still loses I2C3 within 60 s and
   the ladder recovers. The backport removed the AP/quiet-cycle hang but did
   not close H2.
+  **2026-11-24, checking the "MCU blocks I2C3" hypothesis:** the vendor MCU
+  examples use i2c4 only. The `oko-wakeup-sc230ai-ADC` board has
+  `CONFIG_RT_USING_I2C3` **not set**, `CONFIG_RT_USING_I2C4=y`, its iomux
+  configures only `i2c4_m2`, and the `battery-ipc` app never touches i2c3.
+  The built `rtthread.bin` contains only `i2c4`. So the MCU does not occupy
+  the STM8/EC bus; SC230AI keeps working because the MCU owns i2c4/ISP.
+  H2 remains on the AP side: AOV fast wake and the i2c3 controller state,
+  not arbitration with the MCU.
+  **2026-11-24, #33:** `rk3x_i2c_suspend_noirq` now returns `-EBUSY` when
+  `busy`; V1 still loses I2C3 and there are no suspend-abort messages
+  (`busy=false` on entry), while the quiet `cycle` still works
+  (2.26–2.27 s). The failure is not caught at the suspend boundary with an
+  active transfer.
   V2 (`aov_mcu=1`, `aov_keep_isp=0`, 60 s): the AP does not answer for more
   than 8 minutes after suspend (logger ran 476 s, `/api/status` = `000`);
   a power cycle is required. V3 (`aov_mcu=0`) on a healthy filesystem gives

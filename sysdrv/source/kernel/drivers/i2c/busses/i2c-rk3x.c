@@ -1439,6 +1439,15 @@ static __maybe_unused int rk3x_i2c_suspend_noirq(struct device *dev)
 	struct rk3x_i2c *i2c = dev_get_drvdata(dev);
 
 	/*
+	 * Never suspend in the middle of a transfer.  The rk3x controller
+	 * keeps SCL driven low when its clock/power domain is suspended
+	 * between START and STOP (KI-080/H2); abort the suspend attempt and
+	 * let the transfer finish, then retry.
+	 */
+	if (READ_ONCE(i2c->busy))
+		return -EBUSY;
+
+	/*
 	 * Below code is needed only to ensure that there are no
 	 * activities on I2C bus. if at this moment any driver
 	 * is trying to use I2C bus - this may cause i2c timeout.

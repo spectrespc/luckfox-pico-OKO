@@ -463,6 +463,21 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   closed. One AOV run left `/userdata` `ro` again (KI-071), so the sweep is
   limited.
 
+- **i2c3: проверка гипотезы MCU и `-EBUSY` в suspend (2026-11-24).**
+  Вендорские MCU-примеры (`oko-wakeup-sc230ai-ADC`, `battery-ipc`) используют
+  только i2c4 (`RT_USING_I2C3` выключен, iomux `i2c4_m2`), поэтому MCU не
+  блокирует шину STM8/EC; SC230AI работает через i2c4. В
+  `rk3x_i2c_suspend_noirq` добавлен `-EBUSY` при активной транзакции; V1
+  всё равно теряет I2C3, отмен suspend не наблюдалось, тихий `cycle`
+  работает (2.26–2.27 с). H2 остаётся на стороне AP/AOV-fast-wake.
+- **i2c3: MCU hypothesis check and suspend `-EBUSY` (2026-11-24).**
+  The vendor MCU examples (`oko-wakeup-sc230ai-ADC`, `battery-ipc`) use
+  i2c4 only (`RT_USING_I2C3` disabled, `i2c4_m2` iomux), so the MCU does not
+  occupy the STM8/EC bus; SC230AI works through i2c4. `rk3x_i2c_suspend_noirq`
+  now returns `-EBUSY` for an active transfer; V1 still loses I2C3, no
+  suspend abort was observed, and the quiet `cycle` works (2.26–2.27 s).
+  H2 remains on the AP/AOV-fast-wake side.
+
 ### Исправлено
 
 - **HOME FOCUS/ZOOM: полный ход до упора вместо коррекции счётчика.**
