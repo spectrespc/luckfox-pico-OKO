@@ -450,6 +450,21 @@ suspend, потому что MCU ждёт ISP от AP» это не решает
      idblock/meta от логики пробуждения;
   6. только после этого — эксперимент с LPMCU.
 
+**Итог 2026-11-24 по KI-080 (материалы темы не подтвердились как причина).**
+Диагностика `ipd`/`state`/`nak_release_scl` показала, что мёртвая шина — это
+не состояние контроллера: I2C3_H2 — конфликт пина в meta. Sensor-init SC230AI
+объявлял `ircut_b` на GPIO1_D3 (= I2C3_M1 SCL), и MCU battery-ipc
+(`fast_ae.c`, `ircut_switch()`) на каждом решении AE/день-ночь переводил пад
+в GPIO-output-low; `i2cdetect` пуст, unbind/rebind не помогает. Проверено
+детерминированно (`bench/aov_i2c_diag.py --mux-loss --restore-mux`) и
+исправлено переносом `ircut_b` на GPIO1_D1 в
+`project/make_meta/sensor_init/sc230ai_init.c`; V1 на NAND #37 — 14/14
+пробуждений с живой шиной. Из snapshot темы для этого не понадобился ни один
+файл (PDF остаются справкой), поэтому зачистка `snapshot/` не выполнялась.
+Кадентность KI-072 материалами темы не закрывается: окно deep suspend
+2.26–2.27 с не зависит от `wake_interval_s` (10/60), `last_resume_reason`
+пуст.
+
 ## Проверенные факты
 
 ### В дереве OKO

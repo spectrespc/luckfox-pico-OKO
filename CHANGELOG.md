@@ -201,6 +201,24 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Изменено
 
+- **KI-072: кадентность AOV перепроверена после устранения KI-080
+  (2026-11-24).** V1 (`aov_mcu=1`, `keep_isp=1`, `wake_interval_s=60`,
+  240 с) дал 14 пробуждений с интервалами 14.9–20.4 с и окнами deep suspend
+  2.26–2.27 с, `aov_state=off`; тихий `cycle` при `wake_interval_s=10` —
+  те же окна 2.26–2.30 с при счётчике `0xff300048` 320 против 1920 тиков.
+  Окно не масштабируется по `wake_interval_s`, то есть AP будит не
+  PMU-таймер; `last_resume_reason` пуст, `last_suspend_time` =
+  `2.266882594 0.080939000`. Шина I2C3 и STM8 в этих прогонах живы
+  (контроль 300 циклов — 0 ошибок). Записано в `KNOWN_ISSUES.md` (KI-072).
+- **KI-072: AOV cadence re-checked after the KI-080 fix (2026-11-24).**
+  V1 (`aov_mcu=1`, `keep_isp=1`, `wake_interval_s=60`, 240 s) produced
+  14 wakes 14.9–20.4 s apart with 2.26–2.27 s deep-suspend windows and
+  `aov_state=off`; a quiet `cycle` at `wake_interval_s=10` shows the same
+  2.26–2.30 s windows while `0xff300048` holds 320 versus 1920 ticks. The
+  window does not scale with `wake_interval_s`, so the AP is not woken by the
+  PMU timer; `last_resume_reason` is empty and `last_suspend_time` reads
+  `2.266882594 0.080939000`. I2C3 and the STM8 stayed alive (300-cycle
+  control: 0 errors). Recorded in `KNOWN_ISSUES.md` (KI-072).
 - **`research/rv1106-aov/`: разобраны Lanxin CameraSDK и X5 SC230AI
   (2026-11-24).** В `snapshot/drobotics-x5-libcam-sensor/` добавлены 4 файла
   (50 490 Б): `sc230ai_setting.h`, `sc230ai_utility.c`, `MaybeUsed`,

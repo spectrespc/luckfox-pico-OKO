@@ -518,6 +518,19 @@
   (1920 тиков = 60 с), то есть `fca1696`/`856ec70`/`8854147` handshake не
   сломали. Gate всё равно **NO-GO**: после серии AOV-циклов отваливается
   I2C3 (KI-080).
+  **2026-11-24, после устранения KI-080:** источник потери шины убран
+  (конфликт `ircut_b`/I2C3_SCL в meta), но кадентность не изменилась.
+  V1 (`aov_mcu=1`, `keep_isp=1`, `wake_interval_s=60`, 240 с): 14
+  пробуждений, интервалы 14.9–20.4 с, окна deep suspend 2.26–2.27 с,
+  `aov_state=off`, `mcu_run_count=0`, шина и STM8 живы весь прогон.
+  Тихий `cycle` на том же ядре с `wake_interval_s=10` даёт такие же окна
+  2.26–2.30 с, хотя счётчик `0xff300048` отличается в 6 раз (320 против
+  1920 тиков). То есть окно deep suspend не масштабируется по
+  `wake_interval_s` и будит AP не PMU-таймер — это согласуется с прежним
+  `PMU_WAKEUP_INT_ST = 0`. `last_resume_reason` в этом образе пуст,
+  `last_suspend_time` = `2.266882594 0.080939000`. Артефакты:
+  `output/bench/power/20261124-212527-aov` (V1), `.../20261124-213300-cycle`
+  (тихий цикл), `.../20261124-213239-i2c` (контроль 300 циклов, 0 ошибок).
 
 - **KI-073. в `rk3x_i2c_irq` на I2C3 при циклах `[sleep]`.**
   2026-11-17 в AOV-прогоне (idle 30 s, `aov_mcu=1`) шина I2C3
@@ -1607,6 +1620,21 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   follows. The PMU timeout is programmed (1920 ticks = 60 s), so
   `fca1696`/`856ec70`/`8854147` did not break the handshake. The gate is
   still **NO-GO**: after a series of AOV cycles I2C3 dies (KI-080).
+  **2026-11-24, after the KI-080 fix:** the bus-loss source is gone
+  (`ircut_b`/I2C3_SCL clash removed from the meta) but the cadence did not
+  change. V1 (`aov_mcu=1`, `keep_isp=1`, `wake_interval_s=60`, 240 s):
+  14 wakes, intervals 14.9–20.4 s, deep-suspend windows 2.26–2.27 s,
+  `aov_state=off`, `mcu_run_count=0`, and the bus plus the STM8 stay alive
+  for the whole run. A quiet `cycle` on the same kernel with
+  `wake_interval_s=10` shows the same 2.26–2.30 s windows although the
+  `0xff300048` count differs sixfold (320 vs 1920 ticks). The deep-suspend
+  window does not scale with `wake_interval_s`, so the AP is not woken by the
+  PMU timer — consistent with the earlier `PMU_WAKEUP_INT_ST = 0`.
+  `last_resume_reason` is empty in this image and `last_suspend_time` reads
+  `2.266882594 0.080939000`. Artifacts:
+  `output/bench/power/20261124-212527-aov` (V1),
+  `.../20261124-213300-cycle` (quiet cycle), `.../20261124-213239-i2c`
+  (300-cycle control, 0 errors).
 
 - **KI-073. in `rk3x_i2c_irq` on I2C3 during `[sleep]` cycles.**
   On 2026-11-17 an AOV run (idle 30 s, `aov_mcu=1`) got a burst of
