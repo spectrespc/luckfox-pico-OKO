@@ -278,6 +278,16 @@ AOV-профиль, после экспериментов возвращаетс
   источникам (`test_mpi_rgn.cpp`, `rkipc/video.c`, заголовки `rk_mpi_rgn.h`)
   и применимость к OKO; разбирается дефект пересоздания региона на лету
   (KI-063) и вопрос живой смены `ivs.boxes`.
+- `rv1106-aov/` — внешние материалы по AOV, PMU/MCU и I2C RV1106: проект
+  `dehai168` (deep suspend, FE-PHY, PMU-таймер; снимок worklog, AOV guide,
+  `aov_service`/network/storage/media/record/OSD/fMP4/RKNN/IVS и скриптов),
+  Luckfox #10/#99 (HPMCU/LPMCU, JTAG, `mcutool`), `luyi1888/rv1106-mcu`,
+  заметки по SCR1/RK3566, TRM V0.3 и даташит Rev 1.8 (домены питания,
+  PMU/MCU/I2C), rkbin release notes, Rockchip I2C guide, `Rockchip-Docs`
+  (pinctrl RV1106, IO-domain, power, camera 5.10, RGA) и X5 SC230AI
+  (sync/FPS/HDR/gain); снимок `mcutool.c`, OpenOCD-конфигов и
+  RK3566-примеров с провенансом; что переносимо в OKO, а что осталось
+  неподтверждённой гипотезой.
 
 ## Корневые файлы
 

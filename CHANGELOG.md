@@ -76,7 +76,7 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   шаги 2–5 из RAM, опрос `PUL`/`EOP`), что говорят AN2659/AN2737 (архитектура
   пользовательского загрузчика, RWW только для data EEPROM) и чего из этого нет
   в нашем коде. В `snapshot/` — дословные извлечения нужных страниц (2 файла,
-  17 540 Б); полные PDF не хранятся (лимит 200 КБ) и зафиксированы хешем.
+  17 540 Б); полные PDF не дублируются, их хеши/размеры зафиксированы.
   Вывод: недостающего шага в нашей последовательности нет (KI-075).
 - **`research/stm8-iap-an2659/`: STM8 IAP per AN2659/AN2737/PM0051.** The
   topic records what the ST documents actually require for a block erase
@@ -84,8 +84,8 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   as the trigger, steps 2-5 from RAM, `PUL`/`EOP` polling), what AN2659/AN2737
   say (user-bootloader architecture, RWW for data EEPROM only) and which of
   those our code lacks. `snapshot/` holds verbatim extracts of the relevant
-  pages (2 files, 17 540 B); the full PDFs are not stored (200 KB limit) and
-  are pinned by hash. Conclusion: no step is missing from our sequence
+  pages (2 files, 17 540 B); the full PDFs are not duplicated and are pinned
+  by hash/size. Conclusion: no step is missing from our sequence
   (KI-075).
 - **`TO_DO.md` §14: разбор вендорского `fastboot_client.c` и план переноса.**
   Зафиксированы результаты анализа файла (`project/app/fastboot_client/`):
@@ -149,9 +149,132 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   per-file patch series (4 files, 28 042 B) with full SHAs and sha256 in the
   provenance table; the series format is justified in the topic README (the
   full sensor commits touch 60-111 files).
+- **`research/rv1106-aov/`: внешние материалы по AOV и MCU RV1106
+  (2026-11-24).** Тема разбирает `dehai168/rv1106-aov-ipc` (deep suspend
+  требует `rockchip,rv1106`, FE-PHY off и PMU `ms×32`; MCU-детекции на MIS5001
+  нет), Luckfox #10/#99 (HPMCU/LPMCU, JTAG `0xff538008`, IDCODE `0xDEB11001`,
+  `mcutool`), `luyi1888/rv1106-mcu` и `liamhays/rk3566-mcu` (SCR1 RV32IMC,
+  загрузка, mailbox, таймер). Вывод: HPMCU — то же семейство SCR1, но
+  интеграция на RV1106 другая; LPMCU подтверждён регистрами в PMUGRF и ролью
+  в TRM §7.6.2, но прошивки и отдельной документации на ISA/debug нет; тезис
+  о «периодическом опросе периферии» не
+  подтверждён (на RK3566 MCU выключен в suspend). `snapshot/` — 44 файла,
+  37 524 270 Б (GPL + Rockchip/Horizon research copies), pin/sha256 в
+  таблице; выбранные 22 файла dehai включены, остальные не копировались.
+  Обновлены `research/README.md` и `STRUCTURE.md`.
+- **`research/rv1106-aov/`: RV1106 AOV and MCU external material
+  (2026-11-24).** The topic reviews `dehai168/rv1106-aov-ipc` (deep suspend
+  needs `rockchip,rv1106`, FE-PHY off and the PMU `ms×32` counter; no MCU
+  detection on MIS5001), Luckfox #10/#99 (HPMCU/LPMCU, JTAG `0xff538008`,
+  IDCODE `0xDEB11001`, `mcutool`), `luyi1888/rv1106-mcu` and
+  `liamhays/rk3566-mcu` (SCR1 RV32IMC, boot, mailbox, timer). Conclusion:
+  HPMCU is the same SCR1 core family, but the RV1106 integration differs;
+  LPMCU is confirmed by PMUGRF registers and its TRM §7.6.2 role, but has no
+  firmware and no separate ISA/debug documentation; the "periodic peripheral
+  polling" claim is unconfirmed (on
+  RK3566 the MCU is off during suspend). `snapshot/` holds 44 files,
+  37 524 270 B (GPL + Rockchip/Horizon research copies), with pins/sha256
+  in the provenance table; 22 selected dehai files are included and the rest
+  were not copied. `research/README.md` and `STRUCTURE.md` were updated.
 
 ### Изменено
 
+- **`research/rv1106-aov/`: разобраны Lanxin CameraSDK и X5 SC230AI
+  (2026-11-24).** В `snapshot/drobotics-x5-libcam-sensor/` добавлены 4 файла
+  (50 490 Б): `sc230ai_setting.h`, `sc230ai_utility.c`, `MaybeUsed`,
+  `sc230ai_camera_helper.c`. Снимок темы — 44 файла/37 524 270 Б. Выявлены
+  отличия sync master/slave, dynamic FPS через VTS, DOL2 HDR и gain LUT;
+  Lanxin CameraSDK не копировался — в нём нет SC230AI/RV1106-кода. X5-код
+  проприетарный (Horizon), включён по решению владельца как read-only
+  research copy. Обновлены README, STRUCTURE, CHANGELOG.
+- **`research/rv1106-aov/`: Lanxin CameraSDK and X5 SC230AI reviewed
+  (2026-11-24).** Added 4 files (50 490 B) to
+  `snapshot/drobotics-x5-libcam-sensor/`: `sc230ai_setting.h`,
+  `sc230ai_utility.c`, `MaybeUsed`, `sc230ai_camera_helper.c`. The topic
+  snapshot is now 44 files/37 524 270 B. Identified sync master/slave
+  differences, VTS-based dynamic FPS, DOL2 HDR and gain LUT; the Lanxin
+  CameraSDK was not copied because it contains no SC230AI/RV1106 code. The
+  X5 code is proprietary (Horizon) and is included by the project owner's
+  decision as a read-only research copy. Updated README, STRUCTURE,
+  CHANGELOG.
+- **`research/rv1106-aov/`: добавлены документы `as-jackson/Rockchip-Docs`
+  (2026-11-24).** Из публичного зеркала Rockchip взяты 5 public-документов
+  (2 829 505 Б): Pinctrl RV1106, IO-Domain, Power Analysis, Camera
+  Troubleshooting Linux 5.10 (RV1106/RV1103) и RGA IM2D. Снимок темы —
+  44 файла/37 524 270 Б. `SOC_Internal_MCU_CN` помечен «内部资料» и не
+  копировался; его факты (только BUS MCU, PMU/DDR MCU исключены; JTAG через
+  GRF) пересказаны в README. Обновлены `research/README.md`, `STRUCTURE.md`,
+  `CHANGELOG.md`.
+- **`research/rv1106-aov/`: `as-jackson/Rockchip-Docs` documents added
+  (2026-11-24).** Five public Rockchip documents (2 829 505 B) were taken
+  from the public mirror: RV1106 Pinctrl, IO-Domain, Power Analysis, Linux
+  5.10 Camera Troubleshooting (RV1106/RV1103) and RGA IM2D. The topic
+  snapshot is now 44 files/37 524 270 B. `SOC_Internal_MCU_CN` is marked
+  "internal" and was not copied; its facts (BUS MCU only, PMU/DDR MCU
+  excluded; JTAG switch via GRF) are summarised in the README. Updated
+  `research/README.md`, `STRUCTURE.md`, `CHANGELOG.md`.
+- **`research/rv1106-aov/`: разобран локальный dehai-репозиторий
+  (2026-11-24).** В `snapshot/dehai168-rv1106-aov-ipc/` добавлены 22 файла
+  (7 684 761 Б): `README`, worklog, design-доки, AOV guide PDF,
+  `aov_service.c`, `network_service.c`, `storage_service.c`,
+  `media_service.c`, `record_service.c`, `media_osd.c`, `fmp4_mux.c`,
+  `rknn_face.c`, `detect_service.c`, `default_config.json` и скрипты.
+  Снимок темы — 44 файла/37 524 270 Б. У репозитория нет `LICENSE`; файлы
+  включены по решению владельца проекта как read-only research copy.
+  Обновлены `research/README.md`, `STRUCTURE.md`, `CHANGELOG.md`.
+- **`research/rv1106-aov/`: local dehai repository reviewed (2026-11-24).**
+  Added 22 files (7 684 761 B) to
+  `snapshot/dehai168-rv1106-aov-ipc/`: `README`, worklog, design docs, the
+  AOV guide PDF, `aov_service.c`, `network_service.c`,
+  `storage_service.c`, `media_service.c`, `record_service.c`,
+  `media_osd.c`, `fmp4_mux.c`, `rknn_face.c`, `detect_service.c`,
+  `default_config.json` and scripts. The topic snapshot is now 44 files/
+  37 524 270 B. The repository has no `LICENSE`; the files are included by
+  the project owner's decision as a read-only research copy. Updated
+  `research/README.md`, `STRUCTURE.md`, `CHANGELOG.md`.
+- **`research`: снят лимит на размер и число файлов; `rv1106-aov` дополнен
+  (2026-11-24).** Из `research/README.md` удалён лимит ≤8 файлов/≤200 КБ.
+  В `research/rv1106-aov/snapshot/` добавлены TRM V0.3 (24.6 МБ), даташит
+  Rev 1.8 (1.9 МБ), I2C guide V2.2.0 (315 КБ), rkbin `RV1106_EN.md` (43 КБ)
+  и письмо linux-rockchip 029415 (5 КБ); снимок — 44 файла/37 524 270 Б.
+  Провенанс/хеши обновлены; 22 выбранных файла dehai включены, остальные
+  не копировались. Обновлены `research/README.md`, `CHANGELOG.md` и
+  формулировки о лимите в `research/rockchip-npu-mainline/`,
+  `rockchip-kernel-upstream/`, `stm8-iap-an2659/`, `rgn-mpp-lifecycle/`.
+- **`research`: size/file limit removed; `rv1106-aov` extended (2026-11-24).**
+  The ≤8 files/≤200 KB limit was removed from `research/README.md`. Added
+  TRM V0.3 (24.6 MB), datasheet Rev 1.8 (1.9 MB), I2C guide V2.2.0 (315 KB),
+  rkbin `RV1106_EN.md` (43 KB) and the linux-rockchip 029415 message (5 KB)
+  to `research/rv1106-aov/snapshot/`; the snapshot is now 44 files/
+  37 524 270 B. Provenance/hashes updated; 22 selected dehai files are
+  included and the rest were not copied. Updated `research/README.md`,
+  `CHANGELOG.md` and the limit wording in `research/rockchip-npu-mainline/`,
+  `rockchip-kernel-upstream/`, `stm8-iap-an2659/`, `rgn-mpp-lifecycle/`.
+- **`research/rv1106-aov/`: TRM, даташит, rkbin и I2C guide (2026-11-24).**
+  Тема дополнена первоисточниками: RV1106 TRM V0.3 Part1 (PMU §7, MCU §8,
+  I2C §15), даташит Rev 1.8 (3 домена `VDD_ARM`/`VDD_LOGIC`/`VDD_PMU`, 8 КБ
+  PMU SRAM, I2C3 M1 на GPIO1_D3/D2 с питанием `GPIO1_VCC3V3`), rkbin
+  `RV1106_EN` (wakeup v1.00, DDR v1.15 suspend/resume, wrap v2.03rc4 AVS),
+  Rockchip I2C guide V2.2.0 (локальная копия побайтово совпадает с зеркалом;
+  добавлены NACK/timeout/`ipd`/`state` и GPIO-recovery) и linux-rockchip
+  029415 (SPI noirq PM). Уточнено: deep отключает `VD_LOGIC`
+  на каждом входе, а не через 60 с; 60 с — `PMU_WAKEUP_TIMEOUT_CNT`; I2C1 —
+  PMU-блок, пады I2C3 — на отдельной 3.3 В линии; LPMCU — PMU-контроллер
+  (TRM §7.6.2), а не второй документированный SCR1. Снимок — 44 файла/
+  37 524 270 Б, крупные PDF/тексты и dehai-снимок включены в `snapshot/`.
+- **`research/rv1106-aov/`: TRM, datasheet, rkbin and I2C guide
+  (2026-11-24).** The topic now cites the RV1106 TRM V0.3 Part1 (PMU §7,
+  MCU §8, I2C §15), the Rev 1.8 datasheet (three `VDD_ARM`/`VDD_LOGIC`/
+  `VDD_PMU` domains, 8 KB PMU SRAM, I2C3 M1 on GPIO1_D3/D2 powered by
+  `GPIO1_VCC3V3`), rkbin `RV1106_EN` (wakeup v1.00, DDR v1.15
+  suspend/resume, wrap v2.03rc4 AVS), the Rockchip I2C guide V2.2.0 (the
+  local copy is byte-identical to the mirror; NACK/timeout/`ipd`/`state` and
+  GPIO recovery added) and linux-rockchip 029415 (SPI noirq PM). Corrected:
+  deep powers off `VD_LOGIC` on every entry, not after 60 s;
+  60 s is `PMU_WAKEUP_TIMEOUT_CNT`; I2C1 is in the PMU block and I2C3 pads
+  are on a separate 3.3 V rail; LPMCU is a PMU controller (TRM §7.6.2), not
+  a second documented SCR1. The snapshot is now 44 files/37 524 270 B; the
+  large PDFs/texts and the dehai snapshot are included in `snapshot/`.
 - **Документация: AOV-MCU и интервал 60 с (2026-11-22).**
   `TESTBENCH.md` §7-AOV, `bench/README.md`, `FEATURES_UNVERIFIED.md`,
   `KNOWN_ISSUES.md` KI-072: интервал 1 минута не выдержан (12–18 с),

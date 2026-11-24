@@ -1,0 +1,156 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [PATCH 4/6] spi: rockchip: Suspend and resume the bus during NOIRQ_SYSTEM_SLEEP_PM ops
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:linux-rockchip%40lists.infradead.org?Subject=Re:%20Re%3A%20%5BPATCH%204/6%5D%20spi%3A%20rockchip%3A%20Suspend%20and%20resume%20the%20bus%20during%0A%20NOIRQ_SYSTEM_SLEEP_PM%20ops&In-Reply-To=%3C20220211034344.4130-4-jon.lin%40rock-chips.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="029429.html">
+   <LINK REL="Next"  HREF="029412.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[PATCH 4/6] spi: rockchip: Suspend and resume the bus during NOIRQ_SYSTEM_SLEEP_PM ops</H1>
+    <B>Jon Lin</B> 
+    <A HREF="mailto:linux-rockchip%40lists.infradead.org?Subject=Re:%20Re%3A%20%5BPATCH%204/6%5D%20spi%3A%20rockchip%3A%20Suspend%20and%20resume%20the%20bus%20during%0A%20NOIRQ_SYSTEM_SLEEP_PM%20ops&In-Reply-To=%3C20220211034344.4130-4-jon.lin%40rock-chips.com%3E"
+       TITLE="[PATCH 4/6] spi: rockchip: Suspend and resume the bus during NOIRQ_SYSTEM_SLEEP_PM ops">jon.lin at rock-chips.com
+       </A><BR>
+    <I>Thu Feb 10 19:43:40 PST 2022</I>
+    <P><UL>
+        <LI>Previous message (by thread): <A HREF="029429.html">[PATCH 3/6] spi: rockchip: Fix error in getting num-cs property
+</A></li>
+        <LI>Next message (by thread): <A HREF="029412.html">[PATCH v10 5/6] spi: rockchip: Support cs-gpio
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#29415">[ date ]</a>
+              <a href="thread.html#29415">[ thread ]</a>
+              <a href="subject.html#29415">[ subject ]</a>
+              <a href="author.html#29415">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>From: shengfei Xu &lt;<A HREF="http://lists.infradead.org/mailman/listinfo/linux-rockchip">xsf at rock-chips.com</A>&gt;
+
+the wakeup interrupt handler which is guaranteed not to run while
+@resume noirq() is being executed. the patch can help to avoid the
+wakeup source try to access spi when the spi is in suspend mode.
+
+Signed-off-by: shengfei Xu &lt;<A HREF="http://lists.infradead.org/mailman/listinfo/linux-rockchip">xsf at rock-chips.com</A>&gt;
+Signed-off-by: Jon Lin &lt;<A HREF="http://lists.infradead.org/mailman/listinfo/linux-rockchip">jon.lin at rock-chips.com</A>&gt;
+---
+
+ drivers/spi/spi-rockchip.c | 14 +++++++++-----
+ 1 file changed, 9 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/spi/spi-rockchip.c b/drivers/spi/spi-rockchip.c
+index 5f6a70664871..5457af616a44 100644
+--- a/drivers/spi/spi-rockchip.c
++++ b/drivers/spi/spi-rockchip.c
+@@ -959,14 +959,14 @@ static int rockchip_spi_suspend(struct device *dev)
+ {
+ 	int ret;
+ 	struct spi_controller *ctlr = dev_get_drvdata(dev);
++	struct rockchip_spi *rs = spi_controller_get_devdata(ctlr);
+ 
+ 	ret = spi_controller_suspend(ctlr);
+ 	if (ret &lt; 0)
+ 		return ret;
+ 
+-	ret = pm_runtime_force_suspend(dev);
+-	if (ret &lt; 0)
+-		return ret;
++	clk_disable_unprepare(rs-&gt;spiclk);
++	clk_disable_unprepare(rs-&gt;apb_pclk);
+ 
+ 	pinctrl_pm_select_sleep_state(dev);
+ 
+@@ -981,10 +981,14 @@ static int rockchip_spi_resume(struct device *dev)
+ 
+ 	pinctrl_pm_select_default_state(dev);
+ 
+-	ret = pm_runtime_force_resume(dev);
++	ret = clk_prepare_enable(rs-&gt;apb_pclk);
+ 	if (ret &lt; 0)
+ 		return ret;
+ 
++	ret = clk_prepare_enable(rs-&gt;spiclk);
++	if (ret &lt; 0)
++		clk_disable_unprepare(rs-&gt;apb_pclk);
++
+ 	ret = spi_controller_resume(ctlr);
+ 	if (ret &lt; 0) {
+ 		clk_disable_unprepare(rs-&gt;spiclk);
+@@ -1026,7 +1030,7 @@ static int rockchip_spi_runtime_resume(struct device *dev)
+ #endif /* CONFIG_PM */
+ 
+ static const struct dev_pm_ops rockchip_spi_pm = {
+-	SET_SYSTEM_SLEEP_PM_OPS(rockchip_spi_suspend, rockchip_spi_resume)
++	SET_NOIRQ_SYSTEM_SLEEP_PM_OPS(rockchip_spi_suspend, rockchip_spi_resume)
+ 	SET_RUNTIME_PM_OPS(rockchip_spi_runtime_suspend,
+ 			   rockchip_spi_runtime_resume, NULL)
+ };
+-- 
+2.17.1
+
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message (by thread): <A HREF="029429.html">[PATCH 3/6] spi: rockchip: Fix error in getting num-cs property
+</A></li>
+	<LI>Next message (by thread): <A HREF="029412.html">[PATCH v10 5/6] spi: rockchip: Support cs-gpio
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#29415">[ date ]</a>
+              <a href="thread.html#29415">[ thread ]</a>
+              <a href="subject.html#29415">[ subject ]</a>
+              <a href="author.html#29415">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.infradead.org/mailman/listinfo/linux-rockchip">More information about the Linux-rockchip
+mailing list</a><br>
+</body></html>

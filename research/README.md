@@ -22,9 +22,10 @@
    никаких «улучшенных» версий, никакого участия в сборке. Файл вне
    upstream-пути не создаётся.
 4. Таблица провенанса: upstream-путь → локальный путь → лицензия/SPDX →
-   sha256 → размер → дата снятия → pin (репозиторий + полный sha коммита).
-5. Лимит на тему: ≤ 8 файлов и ≤ 200 КБ снимка. Если upstream-файл больше
-   лимита — решение о включении фиксируется явно в `README.md` темы.
+   sha256 → размер → дата снятия → pin (репозиторий + полный sha коммита;
+   для статических PDF — версия и дата документа).
+5. Лимита на число файлов и размер снимка нет. Для крупных PDF/архивов
+   фиксируйте в провенансе размер, хеш и причину хранения.
 6. Не класть: датасеты, бинарники прошивок, секреты, артефакты прогонов
    (это `output/bench/`) и инструментальные скрипты (это `bench/`).
 7. Любое добавление или обновление темы → запись в `CHANGELOG.md` →
@@ -42,3 +43,4 @@
 | [`rockchip-npu-mainline/`](rockchip-npu-mainline/README.md) | mainline-драйвер NPU Rockchip `drivers/accel/rocket`; применимость к RV1106 и сопоставление с вендорским `rknpu` |
 | [`rgn-mpp-lifecycle/`](rgn-mpp-lifecycle/README.md) | 2BPP overlay-регионы `RK_MPI_RGN_*`: вендорский цикл `GetCanvasInfo`/`UpdateCanvas`, переносимость destroy/recreate под живым энкодером, дефект KI-063 |
 | [`stm8-iap-an2659/`](stm8-iap-an2659/README.md) | IAP на STM8 (KI-075): AN2659/AN2737 как архитектура загрузчика, PM0051 §4 как единственная точная процедура стирания блока, сверка с нашим кодом и SPL |
+| [`rv1106-aov/`](rv1106-aov/README.md) | внешние материалы по AOV, PMU/MCU и I2C RV1106: `dehai168` (deep suspend, FE-PHY, PMU-таймер; снимок worklog, AOV guide, `aov_service`/network/storage/media/record/OSD/fMP4/RKNN/IVS и скриптов), Luckfox #10/#99 (HPMCU/LPMCU, JTAG, `mcutool`), `luyi1888/rv1106-mcu`, `liamhays/rk3566-mcu` (SCR1, mailbox, suspend), RV1106 TRM V0.3 и даташит Rev 1.8, rkbin release notes, Rockchip I2C guide, `as-jackson/Rockchip-Docs` (pinctrl, IO-domain, power, camera, RGA), X5 SC230AI (sync/FPS/HDR/gain), SPI noirq patch; что переносимо в OKO и что остаётся гипотезой |
