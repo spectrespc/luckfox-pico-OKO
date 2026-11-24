@@ -445,6 +445,24 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   passed, 300 I2C cycles — 0 errors. AOV remains NO-GO; do not run suspend
   tests until the PMU/HPMCU state is stabilised.
 
+- **rk3x: backport из Rockchip develop-5.10, тихий цикл восстановлен
+  (2026-11-24).** Атомарная запись `CON`+счётчика в `rk3x_i2c_start`
+  (start вынесен из-под лока вызывающего), клампы `START/STOP_SETUP_MAX`,
+  очистка `REG_INT_START` в общем IPD, `disable_irq` вокруг polled-передачи.
+  Ядро #32 прошито: тихий `cycle` и AOV `aov_mcu=0` снова работают
+  (2.25–2.29 с), `api_check` 139/0, 300 циклов I2C — 0 ошибок. V1 с
+  `aov_mcu=1`/`keep_isp=1` всё ещё теряет I2C3; H2 не закрыт. Один
+  AOV-прогон снова оставил `/userdata` в `ro` (KI-071), sweep ограничен.
+- **rk3x: Rockchip develop-5.10 backport, quiet cycle restored
+  (2026-11-24).** Atomic `CON`+count write in `rk3x_i2c_start` (start moved
+  out of the caller lock), `START/STOP_SETUP_MAX` clamps,
+  `REG_INT_START` clearing in the common IPD, and `disable_irq` around a
+  polled transfer. Kernel #32 was flashed: the quiet `cycle` and AOV
+  `aov_mcu=0` work again (2.25–2.29 s), `api_check` 139/0, 300 I2C cycles —
+  0 errors. V1 with `aov_mcu=1`/`keep_isp=1` still loses I2C3; H2 is not
+  closed. One AOV run left `/userdata` `ro` again (KI-071), so the sweep is
+  limited.
+
 ### Исправлено
 
 - **HOME FOCUS/ZOOM: полный ход до упора вместо коррекции счётчика.**

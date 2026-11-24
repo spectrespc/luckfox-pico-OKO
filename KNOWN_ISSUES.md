@@ -323,6 +323,9 @@
   `bench/run.sh recover_dut.py --ssh --restart`, затем проверить
   `mount`/`dmesg`; при повторе — перепрошивка. Ядро #29 уже содержит
   SFC-фикс от 2026-11-21, то есть одного фикса недостаточно.
+  **2026-11-24, #32:** один AOV-прогон снова перевёл `/userdata` в `ro`
+  (`sleep settings could not be saved`); холодный power cycle вернул `rw`.
+  Износ NAND/UBI остаётся, suspend-тесты ограничены одним-двумя прогонами.
 
 - **KI-072. Профиль `-AOV`: 1M-раскладка и окно ядра/MCU исправлены,
   handshake MCU не отвечает.** Hpmcu (117 КБ) + SPL + DDR + usbplug дают
@@ -910,6 +913,15 @@
   upstream стоит забрать только `19cde9c92b` (`disable_irq` вокруг
   polled-передачи) и `b57e90189f` (`clk_enable` перед `clk_get_rate`);
   к H2 они не относятся.
+  **2026-11-24, backport из Rockchip develop-5.10 (ядро #32):** перенесены
+  атомарная запись `CON`+счётчика в `rk3x_i2c_start` (start вынесен из-под
+  лока вызывающего), клампы `START/STOP_SETUP_MAX`, очистка
+  `REG_INT_START` в общем IPD и `disable_irq` вокруг polled-передачи.
+  Результат: тихий `cycle` и AOV `aov_mcu=0` снова работают (3 окна
+  deep suspend 2.25–2.29 с, `restored=true`), 300 циклов I2C — 0 ошибок,
+  `api_check` 139/0. V1 (`aov_mcu=1`, `keep_isp=1`) всё ещё теряет I2C3
+  за 60 с, лестница восстанавливает. То есть backport снял зависание
+  AP/тихого цикла, но H2 не закрыл.
   V2 (`aov_mcu=1`, `aov_keep_isp=0`, 60 с): AP после suspend не отвечает
   более 8 мин (логгер отработал 476 с, `/api/status` = `000`), нужен power
   cycle. V3 (`aov_mcu=0`) на исправной ФС даёт тихий цикл: deep suspend
@@ -1257,6 +1269,9 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   bridge reboot: `bench/run.sh recover_dut.py --ssh --restart`, then check
   `mount`/`dmesg`; if it repeats, reflash. Kernel #29 already contains the
   2026-11-21 SFC fix, so the fix alone is not enough.
+  **2026-11-24, #32:** one AOV run put `/userdata` back into `ro`
+  (`sleep settings could not be saved`); a cold power cycle restored `rw`.
+  NAND/UBI wear remains, so suspend tests are limited to one or two runs.
 
 - **KI-072. `-AOV` profile: 1M layout and the kernel/MCU window are fixed,
   the MCU handshake does not answer.** Hpmcu (117 KB) + SPL + DDR + usbplug
@@ -1852,6 +1867,15 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   `02fe0fbd8a`). Only `19cde9c92b` (`disable_irq` around a polled transfer)
   and `b57e90189f` (`clk_enable` before `clk_get_rate`) are worth taking;
   neither addresses H2.
+  **2026-11-24, Rockchip develop-5.10 backport (kernel #32):** atomic
+  `CON`+count write in `rk3x_i2c_start` (start moved out of the caller
+  lock), `START/STOP_SETUP_MAX` clamps, `REG_INT_START` clearing in the
+  common IPD, and `disable_irq` around a polled transfer. Result: the quiet
+  `cycle` and AOV `aov_mcu=0` work again (3 deep-suspend windows
+  2.25–2.29 s, `restored=true`), 300 I2C cycles — 0 errors, `api_check`
+  139/0. V1 (`aov_mcu=1`, `keep_isp=1`) still loses I2C3 within 60 s and
+  the ladder recovers. The backport removed the AP/quiet-cycle hang but did
+  not close H2.
   V2 (`aov_mcu=1`, `aov_keep_isp=0`, 60 s): the AP does not answer for more
   than 8 minutes after suspend (logger ran 476 s, `/api/status` = `000`);
   a power cycle is required. V3 (`aov_mcu=0`) on a healthy filesystem gives

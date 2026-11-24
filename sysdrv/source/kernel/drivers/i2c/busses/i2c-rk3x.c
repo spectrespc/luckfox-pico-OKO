@@ -95,6 +95,10 @@ enum {
 /* Disable i2c all irqs */
 #define IEN_ALL_DISABLE   0
 
+/* setup/hold tuning fields are 2 bits wide */
+#define START_SETUP_MAX 0x3
+#define STOP_SETUP_MAX 0x3
+
 #define REG_CON1_AUTO_STOP BIT(0)
 #define REG_CON1_TRANSFER_AUTO_STOP BIT(1)
 #define REG_CON1_NACK_AUTO_STOP BIT(2)
@@ -343,6 +347,8 @@ static void rk3x_i2c_start(struct rk3x_i2c *i2c)
 {
 	u32 val = i2c_readl(i2c, REG_CON) & REG_CON_TUNING_MASK;
 	bool auto_stop = rk3x_i2c_auto_stop(i2c);
+	unsigned long flags;
+	unsigned int offset;
 	int length = 0;
 
 	/* enable appropriate interrupts */
@@ -367,13 +373,28 @@ static void rk3x_i2c_start(struct rk3x_i2c *i2c)
 	if (!(i2c->msg->flags & I2C_M_IGNORE_NAK))
 		val |= REG_CON_ACTACK;
 
-	i2c_writel(i2c, val, REG_CON);
+	if (i2c->mode == REG_CON_MOD_TX) {
+		offset = REG_MTXCNT;
+	} else {
+		if (i2c->msg->len > 32) {
+			length = 32;
+			val &= ~REG_CON_LASTACK;
+		} else {
+			length = i2c->msg->len;
+			val |= REG_CON_LASTACK;
+		}
+		offset = REG_MRXCNT;
+	}
 
-	/* enable transition */
-	if (i2c->mode == REG_CON_MOD_TX)
-		i2c_writel(i2c, length, REG_MTXCNT);
-	else
-		rk3x_i2c_prepare_read(i2c);
+	/*
+	 * Rockchip: program CON and the byte count together.  A preemption
+	 * between the START and the count write stretches the start setup
+	 * and can leave SCL low across a suspend (KI-080/H2).
+	 */
+	spin_lock_irqsave(&i2c->lock, flags);
+	i2c_writel(i2c, val, REG_CON);
+	i2c_writel(i2c, length, offset);
+	spin_unlock_irqrestore(&i2c->lock, flags);
 }
 
 /**
@@ -608,7 +629,7 @@ static irqreturn_t rk3x_i2c_irq(int irqno, void *dev_id)
 	dev_dbg(i2c->dev, "IRQ: state %d, ipd: %x\n", i2c->state, ipd);
 
 	/* Clean interrupt bits we don't care about */
-	ipd &= ~(REG_INT_BRF | REG_INT_BTF);
+	ipd &= ~(REG_INT_BRF | REG_INT_BTF | REG_INT_START);
 
 	if (ipd & REG_INT_NAKRCV) {
 		/*
@@ -975,11 +996,13 @@ static int rk3x_i2c_v1_calc_timings(unsigned long clk_rate,
 	min_setup_start_ns = t->scl_rise_ns + spec->min_setup_start_ns;
 	stp_sta_cfg = DIV_ROUND_UP(clk_rate_khz * min_setup_start_ns
 			   - 1000000, 8 * 1000000 * (t_calc->div_high));
+	stp_sta_cfg = (stp_sta_cfg > START_SETUP_MAX) ? START_SETUP_MAX : stp_sta_cfg;
 
 	/* calculate setup stop config */
 	min_setup_stop_ns = t->scl_rise_ns + spec->min_setup_stop_ns;
 	stp_sto_cfg = DIV_ROUND_UP(clk_rate_khz * min_setup_stop_ns
 			   - 1000000, 8 * 1000000 * (t_calc->div_high));
+	stp_sto_cfg = (stp_sto_cfg > STOP_SETUP_MAX) ? STOP_SETUP_MAX : stp_sto_cfg;
 
 	t_calc->tuning = REG_CON_SDA_CFG(--sda_update_cfg) |
 			 REG_CON_STA_CFG(--stp_sta_cfg) |
@@ -1259,15 +1282,17 @@ static int rk3x_i2c_xfer_common(struct i2c_adapter *adap,
 		if (i + ret >= num)
 			i2c->is_last_msg = true;
 
-		rk3x_i2c_start(i2c);
-
 		spin_unlock_irqrestore(&i2c->lock, flags);
 
 		if (!polling) {
+			rk3x_i2c_start(i2c);
 			timeout = wait_event_timeout(i2c->wait, !i2c->busy,
 						     msecs_to_jiffies(xfer_time));
 		} else {
+			disable_irq(i2c->irq);
+			rk3x_i2c_start(i2c);
 			timeout = rk3x_i2c_wait_xfer_poll(i2c, xfer_time);
+			enable_irq(i2c->irq);
 		}
 
 		spin_lock_irqsave(&i2c->lock, flags);
