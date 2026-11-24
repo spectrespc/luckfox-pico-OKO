@@ -34,8 +34,16 @@ int main(int argc, char *argv[])
 			.gpio_index = GPIO1_D1,
 			.gpio_func = IOMUX_FUNC0 | FLGA_GPIO_OUTPUT | FLAG_GPIO_DEFAULT_HIGH,
 		},
+		/*
+		 * OKO: the vendor table put IRCUT_B on GPIO1_D3, but on this board
+		 * GPIO1_D3 is I2C3_M1 SCL (STM8/EC bus).  The MCU battery-ipc AOV
+		 * app re-applies the IRCUT pin function from this table on every
+		 * AE/night decision, so the shared pin killed I2C3 after the first
+		 * AOV wake (KI-080).  The product has no IR-cut motor, so IRCUT_B
+		 * follows IRCUT_A on GPIO1_D1 and never touches the i2c3 pad.
+		 */
 		.ircut_b = {
-			.gpio_index = GPIO1_D3,
+			.gpio_index = GPIO1_D1,
 			.gpio_func = IOMUX_FUNC0 | FLGA_GPIO_OUTPUT | FLAG_GPIO_DEFAULT_LOW,
 		},
 		.led_ir = {

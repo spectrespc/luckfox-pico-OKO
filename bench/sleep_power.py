@@ -49,6 +49,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import aov_i2c_diag                                           # noqa: E402
 import ina_log                                                # noqa: E402
 import power                                                  # noqa: E402
 
@@ -433,12 +434,23 @@ def dump_dmesg(outdir, tag):
 
 
 def stm8_recovery(outdir, events, notes, reason="", allow_rebind=True,
-                  allow_ec_reset=False):
+                  allow_ec_reset=False, allow_bitbang=True):
     """Recovery ladder from T1.3; returns the first step that revived the bus."""
     lines = ["# Лестница восстановления STM8", "", "Причина: %s" % reason, ""]
     verdict = {"layer": "unknown", "recovered": False, "step": None,
                "steps": []}
     client = None
+
+    def save_diag(snap, tag):
+        try:
+            (outdir / ("i2c_regs-%s.txt" % tag)).write_text(
+                aov_i2c_diag.format_snapshot(snap, "I2C3 %s" % tag))
+        except Exception:                                   # noqa: BLE001
+            pass
+        lines.extend(["", "```", "\n".join(aov_i2c_diag.interpret(snap)),
+                      "```", ""])
+        events.write("i2c-diag", tag=tag, pads=snap.get("pads", {}).get("raw"),
+                     verdict=aov_i2c_diag.interpret(snap)[:3])
 
     def record(name, detail, probe=None):
         verdict["steps"].append({"step": name, "detail": detail,
@@ -469,22 +481,51 @@ def stm8_recovery(outdir, events, notes, reason="", allow_rebind=True,
             verdict["layer"] = "bus-or-controller-ap"
         else:
             verdict["layer"] = "stm8-specific"
+        try:
+            diag = aov_i2c_diag.snapshot(client, scan=False)
+            save_diag(diag, "dead")
+            record("Шаг 1b. Регистры I2C3 на мёртвой шине",
+                   "\n".join(aov_i2c_diag.interpret(diag)), base)
+        except Exception as exc:                            # noqa: BLE001
+            notes.append("Дамп регистров I2C3 не снят: %s" % exc)
         if allow_rebind:
+            ssh_run(client, "echo %s > /sys/bus/platform/drivers/rk3x-i2c/"
+                            "unbind; sleep 1" % I2C_MASTER, timeout=30)
+            try:
+                diag = aov_i2c_diag.snapshot(client, scan=False)
+                save_diag(diag, "unbound")
+                record("Шаг 2a. I2C3 после unbind",
+                       "\n".join(aov_i2c_diag.interpret(diag)), None)
+            except Exception as exc:                        # noqa: BLE001
+                notes.append("Дамп после unbind не снят: %s" % exc)
+            if allow_bitbang:
+                try:
+                    bang = aov_i2c_diag.bitbang(client)
+                    record("Шаг 2b. bit-bang 9 тактов SCL", bang["output"], None)
+                    diag = aov_i2c_diag.snapshot(client, scan=False)
+                    save_diag(diag, "bitbang")
+                except Exception as exc:                    # noqa: BLE001
+                    record("Шаг 2b. bit-bang 9 тактов SCL",
+                           "ошибка: %s" % exc, None)
+            else:
+                record("Шаг 2b. bit-bang 9 тактов SCL",
+                       "пропущен по --no-ladder-bitbang", None)
+            aov_i2c_diag.restore_iomux(client)
             code, out, err = ssh_run(
                 client, "echo %s > /sys/bus/platform/drivers/rk3x-i2c/"
-                        "unbind; sleep 1; echo %s > /sys/bus/platform/"
-                        "drivers/rk3x-i2c/bind; sleep 2; i2cdetect -r -y %d" %
-                        (I2C_MASTER, I2C_MASTER, I2C_BUS), timeout=40)
+                        "bind; sleep 2; i2cdetect -r -y %d" %
+                        (I2C_MASTER, I2C_BUS), timeout=40)
             after = stm8_probe(client)
-            record("Шаг 2. unbind/rebind rk3x-i2c", out + err, after)
+            record("Шаг 2c. rebind rk3x-i2c", out + err, after)
             if after["present"]:
                 verdict.update(layer=verdict["layer"] + "/rebind",
-                               recovered=True, step="unbind-rebind")
+                               recovered=True, step="unbind-bitbang-rebind")
                 return verdict
         else:
             record("Шаг 2. unbind/rebind rk3x-i2c",
                    "пропущен по --no-ladder-rebind; на i2c3 "
-                   "(ff460000.i2c) шаг безопасен и восстанавливает шину", base)
+                   "(ff460000.i2c) шаг безопасен и восстанавливает шину; "
+                   "bit-bang без unbind не выполняется", base)
         sda, scl = base.get("sda_level"), base.get("scl_level")
         detail = "GPIO1_D2/SDA=%s, GPIO1_D3/SCL=%s (devmem 0x%08x)" % (
             sda, scl, GPIO1_EXT_PORT)
@@ -1292,6 +1333,7 @@ def scenario_aov(args, outdir, events):
     transitions = []
     aov_counts = {}
     focus_counts = {}
+    pads_log = []
     lost_at = None
     start_probe = {}
     try:
@@ -1353,6 +1395,12 @@ def scenario_aov(args, outdir, events):
                     focus_counts[focus_key] = \
                         focus_counts.get(focus_key, 0) + 1
                     events.write("focus", ts=ts, **focus)
+                    try:
+                        pads = aov_i2c_diag.quick_pads()
+                        events.write("pads", ts=ts, **pads)
+                        pads_log.append(pads)
+                    except Exception as exc:                # noqa: BLE001
+                        events.write("pads-error", ts=ts, error=str(exc))
                     if focus.get("present") is False and lost_at is None:
                         lost_at = ts
                         notes.append("STM8 пропал на пробуждении в %s "
@@ -1402,6 +1450,21 @@ def scenario_aov(args, outdir, events):
             notes.append("GET /api/focus на пробуждениях (present/version): "
                          "%s." % ", ".join("%s=%d" % item for item in
                                            sorted(focus_counts.items())))
+        if pads_log:
+            modes = {}
+            for pads in pads_log:
+                key = pads.get("iomux_mode")
+                modes[key] = modes.get(key, 0) + 1
+            notes.append("I2C3 iomux/pads на пробуждениях: %s." % ", ".join(
+                "%s=%d" % item for item in sorted(
+                    modes.items(), key=lambda item: str(item[0]))))
+            partial = [pads for pads in pads_log
+                       if pads.get("iomux_mode") == "partial"]
+            if partial:
+                notes.append("iomux сброшен частично: SCL(D3)=%s, SDA(D2)=%s "
+                             "— пад I2C3 управляется GPIO-блоком." %
+                             (partial[0].get("iomux_scl"),
+                              partial[0].get("iomux_sda")))
         if lost_at is not None:
             notes.append("STM8 пропал во время прогона: motor.present=false "
                          "(ts=%d)." % lost_at)
@@ -1450,6 +1513,7 @@ def scenario_aov(args, outdir, events):
         result = {"summary": summary, "original": original,
                   "restored": restored, "aov_counts": aov_counts,
                   "focus_counts": focus_counts,
+                  "pads_wakes": pads_log,
                   "stm8_start": start_probe,
                   "stm8_lost": lost_at is not None,
                   "stm8_lost_at": lost_at,
@@ -2188,6 +2252,11 @@ def main():
                         help="skip the i2c3 unbind/rebind ladder step")
     parser.add_argument("--ladder-ec-reset", action="store_true",
                         help="allow EC reboot as the last ladder step")
+    parser.add_argument("--ladder-bitbang", action="store_true", default=True,
+                        help="9 SCL clocks between unbind and rebind (default)")
+    parser.add_argument("--no-ladder-bitbang", dest="ladder_bitbang",
+                        action="store_false",
+                        help="skip the GPIO bit-bang bus recovery")
     parser.add_argument("--i2c-cycles", type=int, default=300)
     parser.add_argument("--i2c-step", type=int, default=5)
     parser.add_argument("--motion-sensitivity", type=int, default=3)
@@ -2260,7 +2329,8 @@ def main():
                 outdir, events, gate_notes,
                 reason="после завершения сценария %s" % args.scenario,
                 allow_rebind=args.ladder_rebind,
-                allow_ec_reset=args.ladder_ec_reset)
+                allow_ec_reset=args.ladder_ec_reset,
+                allow_bitbang=args.ladder_bitbang)
             time.sleep(2)
             final = stm8_probe(attempts=5)
             result["stm8_final"] = final

@@ -1042,6 +1042,32 @@
   H2 не закрывают — отказ по-прежнему на стороне AP/HPMCU-wake, а не
   обработчика NAK. Артефакты: `output/bench/nand-aov-20261124/`
   (`uar0.log`, `aov-console-markers.txt`, `i2c_scan.txt`, `i2c_pads.txt`).
+  **2026-11-24, причина найдена и устранена.** Отказ был не в контроллере
+  rk3x: на мёртвой шине поле iomux GPIO1_D3 (I2C3_M1 SCL) в `0xff538018`
+  равно 0 (GPIO), а регистры GPIO1 с загрузки держат пад выходом низкого
+  уровня (`DDR_H` b11=1, `DR_H` b11=0), поэтому SCL физически прижат к земле,
+  `i2cdetect -r -y 3` пуст, а unbind/rebind, reset контроллера и gate клоков
+  не помогают. Источник записи — meta-образ AOV: в
+  `project/make_meta/sensor_init/sc230ai_init.c` было `ircut_b =
+  GPIO1_D3` (в `meta.img` по смещению 2048+40 лежит 59), а MCU battery-ipc
+  (`fast_ae.c`, `ircut_switch()`) на каждом решении AE/день-ночь заново
+  применяет функцию пина: `IOMUX_FUNC0 | OUTPUT | LOW`.
+  Детерминированное подтверждение: masked-запись `0xff000000` в `0xff538018`
+  (только D3 → GPIO при `DR`=0) даёт ровно полевую картину KI-080 (`state=2`,
+  пустой скан), обратная запись `0xff003300` возвращает
+  `0x40/0x41/0x42/0x60` без unbind и power cycle
+  (`bench/aov_i2c_diag.py --mux-loss --restore-mux`). Правка: `ircut_b`
+  переведён на GPIO1_D1 (в продукте IR-cut нет), `./build.sh meta`, новый
+  `meta.img` отдан на стенд (`/oem/usr/share/oko/meta.img`, перезагрузка).
+  V1 (`aov_mcu=1`, `keep_isp=1`, 60 с, 240 с): 14 пробуждений, на каждом
+  iomux = `i2c3m1`, SCL=1, STM8 `0x60` и `motor.present=true` живы весь
+  прогон; до правки iomux был partial и шина мертва уже на первом wake.
+  Артефакты: `output/bench/power/20261124-212527-aov` (после),
+  `output/bench/power/20261124-205523-aov` и `.../211531-aov` (до),
+  `output/bench/i2c-diag/20261124-210247` (воспроизведение MUX-loss).
+  Остаток: KI-072 (плотный цикл 15–20 с вместо 60 с, `aov_state=off`) и общий
+  gate AOV по ISP-handover (`FEATURES_UNVERIFIED.md` §AOV).
+  Статус: **закрыто** (2026-11-24) в части потери шины I2C3.
 
 ### Архив закрытых записей
 
@@ -1062,6 +1088,7 @@
 - KI-065. IVS: ложные события без движения — введён `ivs.min_area` (площадь кадра в %), в событии `area`/`cause`, исправлена утечка MD-буфера. — исправлено (2026-11-15); остаток: OD не проверен — закрыт ссылкой на KI-015.
 - KI-066. Паника `rga2_reg: irq handler err` при старте IVS сразу после остановки YOLO: после перевода IVS на VI chn2 не воспроизводится. — закрыто (2026-11-15); regression-watch: запись в архиве, не воспроизводится на VI chn2.
 - KI-069. SIGHUP-рестарт утекал дескрипторами и CMA: перед `execvp()` все дескрипторы с 3 помечаются `FD_CLOEXEC`, 20 рестартов без роста fd. — закрыто (2026-11-15).
+- KI-080. I2C3 умирала после AOV-пробуждения: meta-образ объявлял `ircut_b` на GPIO1_D3 (= I2C3_M1 SCL), и MCU battery-ipc (`fast_ae.c`) на каждом решении AE/день-ночь переводил пад в GPIO-output-low. `ircut_b` перенесён на GPIO1_D1, `meta.img` пересобран; V1 14/14 пробуждений с живой шиной и STM8. — закрыто (2026-11-24) в части шины; остаток — KI-072 и gate AOV по ISP-handover.
 
 ## English
 
@@ -2109,6 +2136,32 @@ DDR re-init.
   workaround (with sleep disabled) remains. Artifacts:
   `output/bench/nand-aov-20261124/` (`uar0.log`, `aov-console-markers.txt`,
   `i2c_scan.txt`, `i2c_pads.txt`).
+  **2026-11-24, root cause found and fixed.** The failure was not the rk3x
+  controller: on the dead bus the GPIO1_D3 iomux field (I2C3_M1 SCL) in
+  `0xff538018` is 0 (GPIO), while the GPIO1 registers have driven that pad low
+  since boot (`DDR_H` b11=1, `DR_H` b11=0). SCL is therefore tied to ground,
+  `i2cdetect -r -y 3` is empty, and unbind/rebind, controller reset and clock
+  gating cannot help. The writer was the AOV meta image:
+  `project/make_meta/sensor_init/sc230ai_init.c` declared `ircut_b =
+  GPIO1_D3` (`meta.img` carries 59 at offset 2048+40), and the battery-ipc MCU
+  (`fast_ae.c`, `ircut_switch()`) re-applies that pin function
+  (`IOMUX_FUNC0 | OUTPUT | LOW`) on every AE/day-night decision.
+  Deterministic confirmation: a masked write of `0xff000000` to `0xff538018`
+  (D3 → GPIO with `DR`=0) reproduces the field picture exactly (`state=2`,
+  empty scan), and `0xff003300` brings `0x40/0x41/0x42/0x60` back without
+  unbind or a power cycle (`bench/aov_i2c_diag.py --mux-loss --restore-mux`).
+  Fix: `ircut_b` moved to GPIO1_D1 (the product has no IR-cut), `./build.sh
+  meta`, the new `meta.img` was pushed to the bench
+  (`/oem/usr/share/oko/meta.img`, reboot). V1 (`aov_mcu=1`, `keep_isp=1`,
+  60 s interval, 240 s): 14 wakes, every one with iomux = `i2c3m1`, SCL=1,
+  and STM8 `0x60` / `motor.present=true` alive for the whole run; before the
+  fix the iomux was partial and the bus died on the first wake. Artifacts:
+  `output/bench/power/20261124-212527-aov` (after), `.../20261124-205523-aov`
+  and `.../211531-aov` (before), `output/bench/i2c-diag/20261124-210247`
+  (MUX-loss reproduction). Residual: KI-072 (dense 15–20 s cycle instead of
+  60 s, `aov_state=off`) and the AOV ISP-handover gate
+  (`FEATURES_UNVERIFIED.md` §AOV).
+  Status: **closed** (2026-11-24) for the I2C3 bus loss.
 
 ### Closed entries archive
 
@@ -2129,3 +2182,4 @@ and numbers are never reused.
 - KI-065. IVS: false events without motion — `ivs.min_area` (percent of the frame) and `area`/`cause` in the event were added, and the MD buffer leak was fixed. — fixed (2026-11-15); residual: OD is unverified and covered by KI-015.
 - KI-066. Kernel panic `rga2_reg: irq handler err` when IVS starts right after YOLO stops: not reproducible after IVS moved to VI chn2. — closed (2026-11-15); regression-watch: the entry stays in the archive and is not reproducible on VI chn2.
 - KI-069. A SIGHUP restart leaked descriptors and CMA: before `execvp()` every descriptor from 3 is marked `FD_CLOEXEC`, and 20 restarts show no fd growth. — closed (2026-11-15).
+- KI-080. I2C3 died after an AOV wake: the meta image declared `ircut_b` on GPIO1_D3 (= I2C3_M1 SCL) and the battery-ipc MCU (`fast_ae.c`) turned the pad into a GPIO output low on every AE/day-night decision. `ircut_b` moved to GPIO1_D1 and `meta.img` was rebuilt; V1 kept the bus and the STM8 alive on 14/14 wakes. — closed (2026-11-24) for the bus loss; residual: KI-072 and the AOV ISP-handover gate.

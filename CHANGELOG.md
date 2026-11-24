@@ -26,6 +26,28 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Добавлено
 
+- **`bench/aov_i2c_diag.py`: диагностика I2C3 на уровне регистров и падов.**
+  Читает `CON/CLKDIV/IEN/IPD/FCNT/SCL_OE_DB/ST/DBGCTRL/CON1` (base `0xff460000`,
+  `ST` — 0x220, `DBGCTRL` — 0x224, TRM V0.3 Part1 §15.4), уровни падов
+  (`0xff530070`), iomux `0xff538018`, `/proc/interrupts` и `i2cdetect`;
+  умеет `--nak-release-scl`, `--sample` (чтение при включённом pclk),
+  `--bitbang` (9 тактов SCL + STOP через GPIO1_D2/D3 с masked-записями
+  HIWORD_UPDATE), `--mux-loss`/`--restore-mux` (детерминированное
+  воспроизведение KI-080) и `--heal` (наблюдение с восстановлением iomux).
+  В `sleep_power.py` лестница STM8 теперь снимает дампы до/после unbind и
+  bit-bang между unbind и rebind (`--no-ladder-bitbang` отключает), а сценарий
+  `aov` пишет iomux и уровни падов на каждом пробуждении.
+- **`bench/aov_i2c_diag.py`: register- and pad-level I2C3 diagnostics.**
+  Reads `CON/CLKDIV/IEN/IPD/FCNT/SCL_OE_DB/ST/DBGCTRL/CON1` (base
+  `0xff460000`, `ST` at 0x220, `DBGCTRL` at 0x224, TRM V0.3 Part1 §15.4), the
+  pad levels (`0xff530070`), iomux `0xff538018`, `/proc/interrupts` and
+  `i2cdetect`; supports `--nak-release-scl`, `--sample` (reads while pclk is
+  on), `--bitbang` (9 SCL clocks + STOP over GPIO1_D2/D3 with HIWORD_UPDATE
+  masked writes), `--mux-loss`/`--restore-mux` (deterministic KI-080
+  reproduction) and `--heal` (watch and restore the iomux). In
+  `sleep_power.py` the STM8 ladder now dumps before/after unbind and bit-bangs
+  between unbind and rebind (`--no-ladder-bitbang` disables it), and the `aov`
+  scenario records iomux/pad levels on every wake.
 - **`bench/ina_log.py` + `bench/sleep_power.py`: замер DUT через INA3221
   ESP32-моста.** Второй INA3221 на мосту измеряет вход 5 В всего DUT (CH3;
   прошивка 1.11.1, `GET /sensor`, LSB 0.4 мА). `ina_log.py` пишет CSV с
@@ -742,6 +764,34 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Исправлено
 
+- **KI-080: I2C3 больше не умирает после AOV-пробуждения.** Причина — не
+  контроллер rk3x, а конфликт пина в meta-образе AOV: sensor-init для SC230AI
+  объявлял `ircut_b` на GPIO1_D3, который на этой плате занят под I2C3_M1 SCL
+  (STM8/EC). MCU battery-ipc (`fast_ae.c`, `ircut_switch()`) на каждом решении
+  AE/день-ночь заново применял `IOMUX_FUNC0 | OUTPUT | LOW`, переводил пад в
+  GPIO и прижимал SCL к земле; GPIO-регистры с загрузки держат выход низким,
+  поэтому unbind/rebind и reset контроллера не помогали. В
+  `project/make_meta/sensor_init/sc230ai_init.c` `ircut_b` переведён на
+  GPIO1_D1 (IR-cut в продукте нет), `meta.img` пересобран. Стенд:
+  детерминированное воспроизведение через iomux (`bench/aov_i2c_diag.py
+  --mux-loss --restore-mux`) и V1 на NAND #37 — 14/14 пробуждений с
+  `i2c3m1`, SCL=1, STM8 `0x60` и `motor.present=true` (до правки шина мертва
+  уже на первом wake). KI-080 закрыт в части шины; KI-072 (плотный цикл) и
+  gate AOV остаются открытыми.
+- **KI-080: I2C3 no longer dies after an AOV wake.** The cause was not the
+  rk3x controller but a pin clash in the AOV meta image: the SC230AI
+  sensor-init table declared `ircut_b` on GPIO1_D3, which this board uses as
+  I2C3_M1 SCL (STM8/EC). The battery-ipc MCU (`fast_ae.c`, `ircut_switch()`)
+  re-applied `IOMUX_FUNC0 | OUTPUT | LOW` on every AE/day-night decision,
+  switched the pad to GPIO and tied SCL to ground; the GPIO registers keep the
+  output low since boot, so unbind/rebind and controller reset could not help.
+  `ircut_b` in `project/make_meta/sensor_init/sc230ai_init.c` now points at
+  GPIO1_D1 (the product has no IR-cut) and `meta.img` was rebuilt. Bench:
+  deterministic reproduction through the iomux (`bench/aov_i2c_diag.py
+  --mux-loss --restore-mux`) and V1 on NAND #37 — 14/14 wakes with `i2c3m1`,
+  SCL=1, STM8 `0x60` and `motor.present=true` (before the fix the bus died on
+  the first wake). KI-080 is closed for the bus loss; KI-072 (dense cycle) and
+  the AOV gate stay open.
 - **HOME FOCUS/ZOOM: полный ход до упора вместо коррекции счётчика.**
   `POST /api/focus?home=focus|zoom` в divinus (`focus_home.c`) раньше ехал на
   `|position| + home_margin`: из нуля это 25 шагов, поэтому каждое нажатие
