@@ -895,6 +895,14 @@
   в исходниках, стенд возвращён на стабильное #27. После восстановления
   NAND AOV на #27 всё равно зависает на первом suspend (проверены
   `wake_interval_s` 10/40/60), поэтому AOV остаётся NO-GO, T2.2 не закрыт.
+  **2026-11-24, после откота на #27:** холодный power cycle вернул `rw` и
+  шину, но теперь зависает и тихий `cycle` (без AOV), и AOV при
+  `wake_interval_s` 10/40/60: AP уходит в suspend и не просыпается
+  (`/api/status=000`), лечится только холодным power cycle. Исторические
+  данные 2026-11-22 (#27): 20/60 с работали, deep suspend 2.26–2.42 с;
+  сейчас suspend-путь стенда нестабилен (HPMCU/PMU или износ NAND).
+  Не-suspend регрессия на #27: `api_check` 139/0, `ui_check` passed,
+  300 циклов I2C — 0 ошибок.
   V2 (`aov_mcu=1`, `aov_keep_isp=0`, 60 с): AP после suspend не отвечает
   более 8 мин (логгер отработал 476 с, `/api/status` = `000`), нужен power
   cycle. V3 (`aov_mcu=0`) на исправной ФС даёт тихий цикл: deep suspend
@@ -1822,6 +1830,14 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   the source tree and the bench is back on the stable #27. After the NAND
   recovery AOV on #27 still hangs on the first suspend (tested
   `wake_interval_s` 10/40/60), so AOV remains NO-GO and T2.2 stays open.
+  **2026-11-24, after reverting to #27:** a cold power cycle restored `rw`
+  and the bus, but now even a quiet `cycle` (no AOV) and AOV at
+  `wake_interval_s` 10/40/60 hang: the AP suspends and never wakes
+  (`/api/status=000`), recoverable only by a cold power cycle. Historical
+  2026-11-22 data (#27): 20/60 worked with a 2.26–2.42 s deep suspend; the
+  bench suspend path is now unstable (HPMCU/PMU or NAND wear). Non-suspend
+  regression on #27: `api_check` 139/0, `ui_check` passed, 300 I2C cycles —
+  0 errors.
   V2 (`aov_mcu=1`, `aov_keep_isp=0`, 60 s): the AP does not answer for more
   than 8 minutes after suspend (logger ran 476 s, `/api/status` = `000`);
   a power cycle is required. V3 (`aov_mcu=0`) on a healthy filesystem gives

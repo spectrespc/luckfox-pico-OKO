@@ -430,6 +430,21 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   the first suspend (`wake_interval_s` 10/40/60), so AOV remains NO-GO. The
   working workaround is unbind/rebind of `ff460000.i2c`.
 
+- **Итог H2-эксперимента и состояние стенда (2026-11-24).**
+  Kernel-патчи #29/#30 не устранили потерю I2C3 и откатаны; стенд возвращён
+  на #27 из бэкапа. После восстановления NAND зависает не только AOV, но и
+  тихий `cycle` (10/40/60 с), помогает только холодный power cycle.
+  Не-suspend регрессия на #27: `api_check` 139/0, `ui_check` passed,
+  300 циклов I2C — 0 ошибок. AOV остаётся NO-GO; suspend-тесты до
+  стабилизации PMU/HPMCU не запускать.
+- **H2 experiment result and bench state (2026-11-24).**
+  Kernel patches #29/#30 did not stop the I2C3 loss and were reverted; the
+  bench is back on #27 from the backup. After the NAND recovery not only AOV
+  but also a quiet `cycle` hangs (10/40/60 s); only a cold power cycle
+  recovers. Non-suspend regression on #27: `api_check` 139/0, `ui_check`
+  passed, 300 I2C cycles — 0 errors. AOV remains NO-GO; do not run suspend
+  tests until the PMU/HPMCU state is stabilised.
+
 ### Исправлено
 
 - **HOME FOCUS/ZOOM: полный ход до упора вместо коррекции счётчика.**
