@@ -555,9 +555,15 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
     поддержка в `rk_aiq`/IQ.
   Сборка `./build.sh kernel` и `./build.sh driver` при активном AOV-профиле
   проходит; `output/image/boot.img` — AOV-FIT из `boot-aov.its` (gzip, kernel
-  4 782 493 Б, `load = entry = 0x00208000`), `sc230ai.ko` собран. Стендовая
-  проверка не выполнялась (гейты KI-071/KI-078), статусы KI не менялись на
-  «исправлено».
+  4 782 493 Б, `load = entry = 0x00208000`), `sc230ai.ko` собран. Стенд
+  2026-11-24 (netboot/TFTP + NFS root, NAND не прошивался): ядро `#37`
+  загрузилось, тихие циклы `aov_mcu=0` идут (deep suspend 2.26–2.28 с,
+  интервал ~12 с, десятки циклов), `dmesg` без `sfc`/`ubifs`/`oops`; I2C3 жива
+  после 30 `oko-ec scan` и циклов; `api_check` 139/6 — те же 6 отказов
+  `/api/mqtt` (404), что и до серии, из-за `divinus` от 2026-11-17.
+  Артефакты — `output/bench/kernel-backport-20261124/`. Не проверены:
+  NAND-ввод-вывод (root NFS), AOV-MCU (NO-GO) и HDR (гейт KI-011); статусы KI
+  не менялись на «исправлено».
 - **Kernel 5.10.160: backport of rockchip-linux/kernel fixes (2026-11-24).**
   Late vendor-kernel commits were ported (integration patch under AGENTS §6,
   in-tree — `sysdrv/source/kernel` has no git history):
@@ -586,8 +592,16 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
     still required.
   `./build.sh kernel` and `./build.sh driver` pass with the active AOV profile;
   `output/image/boot.img` is the `boot-aov.its` FIT (gzip, 4 782 493 B kernel,
-  `load = entry = 0x00208000`) and `sc230ai.ko` builds. The bench was not run
-  (KI-071/KI-078 gates), so no KI status is claimed as fixed.
+  `load = entry = 0x00208000`) and `sc230ai.ko` builds. Bench 2026-11-24
+  (netboot/TFTP + NFS root, NAND untouched): kernel `#37` booted, quiet
+  `aov_mcu=0` cycles run (deep suspend 2.26-2.28 s, ~12 s period, dozens of
+  cycles),
+  `dmesg` has no `sfc`/`ubifs`/`oops`; I2C3 stays alive after 30 `oko-ec scan`
+  runs and the cycles; `api_check` reports 139/6 with the same six
+  `/api/mqtt` 404s as before the series (the `divinus` from 2026-11-17 has no
+  MQTT API). Artifacts: `output/bench/kernel-backport-20261124/`. Not checked:
+  NAND I/O (NFS root), AOV-MCU (NO-GO) and HDR (KI-011 gate); no KI status is
+  claimed as fixed.
 
 ### Исправлено
 
