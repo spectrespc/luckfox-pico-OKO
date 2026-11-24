@@ -1,6 +1,6 @@
 # Известные ошибки и ограничения OKO
 
-Обновлено: `2026-11-19`. В файле — открытые проблемы, подтверждённые
+Обновлено: `2026-11-24`. В файле — открытые проблемы, подтверждённые
 ограничения и архив закрытых записей (§Архив). Проверенные функции и доказательства — в `VERIFIED_FUNCTIONS.md`,
 состав и статус функционала — в `FEATURES_VERIFIED.md` / `FEATURES_UNVERIFIED.md`,
 процедуры стенда — в `TESTBENCH.md`.
@@ -90,6 +90,11 @@
 - **KI-011. HDR2/HDR3 не поддерживается на SC230AI.**
   `rk_aiq_uapi_sysctl_prepare(mode=HDR2/HDR3)` завершается ошибкой, приложение
   откатывается в SDR. Гейт `hdr` возвращает `blocked`.
+  **2026-11-24, сенсорная часть:** в `sc230ai.c` перенесены
+  `365e2f6`/`34690d3`/`aecea3e` (`s_frame_interval`, `bus_code`, выбор режима
+  по `s_fmt`/`set_hdr` с подбором по FPS, исправление `cur_best_fit`), см.
+  `research/rockchip-kernel-upstream/`. Гейт не снят: HDR2/HDR3 требует также
+  поддержки в `rk_aiq`/IQ. Стендовая проверка не выполнялась.
   Статус: **заблокировано по дизайну**.
 
 - **KI-012. AIISP несовместим с HDR.**
@@ -326,6 +331,13 @@
   **2026-11-24, #32:** один AOV-прогон снова перевёл `/userdata` в `ro`
   (`sleep settings could not be saved`); холодный power cycle вернул `rw`.
   Износ NAND/UBI остаётся, suspend-тесты ограничены одним-двумя прогонами.
+  **2026-11-24, бэкпорт SFC:** добавлены `53123db` (обнуление delay lines перед
+  DLL-тюнингом) и кросс-порт `9dc03be` из `develop-6.12` (`rockchip_sfc_init`
+  восстанавливает `dll_cells`, `init` вызывается из `runtime_resume`); наша
+  защита 2026-11-21 сохранена (`reset`+`init` в `rockchip_sfc_resume`), двойного
+  reset нет. `5885601`, `924d325`, `a7c2ff4` уже были в дереве; в `5885601`
+  исправлен недостижимый `goto err_dma`. Ядро собирается, **стендовая проверка
+  не выполнена** (гейты KI-078/KI-071) — статус не меняется.
 
 - **KI-072. Профиль `-AOV`: 1M-раскладка и окно ядра/MCU исправлены,
   handshake MCU не отвечает.** Hpmcu (117 КБ) + SPL + DDR + usbplug дают
@@ -468,6 +480,15 @@
   не удалось: `/userdata` уходил в `ro` (KI-071), а пул сессий моста
   исчерпан (3/3, `429`). Gate: **AOV = NO-GO до вендорского
   ISP-handover**; quiet-тесты — только `aov_mcu=0`.
+  **2026-11-24, бэкпорт PM:** перенесены `fca1696` (TIMEOUT_WKUP включается
+  только при ненулевом `PMU_WAKEUP_TIMEOUT_CNT`; при init счётчик обнуляется),
+  `856ec70` (save/restore `rtc_clamp_en` через `vi_grf`) и `8854147` (32k-ext
+  только при `chip_version > 0`). **Эксплуатационное следствие:** AOV-цикл
+  теперь требует, чтобы divinus программировал `PMU_WAKEUP_TIMEOUT_CNT` перед
+  `echo mem` — иначе таймаут-пробуждение выключено. AOV-хуки
+  (`oko_aov_enabled`, `pmu_timeout_cnt`, `hpmcu_fast_wkup`,
+  `gic_irq_clear_pending`, окно mailbox 1000 мс) не тронуты. Ядро собирается,
+  **стендовая проверка не выполнена**; gate остаётся NO-GO.
 
 - **KI-073. в `rk3x_i2c_irq` на I2C3 при циклах `[sleep]`.**
   2026-11-17 в AOV-прогоне (idle 30 s, `aov_mcu=1`) шина I2C3
@@ -488,7 +509,13 @@
   воспроизводится в трёх прогонах suspend (до патча — на первом-втором
   цикле); без патча цикл на том же стенде теперь доходит до зависания
   resume (KI-074), поэтому остаточный блокер — KI-074. Артефакт паники:
-  `output/bench/aov-test/console-m3-panic-attempt3.log`.
+`output/bench/aov-test/console-m3-panic-attempt3.log`.
+  **2026-11-24, бэкпорт i2c:** `2b42b35` — `i2c->msg` обнуляется только в
+  состоянии IDLE (в `rk3x_i2c_stop` и `rk3x_i2c_handle_stop`), поэтому поздний
+  NAK/STOP больше не видит NULL; guard `if (!i2c->msg)` сохранён как второй
+  барьер. `d8a07ba`, `6272868`, `f6730fc`, `13505e1` уже были в дереве (два
+  последних — в коммите `9ee690f5d`). Ядро собирается, **стендовая проверка не
+  выполнена**; статус «патч применён» без изменения.
 
 - **KI-074. Зависание AP на resume сразу после `rv1106 exit sleep`.**
   2026-11-17, AOV-образ (ядро по 0x208000), `[sleep]` с `aov_mcu=0`, idle
@@ -534,6 +561,12 @@
   `/api/sleep`. Следующие шаги: сравнить поведение на вендорском TB-ядре,
   разобрать DDR/PMU-stub (`rv1106_pm.c`, `rkpm_*`, `Jump to PMU_SRAM`) и
   проверить гипотезу порчи/несовместимости контекста после DDR re-init.
+  **2026-11-24, бэкпорт PM:** в дерево добавлены `fca1696` (`TIMEOUT_WKUP` по
+  значению `PMU_WAKEUP_TIMEOUT_CNT`), `856ec70` (`rtc_clamp_en` в save/restore
+  через `vi_grf`) и `8854147` (32k-ext только при `chip_version > 0`) — все три
+  относятся к контексту после `rv1106 exit sleep`. Патч `gic400_restore`
+  (2026-11-17) не тронут. Ядро собирается, **стендовая проверка не
+  выполнялась**; статус исправления остаётся по стенду 2026-11-17.
 
 - **KI-064. `GET /api/update` роняет/подвешивает divinus.**
   2026-11-14: и старая сборка 0.3.0 (`/userdata/divinus.old`), и новая
@@ -962,6 +995,11 @@
   `layer/dmesg-dead-bus.txt`), `output/bench/power/20261123-100835-aov/`.
   Статус: **открыто**; для закрытия нужны консоль (KI-078) и вендорский
   ISP-handover, gate — в `FEATURES_UNVERIFIED.md` §AOV.
+  **2026-11-24, ветка `feature/rockchip-kernel-upstream`:** поверх #32 добавлен
+  `2b42b35` (msg обнуляется только в IDLE), а также SFC/PM-бэкпорты
+  (KI-071/KI-072); H2 они не закрывают по определению, ядро этой ветки на
+  стенд **не прошивалось** (KI-078/KI-071). Рабочий обход остаётся
+  unbind/rebind i2c3.
 
 ### Архив закрытых записей
 
@@ -985,7 +1023,7 @@
 
 ## English
 
-Updated: `2026-11-16`. This file lists open problems, confirmed limitations and
+Updated: `2026-11-24`. This file lists open problems, confirmed limitations and
 an archive of closed entries (§Archive).
 Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
 `FEATURES_VERIFIED.md` / `FEATURES_UNVERIFIED.md`, bench procedures in
@@ -1068,6 +1106,11 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
 
 - **KI-011. HDR2/HDR3 is unsupported on SC230AI.** `rk_aiq_uapi_sysctl_prepare`
   fails and the stream falls back to SDR; the `hdr` gate returns `blocked`.
+  **2026-11-24, sensor part:** `365e2f6`/`34690d3`/`aecea3e` were ported into
+  `sc230ai.c` (`s_frame_interval`, `bus_code`, mode selection from
+  `s_fmt`/`set_hdr` with an FPS match, `cur_best_fit` fix), see
+  `research/rockchip-kernel-upstream/`. The gate is not lifted: HDR2/HDR3 also
+  needs `rk_aiq`/IQ support. No bench validation was run.
   Status: **blocked by design**.
 
 - **KI-012. AIISP cannot run with HDR.** AIISP is forced off when
@@ -1300,6 +1343,14 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   **2026-11-24, #32:** one AOV run put `/userdata` back into `ro`
   (`sleep settings could not be saved`); a cold power cycle restored `rw`.
   NAND/UBI wear remains, so suspend tests are limited to one or two runs.
+  **2026-11-24, SFC backport:** `53123db` (zero the delay lines before DLL
+  tuning) and a cross-port of `9dc03be` from `develop-6.12`
+  (`rockchip_sfc_init` restores `dll_cells`, `init` runs from
+  `runtime_resume`) were added; the local 2026-11-21 protection is kept
+  (`reset`+`init` in `rockchip_sfc_resume`), so there is no double reset.
+  `5885601`, `924d325`, `a7c2ff4` were already in the tree; the unreachable
+  `goto err_dma` in `5885601` is fixed. The kernel builds, the **bench was not
+  run** (KI-078/KI-071 gates) — the status is unchanged.
 
 - **KI-072. `-AOV` profile: 1M layout and the kernel/MCU window are fixed,
   the MCU handshake does not answer.** Hpmcu (117 KB) + SPL + DDR + usbplug
@@ -1447,6 +1498,15 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   (KI-071) and the bridge session pool was exhausted (3/3, `429`). Gate:
   **AOV = NO-GO until a vendor ISP-handover**; quiet tests only with
   `aov_mcu=0`.
+  **2026-11-24, PM backport:** `fca1696` (TIMEOUT_WKUP enabled only when
+  `PMU_WAKEUP_TIMEOUT_CNT` is non-zero; init writes 0), `856ec70`
+  (save/restore `rtc_clamp_en` via `vi_grf`) and `8854147` (32k-ext only when
+  `chip_version > 0`) were ported. **Operational consequence:** an AOV cycle
+  now requires divinus to program `PMU_WAKEUP_TIMEOUT_CNT` before
+  `echo mem`, otherwise timeout wakeup is disabled. The AOV hooks
+  (`oko_aov_enabled`, `pmu_timeout_cnt`, `hpmcu_fast_wkup`,
+  `gic_irq_clear_pending`, 1000 ms mailbox window) are untouched. The kernel
+  builds, the **bench was not run**; the gate stays NO-GO.
 
 - **KI-073. in `rk3x_i2c_irq` on I2C3 during `[sleep]` cycles.**
   On 2026-11-17 an AOV run (idle 30 s, `aov_mcu=1`) got a burst of
@@ -1468,6 +1528,12 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   on the first or second cycle); without the patch the same bench now stops
   at the resume hang (KI-074), so the remaining blocker is KI-074. Panic
   artifact: `output/bench/aov-test/console-m3-panic-attempt3.log`.
+  **2026-11-24, i2c backport:** `2b42b35` clears `i2c->msg` only in the IDLE
+  state (`rk3x_i2c_stop` and `rk3x_i2c_handle_stop`), so a late NAK/STOP no
+  longer sees NULL; the `if (!i2c->msg)` guard is kept as a second barrier.
+  `d8a07ba`, `6272868`, `f6730fc`, `13505e1` were already in the tree (the
+  last two via commit `9ee690f5d`). The kernel builds, the **bench was not
+  run**; the status stays "patch applied".
 
 - **KI-074. AP hangs on resume right after `rv1106 exit sleep`.**
   2026-11-17, AOV image (kernel at 0x208000), `[sleep]` with `aov_mcu=0`,
@@ -1512,7 +1578,13 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   `/proc/uptime`, not `/api/sleep`. Next steps: compare with the vendor TB
   kernel, inspect the DDR/PMU stub (`rv1106_pm.c`, `rkpm_*`,
   `Jump to PMU_SRAM`) and test the context-corruption hypothesis after the
-  DDR re-init.
+DDR re-init.
+  **2026-11-24, PM backport:** `fca1696` (`TIMEOUT_WKUP` by the value of
+  `PMU_WAKEUP_TIMEOUT_CNT`), `856ec70` (`rtc_clamp_en` saved/restored via
+  `vi_grf`) and `8854147` (32k-ext only when `chip_version > 0`) were added —
+  all three affect the context after `rv1106 exit sleep`. The `gic400_restore`
+  patch (2026-11-17) is untouched. The kernel builds, the **bench was not
+  run**; the fixed status relies on the 2026-11-17 bench run.
 
 - **KI-064. `GET /api/update` hangs/kills divinus.**
   On 2026-11-14 both the previous 0.3.0 binary (`/userdata/divinus.old`) and
@@ -1945,6 +2017,10 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   `layer/dmesg-dead-bus.txt`), `output/bench/power/20261123-100835-aov/`.
   Status: **open**; closing needs the console (KI-078) and a vendor
   ISP-handover; the gate is in `FEATURES_UNVERIFIED.md` §AOV.
+  **2026-11-24, `feature/rockchip-kernel-upstream` branch:** `2b42b35` (msg
+  cleared only in IDLE) plus the SFC/PM backports (KI-071/KI-072) were added on
+  top of #32; by definition they do not close H2, and this branch's kernel was
+  **not flashed** (KI-078/KI-071). The unbind/rebind i2c3 workaround remains.
 
 ### Closed entries archive
 

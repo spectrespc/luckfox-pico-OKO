@@ -410,7 +410,6 @@ static void rk3x_i2c_stop(struct rk3x_i2c *i2c, int error)
 	unsigned int ctrl;
 
 	i2c->processed = 0;
-	i2c->msg = NULL;
 	i2c->error = error;
 
 	if (i2c->is_last_msg) {
@@ -427,6 +426,12 @@ static void rk3x_i2c_stop(struct rk3x_i2c *i2c, int error)
 		/* Signal rk3x_i2c_xfer to start the next message. */
 		i2c->busy = false;
 		i2c->state = STATE_IDLE;
+		/*
+		 * Rockchip 2b42b35: keep i2c->msg valid until the controller is
+		 * idle - the stop phase may still need it, and a NAK interrupt
+		 * arriving in between must not observe a stale NULL.
+		 */
+		i2c->msg = NULL;
 
 		/*
 		 * The HW is actually not capable of REPEATED START. But we can
@@ -593,7 +598,6 @@ static void rk3x_i2c_handle_stop(struct rk3x_i2c *i2c, unsigned int ipd)
 		}
 
 		i2c->processed = 0;
-		i2c->msg = NULL;
 	}
 
 	/* ack interrupt */
@@ -608,6 +612,8 @@ static void rk3x_i2c_handle_stop(struct rk3x_i2c *i2c, unsigned int ipd)
 
 	i2c->busy = false;
 	i2c->state = STATE_IDLE;
+	/* Rockchip 2b42b35: only drop the message once the bus is idle. */
+	i2c->msg = NULL;
 
 	/* signal rk3x_i2c_xfer that we are finished */
 	rk3x_i2c_wake_up(i2c);

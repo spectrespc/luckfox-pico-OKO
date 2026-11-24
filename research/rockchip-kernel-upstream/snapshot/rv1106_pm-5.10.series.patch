@@ -1,0 +1,105 @@
+From fca16960f80380d7e585b1b04ecfd7f08bf3079b Mon Sep 17 00:00:00 2001
+From: XiaoDong Huang <derrick.huang@rock-chips.com>
+Date: Tue, 7 May 2024 18:24:21 +0800
+Subject: [PATCH] ARM: rockchip: rv1106: sleep: disable TIMEOUT_WKUP if
+ PMU_WAKEUP_TIMEOUT_CNT == 0
+
+Signed-off-by: XiaoDong Huang <derrick.huang@rock-chips.com>
+Change-Id: I6a39e622d22314df58e8c55fcc5b165f5b01dc2a
+---
+ arch/arm/mach-rockchip/rv1106_pm.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm/mach-rockchip/rv1106_pm.c b/arch/arm/mach-rockchip/rv1106_pm.c
+index 738b3adfb9213..8ad10fe759a9e 100644
+--- a/arch/arm/mach-rockchip/rv1106_pm.c
++++ b/arch/arm/mach-rockchip/rv1106_pm.c
+@@ -779,7 +779,7 @@ static void pmu_sleep_config(void)
+ 		/* BIT(RV1106_PMU_WAKEUP_CPU_INT_EN) | */
+ 		BIT(RV1106_PMU_WAKEUP_GPIO_INT_EN) |
+ 		0;
+-	if (IS_ENABLED(CONFIG_RV1106_PMU_WAKEUP_TIMEOUT))
++	if (readl_relaxed(pmu_base + RV1106_PMU_WAKEUP_TIMEOUT_CNT) != 0)
+ 		pmu_wkup_con |= BIT(RV1106_PMU_WAKEUP_TIMEOUT_EN);
+ 
+ 	pmu_pwr_con =
+@@ -1344,6 +1344,9 @@ static int __init rv1106_suspend_init(struct device_node *np)
+ 	writel_relaxed(BITS_WITH_WMASK(0x5, 0x7, 0),
+ 		       pmugrf_base + RV1106_PMUGRF_SOC_CON(1));
+ 
++	/* PMU_WAKEUP_TIMEOUT_CNT = 0, disable TIMEOUT_WAKEUP by default */
++	writel_relaxed(0x0, pmu_base + RV1106_PMU_WAKEUP_TIMEOUT_CNT);
++
+ 	rkpm_region_mem_init(RV1106_PM_REG_REGION_MEM_SIZE);
+ 	rkpm_reg_rgns_init();
+ 
+From 856ec70f8bb014b4aa892db413dbc907fe4c7057 Mon Sep 17 00:00:00 2001
+From: XiaoDong Huang <derrick.huang@rock-chips.com>
+Date: Wed, 29 May 2024 14:27:54 +0800
+Subject: [PATCH] ARM: rockchip: rv1106: sleep: save/restore "rtc_clamp_en"
+
+Signed-off-by: XiaoDong Huang <derrick.huang@rock-chips.com>
+Change-Id: Idca1a9fa13bf9d59a2ede302a494a328cba7b34e
+---
+ arch/arm/mach-rockchip/rv1106_pm.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/arch/arm/mach-rockchip/rv1106_pm.c b/arch/arm/mach-rockchip/rv1106_pm.c
+index 8ad10fe759a9e..46ad6503b4cd0 100644
+--- a/arch/arm/mach-rockchip/rv1106_pm.c
++++ b/arch/arm/mach-rockchip/rv1106_pm.c
+@@ -206,6 +206,9 @@ static struct reg_region vd_log_reg_rgns[] = {
+ 	{ REG_REGION(0x080, 0x0a4, 4, &perisgrf_base, WMSK_VAL)},
+ 	{ REG_REGION(0x0b8, 0x0bc, 4, &perisgrf_base, WMSK_VAL)},
+ 
++	/* vi_grf */
++	{ REG_REGION(0x000, 0x000, 4, &vigrf_base, 0x00400000)}, /* rtc_clamp_en */
++
+ 	/* vi_cru */
+ 	{ REG_REGION(0x300, 0x30c, 4, &vicru_base, WMSK_VAL)},
+ 	{ REG_REGION(0x800, 0x808, 4, &vicru_base, WMSK_VAL)},
+From 8854147ef26e6b1c6db008765a582a9d485a3c46 Mon Sep 17 00:00:00 2001
+From: XiaoDong Huang <derrick.huang@rock-chips.com>
+Date: Fri, 25 Oct 2024 15:24:17 +0800
+Subject: [PATCH] ARM: rockchip: rv1106: sleep: use 32k-ext when "chip_version
+ > 0" only
+
+Signed-off-by: XiaoDong Huang <derrick.huang@rock-chips.com>
+Change-Id: Ic7c2f691f79c992deecb4f9d35bc631b28b41fd4
+---
+ arch/arm/mach-rockchip/rv1106_pm.c | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm/mach-rockchip/rv1106_pm.c b/arch/arm/mach-rockchip/rv1106_pm.c
+index 46ad6503b4cd0..6dede4f9acdd4 100644
+--- a/arch/arm/mach-rockchip/rv1106_pm.c
++++ b/arch/arm/mach-rockchip/rv1106_pm.c
+@@ -80,6 +80,8 @@ static struct rv1106_sleep_ddr_data ddr_data;
+ 
+ static const struct rk_sleep_config *slp_cfg;
+ 
++static u32 rv1106_chip_version;
++
+ static void __iomem *pmucru_base;
+ static void __iomem *cru_base;
+ static void __iomem *pvtpllcru_base;
+@@ -648,7 +650,9 @@ static void pvtm_32k_config(void)
+ 	ddr_data.pmucru_sel_con7 =
+ 		readl_relaxed(pmucru_base + RV1106_PMUCRU_CLKSEL_CON(7));
+ 
+-	if (slp_cfg->mode_config & RKPM_SLP_32K_EXT) {
++	/* We can use clk-32k from rtc when chip_version > 0 only */
++	if ((slp_cfg->mode_config & RKPM_SLP_32K_EXT) &&
++	    (rv1106_chip_version > 0)) {
+ 		writel_relaxed(BITS_WITH_WMASK(0x3, 0x3, 14),
+ 			       pmugrf_base + RV1106_PMUGRF_SOC_CON(1));
+ 		writel_relaxed(BITS_WITH_WMASK(0x1, 0x3, 0),
+@@ -1328,6 +1332,8 @@ static int __init rv1106_suspend_init(struct device_node *np)
+ 
+ 	rv1106_bootram_base = dev_reg_base + RV1106_PMUSRAM_OFFSET;
+ 
++	rv1106_chip_version = readl_relaxed(pmugrf_base + RV1106_PMUGRF_OS_REG(1)) & 0x7;
++
+ 	rv1106_config_bootdata();
+ 
+ 	/* copy resume code and data to bootsram */

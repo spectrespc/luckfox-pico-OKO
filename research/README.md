@@ -38,6 +38,7 @@
 | Тема | Что внутри |
 |---|---|
 | [`buildroot-2026-08/`](buildroot-2026-08/README.md) | миграция rootfs на upstream Buildroot 2026.08.1: вендорская дельта, пакетные патчи под uClibc/gcc 8, версии пакетов |
+| [`rockchip-kernel-upstream/`](rockchip-kernel-upstream/README.md) | фиксы rockchip-linux/kernel `develop-5.10`/`develop-6.12` для ядра 5.10.160: SFC (KI-071), rk3x I2C (KI-073/080), rv1106_pm (KI-072/074/079), SC230AI (KI-011); что уже было в дереве и что отклонено |
 | [`rockchip-npu-mainline/`](rockchip-npu-mainline/README.md) | mainline-драйвер NPU Rockchip `drivers/accel/rocket`; применимость к RV1106 и сопоставление с вендорским `rknpu` |
 | [`rgn-mpp-lifecycle/`](rgn-mpp-lifecycle/README.md) | 2BPP overlay-регионы `RK_MPI_RGN_*`: вендорский цикл `GetCanvasInfo`/`UpdateCanvas`, переносимость destroy/recreate под живым энкодером, дефект KI-063 |
 | [`stm8-iap-an2659/`](stm8-iap-an2659/README.md) | IAP на STM8 (KI-075): AN2659/AN2737 как архитектура загрузчика, PM0051 §4 как единственная точная процедура стирания блока, сверка с нашим кодом и SPL |

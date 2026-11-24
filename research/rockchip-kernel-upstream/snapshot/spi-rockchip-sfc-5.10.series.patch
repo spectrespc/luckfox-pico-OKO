@@ -1,0 +1,217 @@
+From a7c2ff483d857f192fa3b49d0c64bd24283ab0c5 Mon Sep 17 00:00:00 2001
+From: Jon Lin <jon.lin@rock-chips.com>
+Date: Thu, 29 Feb 2024 17:29:03 +0800
+Subject: [PATCH] spi: rockchip-sfc: Fix error in remove progress
+
+Fix error in remove progress:
+	[   43.026148] Call trace:
+	[   43.026370]  klist_next+0x1c/0x1d4
+	[   43.026671]  device_for_each_child+0x48/0xac
+	[   43.027049]  spi_unregister_controller+0x30/0x130
+	[   43.027469]  rockchip_sfc_remove+0x48/0x80 [spi_rockchip_sfc]
+	[   43.027986]  platform_remove+0x3c/0x6c
+
+Change-Id: Ia930aa506837291c4bff39c9accb7df99cb9a10a
+Signed-off-by: Jon Lin <jon.lin@rock-chips.com>
+---
+ drivers/spi/spi-rockchip-sfc.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/spi/spi-rockchip-sfc.c b/drivers/spi/spi-rockchip-sfc.c
+index 01dedba02fd72..1b34fd394aef5 100644
+--- a/drivers/spi/spi-rockchip-sfc.c
++++ b/drivers/spi/spi-rockchip-sfc.c
+@@ -197,6 +197,7 @@ struct rockchip_sfc {
+ 	u32 dll_cells[SFC_MAX_CHIPSELECT_NUM];
+ 	u16 version;
+ 	struct gpio_desc **cs_gpiods;
++	struct spi_master *master;
+ };
+ 
+ static int rockchip_sfc_reset(struct rockchip_sfc *sfc)
+@@ -860,6 +861,7 @@ static int rockchip_sfc_probe(struct platform_device *pdev)
+ 
+ 	sfc = spi_master_get_devdata(master);
+ 	sfc->dev = dev;
++	sfc->master = master;
+ 
+ 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+ 	sfc->regbase = devm_ioremap_resource(dev, res);
+@@ -986,8 +988,8 @@ static int rockchip_sfc_probe(struct platform_device *pdev)
+ 
+ static int rockchip_sfc_remove(struct platform_device *pdev)
+ {
+-	struct spi_master *master = platform_get_drvdata(pdev);
+ 	struct rockchip_sfc *sfc = platform_get_drvdata(pdev);
++	struct spi_master *master = sfc->master;
+ 
+ 	free_pages((unsigned long)sfc->buffer, get_order(sfc->max_iosize));
+ 	spi_unregister_master(master);
+From 58856019542ef88a5797c5e8ed0fa7ec810cadef Mon Sep 17 00:00:00 2001
+From: Jon Lin <jon.lin@rock-chips.com>
+Date: Thu, 29 Feb 2024 18:48:59 +0800
+Subject: [PATCH] spi: rockchip-sfc: Add err_dma when get dma buffer failed
+
+Change-Id: Ib0798c4bdae14d21825658c9a0d218de43143505
+Signed-off-by: Jon Lin <jon.lin@rock-chips.com>
+---
+ drivers/spi/spi-rockchip-sfc.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/spi/spi-rockchip-sfc.c b/drivers/spi/spi-rockchip-sfc.c
+index 1b34fd394aef5..ecce7e9ff8173 100644
+--- a/drivers/spi/spi-rockchip-sfc.c
++++ b/drivers/spi/spi-rockchip-sfc.c
+@@ -959,8 +959,10 @@ static int rockchip_sfc_probe(struct platform_device *pdev)
+ 
+ 	if (sfc->use_dma) {
+ 		sfc->buffer = (u8 *)__get_free_pages(GFP_KERNEL | GFP_DMA32, get_order(sfc->max_iosize));
+-		if (!sfc->buffer)
++		if (!sfc->buffer) {
+ 			return -ENOMEM;
++			goto err_dma;
++		}
+ 		sfc->dma_buffer = virt_to_phys(sfc->buffer);
+ 	}
+ 
+@@ -975,6 +977,7 @@ static int rockchip_sfc_probe(struct platform_device *pdev)
+ 
+ err_register:
+ 	free_pages((unsigned long)sfc->buffer, get_order(sfc->max_iosize));
++err_dma:
+ 	pm_runtime_disable(sfc->dev);
+ 	pm_runtime_set_suspended(sfc->dev);
+ 	pm_runtime_dont_use_autosuspend(sfc->dev);
+From 924d32547cd5e78a02bf859688f313358ac4b26e Mon Sep 17 00:00:00 2001
+From: Jon Lin <jon.lin@rock-chips.com>
+Date: Tue, 23 Apr 2024 15:52:20 +0800
+Subject: [PATCH] spi: rockchip-sfc: Increase the waiting time to adapt to
+ lower frequency
+
+Wait 5 seconds.
+
+Change-Id: I7a91d5bb4efa939a365f101b61f3246912558046
+Signed-off-by: Jon Lin <jon.lin@rock-chips.com>
+---
+ drivers/spi/spi-rockchip-sfc.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/spi/spi-rockchip-sfc.c b/drivers/spi/spi-rockchip-sfc.c
+index 6daebc2e5511f..31ec7211b0232 100644
+--- a/drivers/spi/spi-rockchip-sfc.c
++++ b/drivers/spi/spi-rockchip-sfc.c
+@@ -934,7 +934,7 @@ static int rockchip_sfc_probe(struct platform_device *pdev)
+ 
+ 		if (readl_poll_timeout(sfc->regbase + SFC_SR, status,
+ 				       !(status & SFC_SR_IS_BUSY), 10,
+-				       500 * USEC_PER_MSEC))
++				       5000 * USEC_PER_MSEC))
+ 			dev_err(dev, "Wait for SFC idle timeout!\n");
+ 	}
+ 
+From 9dc03be23fb536b6a6fb861c4a3272fe0925a7c9 Mon Sep 17 00:00:00 2001
+From: Jon Lin <jon.lin@rock-chips.com>
+Date: Mon, 10 Nov 2025 14:35:07 +0800
+Subject: [PATCH] spi: rockchip-sfc: Initialize the controller during runtime
+ wake-up
+
+The controller power domain may be reset during runtime hibernation.
+
+Change-Id: I8d1eccd4bf3ef45f590d9416a14776b78b3e53e6
+Signed-off-by: Jon Lin <jon.lin@rock-chips.com>
+---
+ drivers/spi/spi-rockchip-sfc.c | 23 ++++++++++++-----------
+ 1 file changed, 12 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/spi/spi-rockchip-sfc.c b/drivers/spi/spi-rockchip-sfc.c
+index 7dc9ad405dc5b..aa0da4d73598e 100644
+--- a/drivers/spi/spi-rockchip-sfc.c
++++ b/drivers/spi/spi-rockchip-sfc.c
+@@ -333,7 +333,7 @@ static void rockchip_sfc_irq_mask(struct rockchip_sfc *sfc, u32 mask)
+ 
+ static int rockchip_sfc_init(struct rockchip_sfc *sfc)
+ {
+-	u32 reg;
++	u32 reg, i;
+ 
+ 	writel(0, sfc->regbase + SFC_CTRL);
+ 	writel(0xFFFFFFFF, sfc->regbase + SFC_ICLR);
+@@ -345,6 +345,10 @@ static int rockchip_sfc_init(struct rockchip_sfc *sfc)
+ 		reg |= SFC_SCLK_X2_BYPASS;
+ 		writel(reg, sfc->regbase + SFC_EXT_CTRL);
+ 	}
++	for (i = 0; i < SFC_MAX_CHIPSELECT_NUM; i++) {
++		if (sfc->dll_cells[i])
++			rockchip_sfc_set_delay_lines(sfc, (u16)sfc->dll_cells[i], i);
++	}
+ 
+ 	return 0;
+ }
+@@ -1161,10 +1165,14 @@ static int __maybe_unused rockchip_sfc_runtime_resume(struct device *dev)
+ 		return ret;
+ 
+ 	ret = clk_prepare_enable(sfc->clk);
+-	if (ret < 0)
++	if (ret < 0) {
+ 		clk_disable_unprepare(sfc->hclk);
++		return ret;
++	}
+ 
+-	return ret;
++	rockchip_sfc_init(sfc);
++
++	return 0;
+ }
+ 
+ static int __maybe_unused rockchip_sfc_suspend(struct device *dev)
+@@ -1176,8 +1184,7 @@ static int __maybe_unused rockchip_sfc_suspend(struct device *dev)
+ 
+ static int __maybe_unused rockchip_sfc_resume(struct device *dev)
+ {
+-	struct rockchip_sfc *sfc = dev_get_drvdata(dev);
+-	int ret, i;
++	int ret;
+ 
+ 	ret = pm_runtime_force_resume(dev);
+ 	if (ret < 0)
+@@ -1191,12 +1198,6 @@ static int __maybe_unused rockchip_sfc_resume(struct device *dev)
+ 		return ret;
+ 	}
+ 
+-	rockchip_sfc_init(sfc);
+-	for (i = 0; i < SFC_MAX_CHIPSELECT_NUM; i++) {
+-		if (sfc->dll_cells[i])
+-			rockchip_sfc_set_delay_lines(sfc, (u16)sfc->dll_cells[i], i);
+-	}
+-
+ 	pm_runtime_mark_last_busy(dev);
+ 	pm_runtime_put_autosuspend(dev);
+ 
+From 53123db8345873e478b23a7739703efdb5376dcc Mon Sep 17 00:00:00 2001
+From: Jon Lin <jon.lin@rock-chips.com>
+Date: Thu, 23 Jul 2026 21:02:36 +0800
+Subject: [PATCH] spi: rockchip-sfc: set delay lines to 0 before DLL threshold
+ tuning
+
+Initialize delay lines to 0 before switching to the DLL threshold
+clock so that stale delay values do not affect flash ID sampling
+during tuning.
+
+Change-Id: I2b3c3e81923fef69668331c97369aa1d11795fee
+Signed-off-by: Jon Lin <jon.lin@rock-chips.com>
+---
+ drivers/spi/spi-rockchip-sfc.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/spi/spi-rockchip-sfc.c b/drivers/spi/spi-rockchip-sfc.c
+index 4b3e05adc58cd..96eff99574914 100644
+--- a/drivers/spi/spi-rockchip-sfc.c
++++ b/drivers/spi/spi-rockchip-sfc.c
+@@ -670,6 +670,7 @@ static void rockchip_sfc_delay_lines_tuning(struct rockchip_sfc *sfc, struct spi
+ 	bool dll_valid = false;
+ 	u8 cs = mem->spi->chip_select;
+ 
++	rockchip_sfc_set_delay_lines(sfc, 0, cs);
+ 	rockchip_sfc_clk_set_rate(sfc, SFC_DLL_THRESHOLD_RATE);
+ 	op.data.buf.in = &id;
+ 	rockchip_sfc_exec_op_bypass(sfc, mem, &op);

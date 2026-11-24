@@ -297,11 +297,23 @@ static void rockchip_sfc_irq_mask(struct rockchip_sfc *sfc, u32 mask)
 
 static int rockchip_sfc_init(struct rockchip_sfc *sfc)
 {
+	u32 i;
+
 	writel(0, sfc->regbase + SFC_CTRL);
 	writel(0xFFFFFFFF, sfc->regbase + SFC_ICLR);
 	rockchip_sfc_irq_mask(sfc, 0xFFFFFFFF);
 	if (rockchip_sfc_get_version(sfc) >= SFC_VER_4)
 		writel(SFC_LEN_CTRL_TRB_SEL, sfc->regbase + SFC_LEN_CTRL);
+
+	/*
+	 * Rockchip 9dc03be (cross-port from develop-6.12): the controller power
+	 * domain may be reset during runtime hibernation, so every re-init has
+	 * to restore the tuned delay lines as well.
+	 */
+	for (i = 0; i < SFC_MAX_CHIPSELECT_NUM; i++) {
+		if (sfc->dll_cells[i])
+			rockchip_sfc_set_delay_lines(sfc, (u16)sfc->dll_cells[i], i);
+	}
 
 	return 0;
 }
@@ -640,6 +652,11 @@ static void rockchip_sfc_delay_lines_tuning(struct rockchip_sfc *sfc, struct spi
 	bool dll_valid = false;
 	u8 cs = mem->spi->chip_select;
 
+	/*
+	 * Rockchip 53123db: stale delay values from a previous tuning run can
+	 * corrupt the flash ID sampling below, so start from zero cells.
+	 */
+	rockchip_sfc_set_delay_lines(sfc, 0, cs);
 	rockchip_sfc_clk_set_rate(sfc, SFC_DLL_THRESHOLD_RATE);
 	op.data.buf.in = &id;
 	rockchip_sfc_exec_op_bypass(sfc, mem, &op);
@@ -964,7 +981,12 @@ static int rockchip_sfc_probe(struct platform_device *pdev)
 	if (sfc->use_dma) {
 		sfc->buffer = (u8 *)__get_free_pages(GFP_KERNEL | GFP_DMA32, get_order(sfc->max_iosize));
 		if (!sfc->buffer) {
-			return -ENOMEM;
+			/*
+			 * Rockchip 5885601 as published returns -ENOMEM *before*
+			 * the goto, so the goto is dead code and the clocks stay
+			 * enabled.  Set the code and take the err_dma path.
+			 */
+			ret = -ENOMEM;
 			goto err_dma;
 		}
 		sfc->dma_buffer = virt_to_phys(sfc->buffer);
@@ -1027,10 +1049,14 @@ static int __maybe_unused rockchip_sfc_runtime_resume(struct device *dev)
 		return ret;
 
 	ret = clk_prepare_enable(sfc->clk);
-	if (ret < 0)
+	if (ret < 0) {
 		clk_disable_unprepare(sfc->hclk);
+		return ret;
+	}
 
-	return ret;
+	rockchip_sfc_init(sfc);
+
+	return 0;
 }
 
 static int __maybe_unused rockchip_sfc_suspend(struct device *dev)
@@ -1052,7 +1078,7 @@ static int __maybe_unused rockchip_sfc_suspend(struct device *dev)
 static int __maybe_unused rockchip_sfc_resume(struct device *dev)
 {
 	struct rockchip_sfc *sfc = dev_get_drvdata(dev);
-	int ret, i;
+	int ret;
 
 	ret = pm_runtime_force_resume(dev);
 	if (ret < 0)
@@ -1071,14 +1097,11 @@ static int __maybe_unused rockchip_sfc_resume(struct device *dev)
 	 * (or its DMA engine) is not in the idle state, and the vendor code
 	 * only re-initialises the registers.  Reset the block first so the
 	 * resume always starts from a clean state instead of inheriting a
-	 * half-finished transfer.
+	 * half-finished transfer.  rockchip_sfc_init() (also called from
+	 * rockchip_sfc_runtime_resume()) restores the delay lines afterwards.
 	 */
 	rockchip_sfc_reset(sfc);
 	rockchip_sfc_init(sfc);
-	for (i = 0; i < SFC_MAX_CHIPSELECT_NUM; i++) {
-		if (sfc->dll_cells[i])
-			rockchip_sfc_set_delay_lines(sfc, (u16)sfc->dll_cells[i], i);
-	}
 
 	pm_runtime_mark_last_busy(dev);
 	pm_runtime_put_autosuspend(dev);

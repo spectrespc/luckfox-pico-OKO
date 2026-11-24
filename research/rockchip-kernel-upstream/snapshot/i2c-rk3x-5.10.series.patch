@@ -1,0 +1,257 @@
+From d8a07ba130da09763442adb598d6c881fa777cc3 Mon Sep 17 00:00:00 2001
+From: Jensen Huang <jensenhuang@friendlyarm.com>
+Date: Thu, 7 Dec 2023 16:21:59 +0800
+Subject: [PATCH] i2c: rk3x: fix potential spinlock recursion on poll
+
+[ Upstream commit 19cde9c92b8d3b7ee555d0da3bcb0232d3a784f4 ]
+
+Possible deadlock scenario (on reboot):
+rk3x_i2c_xfer_common(polling)
+    -> rk3x_i2c_wait_xfer_poll()
+        -> rk3x_i2c_irq(0, i2c);
+            --> spin_lock(&i2c->lock);
+            ...
+        <rk3x i2c interrupt>
+        -> rk3x_i2c_irq(0, i2c);
+            --> spin_lock(&i2c->lock); (deadlock here)
+
+Store the IRQ number and disable/enable it around the polling transfer.
+This patch has been tested on NanoPC-T4.
+
+Signed-off-by: Jensen Huang <jensenhuang@friendlyarm.com>
+Reviewed-by: Heiko Stuebner <heiko@sntech.de>
+Reviewed-by: Andi Shyti <andi.shyti@kernel.org>
+Signed-off-by: Wolfram Sang <wsa@kernel.org>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ drivers/i2c/busses/i2c-rk3x.c | 13 +++++++++++--
+ 1 file changed, 11 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/i2c/busses/i2c-rk3x.c b/drivers/i2c/busses/i2c-rk3x.c
+index 13c14eb175e94..6abcf975a2db9 100644
+--- a/drivers/i2c/busses/i2c-rk3x.c
++++ b/drivers/i2c/busses/i2c-rk3x.c
+@@ -178,6 +178,7 @@ struct rk3x_i2c_soc_data {
+  * @clk: function clk for rk3399 or function & Bus clks for others
+  * @pclk: Bus clk for rk3399
+  * @clk_rate_nb: i2c clk rate change notify
++ * @irq: irq number
+  * @t: I2C known timing information
+  * @lock: spinlock for the i2c bus
+  * @wait: the waitqueue to wait for i2c transfer
+@@ -200,6 +201,7 @@ struct rk3x_i2c {
+ 	struct clk *clk;
+ 	struct clk *pclk;
+ 	struct notifier_block clk_rate_nb;
++	int irq;
+ 
+ 	/* Settings */
+ 	struct i2c_timings t;
+@@ -1087,13 +1089,18 @@ static int rk3x_i2c_xfer_common(struct i2c_adapter *adap,
+ 
+ 		spin_unlock_irqrestore(&i2c->lock, flags);
+ 
+-		rk3x_i2c_start(i2c);
+-
+ 		if (!polling) {
++			rk3x_i2c_start(i2c);
++
+ 			timeout = wait_event_timeout(i2c->wait, !i2c->busy,
+ 						     msecs_to_jiffies(WAIT_TIMEOUT));
+ 		} else {
++			disable_irq(i2c->irq);
++			rk3x_i2c_start(i2c);
++
+ 			timeout = rk3x_i2c_wait_xfer_poll(i2c);
++
++			enable_irq(i2c->irq);
+ 		}
+ 
+ 		spin_lock_irqsave(&i2c->lock, flags);
+@@ -1301,6 +1308,8 @@ static int rk3x_i2c_probe(struct platform_device *pdev)
+ 		return ret;
+ 	}
+ 
++	i2c->irq = irq;
++
+ 	platform_set_drvdata(pdev, i2c);
+ 
+ 	if (i2c->soc_data->calc_timings == rk3x_i2c_v0_calc_timings) {
+From 6272868cd8921f94a0e82997c36e6a49abe6a080 Mon Sep 17 00:00:00 2001
+From: David Wu <david.wu@rock-chips.com>
+Date: Tue, 19 Dec 2023 18:13:19 +0800
+Subject: [PATCH] i2c: busses: rk3x: Don't care about start ipd
+
+If the start interrupt is not enabled, don't care about this
+interrupt, clean it can slove the warning log:
+"rk3x-i2c fead0000.i2c: unexpected irq in STOP: 0x10 may appear".
+
+Signed-off-by: David Wu <david.wu@rock-chips.com>
+Change-Id: I0ebb145ac7971b4c128c172e136bd1dda6e6192e
+---
+ drivers/i2c/busses/i2c-rk3x.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/i2c/busses/i2c-rk3x.c b/drivers/i2c/busses/i2c-rk3x.c
+index 0d1e984c1ba24..69a56bf99e429 100644
+--- a/drivers/i2c/busses/i2c-rk3x.c
++++ b/drivers/i2c/busses/i2c-rk3x.c
+@@ -611,7 +611,7 @@ static irqreturn_t rk3x_i2c_irq(int irqno, void *dev_id)
+ 	dev_dbg(i2c->dev, "IRQ: state %d, ipd: %x\n", i2c->state, ipd);
+ 
+ 	/* Clean interrupt bits we don't care about */
+-	ipd &= ~(REG_INT_BRF | REG_INT_BTF);
++	ipd &= ~(REG_INT_BRF | REG_INT_BTF | REG_INT_START);
+ 
+ 	if (ipd & REG_INT_NAKRCV) {
+ 		/*
+From 2b42b3527ea03e894d33dc6d878c27e41f022588 Mon Sep 17 00:00:00 2001
+From: David Wu <david.wu@rock-chips.com>
+Date: Fri, 22 Dec 2023 11:36:49 +0800
+Subject: [PATCH] i2c: busses: rk3x: Sync with i2c->msg with idle state
+
+Ensure that the I2C->msg is synchronized with the idle state,
+and the I2C->msg may still be used in the stop phase, need to
+wait until the I2C transfer is completed, and then set I2C->msg
+to be null.
+
+Signed-off-by: David Wu <david.wu@rock-chips.com>
+Change-Id: I8a8e8c1e72f28cf4c95fe4efb559177056f483d1
+---
+ drivers/i2c/busses/i2c-rk3x.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/i2c/busses/i2c-rk3x.c b/drivers/i2c/busses/i2c-rk3x.c
+index 69a56bf99e429..4fe2e04f533fa 100644
+--- a/drivers/i2c/busses/i2c-rk3x.c
++++ b/drivers/i2c/busses/i2c-rk3x.c
+@@ -387,7 +387,6 @@ static void rk3x_i2c_stop(struct rk3x_i2c *i2c, int error)
+ 	unsigned int ctrl;
+ 
+ 	i2c->processed = 0;
+-	i2c->msg = NULL;
+ 	i2c->error = error;
+ 
+ 	if (i2c->is_last_msg) {
+@@ -404,6 +403,7 @@ static void rk3x_i2c_stop(struct rk3x_i2c *i2c, int error)
+ 		/* Signal rk3x_i2c_xfer to start the next message. */
+ 		i2c->busy = false;
+ 		i2c->state = STATE_IDLE;
++		i2c->msg = NULL;
+ 
+ 		/*
+ 		 * The HW is actually not capable of REPEATED START. But we can
+@@ -572,7 +572,6 @@ static void rk3x_i2c_handle_stop(struct rk3x_i2c *i2c, unsigned int ipd)
+ 		}
+ 
+ 		i2c->processed = 0;
+-		i2c->msg = NULL;
+ 	}
+ 
+ 	/* ack interrupt */
+@@ -587,6 +586,7 @@ static void rk3x_i2c_handle_stop(struct rk3x_i2c *i2c, unsigned int ipd)
+ 
+ 	i2c->busy = false;
+ 	i2c->state = STATE_IDLE;
++	i2c->msg = NULL;
+ 
+ 	/* signal rk3x_i2c_xfer that we are finished */
+ 	rk3x_i2c_wake_up(i2c);
+From f6730fc3b48ad20efb580cf22b687dccfa85fccf Mon Sep 17 00:00:00 2001
+From: David Wu <david.wu@rock-chips.com>
+Date: Wed, 29 Oct 2025 16:12:22 +0800
+Subject: [PATCH] i2c: rk3x: Reduce register accesses to improve I2C transfers
+
+Signed-off-by: David Wu <david.wu@rock-chips.com>
+Change-Id: Ic271ce0283daa416995caabf5b1ab7bfeb64790c
+---
+ drivers/i2c/busses/i2c-rk3x.c | 18 +++++++++++++-----
+ 1 file changed, 13 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/i2c/busses/i2c-rk3x.c b/drivers/i2c/busses/i2c-rk3x.c
+index c2f87d3e8c300..8a1eaba1ea1c2 100644
+--- a/drivers/i2c/busses/i2c-rk3x.c
++++ b/drivers/i2c/busses/i2c-rk3x.c
+@@ -374,13 +374,21 @@ static void rk3x_i2c_start(struct rk3x_i2c *i2c)
+ 	if (!(i2c->msg->flags & I2C_M_IGNORE_NAK))
+ 		val |= REG_CON_ACTACK;
+ 
+-	i2c_writel(i2c, val, REG_CON);
+-
+ 	/* enable transition */
+-	if (i2c->mode == REG_CON_MOD_TX)
++	if (i2c->mode == REG_CON_MOD_TX) {
++		i2c_writel(i2c, val, REG_CON);
+ 		i2c_writel(i2c, length, REG_MTXCNT);
+-	else
+-		rk3x_i2c_prepare_read(i2c);
++	} else {
++		if (i2c->msg->len > 32) {
++			length = 32;
++			val &= ~REG_CON_LASTACK;
++		} else {
++			length = i2c->msg->len;
++			val |= REG_CON_LASTACK;
++		}
++		i2c_writel(i2c, val, REG_CON);
++		i2c_writel(i2c, length, REG_MRXCNT);
++	}
+ }
+ 
+ /**
+From 13505e1858afef433c91ec59309300b6829552b8 Mon Sep 17 00:00:00 2001
+From: David Wu <david.wu@rock-chips.com>
+Date: Wed, 29 Oct 2025 16:18:56 +0800
+Subject: [PATCH] i2c: rk3x: Protect the I2C START condition from broken
+
+Signed-off-by: David Wu <david.wu@rock-chips.com>
+Change-Id: I43d83fc558122076bd2040bd44c24340d22a85a0
+---
+ drivers/i2c/busses/i2c-rk3x.c | 18 +++++++++++++-----
+ 1 file changed, 13 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/i2c/busses/i2c-rk3x.c b/drivers/i2c/busses/i2c-rk3x.c
+index 8a1eaba1ea1c2..4f867fe740acc 100644
+--- a/drivers/i2c/busses/i2c-rk3x.c
++++ b/drivers/i2c/busses/i2c-rk3x.c
+@@ -350,6 +350,8 @@ static void rk3x_i2c_start(struct rk3x_i2c *i2c)
+ {
+ 	u32 val = i2c_readl(i2c, REG_CON) & REG_CON_TUNING_MASK;
+ 	bool auto_stop = rk3x_i2c_auto_stop(i2c);
++	unsigned long flags;
++	unsigned int offset;
+ 	int length = 0;
+ 
+ 	/* enable appropriate interrupts */
+@@ -374,10 +376,8 @@ static void rk3x_i2c_start(struct rk3x_i2c *i2c)
+ 	if (!(i2c->msg->flags & I2C_M_IGNORE_NAK))
+ 		val |= REG_CON_ACTACK;
+ 
+-	/* enable transition */
+ 	if (i2c->mode == REG_CON_MOD_TX) {
+-		i2c_writel(i2c, val, REG_CON);
+-		i2c_writel(i2c, length, REG_MTXCNT);
++		offset = REG_MTXCNT;
+ 	} else {
+ 		if (i2c->msg->len > 32) {
+ 			length = 32;
+@@ -386,9 +386,17 @@ static void rk3x_i2c_start(struct rk3x_i2c *i2c)
+ 			length = i2c->msg->len;
+ 			val |= REG_CON_LASTACK;
+ 		}
+-		i2c_writel(i2c, val, REG_CON);
+-		i2c_writel(i2c, length, REG_MRXCNT);
++		offset = REG_MRXCNT;
+ 	}
++
++	/*
++	 * Ensure the I2C atomic start condition is not broken to avoid
++	 * an excessively long start setup time on the bus.​​
++	 */
++	spin_lock_irqsave(&i2c->lock, flags);
++	i2c_writel(i2c, val, REG_CON);
++	i2c_writel(i2c, length, offset);
++	spin_unlock_irqrestore(&i2c->lock, flags);
+ }
+ 
+ /**

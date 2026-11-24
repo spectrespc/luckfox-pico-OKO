@@ -132,6 +132,23 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   `stm8-recovery.md`; `--expect-present` exits 3, plus `--motor-sleep`,
   `--ladder-rebind` and SSH banner retries. Bench: 300 I2C cycles — 0 errors
   and `present=true`; `aov_mcu=1` fails I2C3/AP (KI-080).
+- **`research/rockchip-kernel-upstream/`: фиксы rockchip-linux/kernel для нашего
+  ядра (2026-11-24).** Тема разбирает ветви `develop-5.10` и `develop-6.12`
+  (`develop-6.1`/`rt53` после сверки бесполезны) и фиксирует, какие коммиты
+  закрывают KI-011/KI-071/KI-072/KI-073/KI-074/KI-079/KI-080, какие уже есть в
+  дереве 5.10.160 и какие отклонены (новые IP, thunder-boot, normal-memory DMA,
+  10 кГц). `snapshot/` — четыре серии патчей по одному файлу ядра (4 файла,
+  28 042 Б), полные SHA и sha256 в таблице провенанса; формат «серии» вместо
+  копий файлов обоснован в README темы (полные коммиты сенсора — 60–111 файлов).
+- **`research/rockchip-kernel-upstream/`: rockchip-linux/kernel fixes for our
+  kernel (2026-11-24).** The topic reviews `develop-5.10` and `develop-6.12`
+  (`develop-6.1`/`rt53` turned out to be useless after the comparison) and
+  records which commits address KI-011/KI-071/KI-072/KI-073/KI-074/KI-079/
+  KI-080, which are already in the 5.10.160 tree and which were rejected (new
+  IPs, thunder-boot, normal-memory DMA, 10 kHz). `snapshot/` holds four
+  per-file patch series (4 files, 28 042 B) with full SHAs and sha256 in the
+  provenance table; the series format is justified in the topic README (the
+  full sensor commits touch 60-111 files).
 
 ### Изменено
 
@@ -511,6 +528,66 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   busy-abort series does not close H2. MCU i2c3 was not enabled: the vendor
   app has no i2c3 consumer, and it would add a second master to the
   STM8/EC bus.
+- **Ядро 5.10.160: бэкпорт фиксов rockchip-linux/kernel (2026-11-24).**
+  Перенесены поздние коммиты вендорского ядра (интеграционный патч по AGENTS §6,
+  in-tree — у `sysdrv/source/kernel` нет git-истории):
+  - `drivers/spi/spi-rockchip-sfc.c` (KI-071): `53123db` — обнуление delay lines
+    перед DLL-тюнингом; `9dc03be` (кросс-порт из `develop-6.12`) — `init` и
+    восстановление `dll_cells` в `rockchip_sfc_init()`/`runtime_resume`. Наша
+    защита 2026-11-21 сохранена: `reset`+`init` в `rockchip_sfc_resume` остаётся,
+    дублирующий цикл DLL убран. `5885601`, `924d325`, `a7c2ff4` уже были в дереве;
+    в `5885601` исправлен недостижимый `goto err_dma` (upstream возвращал
+    `-ENOMEM` до `goto`).
+  - `drivers/i2c/busses/i2c-rk3x.c` (KI-073/KI-080): `2b42b35` — `i2c->msg`
+    обнуляется только в состоянии IDLE, guard KI-073 сохранён. `d8a07ba`,
+    `6272868`, `f6730fc`, `13505e1` уже были в дереве (последние два — в
+    локальном коммите `9ee690f5d`).
+  - `arch/arm/mach-rockchip/rv1106_pm.c` (KI-072/074/079): `fca1696` —
+    TIMEOUT_WKUP включается по ненулевому `PMU_WAKEUP_TIMEOUT_CNT` (при init
+    счётчик обнуляется); `856ec70` — save/restore `rtc_clamp_en` через `vi_grf`;
+    `8854147` — 32k-ext только при `chip_version > 0`. AOV-хуки
+    (`oko_aov_enabled`, `pmu_timeout_cnt`, `hpmcu_fast_wkup`,
+    `gic_irq_clear_pending`, окно mailbox 1000 мс) не тронуты.
+  - `drivers/media/i2c/sc230ai.c` (KI-011): `365e2f6` — `s_frame_interval`,
+    `bus_code`, tie-break по `bus_fmt`; `34690d3` — выбор режима по
+    `s_fmt`/`s_frame_interval`/`set_hdr` с подбором по FPS; `aecea3e` —
+    исправление `cur_best_fit = -1`. Гейт `hdr` в divinus не снят: нужна
+    поддержка в `rk_aiq`/IQ.
+  Сборка `./build.sh kernel` и `./build.sh driver` при активном AOV-профиле
+  проходит; `output/image/boot.img` — AOV-FIT из `boot-aov.its` (gzip, kernel
+  4 782 493 Б, `load = entry = 0x00208000`), `sc230ai.ko` собран. Стендовая
+  проверка не выполнялась (гейты KI-071/KI-078), статусы KI не менялись на
+  «исправлено».
+- **Kernel 5.10.160: backport of rockchip-linux/kernel fixes (2026-11-24).**
+  Late vendor-kernel commits were ported (integration patch under AGENTS §6,
+  in-tree — `sysdrv/source/kernel` has no git history):
+  - `drivers/spi/spi-rockchip-sfc.c` (KI-071): `53123db` zeroes the delay lines
+    before DLL tuning; `9dc03be` (cross-port from `develop-6.12`) moves `init`
+    and the `dll_cells` restore into `rockchip_sfc_init()`/`runtime_resume`. The
+    local 2026-11-21 protection is kept: `reset`+`init` in
+    `rockchip_sfc_resume` stays, the duplicate DLL loop is gone. `5885601`,
+    `924d325`, `a7c2ff4` were already in the tree; the unreachable
+    `goto err_dma` in `5885601` is fixed (upstream returns `-ENOMEM` before the
+    `goto`).
+  - `drivers/i2c/busses/i2c-rk3x.c` (KI-073/KI-080): `2b42b35` clears
+    `i2c->msg` only in the IDLE state; the KI-073 guard is kept. `d8a07ba`,
+    `6272868`, `f6730fc`, `13505e1` were already in the tree (the last two via
+    the local commit `9ee690f5d`).
+  - `arch/arm/mach-rockchip/rv1106_pm.c` (KI-072/074/079): `fca1696` enables
+    TIMEOUT_WKUP only when `PMU_WAKEUP_TIMEOUT_CNT` is non-zero (init writes 0);
+    `856ec70` saves/restores `rtc_clamp_en` via `vi_grf`; `8854147` uses 32k-ext
+    only when `chip_version > 0`. The AOV hooks (`oko_aov_enabled`,
+    `pmu_timeout_cnt`, `hpmcu_fast_wkup`, `gic_irq_clear_pending`, 1000 ms
+    mailbox window) are untouched.
+  - `drivers/media/i2c/sc230ai.c` (KI-011): `365e2f6` adds `s_frame_interval`,
+    `bus_code` and the `bus_fmt` tie-break; `34690d3` selects the mode from
+    `s_fmt`/`s_frame_interval`/`set_hdr` with an FPS match; `aecea3e` fixes
+    `cur_best_fit = -1`. The divinus `hdr` gate stays: `rk_aiq`/IQ support is
+    still required.
+  `./build.sh kernel` and `./build.sh driver` pass with the active AOV profile;
+  `output/image/boot.img` is the `boot-aov.its` FIT (gzip, 4 782 493 B kernel,
+  `load = entry = 0x00208000`) and `sc230ai.ko` builds. The bench was not run
+  (KI-071/KI-078 gates), so no KI status is claimed as fixed.
 
 ### Исправлено
 
