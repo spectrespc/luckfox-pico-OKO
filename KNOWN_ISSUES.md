@@ -96,7 +96,9 @@
   `research/rockchip-kernel-upstream/`. Гейт не снят: HDR2/HDR3 требует также
   поддержки в `rk_aiq`/IQ. На netboot-ядре `#37` (2026-11-24) сенсор
   определяется (`sensor: sc230ai`), пайплайн и поток работает после циклов сна;
-  HDR-режимы не переключались (гейт).
+  на NAND с новым `sc230ai.ko` из ветки (`sha256 77b1546f…`) сенсор также
+  определяется, поток идёт, AOV-MCU делает fast-AE на 640×480@120; HDR-режимы
+  не переключались (гейт).
   Статус: **заблокировано по дизайну**.
 
 - **KI-012. AIISP несовместим с HDR.**
@@ -342,6 +344,16 @@
   NFS root) SFC проходит suspend/resume в десятках циклов без сообщений
   `sfc`/`ubifs`; NAND-ввод-вывод в этом режиме не задействован, поэтому
   сценарий `UBIFS ro` не воспроизводился — статус не меняется.
+  **2026-11-24, NAND-прогон (ядро `#37` прошито в `boot`, root — ubifs):**
+  80 циклов deep suspend (`aov_mcu=0`, `wake_interval_s=10`) при непрерывной
+  нагрузке на ubifs — 897 итераций записи/чтения/`sync` по 512 КБ в
+  `/userdata` и `/`; `dmesg` без `sfc`/`ubifs` ошибок, все три тома
+  (`/`, `/oem`, `/userdata`) остались `rw`, контрольный файл 2 МиБ нулей
+  прочитан с ожидаемым md5 (`b2d1236c…`) с обоих томов. Отдельный AOV-прогон
+  (7 циклов) тоже без `sfc`/`ubi` ошибок. KI-071 не воспроизведён, но для
+  вывода «исправлено» нужен длительный soak (прежний триггер — ~288 циклов
+  и деградация NAND). Артефакты: `output/bench/nand-aov-20261124/`
+  (`sfc-watch.log`, `ubi_state.txt`, `dmesg.txt`).
 
 - **KI-072. Профиль `-AOV`: 1M-раскладка и окно ядра/MCU исправлены,
   handshake MCU не отвечает.** Hpmcu (117 КБ) + SPL + DDR + usbplug дают
@@ -497,6 +509,15 @@
   штатное — значит divinus программирует `PMU_WAKEUP_TIMEOUT_CNT` и
   TIMEOUT_WKUP включается. AOV-MCU (`aov_mcu=1`) не тестировался: gate
   остаётся NO-GO.
+  **2026-11-24, AOV-MCU на NAND (ядро `#37`):** профиль
+  `aov_mcu=1`+`keep_isp=1`, `wake_interval_s=60` отработал 7 полных циклов
+  без зависаний AP: MCU-прокси поднимается (`RT_USING_RK_AOV=y`), fast-AE
+  (SC230AI 640×480@120), детекция движения (`md_flag=1`), `-h-mbox-`,
+  `wake up status:0x00000000`, `rv1106 exit sleep`, поток и ISP
+  восстанавливаются, `PM: suspend exit`. PMU-таймаут программируется
+  (1920 тиков = 60 с), то есть `fca1696`/`856ec70`/`8854147` handshake не
+  сломали. Gate всё равно **NO-GO**: после серии AOV-циклов отваливается
+  I2C3 (KI-080).
 
 - **KI-073. в `rk3x_i2c_irq` на I2C3 при циклах `[sleep]`.**
   2026-11-17 в AOV-прогоне (idle 30 s, `aov_mcu=1`) шина I2C3
@@ -1012,6 +1033,15 @@
   (NFS root, `aov_mcu=0`) десятки циклов сна и 30 сканов I2C3 прошли без потери
   шины, `dmesg` без `rk3x`/`scl hold`; V1 (`aov_mcu=1`) не тестировался —
   AOV остаётся NO-GO. Рабочий обход остаётся unbind/rebind i2c3.
+  **2026-11-24, V1 на NAND (ядро `#37`, `aov_mcu=1`+`keep_isp=1`):** H2
+  воспроизведён. 7 AOV-циклов прошли с resume и восстановлением потока, но
+  затем `oko-ec scan` показал пустую шину (`0x40/0x41/0x42/0x60` absent).
+  Unbind/rebind `ff460000.i2c` **во время** активных циклов шину не вернул;
+  после выключения сна (`enable=false`) и повторного unbind/rebind все
+  четыре адреса вернулись, SCL в высоком уровне. То есть `2b42b35` и PM-фиксы
+  H2 не закрывают — отказ по-прежнему на стороне AP/HPMCU-wake, а не
+  обработчика NAK. Артефакты: `output/bench/nand-aov-20261124/`
+  (`uar0.log`, `aov-console-markers.txt`, `i2c_scan.txt`, `i2c_pads.txt`).
 
 ### Архив закрытых записей
 
@@ -1124,7 +1154,10 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   `research/rockchip-kernel-upstream/`. The gate is not lifted: HDR2/HDR3 also
   needs `rk_aiq`/IQ support. On the netboot kernel `#37` (2026-11-24) the
   sensor is detected (`sensor: sc230ai`) and the pipeline keeps streaming
-  after sleep cycles; the HDR modes were not switched (gate).
+  after sleep cycles; on NAND with the branch-built `sc230ai.ko`
+  (`sha256 77b1546f…`) the sensor is detected as well, the stream runs and the
+  AOV MCU performs fast AE at 640x480@120; the HDR modes were not switched
+  (gate).
   Status: **blocked by design**.
 
 - **KI-012. AIISP cannot run with HDR.** AIISP is forced off when
@@ -1368,6 +1401,16 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   with no
   `sfc`/`ubifs` messages; NAND I/O is not exercised in that mode, so the
   `UBIFS ro` scenario was not reproduced — the status is unchanged.
+  **2026-11-24, NAND run (kernel `#37` flashed to `boot`, ubifs root):**
+  80 deep-suspend cycles (`aov_mcu=0`, `wake_interval_s=10`) under continuous
+  ubifs load — 897 iterations of 512 KB write/read/`sync` on `/userdata` and
+  `/`; `dmesg` has no `sfc`/`ubifs` errors, all three volumes (`/`, `/oem`,
+  `/userdata`) stayed `rw`, and a 2 MiB zero test file read back with the
+  expected md5 (`b2d1236c…`) on both volumes. A separate AOV run (7 cycles)
+  also had no `sfc`/`ubi` errors. KI-071 did not reproduce, but a long soak is
+  still required to call it fixed (the earlier trigger was ~288 cycles plus
+  NAND degradation). Artifacts: `output/bench/nand-aov-20261124/`
+  (`sfc-watch.log`, `ubi_state.txt`, `dmesg.txt`).
 
 - **KI-072. `-AOV` profile: 1M layout and the kernel/MCU window are fixed,
   the MCU handshake does not answer.** Hpmcu (117 KB) + SPL + DDR + usbplug
@@ -1528,6 +1571,15 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   timer woke the AP normally, so divinus does program
   `PMU_WAKEUP_TIMEOUT_CNT` and TIMEOUT_WKUP is enabled. AOV-MCU
   (`aov_mcu=1`) was not tested: the gate stays NO-GO.
+  **2026-11-24, AOV-MCU on NAND (kernel `#37`):** the profile
+  `aov_mcu=1`+`keep_isp=1` with `wake_interval_s=60` completed 7 full cycles
+  with no AP hang: the MCU proxy comes up (`RT_USING_RK_AOV=y`), fast AE runs
+  (SC230AI 640x480@120), motion is detected (`md_flag=1`), the mailbox
+  handshake prints `-h-mbox-`, `wake up status:0x00000000`,
+  `rv1106 exit sleep`, the stream and ISP come back and `PM: suspend exit`
+  follows. The PMU timeout is programmed (1920 ticks = 60 s), so
+  `fca1696`/`856ec70`/`8854147` did not break the handshake. The gate is
+  still **NO-GO**: after a series of AOV cycles I2C3 dies (KI-080).
 
 - **KI-073. in `rk3x_i2c_irq` on I2C3 during `[sleep]` cycles.**
   On 2026-11-17 an AOV run (idle 30 s, `aov_mcu=1`) got a burst of
@@ -2044,9 +2096,19 @@ DDR re-init.
   **2026-11-24, `feature/rockchip-kernel-upstream` branch:** `2b42b35` (msg
   cleared only in IDLE) plus the SFC/PM backports (KI-071/KI-072) were added on
   top of #32; by definition they do not close H2. On the netboot kernel `#37`
-  (NFS root, `aov_mcu=0`) ~25 sleep cycles and 30 I2C3 scans kept the bus
-  alive with no `rk3x`/`scl hold` in `dmesg`; V1 (`aov_mcu=1`) was not tested —
-  AOV stays NO-GO. The unbind/rebind i2c3 workaround remains.
+  (NFS root, `aov_mcu=0`) dozens of sleep cycles and 30 I2C3 scans kept the bus
+  alive with no `rk3x`/`scl hold` in `dmesg`.
+  **2026-11-24, V1 on NAND (kernel `#37` flashed, `aov_mcu=1`+`keep_isp=1`):**
+  H2 reproduced. Seven AOV cycles resumed and restored the stream, but then
+  `oko-ec scan` showed an empty bus (`0x40/0x41/0x42/0x60` absent).
+  Unbind/rebind of `ff460000.i2c` **during** the active cycles did not bring
+  the bus back; after disabling sleep (`enable=false`) and repeating
+  unbind/rebind all four addresses returned and SCL was high. So `2b42b35`
+  and the PM fixes do not close H2 — the failure is still on the AP/HPMCU-wake
+  side, not in the NAK handler. AOV stays NO-GO; the unbind/rebind i2c3
+  workaround (with sleep disabled) remains. Artifacts:
+  `output/bench/nand-aov-20261124/` (`uar0.log`, `aov-console-markers.txt`,
+  `i2c_scan.txt`, `i2c_pads.txt`).
 
 ### Closed entries archive
 

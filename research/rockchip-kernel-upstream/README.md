@@ -173,10 +173,38 @@ root), профиль `...-SC230AI-AOV.mk`, `aov_mcu=0`.
   `errors_grep.txt`, `status.json`, `isp.json`, `sleep.json`),
   `output/bench/netboot-20261124-194411.log`.
 
-**Чего прогон не проверяет:** NAND-ввод-вывод (root — NFS, поэтому сценарий
-KI-071 `UBIFS ro` не воспроизводится; SFC проходит только suspend/resume),
-AOV-MCU (`aov_mcu=1` — NO-GO по KI-072/080) и HDR (гейт KI-011). Статусы KI
-поэтому не переведены в «исправлено».
+**NAND-прогон (2026-11-24, ядро `#37` прошито в раздел `boot`, root — ubifs):**
+
+- 80 циклов deep suspend (`aov_mcu=0`, `wake_interval_s=10`) при непрерывной
+  нагрузке на ubifs: 897 итераций записи/чтения/`sync` по 512 КБ в `/userdata`
+  и `/`. `dmesg` без `sfc`/`ubifs` ошибок, `/`, `/oem`, `/userdata` остались
+  `rw`, контрольный файл 2 МиБ нулей прочитан с ожидаемым md5
+  (`b2d1236c286a3c0704224fe4105eca49`) с обоих томов. KI-071 не
+  воспроизведён (для вердикта нужен длительный soak).
+- Обновлён `sc230ai.ko` из этой сборки (`/oem/usr/ko`, sha256 `77b1546f…`):
+  сенсор определяется, поток идёт, AOV-MCU делает fast-AE 640×480@120.
+
+**AOV-MCU на NAND (2026-11-24, `aov_mcu=1`+`keep_isp=1`, `wake_interval_s=60`):**
+
+- 7 полных циклов без зависания AP: `[sleep] AOV: keeping the CSI/ISP pipeline
+  up`, `PMU timeout 1920 ticks (60 s), aov armed`, MCU-прокси
+  (`RT_USING_RK_AOV=y`), fast-AE, детекция движения (`md_flag=1`), `-h-mbox-`,
+  `wake up status:0x00000000`, `rv1106 exit sleep`, поток/ISP восстанавливаются,
+  `PM: suspend exit`. То есть PM-патчи (`fca1696`/`856ec70`/`8854147`)
+  handshake не сломали.
+- **H2 (KI-080) воспроизведён:** после серии циклов `oko-ec scan` даёт пустую
+  шину I2C3. Unbind/rebind во время активных циклов не помогает; после
+  выключения сна повторный unbind/rebind возвращает все адреса. AOV остаётся
+  **NO-GO**, наши I2C/PM-патчи H2 не закрывают (ожидаемо).
+- Артефакты: `output/bench/nand-aov-20261124/` (`uar0.log` — консоль с 7
+  `rv1106 enter sleep`, `aov-console-markers.txt`, `dmesg.txt`, `i2c_scan.txt`,
+  `i2c_pads.txt`, `sfc-watch.log`, `ubi_state.txt`).
+
+**Чего прогоны не проверяют:** HDR (гейт KI-011) и длительный NAND-soak
+(сотни циклов) для вердикта по KI-071. Статусы KI поэтому не переведены в
+«исправлено». На стенде после прогонов оставлено ядро `#37` этой ветки и её
+`sc230ai.ko`; для отката — пересобрать `main` и прошить `boot`+`oem`
+(`tftp_flash.py --components boot,oem`).
 
 ## Ссылки
 

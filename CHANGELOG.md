@@ -561,9 +561,16 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   интервал ~12 с, десятки циклов), `dmesg` без `sfc`/`ubifs`/`oops`; I2C3 жива
   после 30 `oko-ec scan` и циклов; `api_check` 139/6 — те же 6 отказов
   `/api/mqtt` (404), что и до серии, из-за `divinus` от 2026-11-17.
-  Артефакты — `output/bench/kernel-backport-20261124/`. Не проверены:
-  NAND-ввод-вывод (root NFS), AOV-MCU (NO-GO) и HDR (гейт KI-011); статусы KI
-  не менялись на «исправлено».
+  Артефакты — `output/bench/kernel-backport-20261124/`. NAND-прогон
+  (ядро `#37` прошито в `boot`, root ubifs): 80 циклов deep suspend при
+  непрерывной нагрузке на ubifs (897 итераций записи/чтения по 512 КБ) —
+  `dmesg` без `sfc`/`ubifs` ошибок, тома `rw`, контроль чтения 2 МиБ совпал;
+  обновлён `sc230ai.ko` ветки — сенсор и поток работают. AOV-MCU
+  (`aov_mcu=1`+`keep_isp=1`): 7 циклов с MCU-прокси, fast-AE, детекцией
+  движения, mailbox и штатным resume, но H2 (KI-080) воспроизведён — I2C3
+  умирает после серии циклов, AOV остаётся NO-GO. HDR не проверялся
+  (гейт KI-011); статусы KI не менялись на «исправлено». Артефакты —
+  `output/bench/nand-aov-20261124/`.
 - **Kernel 5.10.160: backport of rockchip-linux/kernel fixes (2026-11-24).**
   Late vendor-kernel commits were ported (integration patch under AGENTS §6,
   in-tree — `sysdrv/source/kernel` has no git history):
@@ -599,9 +606,16 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   `dmesg` has no `sfc`/`ubifs`/`oops`; I2C3 stays alive after 30 `oko-ec scan`
   runs and the cycles; `api_check` reports 139/6 with the same six
   `/api/mqtt` 404s as before the series (the `divinus` from 2026-11-17 has no
-  MQTT API). Artifacts: `output/bench/kernel-backport-20261124/`. Not checked:
-  NAND I/O (NFS root), AOV-MCU (NO-GO) and HDR (KI-011 gate); no KI status is
-  claimed as fixed.
+  MQTT API). Artifacts: `output/bench/kernel-backport-20261124/`. NAND run (kernel `#37`
+  flashed to `boot`, ubifs root): 80 deep-suspend cycles under continuous ubifs
+  load (897 write/read iterations of 512 KB) — no `sfc`/`ubifs` errors, the
+  volumes stayed `rw` and a 2 MiB read-back check matched; the branch-built
+  `sc230ai.ko` was installed and the sensor/stream work. AOV-MCU
+  (`aov_mcu=1`+`keep_isp=1`): 7 cycles with the MCU proxy, fast AE, motion
+  detection, mailbox and a normal resume, but H2 (KI-080) reproduced — I2C3
+  dies after the series, so AOV stays NO-GO. HDR was not tested (KI-011 gate);
+  no KI status is claimed as fixed. Artifacts:
+  `output/bench/nand-aov-20261124/`.
 
 ### Исправлено
 
