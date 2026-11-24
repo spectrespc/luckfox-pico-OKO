@@ -903,6 +903,13 @@
   сейчас suspend-путь стенда нестабилен (HPMCU/PMU или износ NAND).
   Не-suspend регрессия на #27: `api_check` 139/0, `ui_check` passed,
   300 циклов I2C — 0 ошибок.
+  **2026-11-24, сверка с upstream `i2c-rk3x.c`:** в master/v5.10 нет
+  H2-фикса; upstream упростил PM до `adapt_div` и не содержит vendor-кода
+  `suspend_noirq`/reset. Полезный для KI-073 spurious START уже есть в
+  vendor (`REG_INT_MBRF | REG_INT_START`, upstream `02fe0fbd8a`). Из
+  upstream стоит забрать только `19cde9c92b` (`disable_irq` вокруг
+  polled-передачи) и `b57e90189f` (`clk_enable` перед `clk_get_rate`);
+  к H2 они не относятся.
   V2 (`aov_mcu=1`, `aov_keep_isp=0`, 60 с): AP после suspend не отвечает
   более 8 мин (логгер отработал 476 с, `/api/status` = `000`), нужен power
   cycle. V3 (`aov_mcu=0`) на исправной ФС даёт тихий цикл: deep suspend
@@ -1838,6 +1845,13 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   bench suspend path is now unstable (HPMCU/PMU or NAND wear). Non-suspend
   regression on #27: `api_check` 139/0, `ui_check` passed, 300 I2C cycles —
   0 errors.
+  **2026-11-24, upstream `i2c-rk3x.c` review:** master/v5.10 contain no H2
+  fix; upstream simplified PM to `adapt_div` only and has no vendor
+  `suspend_noirq`/reset code. The spurious START fix for KI-073 is already
+  in the vendor driver (`REG_INT_MBRF | REG_INT_START`, upstream
+  `02fe0fbd8a`). Only `19cde9c92b` (`disable_irq` around a polled transfer)
+  and `b57e90189f` (`clk_enable` before `clk_get_rate`) are worth taking;
+  neither addresses H2.
   V2 (`aov_mcu=1`, `aov_keep_isp=0`, 60 s): the AP does not answer for more
   than 8 minutes after suspend (logger ran 476 s, `/api/status` = `000`);
   a power cycle is required. V3 (`aov_mcu=0`) on a healthy filesystem gives
