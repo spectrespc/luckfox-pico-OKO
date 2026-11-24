@@ -891,8 +891,10 @@
   собрано и прошито. V1 всё равно теряет I2C3 за 60 с; предупреждений
   «suspend with a busy transfer» нет, то есть сброс контроллера сам по себе
   отказ не устраняет. Остаются H1/H3 (удержание slave) или транзакция,
-  начатая после resume; рабочий обход — unbind/rebind i2c3. Патч оставлен
-  как страховка, но T2.2 не закрывает проблему.
+  начатая после resume; рабочий обход — unbind/rebind i2c3. Патч **откатан**
+  в исходниках, стенд возвращён на стабильное #27. После восстановления
+  NAND AOV на #27 всё равно зависает на первом suspend (проверены
+  `wake_interval_s` 10/40/60), поэтому AOV остаётся NO-GO, T2.2 не закрыт.
   V2 (`aov_mcu=1`, `aov_keep_isp=0`, 60 с): AP после suspend не отвечает
   более 8 мин (логгер отработал 476 с, `/api/status` = `000`), нужен power
   cycle. V3 (`aov_mcu=0`) на исправной ФС даёт тихий цикл: deep suspend
@@ -1816,8 +1818,10 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   within 60 s and there are no "suspend with a busy transfer" warnings, so
   the controller reset alone does not fix the failure. It is still an
   external-slave hold (H1/H3) or a transaction started after resume; the
-  working workaround is unbind/rebind of i2c3. The patch remains as a safety
-  net, but T2.2 does not close the issue.
+  working workaround is unbind/rebind of i2c3. The patch was **reverted** in
+  the source tree and the bench is back on the stable #27. After the NAND
+  recovery AOV on #27 still hangs on the first suspend (tested
+  `wake_interval_s` 10/40/60), so AOV remains NO-GO and T2.2 stays open.
   V2 (`aov_mcu=1`, `aov_keep_isp=0`, 60 s): the AP does not answer for more
   than 8 minutes after suspend (logger ran 476 s, `/api/status` = `000`);
   a power cycle is required. V3 (`aov_mcu=0`) on a healthy filesystem gives

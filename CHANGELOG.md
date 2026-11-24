@@ -416,14 +416,18 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   `rk3x_i2c_resume` — полный reset контроллера (reset-on-resume), плюс
   предупреждение о busy-transfer на suspend. Ядро #29 собрано и прошито
   через TFTP/U-Boot. V1 (`aov_mcu=1`, `keep_isp=1`) по-прежнему теряет
-  I2C3 за 60 с, `busy`-предупреждений нет; патч оставлен как страховка,
-  но H2 не закрывает. Рабочий обход — unbind/rebind `ff460000.i2c`.
+  I2C3 за 60 с, `busy`-предупреждений нет; патч откатан в исходниках,
+  стенд возвращён на стабильное #27. После восстановления NAND AOV на #27
+  всё равно зависает на первом suspend (`wake_interval_s` 10/40/60), AOV
+  остаётся NO-GO. Рабочий обход — unbind/rebind `ff460000.i2c`.
 - **Experimental rk3x H2 patch (2026-11-23, did not fix the failure).**
   i2c3 now has `resets = <&cru SRST_I2C3>` and `rk3x_i2c_resume` performs a
   full controller reset (reset-on-resume), plus a busy-transfer warning on
   suspend. Kernel #29 was built and flashed over TFTP/U-Boot. V1
   (`aov_mcu=1`, `keep_isp=1`) still loses I2C3 within 60 s and there are no
-  busy warnings; the patch remains a safety net but does not close H2. The
+  busy warnings; the patch was reverted in the source tree and the bench is
+  back on the stable #27. After the NAND recovery AOV on #27 still hangs on
+  the first suspend (`wake_interval_s` 10/40/60), so AOV remains NO-GO. The
   working workaround is unbind/rebind of `ff460000.i2c`.
 
 ### Исправлено

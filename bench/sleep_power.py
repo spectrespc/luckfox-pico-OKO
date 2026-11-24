@@ -415,6 +415,23 @@ def stm8_probe(client=None, attempts=4):
                 pass
 
 
+def dump_dmesg(outdir, tag):
+    """Save the kernel log before an i2cdetect scan floods the ring buffer."""
+    try:
+        client = ssh_client()
+        try:
+            code, out, err = ssh_run(client, "dmesg", timeout=25)
+        finally:
+            client.close()
+        text = out if code == 0 else (out + err)
+        (outdir / ("dmesg-%s.txt" % tag)).write_text(text)
+        return len(text.splitlines())
+    except Exception as exc:                                # noqa: BLE001
+        (outdir / ("dmesg-%s.txt" % tag)).write_text(
+            "dmesg failed: %s\n" % exc)
+        return 0
+
+
 def stm8_recovery(outdir, events, notes, reason="", allow_rebind=True,
                   allow_ec_reset=False):
     """Recovery ladder from T1.3; returns the first step that revived the bus."""
@@ -2228,6 +2245,7 @@ def main():
                 events.write("motor-sleep-restore", ok=restored)
                 if not restored:
                     log("warning: could not restore /userdata/divinus.yaml")
+        dump_dmesg(outdir, "before-final-probe")
         final = {}
         try:
             final = stm8_probe()
