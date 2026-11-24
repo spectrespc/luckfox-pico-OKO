@@ -18,6 +18,7 @@
 #include <linux/io.h>
 #include <linux/of_address.h>
 #include <linux/of_irq.h>
+#include <linux/pinctrl/consumer.h>
 #include <linux/reset.h>
 #include <linux/spinlock.h>
 #include <linux/clk.h>
@@ -255,6 +256,7 @@ struct rk3x_i2c {
 	int error;
 	unsigned int suspended:1;
 	unsigned int reset_held:1;
+	unsigned int clocks_off:1;
 
 	struct notifier_block i2c_restart_nb;
 	bool system_restarting;
@@ -1462,6 +1464,15 @@ static __maybe_unused int rk3x_i2c_suspend(struct device *dev)
 			i2c->reset_held = 1;
 	}
 
+	/*
+	 * Gate both clocks as unbind does: on RV1106 the pad can keep SCL
+	 * low even after a controller reset, and only clock gating releases
+	 * it.  A transfer is not active (busy check above).
+	 */
+	clk_unprepare(i2c->pclk);
+	clk_unprepare(i2c->clk);
+	i2c->clocks_off = 1;
+
 	return 0;
 }
 
@@ -1469,6 +1480,27 @@ static __maybe_unused int rk3x_i2c_resume(struct device *dev)
 {
 	struct rk3x_i2c *i2c = dev_get_drvdata(dev);
 	unsigned long rate;
+	int ret;
+
+	/*
+	 * KI-080/H2: the AOV fast-wake path may lose the i2c3 pinmux while
+	 * the controller state survives.  Re-apply the default pinctrl
+	 * state before touching the controller; otherwise the pads can stay
+	 * in a GPIO/pull-down state and hold SCL low.
+	 */
+	ret = pinctrl_pm_select_default_state(dev);
+	if (ret)
+		dev_warn(i2c->dev, "pinctrl default state failed: %d\n", ret);
+
+	if (i2c->clocks_off) {
+		ret = clk_prepare(i2c->clk);
+		if (ret)
+			dev_warn(i2c->dev, "clk prepare failed: %d\n", ret);
+		ret = clk_prepare(i2c->pclk);
+		if (ret)
+			dev_warn(i2c->dev, "pclk prepare failed: %d\n", ret);
+		i2c->clocks_off = 0;
+	}
 
 	if (i2c->reset_held) {
 		reset_control_deassert(i2c->reset);

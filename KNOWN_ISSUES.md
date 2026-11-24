@@ -941,6 +941,15 @@
   внешний slave (STM8/EC, H1/H3) либо отказ уже после resume в отдельной
   транзакции. Следующий шаг — bus-recovery 9 тактами SCL или hardening
   STM8/EC, а не reset контроллера.
+  **2026-11-24, #35/#36:** добавлены `clk_unprepare` обоих клоков на
+  suspend (как при unbind) и повторное применение default pinctrl на
+  resume. V1 всё равно теряет I2C3; тихий `cycle` работает (2.25–2.30 с).
+  Итог серии: reset, удержание в reset, gate клоков, busy-abort и pinctrl
+  на resume не закрывают H2. Вендорский MCU i2c3 не использует
+  (`RT_USING_I2C3` выключен, приложение без пользователя i2c3), поэтому
+  включать его бессмысленно: это лишь добавит второго потенциального
+  мастера на шину STM8/EC. Остаются внешний slave/питание домена i2c3
+  или HPMCU fast-wake — нужен вендорский ответ/bus-recovery.
   V2 (`aov_mcu=1`, `aov_keep_isp=0`, 60 с): AP после suspend не отвечает
   более 8 мин (логгер отработал 476 с, `/api/status` = `000`), нужен power
   cycle. V3 (`aov_mcu=0`) на исправной ФС даёт тихий цикл: deep suspend
@@ -1915,6 +1924,15 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   (STM8/EC, H1/H3) or a post-resume transaction is more likely. The next
   step is 9-clock bus recovery or STM8/EC hardening, not another controller
   reset.
+  **2026-11-24, #35/#36:** `clk_unprepare` of both clocks on suspend (as
+  unbind does) and re-applying the default pinctrl state on resume were
+  added. V1 still loses I2C3; the quiet `cycle` works (2.25–2.30 s). The
+  series conclusion: reset, reset-hold, clock gating, busy abort and
+  pinctrl on resume do not close H2. The vendor MCU does not use i2c3
+  (`RT_USING_I2C3` disabled, no i2c3 consumer), so enabling it is pointless:
+  it would only add a second potential master to the STM8/EC bus. The
+  remaining candidates are an external slave/i2c3 power domain or the
+  HPMCU fast wake; vendor input or bus recovery is needed.
   V2 (`aov_mcu=1`, `aov_keep_isp=0`, 60 s): the AP does not answer for more
   than 8 minutes after suspend (logger ran 476 s, `/api/status` = `000`);
   a power cycle is required. V3 (`aov_mcu=0`) on a healthy filesystem gives

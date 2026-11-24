@@ -495,6 +495,23 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   post-resume transaction is more likely; 9-clock bus recovery or slave
   hardening is needed.
 
+- **i2c3: gate clocks и pinctrl на resume (2026-11-24, не помогло).**
+  На suspend добавлен `clk_unprepare` обоих клоков (как при unbind), на
+  resume — `pinctrl_pm_select_default_state()` и повторный `clk_prepare`.
+  Ядро #36 прошито: тихий `cycle` работает (2.25–2.30 с), V1
+  (`aov_mcu=1`, `keep_isp=1`) всё равно теряет I2C3. Серия reset/gate/
+  pinctrl/busy-abort H2 не закрывает. MCU i2c3 не включали: вендорское
+  приложение его не использует, это добавило бы второго мастера на шину
+  STM8/EC.
+- **i2c3: gate clocks and pinctrl on resume (2026-11-24, did not help).**
+  `clk_unprepare` of both clocks on suspend (as unbind does) and
+  `pinctrl_pm_select_default_state()` plus `clk_prepare` on resume were
+  added. Kernel #36 was flashed: the quiet `cycle` works (2.25–2.30 s),
+  V1 (`aov_mcu=1`, `keep_isp=1`) still loses I2C3. The reset/gate/pinctrl/
+  busy-abort series does not close H2. MCU i2c3 was not enabled: the vendor
+  app has no i2c3 consumer, and it would add a second master to the
+  STM8/EC bus.
+
 ### Исправлено
 
 - **HOME FOCUS/ZOOM: полный ход до упора вместо коррекции счётчика.**
