@@ -478,6 +478,23 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   suspend abort was observed, and the quiet `cycle` works (2.26–2.27 s).
   H2 remains on the AP/AOV-fast-wake side.
 
+- **i2c3: удержание в reset через suspend (2026-11-24, не помогло).**
+  Для i2c3 добавлен `resets` в DTS; в `rk3x` появились `.suspend`
+  (assert reset) и `.resume` (deassert + `adapt_div`), плюс `-EBUSY` при
+  активной транзакции. Ядро #34 прошито: тихий `cycle` работает
+  (2.26–2.28 с), но V1 (`aov_mcu=1`, `keep_isp=1`) всё равно теряет I2C3.
+  Удержание контроллера в reset не освобождает SCL → вероятен внешний
+  slave (STM8/EC) или отказ после resume; нужен bus-recovery 9 тактами
+  или hardening slave.
+- **i2c3: hold in reset across suspend (2026-11-24, did not help).**
+  i2c3 now has DTS `resets`; `rk3x` has `.suspend` (assert reset) and
+  `.resume` (deassert + `adapt_div`), plus `-EBUSY` on an active transfer.
+  Kernel #34 was flashed: the quiet `cycle` works (2.26–2.28 s), but V1
+  (`aov_mcu=1`, `keep_isp=1`) still loses I2C3. Holding the controller in
+  reset does not release SCL → an external slave (STM8/EC) or a
+  post-resume transaction is more likely; 9-clock bus recovery or slave
+  hardening is needed.
+
 ### Исправлено
 
 - **HOME FOCUS/ZOOM: полный ход до упора вместо коррекции счётчика.**

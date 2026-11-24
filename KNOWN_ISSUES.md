@@ -934,6 +934,13 @@
   `busy`; V1 по-прежнему теряет I2C3, сообщений об отмене suspend нет
   (`busy=false` в момент входа), тихий `cycle` работает (2.26–2.27 с).
   То есть отказ не ловится на границе suspend с активной транзакцией.
+  **2026-11-24, #34:** i2c3 удерживается в reset через весь suspend
+  (`resets` в DTS, `.suspend` assert / `.resume` deassert + `adapt_div`).
+  V1 всё равно теряет I2C3; тихий `cycle` работает (2.26–2.28 с).
+  Значит, удержание контроллера в reset не освобождает линию: вероятен
+  внешний slave (STM8/EC, H1/H3) либо отказ уже после resume в отдельной
+  транзакции. Следующий шаг — bus-recovery 9 тактами SCL или hardening
+  STM8/EC, а не reset контроллера.
   V2 (`aov_mcu=1`, `aov_keep_isp=0`, 60 с): AP после suspend не отвечает
   более 8 мин (логгер отработал 476 с, `/api/status` = `000`), нужен power
   cycle. V3 (`aov_mcu=0`) на исправной ФС даёт тихий цикл: deep suspend
@@ -1901,6 +1908,13 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   (`busy=false` on entry), while the quiet `cycle` still works
   (2.26–2.27 s). The failure is not caught at the suspend boundary with an
   active transfer.
+  **2026-11-24, #34:** i2c3 is held in reset for the whole suspend window
+  (`resets` in DTS, `.suspend` assert / `.resume` deassert + `adapt_div`).
+  V1 still loses I2C3; the quiet `cycle` works (2.26–2.28 s). Holding the
+  controller in reset does not release the line: an external slave
+  (STM8/EC, H1/H3) or a post-resume transaction is more likely. The next
+  step is 9-clock bus recovery or STM8/EC hardening, not another controller
+  reset.
   V2 (`aov_mcu=1`, `aov_keep_isp=0`, 60 s): the AP does not answer for more
   than 8 minutes after suspend (logger ran 476 s, `/api/status` = `000`);
   a power cycle is required. V3 (`aov_mcu=0`) on a healthy filesystem gives

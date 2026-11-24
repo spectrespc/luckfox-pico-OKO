@@ -123,6 +123,8 @@
 	status = "okay";
 	clock-frequency = <100000>;
 	pinctrl-0 = <&i2c3m1_xfer>;
+	resets = <&cru SRST_I2C3>;
+	reset-names = "i2c";
 };
 
 /* I2C1_M1 */

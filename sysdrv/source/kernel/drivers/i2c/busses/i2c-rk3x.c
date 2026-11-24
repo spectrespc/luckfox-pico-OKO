@@ -254,6 +254,7 @@ struct rk3x_i2c {
 	unsigned int processed;
 	int error;
 	unsigned int suspended:1;
+	unsigned int reset_held:1;
 
 	struct notifier_block i2c_restart_nb;
 	bool system_restarting;
@@ -1434,40 +1435,51 @@ static int rk3x_i2c_acpi_get_bus_id(struct device *dev, struct rk3x_i2c *priv)
 }
 #endif /* CONFIG_ACPI */
 
-static __maybe_unused int rk3x_i2c_suspend_noirq(struct device *dev)
+static __maybe_unused int rk3x_i2c_suspend(struct device *dev)
 {
 	struct rk3x_i2c *i2c = dev_get_drvdata(dev);
+	int ret;
 
-	/*
-	 * Never suspend in the middle of a transfer.  The rk3x controller
-	 * keeps SCL driven low when its clock/power domain is suspended
-	 * between START and STOP (KI-080/H2); abort the suspend attempt and
-	 * let the transfer finish, then retry.
-	 */
-	if (READ_ONCE(i2c->busy))
-		return -EBUSY;
-
-	/*
-	 * Below code is needed only to ensure that there are no
-	 * activities on I2C bus. if at this moment any driver
-	 * is trying to use I2C bus - this may cause i2c timeout.
-	 *
-	 * So forbid access to I2C device using i2c->suspended flag.
-	 */
 	i2c_lock_bus(&i2c->adap, I2C_LOCK_ROOT_ADAPTER);
+	if (READ_ONCE(i2c->busy)) {
+		i2c_unlock_bus(&i2c->adap, I2C_LOCK_ROOT_ADAPTER);
+		return -EBUSY;
+	}
 	i2c->suspended = 1;
 	i2c_unlock_bus(&i2c->adap, I2C_LOCK_ROOT_ADAPTER);
+
+	/*
+	 * KI-080/H2: an AOV suspend can leave the rk3x controller driving
+	 * SCL low.  Hold i2c3 in reset for the whole suspend window so the
+	 * pads cannot keep SCL asserted; resume deasserts the reset and
+	 * reprograms the timings.
+	 */
+	if (!IS_ERR_OR_NULL(i2c->reset)) {
+		ret = reset_control_assert(i2c->reset);
+		if (ret)
+			dev_warn(i2c->dev, "i2c reset assert failed: %d\n", ret);
+		else
+			i2c->reset_held = 1;
+	}
 
 	return 0;
 }
 
-static __maybe_unused int rk3x_i2c_resume_noirq(struct device *dev)
+static __maybe_unused int rk3x_i2c_resume(struct device *dev)
 {
 	struct rk3x_i2c *i2c = dev_get_drvdata(dev);
+	unsigned long rate;
 
-	rk3x_i2c_adapt_div(i2c, clk_get_rate(i2c->clk));
+	if (i2c->reset_held) {
+		reset_control_deassert(i2c->reset);
+		i2c->reset_held = 0;
+	}
 
-	/* Allow access to I2C bus */
+	clk_enable(i2c->clk);
+	rate = clk_get_rate(i2c->clk);
+	clk_disable(i2c->clk);
+	rk3x_i2c_adapt_div(i2c, rate);
+
 	i2c_lock_bus(&i2c->adap, I2C_LOCK_ROOT_ADAPTER);
 	i2c->suspended = 0;
 	i2c_unlock_bus(&i2c->adap, I2C_LOCK_ROOT_ADAPTER);
@@ -1773,8 +1785,8 @@ static int rk3x_i2c_remove(struct platform_device *pdev)
 }
 
 static const struct dev_pm_ops rk3x_i2c_pm_ops = {
-	SET_NOIRQ_SYSTEM_SLEEP_PM_OPS(rk3x_i2c_suspend_noirq,
-				      rk3x_i2c_resume_noirq)
+	.suspend = rk3x_i2c_suspend,
+	.resume = rk3x_i2c_resume,
 };
 
 static struct platform_driver rk3x_i2c_driver = {
