@@ -284,7 +284,8 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   не-AOV вариант. В PMU RV1106 один общий `RV1106_PMU_POWER_OFF_ENA`, per-domain
   keep нет. Итог: AOV остаётся на совместимой схеме `aov_mcu=1` +
   `keep_isp=1` + PMU-таймер; в KI-072 (RU+EN) и
-  `research/rv1106-aov/README.md` записаны доказательства и цитаты, gate в
+  `research/rv1106-aov/README.md` записаны доказательства и цитаты (там же
+  исправлен прежний тезис о «событийной» схеме вендорского AOV), gate в
   `TO_DO.md` §8.1 переформулирован в решение владельца (политика интервала,
   выпуск без handover, отдельный проект «перенос `divinus` через suspend» для
   латентности < 2 с). Артефакты:
@@ -312,7 +313,8 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   global `RV1106_PMU_POWER_OFF_ENA` and no per-domain keep. As a result AOV
   stays on the compatible `aov_mcu=1` + `keep_isp=1` + PMU timer scheme;
   KI-072 (RU+EN) and `research/rv1106-aov/README.md` now carry the evidence
-  and quotes, and the gate in `TO_DO.md` §8.1 became an owner decision
+  and quotes (the earlier "event-driven vendor AOV" claim was corrected
+  there too), and the gate in `TO_DO.md` §8.1 became an owner decision
   (interval policy, release without handover, a separate "carry `divinus`
   across suspend" project for a sub-2 s latency). Artifacts:
   `output/bench/aov-test/keepisp0-20261125b`,
