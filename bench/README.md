@@ -59,6 +59,7 @@ U-Boot — Maskrom, USB-порт занят хабом (TESTBENCH §7).
 | `heartbeat_check.py` | heartbeat-Snapshot сна: настраивает `[http_post]` и `[sleep]` (`enable=1`, `heartbeat=1`, `idle=30`, `wake_interval=10`, `wake_check=5`, `heartbeat_interval_s=0`), перезапускает divinus и ждёт ≥3 тихих цикла; проверяет JPEG+заголовки `X-Heartbeat-*`/`X-OKO-*` в `services/events`, рост `wake_cycle`, `fail_streak=0`; `--neg` — приёмник выключен и `fail_streak` растёт, циклы продолжаются; `--no-motion` — пропустить инъекцию `?motion=1` (нужен `OKO_BENCH_API=1`); отчёт и кадры — `output/bench/heartbeat` |
 | `mqtt_check.py` | сквозная проверка MQTT: поднимает `services/mqtt`, проверяет аутентификацию брокера (верный/неверный пароль), настраивает `[mqtt]` живьём через `POST /api/mqtt`, ждёт retained `online:true` и телеметрию в рекордере, затем `SIGKILL` divinus → LWT `online:false`, перезапускает divinus с `OKO_BENCH_API=1` → `online:true` и bench-событие `POST /api/mqtt?test=1`, в конце перезапускает без `OKO_BENCH_API`; `--neg` — профиль выключен и публикатор остаётся disconnected; `--deploy`, `--keep-config`; отчёт — `output/bench/mqtt/report.json` |
 | `deploy_divinus.py` | копирование свежесобранного `divinus` в `/oem/usr/bin` по SSH и graceful restart (быстрая итерация, не замена прошивке) |
+| `boot_probe.py` | бюджет старта `divinus` по меткам `divinus-boot:*` в `/dev/kmsg` (`divinus` — последний прогон из `dmesg`, таблица стадий и сумма `main → first_frame`); `vendor` — проба вендорского `fastboot_client` (копия в `/userdata/boot-probe`, запуск с UART-консоли при остановленном `divinus`, сбор `[app-cli]`-меток и stdout, восстановление `divinus`); `marks` — дамп всех меток; артефакты — `output/bench/boot/` |
 | `rgn_boxes_check.py` | soak 2BPP-рамок (KI-063): `--mode observe` — сэмплы fd/VmRSS/потоков и счётчиков ядра (`sfc`, `UBIFS`, `dup mClientFd`/`CHECK_GE`, oops, `rga2_reg`) каждые 10 с; `--mode cycle --target yolo\|ivs` — A/B тумблер через API; `--mode restart` — SIGHUP-рестарты с привязанным регионом (`--settle` секунд перед сэмплом, критерий — стабильный fd); `--mode config --target ivs --value true` — правка `boxes` в `/userdata/divinus.yaml` (бэкап `.oko-rgn-boxes.bak`) с рестартом; `--mode steady` — включить рамки и держать; JSON-отчёт в `output/bench/rgn`, код 1 при росте fd, VmRSS или счётчика ядра |
 | `yolo_night.py` | KI-005: ночная точность YOLO по матрице `{vpss3, vi0} × {AIISP off, on}` (C1–C4). Правка `/userdata/divinus.yaml` по SSH + graceful restart на каждую конфигурацию (vi0 иначе не применяется), `night`-сцена вручную через `/api/night`, сбор истории `/api/yolo?detections=1`, метрики recall / mean best score / FP per frame по `--gt` (IoU ≥ `--iou`), день C1/C4 — контроль методики; `--repeat`, `--seconds`, `--snapshots`, `--capture-gt`, `--deploy`, `--dry-run`, `--keep-config`; `report.json`/`report.csv` и `raw-*.json` в `output/bench/yolo_night` |
 | `uplink_soak.py` | 20-минутный soak двух аплинков: проверяет `active_default`, HTTP на eth/wlan-адресах и живой `divinus`, по фазам выдёргивает eth-линк и роняет шлюз временной Wi-Fi-точки (iptables в контейнере `oko-services`); `--seconds`, `--interval`, `--no-eth-toggle`, `--no-ap-toggle`; подготовка AP — `TESTBENCH.md` §9 |
@@ -153,6 +154,13 @@ bench/run.sh dut.py '/etc/init.d/S21oko-ec stop' \
 # быстрая выкатка собранного divinus в /oem без пересборки образа
 make -C project/app/divinus            # в цикле сборки SDK
 bench/run.sh deploy_divinus.py
+
+# бюджет старта: метки из dmesg (мкс по стадиям и main → first_frame)
+bench/run.sh boot_probe.py divinus
+bench/run.sh boot_probe.py divinus --restart   # SIGHUP и замер нового старта
+# вендорский fastboot_client: divinus останавливается, запуск идёт с консоли
+make -C project/app/fastboot_client fastboot_client-build
+bench/run.sh boot_probe.py vendor --seconds 15
 
 # WebUI: отдельный venv с Playwright и Chromium
 python3 -m venv /tmp/pw && /tmp/pw/bin/pip install playwright

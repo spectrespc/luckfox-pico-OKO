@@ -1,6 +1,7 @@
 #include "media.h"
 #include "gating.h"
 #include "record_clip.h"
+#include "hal/boot_mark.h"
 
 #include <time.h>
 
@@ -1419,6 +1420,7 @@ int sdk_start(void) {
     if (ret)
         HAL_ERROR("media", "System initialization failed with %#x!\n%s\n",
             ret, errstr(ret));
+    boot_mark("sys_init");
 
     if (app_config.audio_enable) {
         ret = media_audio_enable();

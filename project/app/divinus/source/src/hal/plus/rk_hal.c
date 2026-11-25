@@ -6,6 +6,7 @@
 #include "rk_hal.h"
 #include "rk_af_stats.h"
 #include "rk_rgn_pack.h"
+#include "../boot_mark.h"
 #include "../../app_config.h"
 #include "../../analytics/nn_geom.h"
 
@@ -282,6 +283,15 @@ int rk_channel_bind(char index)
             return ret;
     }
 
+    {
+        /* First live VPSS->VENC bind marks the end of the bind stage. */
+        static char marked;
+        if (!marked) {
+            marked = 1;
+            boot_mark("bind");
+        }
+    }
+
     return EXIT_SUCCESS;
 }
 
@@ -371,6 +381,7 @@ int rk_pipeline_create(short width, short height)
 
     if (!(_rk_aiq_ctx = rk_aiq.fnInit(snrEnt, "/oem/usr/share/iqfiles", NULL, NULL)))
         HAL_ERROR("rk_aiq", "Failed to initialize!\n");
+    boot_mark("aiq_init");
 
     {
         rk_aiq_work work = RK_AIQ_WORK_NORMAL;
@@ -391,9 +402,11 @@ int rk_pipeline_create(short width, short height)
         if (ret)
             HAL_ERROR("rk_aiq", "Failed to prepare device!\n");
     }
+    boot_mark("aiq_prepare");
 
     if (ret = rk_aiq.fnStart(_rk_aiq_ctx))
         HAL_ERROR("rk_aiq", "Failed to start device!\n");
+    boot_mark("aiq_start");
 
     if (ret = rk_vi.fnEnableDevice(_rk_vi_dev))
         return ret;
@@ -431,6 +444,7 @@ int rk_pipeline_create(short width, short height)
     }
     if (ret = rk_vi.fnEnableChannel(_rk_vi_pipe, _rk_vi_chn))
         return ret;
+    boot_mark("vi");
 
     {
         rk_vpss_grp group;
@@ -457,6 +471,7 @@ int rk_pipeline_create(short width, short height)
         if (ret = rk_sys.fnBind(&source, &dest))
             return ret;
     }
+    boot_mark("vi_bind");
 
     return EXIT_SUCCESS;
 }
@@ -1254,6 +1269,15 @@ int rk_video_create(char index, hal_vidconfig *config)
         return ret;
 
     {
+        /* First encoder channel marks the end of the VENC stage. */
+        static char marked;
+        if (!marked) {
+            marked = 1;
+            boot_mark("venc");
+        }
+    }
+
+    {
         int enable = 1;
         if (ret = rk_venc.fnSetChannelBufferShare(index, &enable))
         return ret;
@@ -1783,6 +1807,16 @@ void *rk_video_thread(void)
                             "channel %d failed with %#x!\n", i, ret);
                         if (stat.curPacks > 8) free(stream.packet);
                         break;
+                    }
+
+                    {
+                        /* Budget: from the first "main" marker to the first
+                         * encoded frame the streaming loop actually sees. */
+                        static char marked;
+                        if (!marked) {
+                            marked = 1;
+                            boot_mark("first_frame");
+                        }
                     }
 
                     if (rk_vid_cb) {

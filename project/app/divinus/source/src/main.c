@@ -4,6 +4,7 @@
 #include "focus_motor.h"
 #include "focus_proto.h"
 #include "gating.h"
+#include "hal/boot_mark.h"
 #include "hal/macros.h"
 #include "heartbeat_task.h"
 #include "http_post.h"
@@ -52,6 +53,8 @@ void handle_exit(int signo) {
 }
 
 int main(int argc, char *argv[]) {
+    boot_mark("main");
+
     {
         struct sigaction sa;
         memset(&sa, 0, sizeof(sa));
