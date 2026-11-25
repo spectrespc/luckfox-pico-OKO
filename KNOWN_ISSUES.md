@@ -637,6 +637,30 @@
   `aov_mcu=1` + `keep_isp=1` + PMU-таймер (интервал по умолчанию 60 с),
   ISP-handover и MCU-JTAG-исследование не делаются; открытым остаётся только
   выпуск AOV из экспериментального профиля (`TO_DO.md` §8.1).
+  **2026-11-25, профиль resume-пути и двухуровневый сон.** Окно
+  `suspend entry → exit` (2.27–2.32 с) измерено по фазам: это dpm-резюм
+  устройств, а не `rv1106_pm.c`. Лестница `pm_test` на debug-ядре:
+  freezer/thaw ≈20 мс, устройства ≈2.33 с, noirq +0.14 с, `TEST_CORE`
+  без `suspend_ops->enter` даёт те же 2.48 с. `pm_print_times`:
+  `usb 1-1` (USB2.0 HUB) 0.60 с, `usb 1-1.4` (RTL8821CU WiFi) 1.26 с,
+  GMAC 71 мс + PHY 72 мс. С unbind xhci resume devices 0.120 с, полный
+  resume-путь 0.166 с — без стендового USB-хаба/донгла цель ≤800 мс
+  достижима, с ними нет: HCD теряет питание во сне
+  (`xhci: xHC error in resume ... Reinit`), порты пересбрасываются.
+  Код `rv1106_pm.c` (маркеры `arch_timer`) — ≤10 мс; арх-таймер гейтится
+  во сне, поэтому сон мерить только `last_suspend_time`. Стоп-правило 4.7
+  применено: AP-сторонней правки нет.
+  Двухуровневый сон реализован: `aov_heartbeat_wakes` (N тихих циклов),
+  `aov_quiet_wakes`, `aov_timeout_streak`, состояние `heartbeat`; ядро
+  считает циклы в .data, quiet-циклы Linux не поднимают, каждый N-й
+  возвращает его, а третий таймаут mailbox подряд — терминальный резюм
+  для самоизлечения divinus. Netboot 2026-11-25 (MCU без кадров,
+  таймаут-ветка): N=0 → сон 10.69 с и `aov_state=timeout`; N=2 → сон
+  7.13 с, `aov_state=heartbeat` на втором цикле, `PM: suspend entry` = 1.
+  Артефакты `output/bench/aov-test/resume-profile-20261125/` и
+  `two-tier-20261125/`. Живой MCU (quiet/motion) и полная валидация 8.2–8.6
+  остаются за NAND-образом: netboot-rootfs не поднимает медиа
+  (`CmaFree=0`, rockit error 11).
 
 - **KI-073. в `rk3x_i2c_irq` на I2C3 при циклах `[sleep]`.**
   2026-11-17 в AOV-прогоне (idle 30 s, `aov_mcu=1`) шина I2C3
@@ -1733,6 +1757,31 @@ Status: **experimental, not for release** (refreshed 2026-11-25). The MCU
   timer (60 s interval by default); neither the ISP-handover nor an MCU JTAG
   study will be done, and only the release of AOV out of the experimental
   profile remains open (`TO_DO.md` §8.1).
+  **2026-11-25, resume-path profile and the two-tier sleep.** The
+  `suspend entry → exit` window (2.27–2.32 s) was measured phase by phase:
+  it is the device-model resume, not `rv1106_pm.c`. The `pm_test` ladder on
+  a debug kernel: freezer/thaw ≈20 ms, devices ≈2.33 s, noirq +0.14 s, and
+  `TEST_CORE` without `suspend_ops->enter` still shows the same 2.48 s.
+  `pm_print_times`: `usb 1-1` (USB2.0 HUB) 0.60 s, `usb 1-1.4` (RTL8821CU
+  WiFi) 1.26 s, GMAC 71 ms + PHY 72 ms. With xhci unbound, resume devices
+  is 0.120 s and the whole resume path 0.166 s — without the bench USB hub
+  and dongle the ≤800 ms goal is reachable, with them it is not: the HCD
+  loses power in the sleep (`xhci: xHC error in resume ... Reinit`) and the
+  ports are re-enumerated. The `rv1106_pm.c` code (arch-timer markers) costs
+  ≤10 ms; the arch timer is gated in the sleep, so only
+  `last_suspend_time` measures the sleep. Stop rule 4.7 applies: there is
+  no AP-side fix and it is recorded.
+  The two-tier sleep is implemented: `aov_heartbeat_wakes` (N quiet
+  cycles), `aov_quiet_wakes`, `aov_timeout_streak`, the `heartbeat` state;
+  the kernel counts cycles in .data, quiet cycles never bring Linux up,
+  every N-th does, and the third consecutive mailbox timeout is a terminal
+  resume for the divinus self-heal. Netboot 2026-11-25 (MCU without frames,
+  timeout branch): N=0 → 10.69 s of sleep and `aov_state=timeout`; N=2 →
+  7.13 s of sleep, `aov_state=heartbeat` on the second cycle, `PM: suspend
+  entry` = 1. Artifacts: `output/bench/aov-test/resume-profile-20261125/`
+  and `two-tier-20261125/`. The live MCU (quiet/motion) and the full
+  8.2–8.6 validation remain for the NAND image: the netboot rootfs does not
+  bring the media stack up (`CmaFree=0`, rockit error 11).
 
 - **KI-073. in `rk3x_i2c_irq` on I2C3 during `[sleep]` cycles.**
   On 2026-11-17 an AOV run (idle 30 s, `aov_mcu=1`) got a burst of

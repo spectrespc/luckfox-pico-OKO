@@ -411,6 +411,7 @@ TESTBENCH.md §7D.
 | `OKO_NFS_IP` | `192.168.52.150` | статический адрес DUT в NFS-режиме (`nfs_env.py`, `ip=`) |
 | `OKO_NAND_HOST` | `192.168.52.33` | DHCP-адрес DUT в NAND-режиме (проверка после `nfs_env.py off`) |
 | `OKO_CMA_SIZE` | `66M` | `rk_dma_heap_cma` в строках `nfs_env.py`/`netboot.py` (как `RK_BOOTARGS_CMA_SIZE`) |
+| `OKO_LOG_BUF_LEN` | — | если задано (например `1M`), `netboot.py` добавляет `log_buf_len=` в `sys_bootargs`: 16 КиБ ring buffer меньше одного цикла `pm_print_times` |
 | `OKO_EC_BUS` | `3` | номер шины i2c-tools (`3` = `/dev/i2c-3`) для `ec_bus_soak.py` |
 | `OKO_GATEWAY` | `192.168.52.254` | `gatewayip` (netboot) |
 | `OKO_NFSROOT` | `192.168.52.200:/srv/nfs/rootfs` | NFS-корень для `sys_bootargs` |
@@ -492,6 +493,9 @@ bench/run.sh sleep_power.py --scenario cycle --hz 5    # один цикл сн�
 bench/run.sh sleep_power.py --scenario motion          # сон с IVS (движение)
 bench/run.sh sleep_power.py --scenario aov --aov-seconds 150  # PMU, интервал 60 с
 bench/run.sh sleep_power.py --scenario aov --aov-mcu --aov-keep-isp  # AOV MCU
+bench/run.sh sleep_power.py --scenario aov --aov-mcu --heartbeat-seconds 300
+# двухуровневый сон: N = heartbeat_interval_s/wake_interval_s, tier-2 резюм
+# виден как aov_state=heartbeat, поля heartbeat_wakes/timeout_streak в JSON
 bench/run.sh recover_dut.py --ssh --restart             # после зависшего сна
 bench/run.sh sleep_power.py --scenario i2c --i2c-cycles 300 --expect-present
 bench/run.sh sleep_power.py --scenario aov --aov-seconds 60 --expect-present

@@ -682,6 +682,13 @@ curl -s -u admin:oko-change-me http://127.0.0.1/api/sleep
 # перед AOV-циклом: dmesg -c; после resume: dmesg | grep -iE 'sfc|ubi.*error'
 # KI-071: при sfc timeout/ro-rootfs — power cycle, при повторе — перепрошивка
 
+# Двухуровневый сон (2026-11-25): N тихих циклов на один резюм Linux
+cat /sys/devices/platform/rockchip-suspend/aov_heartbeat_wakes   # N, 0 = никогда
+cat /sys/devices/platform/rockchip-suspend/aov_quiet_wakes       # с начала серии
+cat /sys/devices/platform/rockchip-suspend/aov_timeout_streak    # таймауты подряд
+# после серии -h-timeout-: aov_state=timeout и [sleep] resumed (… aov timeout),
+# divinus должен снять aov_mcu и вернуть wake_interval_s=60 (mcu_unresponsive)
+
 # Гигиена сессий моста: пул 3, TTL 24 ч, переполнение — 429.
 # На каждый прогон один cookie-файл, logout в finally; не логиниться заново
 # на каждый power cycle. При 429 — ребут моста вручную (сетевого способа
@@ -696,6 +703,17 @@ bench/run.sh recover_dut.py --ssh --restart
 #     'http://192.168.52.33/api/sleep?enable=false&idle_timeout_s=3600'
 #   [sleep] enable:false, idle_timeout_s:15 в /userdata/divinus.yaml
 #   /etc/init.d/S21appinit stop; /etc/init.d/S21appinit start
+
+# Профиль suspend/resume на netboot (только debug-ядро): фрагменты
+# rv1106-pm.config rv1106-pm-debug.config, загрузка с увеличенным ring buffer
+OKO_LOG_BUF_LEN=1M bench/run.sh netboot.py reboot
+echo 1 > /sys/power/pm_print_times; echo 1 > /sys/power/pm_debug_messages
+echo devices > /sys/power/pm_test; echo mem > /sys/power/state   # один цикл
+dmesg | grep -E 'took|after [0-9]{4,} usecs'
+# лестница уровней: freezer/devices/platform/processors/core; TEST_CORE
+# пропускает suspend_ops->enter, т.е. мерит только generic-путь. Арх-таймер
+# гейтится во сне (маркеры oko-pm), сон мерить только last_suspend_time.
+# Без debug-фрагментов: bench/run.sh sleep_power.py --scenario aov #   --heartbeat-seconds 300 (поле heartbeat_wakes/timeout_streak в /api/sleep)
 
 # Слой отказа I2C3 (KI-080):
 i2cdetect -r -y 3                      # 40/41/42/60 должны отвечать

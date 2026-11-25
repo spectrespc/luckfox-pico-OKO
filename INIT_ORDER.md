@@ -102,7 +102,7 @@ TB-порядок в обычной загрузке не требуется.
 | Параметр | Значение | Комментарий |
 |---|---|---|
 | `RK_KERNEL_DTS` | `rv1106g-luckfox-pico-pro-max-sc230ai-aov.dts` | продуктовая плата + reserved-memory `rtos@40000` (240 КиБ), `meta@1000000`, `isp@1060000`; `&i2c4 rockchip,amp-shared`; `&rockchip_suspend oko,aov-mcu` |
-| `RK_KERNEL_DEFCONFIG_FRAGMENT` | продуктовый набор + `rv1106-hpmcu-aov.config` | `CONFIG_RV1106_HPMCU_FAST_WAKEUP=y` (sysfs `aov_wakeproxy`/`aov_state`, release MCU в suspend-exit) |
+| `RK_KERNEL_DEFCONFIG_FRAGMENT` | продуктовый набор + `rv1106-hpmcu-aov.config` | `CONFIG_RV1106_HPMCU_FAST_WAKEUP=y` (sysfs `aov_wakeproxy`/`aov_state`/`aov_heartbeat_wakes`/`aov_quiet_wakes`/`aov_timeout_streak`, release MCU в suspend-exit) |
 | `RK_PARTITION_CMD_IN_ENV` | `256K(env),1M@256K(idblock),512K(uboot),6M(boot),40M(oem),40M(userdata),167M(rootfs)` | idblock 1M (как в TB-профиле): Hpmcu+SPL+DDR+usbplug ~300 КБ не влезают в 256K; все разделы после idblock сдвинуты на 768K, rootfs уменьшен до 167M, сумма 255.25 МБ |
 | `RK_UBOOT_RKBIN_MCU_CFG` | `oko-wakeup-sc230ai-ADC` | `build.sh` собирает MCU и подставляет `Hpmcu=` в overlay ini |
 | `RK_UBOOT_RKBIN_INI_OVERLAY` | `RKBOOT/RV1106MINIALL_SPI_NAND_HPMCU.ini` | `LOADER1=FlashData`, `LOADER2=Hpmcu` (0x40000), `LOADER3=FlashBoot` — штатный SPL, без fastboot |
@@ -119,8 +119,13 @@ textofs до userspace не доходит (проверено на стенде
 thunder-boot устроен так же — `load = 0x208000` + `compression = "gzip"`.
 divinus при `aov_mcu=1` копирует meta в 0x01000000, пишет
 `aov_wakeproxy=1`, программирует PMU timeout и уходит в `mem`; ядро после
-PMU-wake освобождает MCU и ждёт `AP_SUSPEND`/`AP_RESUME` с timeout 2 с
-(`aov_state=timeout` → обычный resume).
+PMU-wake освобождает MCU и ждёт `AP_SUSPEND`/`AP_RESUME` в окне 500 мс
+(`aov_state=timeout`). Тихий ответ MCU (`quiet`) не поднимает Linux: ядро
+переписывает PMU timeout и снова уходит в `mem`, накапливая
+`aov_quiet_wakes`; каждый `aov_heartbeat_wakes`-й тихий цикл (N пишет
+divinus, `N = heartbeat_interval_s / wake_interval_s`) возвращает Linux с
+`aov_state=heartbeat` для телеметрии, а третий таймаут mailbox подряд —
+терминальный резюм с `aov_state=timeout` (divinus снимает `aov_mcu`).
 
 Стенд 2026-11-17 (артефакты `output/bench/aov-image-1m/`,
 `output/bench/uar0-aov-fit-boot-20261117.log`): NAND грузит FIT с ядром по

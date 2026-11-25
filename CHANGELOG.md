@@ -26,6 +26,39 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Добавлено
 
+- **Двухуровневый сон AOV: тихий цикл не поднимает Linux, телеметрия
+  каждые N циклов (`KNOWN_ISSUES.md` KI-072).** Ядро
+  (`CONFIG_RV1106_HPMCU_FAST_WAKEUP`) считает тихие циклы в `.data` и
+  отдаёт наружу `aov_heartbeat_wakes`, `aov_quiet_wakes`,
+  `aov_timeout_streak` и состояние `heartbeat`: каждый N-й тихий цикл
+  возвращает Linux, третий таймаут mailbox подряд — терминальный резюм
+  `timeout` для самоизлечения. `divinus` программирует
+  `N = heartbeat_interval_s / wake_interval_s`, шлёт heartbeat по tier-2
+  без гейта `CLOCK_MONOTONIC`, снимает `aov_mcu` при `mcu_unresponsive` и
+  применяет AOV-дефолты (`wake_interval_s=2`, `heartbeat=true`,
+  `heartbeat_interval_s=300`) только к отсутствующим ключам. Профиль
+  resume-пути: 2.27–2.32 с — это dpm-резюм (USB-хаб 0.60 с + RTL8821CU
+  1.26 с + GMAC/PHY 0.14 с), код `rv1106_pm.c` ≤10 мс; без USB-хоста
+  resume 0.12–0.17 с. Netboot-проверка таймаут-ветки: N=0 → сон 10.69 с,
+  N=2 → 7.13 с и `aov_state=heartbeat`, один `PM: suspend entry` на два
+  цикла. Host-тест — `project/app/divinus/tests/sleep_logic_test.c`.
+- **Two-tier AOV sleep: a quiet cycle never brings Linux up, telemetry
+  every N cycles (`KNOWN_ISSUES.md` KI-072).** The kernel
+  (`CONFIG_RV1106_HPMCU_FAST_WAKEUP`) counts quiet cycles in `.data` and
+  exposes `aov_heartbeat_wakes`, `aov_quiet_wakes`,
+  `aov_timeout_streak` and the `heartbeat` state: every N-th quiet cycle
+  returns to Linux and the third consecutive mailbox timeout is a terminal
+  `timeout` resume for the self-heal. `divinus` programs
+  `N = heartbeat_interval_s / wake_interval_s`, sends the tier-2 heartbeat
+  without the `CLOCK_MONOTONIC` gate, disarms `aov_mcu` on
+  `mcu_unresponsive` and applies the AOV profile defaults
+  (`wake_interval_s=2`, `heartbeat=true`, `heartbeat_interval_s=300`) only
+  to absent keys. Resume-path profile: the 2.27–2.32 s is the device-model
+  resume (USB hub 0.60 s + RTL8821CU 1.26 s + GMAC/PHY 0.14 s) while the
+  `rv1106_pm.c` code costs ≤10 ms; without the USB host it is 0.12–0.17 s.
+  Netboot timeout-branch check: N=0 → 10.69 s of sleep, N=2 → 7.13 s and
+  `aov_state=heartbeat`, one `PM: suspend entry` per two cycles. Host test
+  — `project/app/divinus/tests/sleep_logic_test.c`.
 - **`divinus`: метки стадий старта в `/dev/kmsg` (P4, `TO_DO.md` §14).**
   Добавлен `source/src/hal/boot_mark.c`/`.h`: `main`, `sys_init`,
   `aiq_init`, `aiq_prepare`, `aiq_start`, `vi`, `vi_bind`, `venc`, `bind`,
@@ -267,6 +300,20 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Изменено
 
+- **`bench/`: буфер dmesg для PM-профиля и heartbeat в AOV-прогоне.**
+  `netboot.py` принимает `OKO_LOG_BUF_LEN` (например `1M`) и добавляет
+  `log_buf_len=` в `sys_bootargs`: штатные 16 КиБ меньше одного цикла
+  `pm_print_times`. `sleep_power.py --scenario aov` получил
+  `--heartbeat-seconds` (проброс `heartbeat`/`heartbeat_interval_s`),
+  `heartbeat_wakes`/`timeout_streak` в снимке `aov_state` и таблицу строк
+  `oko-pm:` из dmesg.
+- **`bench/`: a dmesg buffer for the PM profile and heartbeat in the AOV
+  run.** `netboot.py` accepts `OKO_LOG_BUF_LEN` (e.g. `1M`) and appends
+  `log_buf_len=` to `sys_bootargs`, because the shipped 16 KiB ring is
+  smaller than one `pm_print_times` cycle. `sleep_power.py --scenario aov`
+  gained `--heartbeat-seconds` (passes `heartbeat`/`heartbeat_interval_s`),
+  `heartbeat_wakes`/`timeout_streak` in the `aov_state` snapshot and a table
+  of `oko-pm:` lines from dmesg.
 - **KI-072: вендорский ISP-handover признан нереализуемым на этом железе
   (2026-11-25).** План `.kilo/plans/1795603530004-ki072-isp-handover-close.md`
   остановлен по собственному стоп-правилу: схема «AP отпускает media, MCU
