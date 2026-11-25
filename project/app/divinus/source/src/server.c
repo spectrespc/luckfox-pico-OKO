@@ -2688,6 +2688,10 @@ void respond_request(http_request_t *req) {
     }
 
     if (EQUALS(req->uri, "/api/record")) {
+        /* Commands are collected while the query is parsed and applied only
+         * after every config key is stored, so the order of the keys in the
+         * request never changes the outcome. */
+        int doStart = 0, doStop = 0, enableOff = 0;
         if (req->query) {
             char *remain;
             while (req->query) {
@@ -2701,8 +2705,10 @@ void respond_request(http_request_t *req) {
                         gating_result gate = gating_check("record");
                         if (!gate.ok) { gating_block(req, gate); return; }
                         app_config.record_enable = 1;
-                    } else if (EQUALS_CASE(value, "false") || EQUALS(value, "0"))
+                    } else if (EQUALS_CASE(value, "false") || EQUALS(value, "0")) {
                         app_config.record_enable = 0;
+                        enableOff = 1;
+                    }
                 }
                 else if (EQUALS(key, "source")) {
                     app_config.record_sub = EQUALS(value, "sub");
@@ -2735,34 +2741,39 @@ void respond_request(http_request_t *req) {
                     if (remain != value)
                         app_config.record_segment_size = result;
                 }
+                else if (EQUALS(key, "start"))
+                    doStart = 1;
+                else if (EQUALS(key, "stop"))
+                    doStop = 1;
+            }
+        }
 
-                if (!app_config.record_enable) continue;
-                if (app_config.record_continuous) continue;
-                if (EQUALS(key, "start")) {
-                    int source = app_config.record_sub ?
-                        HAL_CHNROLE_SUB : HAL_CHNROLE_MAIN;
-                    if (channel_by_role(source) < 0) {
-                        gating_result gate = { false,
-                            "the selected recording source is not running",
-                            app_config.record_sub ?
-                                "enable the sub stream or set record.source=main" :
-                                "the main stream is disabled" };
-                        gating_block(req, gate);
-                        return;
-                    }
-                    if (!record_start()) {
-                        gating_result gate = { false,
-                            storageBusy ?
-                                "storage is busy with another operation" :
-                                "recording requires a mounted microSD card",
-                            storageBusy ?
-                                "wait for the format/unmount operation to finish" :
-                                "insert a card formatted as vfat; local storage is not used" };
-                        gating_block(req, gate);
-                        return;
-                    }
-                } else if (EQUALS(key, "stop"))
-                    record_stop();
+        /* An explicit stop or a disable always ends the live session, whatever
+         * the enable/continuous flags say and whichever key order was used. */
+        if (doStop || enableOff)
+            record_stop();
+        if (doStart && app_config.record_enable) {
+            int source = app_config.record_sub ?
+                HAL_CHNROLE_SUB : HAL_CHNROLE_MAIN;
+            if (channel_by_role(source) < 0) {
+                gating_result gate = { false,
+                    "the selected recording source is not running",
+                    app_config.record_sub ?
+                        "enable the sub stream or set record.source=main" :
+                        "the main stream is disabled" };
+                gating_block(req, gate);
+                return;
+            }
+            if (!record_start()) {
+                gating_result gate = { false,
+                    storageBusy ?
+                        "storage is busy with another operation" :
+                        "recording requires a mounted microSD card",
+                    storageBusy ?
+                        "wait for the format/unmount operation to finish" :
+                        "insert a card formatted as vfat; local storage is not used" };
+                gating_block(req, gate);
+                return;
             }
         }
         char start_time[32] = "";

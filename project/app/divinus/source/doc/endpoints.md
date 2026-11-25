@@ -451,6 +451,7 @@ Manages video recording operations.
 
 | Method | Parameters         | Description                                        |
 |--------|--------------------|----------------------------------------------------|
+| GET    | `enable`           | Enables recording; `false` also stops the live session |
 | GET    | `continuous`       | Adjusts the operation mode to be uninterruptible   |
 | GET    | `path`             | Specifies the location of the resulting files      |
 | GET    | `filename`         | Sets the base output name (extension needed)       |
@@ -484,6 +485,22 @@ If the card disappears while recording, the current segment is closed and no
 further file is created on SPI NAND. Formatting or unmounting the card sets
 `storageBusy`, so a concurrent `start=1` is refused instead of opening a file
 that would be formatted.
+
+**Command semantics**
+
+- Config keys are stored first; `start`/`stop`/`enable=false` are applied only
+  after the whole query is parsed, so the key order does not change the result.
+- `stop=1` and `enable=false` stop the live session unconditionally — they no
+  longer depend on `enable` or `continuous`, and a request with only config keys
+  leaves a running session (and a motion clip) alone.
+- `start=1` requires `record_enable=true` in the final state of the request;
+  `continuous` does not gate `start` or `stop` any more.
+- `stop=1&start=1` and `enable=true&stop=1&start=1` restart the session: stop is
+  applied first, then start.
+- A manual `stop=1` also cancels a pending motion clip timer, so the clip cannot
+  close the next session when its timer expires.
+- Limitation: a `continuous` session is started only when the application boots.
+  Setting `continuous=false` at runtime does not stop it — send `stop=1`.
 
 #### `/api/eptz`
 

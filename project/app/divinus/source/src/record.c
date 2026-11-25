@@ -454,6 +454,11 @@ bool record_start(void) {
 void record_stop(void) {
     pthread_mutex_lock(&recordMtx);
 
+    /* OKO: a manual stop also cancels a pending motion clip timer, otherwise
+     * the orphaned timer would close the next session once it expires. */
+    recordEventActive = false;
+    recordEventGeneration++;
+
     record_close_locked();
     recordActive = false;
     recordStartTime = 0;
