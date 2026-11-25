@@ -20,6 +20,13 @@
 #define IVS_EVENT_RING 16
 #define IVS_TRIGGER_COOLDOWN 5
 
+/* KI-079: right after the pipeline (re)start the first MD results see the
+ * AE/ISP transition and cover the whole frame.  Such a full-frame result is
+ * not plausible motion; drop it for a short settle window instead of
+ * postponing the [sleep] idle timer and forcing a 1000‰ event. */
+#define IVS_SETTLE_S 3
+#define IVS_FULL_FRAME_PERMILLE 900
+
 typedef struct {
     time_t when;
     unsigned int frameId;
@@ -43,6 +50,10 @@ static time_t ivsLastShown;
  * IVS is off or has not produced a result yet.  The heartbeat snapshot puts
  * it into a header, so a plain aligned store is enough. */
 static volatile int ivsLastArea = -1;
+
+/* End of the post-start settle window; full-frame MD results are ignored
+ * until then (KI-079).  Written once per analytics start, read by the loop. */
+static time_t ivsSettleUntil;
 
 static void ivs_osd_indicator(int active, time_t when)
 {
@@ -402,6 +413,7 @@ static void *ivs_thread(void *arg)
 
     /* ivsRunning is cleared by ivs_events_stop() before the join, so the thread
      * leaves even when the configuration still says enable. */
+    ivsSettleUntil = time(NULL) + IVS_SETTLE_S;
     while (keepRunning && ivsRunning) {
         hal_ivs_result result;
         time_t now = time(NULL);
@@ -424,6 +436,15 @@ static void *ivs_thread(void *arg)
         if (!rk_ivs_get_results(&result, 500)) {
             unsigned int area = ivs_area_permille(&result);
             const char *cause = result.rectCount > 0 ? "md" : "od";
+            /* KI-079: a full-frame result in the settle window is the AE/ISP
+             * transition after (re)start, not motion.  Real motion that does
+             * not cover the frame is still reported. */
+            if (area >= IVS_FULL_FRAME_PERMILLE && now < ivsSettleUntil) {
+                ivsLastArea = -1;
+                ivs_boxes_clear();
+                rk_ivs_release_results();
+                continue;
+            }
             ivsLastArea = (int)area;
             /* min_area is a percentage, area is permille.  OD hits are never
              * hidden by the threshold: they have no rectangle to measure. */
