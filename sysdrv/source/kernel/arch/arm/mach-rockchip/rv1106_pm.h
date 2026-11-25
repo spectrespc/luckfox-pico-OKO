@@ -15,7 +15,7 @@
  * timeout path when the MCU has no frames (aov_keep_isp=0), so keep a small
  * margin over the measured figure.
  */
-#define RV1106_HPMCU_FAST_WKUP_TIMEOUT	1000 /* ms */
+#define RV1106_HPMCU_FAST_WKUP_TIMEOUT	500 /* ms */
 
 #define RV1106_PERIGRF_OFFSET		0x0
 #define RV1106_VENCGRF_OFFSET		0x10000
