@@ -47,6 +47,7 @@ U-Boot — Maskrom, USB-порт занят хабом (TESTBENCH §7).
 | `tftp_flash.py` | прошивка SPI NAND по TFTP из U-Boot (режим по умолчанию): входит в prompt, грузит `output/image/*.img` на `ramdisk_addr_r`, `mtd erase` + `mtd write` с явным размером, восстанавливает NAND-`sys_bootargs` и `mtdparts`, `saveenv` и `reset`; раскладка читается из `output/image/.env.txt` (работают и продуктовый 256K idblock, и `-AOV` 1M); `--components` (`env,idblock,uboot,boot,oem,rootfs,userdata`, по умолчанию `boot,oem,rootfs`), `--userdata`, `--no-reset`; при `idblock` обязателен SSH-бэкап `/dev/mtdblock1` в `output/bench/backup/` (`--dut-host`, `--skip-backup` — только для восстановления из U-Boot); `--power-cycle` — холодный цикл питания через мост и перехват U-Boot на подъёме (нужно после зависшего HPMCU); если консольный логин недоступен, плата перезагружается по SSH и Ctrl-C начинает бить сразу |
 | `uart.py` | транспорт консоли для `serial_exec.py`/`netboot.py`: telnet-клиент ESP32-моста (отвечает на IAC и вырезает его) или локальный pyserial по `--port /dev/ttyACM*` |
 | `aov_cadence.py` | кадентность AOV-цикла по read-only монитору UART моста (`:2324`, включён `telnet0_mon_enable`): захват N секунд в `output/bench/aov-test/`, подсчёт `-h-wait-`/`-h-mbox-`/`-h-timeout-`, дельты и темп, JSON-сводка; `--file` разбирает готовый захват; монитор нужен потому, что HPMCU делит UART2 с консолью AP |
+| `aov_resume_matrix.py` | матрица resume по циклам (KI-072): `--mode exec\|live\|stopstart\|aiq --cycles N --interval S [--aov]`; на каждый resume — путь `last_suspend_time`, время до `/api/status` 200 и JPEG > 1000 Б, потоки/fd/RSS/dma-buf, `pidof`, слушатель :80, счётчики `mipi-csi2-hw ERR`/`mpp ctx is no found`/NAND `sfc`+`ubi`; конфиг `[sleep]` задаёт сам и восстанавливает в `finally`; `--stop-on-sfc` (по умолчанию остановка на первой новой ошибке NAND, `-1` отключает), `--stop-on-mipi`; артефакты — `output/bench/aov-test/fast-resume-20261125/<mode>/` |
 | `nfs_env.py` | переключение штатной загрузки через env U-Boot: `status` (текущий `sys_bootargs` и режим `nand`/`nfs`), `on` (NFS-root, проверка `/`, `/oem`, `/userdata`), `off` (возврат на `ubi0:rootfs`); `--no-reboot` пишет переменную без перезагрузки |
 | `osd_check.py` | захват кадров RTSP (`--path`, по умолчанию `/live/0`), попарный диф боксов OSD-регионов, сохранение полных кадров и кропов |
 | `stream_check.py` | сквозная проверка UDP/RTP-раздачи камеры и приёмника MediaMTX: чтение `stream`/`mp4` из `/userdata/divinus.yaml` по SSH, опрос `/v3/paths/list`, декодирование `rtsp://<host>:8554/cam` через PyAV, fps и отклонение от `mp4.fps`, `--compare-dut` — сверка с собственным RTSP камеры, `--latency` — задержка ретрансляции по совпадению кадров; при `--compare-dut` эталоном fps служит сама камера, иначе `mp4.fps`; JSON и CSV в `output/bench/stream` (учётные данные в артефакты не пишутся), код 1 — отклонение, код 2 — метрика не снята |
@@ -541,6 +542,49 @@ KI-080, KI-072, `TESTBENCH.md` §7-AOV. Сценарий `motion` (IVS вклю�
 (KI-072). Мост держит не больше трёх сессий: `sleep_power.py` держит
 одну cookie-сессию на логгер и питание и делает logout в конце; параллельные
 ручные `curl`-сессии дают `429`.
+
+## Матрица resume (KI-072)
+
+`aov_resume_matrix.py` гоняет `[sleep] fast_resume` по циклам и пишет по
+каждому пробуждению: resume-путь ядра (`last_suspend_time`), время до
+`/api/status` 200 и JPEG > 1000 Б, потоки/fd/RSS/dma-buf `divinus`, `pidof`,
+слушатель :80, счётчики `mipi-csi2-hw ERR`, `mpp: ctx is no found` и NAND
+(`rockchip-sfc` timeout / `ubi_io_* error`). Конфиг прогона —
+`enable=1, aov_mcu=0, aov_keep_isp=0, usb_on_motion=1, idle_timeout_s=15,
+wake_interval_s=--interval, wake_check_s=5, heartbeat=0,
+fast_resume=<mode>`; после `POST /api/sleep` скрипт перезапускает `divinus`
+(SIGHUP по SSH, fallback `/api/cmd?restart`), потому что живьём настройки не
+применяются.
+
+```sh
+# контроль exec (V0): 30 циклов, интервал 20 с, окно проверки 10 с
+bench/run.sh aov_resume_matrix.py --mode exec --cycles 30 --interval 20 --wake-check 10
+
+# AIQ-парковка (V3): первый цикл уже показывает шторм/HTTP 000 (KI-072)
+bench/run.sh aov_resume_matrix.py --mode aiq --cycles 5 --interval 20 --wake-check 10
+
+# двухуровневый AOV-сон (aov_mcu=1 + aov_keep_isp=1)
+bench/run.sh aov_resume_matrix.py --mode exec --aov --cycles 10 --interval 60
+```
+
+Важно:
+
+- `--wake-check 5` (значение из плана) слишком коротко для `exec`: полный
+  старт нового образа после `execvp` не успевает отдать :80, и окно
+  измерения теряется. Для матриц использовать `--wake-check 10…20`;
+  порог `wake→API ≤ 1.0 с` считается по `resume_s + задержка после первого
+  контакта` и от окна не зависит.
+- По умолчанию (`--stop-on-sfc 0`) прогон **останавливается на первой новой
+  ошибке NAND**: при коротком интервале (5–10 с) серия циклов воспроизводит
+  KI-071 (`rockchip-sfc ... DMA timeout` → `ubi_io_read: error -5` →
+  `/userdata` в `ro`). `-1` отключает проверку (только для коротких проб).
+- Прерванный прогон восстанавливает конфиг в `finally`; если это не удалось
+  (DUT завис/спит), порядок: `bench/run.sh power.py cycle --off-seconds 5`,
+  затем сразу `POST /api/sleep?enable=false` или правка
+  `/userdata/divinus.yaml` + SIGHUP (см. `recover_dut.py`).
+- Артефакты: `output/bench/aov-test/fast-resume-20261125/<mode>/run.json`,
+  `report.md`, `dmesg-<stamp>.txt`; `run.json` сохраняется и при аварийной
+  остановке (с полем `meta.stopped`).
 
 ## Wi-Fi на стенде
 

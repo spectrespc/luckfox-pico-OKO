@@ -1623,6 +1623,45 @@ retained `online:true`, телеметрию, затем `kill -9` divinus → L
 suspend, теряются (память только RAM). Пароль лежит открытым в
 `/userdata/divinus.yaml` — как у `[http_post]`.
 
+### Матрица resume `[sleep] fast_resume` (KI-072)
+
+Переключатель `exec|live|stopstart|aiq` (YAML `[sleep] fast_resume`,
+`POST /api/sleep?fast_resume=`) — диагностический, дефолт `exec`. Матрица
+по циклам:
+
+```sh
+# V0 baseline: 30 циклов, интервал 20 с, окно проверки 10 с
+bench/run.sh aov_resume_matrix.py --mode exec --cycles 30 --interval 20 --wake-check 10
+# V3 aiq — ожидаемый шторм/HTTP 000 уже на первом цикле
+bench/run.sh aov_resume_matrix.py --mode aiq --cycles 5 --interval 20 --wake-check 10
+```
+
+Скрипт сам задаёт тестовый конфиг (`enable=1, aov_mcu=0, usb_on_motion=1,
+idle 15, wake_check 10…20, heartbeat=0`) и перезапускает `divinus` SIGHUP,
+потому что `POST /api/sleep` живьём не применяется; в конце конфиг
+восстанавливается. На цикл пишутся `last_suspend_time`, время до
+`/api/status` 200 и JPEG > 1000 Б, потоки/fd/RSS/dma-buf, `pidof`, :80,
+счётчики `mipi-csi2-hw ERR`, `mpp: ctx is no found`, NAND `sfc`/`ubi`;
+артефакты — `output/bench/aov-test/fast-resume-20261125/<mode>/`
+(`run.json`, `report.md`, `dmesg-*.txt`). `run.json` сохраняется и при
+аварийной остановке (`meta.stopped`).
+
+Выученные ограничения (2026-11-25, NAND #38):
+
+- `wake_check_s=5` для `exec` слишком коротко: новый образ после `execvp`
+  не успевает поднять :80 до нового сна, окно измерения теряется — для
+  матриц брать 10–20 с. `exec` 10/10 на 10 с: wake→API 0.21 с,
+  wake→JPEG 0.29 с, 25 потоков, `mipi`=0.
+- `aiq` на SC230AI: процесс жив (22 потока), resume 0.20 с, но каждый цикл
+  даёт `mipi-csi2-hw ERR` (+1…+4) и HTTP 000, следующее пробуждение может
+  не наступить — только power cycle. `live`/`stopstart` — прежние вердикты
+  KI-072; в продакшн не включать.
+- Короткий интервал (5–10 с) воспроизводит KI-071 (`rockchip-sfc ...
+  DMA timeout` → `ubi_io_read: error -5` → `/userdata` в `ro`). Матрица
+  считает `sfc`/`ubi` и по умолчанию останавливается на первой новой
+  ошибке (`--stop-on-sfc -1` отключает); после остановки — power cycle,
+  затем проверка `mount`/`dmesg`/`touch /userdata/.write-test`.
+
 ## 9. Известные особенности
 
 - **USB-порт закреплён в host-режиме (`dr_mode = "host"`).** С 2026-11-11
