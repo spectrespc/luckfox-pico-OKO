@@ -66,8 +66,9 @@ RECEIVER = os.environ.get("OKO_EVENTS_ADDR", "192.168.52.200:8090")
 COMPOSE = ROOT / "services" / "events" / "docker-compose.yml"
 
 SLEEP_KEYS = ["enable", "pmu_timer_wake", "aov_mcu", "aov_keep_isp",
-              "idle_timeout_s", "wake_interval_s", "wake_check_s",
-              "heartbeat", "heartbeat_interval_s", "heartbeat_retries"]
+              "usb_on_motion", "idle_timeout_s", "wake_interval_s",
+              "wake_check_s", "heartbeat", "heartbeat_interval_s",
+              "heartbeat_retries", "fast_resume"]
 HTTP_KEYS = ["enable", "host", "url", "login", "width", "height", "interval",
              "qfactor", "receiver_url"]
 FD_MIN, FD_MAX = 113, 116

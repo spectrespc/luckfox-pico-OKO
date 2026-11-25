@@ -387,8 +387,8 @@ def measure_cycle(args, down_at):
         record["wake_to_jpeg_s"] = round(
             probe["resume_s"] + record["t_jpeg_after_connect_s"], 3)
 
-    # Counters are cumulative in the dmesg ring; keep the cumulative value so
-    # a wrapped ring is visible (a drop) instead of being silently lost.
+    # Counters are cumulative; run_cycles() turns a decrease (ring wrap or
+    # reboot) into a flagged delta instead of a silent zero.
     record["mipi_total"] = probe.get("mipi_total")
     record["ctx_total"] = probe.get("ctx_total")
     record["sfc_total"] = probe.get("sfc_total")
@@ -407,6 +407,20 @@ def measure_cycle(args, down_at):
     # still counted but flagged.
     record["window_lost"] = not (status == 200 and jstatus == 200)
     return record
+
+
+def counter_delta(current, previous):
+    """Delta of a cumulative dmesg counter plus a ring-wrap/reset flag.
+
+    A wrapped 16 KiB ring (or a reboot) makes the counter decrease; the
+    remaining value can only be new lines, so it is returned as the delta and
+    flagged instead of being dropped as zero.
+    """
+    if current is None or previous is None:
+        return None, False
+    if current < previous:
+        return current, True
+    return current - previous, False
 
 
 def run_cycles(args, baseline=None, cycles=None):
@@ -440,16 +454,22 @@ def run_cycles(args, baseline=None, cycles=None):
 
         mipi = record.get("mipi_total")
         ctx = record.get("ctx_total")
-        record["mipi_delta"] = None if (mipi is None or prev["mipi"] is None) \
-            else max(0, mipi - prev["mipi"]) if mipi >= prev["mipi"] else 0
-        record["ctx_delta"] = None if (ctx is None or prev["ctx"] is None) \
-            else max(0, ctx - prev["ctx"]) if ctx >= prev["ctx"] else 0
         sfc = record.get("sfc_total")
         ubi = record.get("ubi_total")
-        record["sfc_delta"] = None if (sfc is None or prev["sfc"] is None) \
-            else max(0, sfc - prev["sfc"]) if sfc >= prev["sfc"] else 0
-        record["ubi_delta"] = None if (ubi is None or prev["ubi"] is None) \
-            else max(0, ubi - prev["ubi"]) if ubi >= prev["ubi"] else 0
+        record["mipi_delta"], record["mipi_reset"] = counter_delta(
+            mipi, prev["mipi"])
+        record["ctx_delta"], record["ctx_reset"] = counter_delta(
+            ctx, prev["ctx"])
+        record["sfc_delta"], record["sfc_reset"] = counter_delta(
+            sfc, prev["sfc"])
+        record["ubi_delta"], record["ubi_reset"] = counter_delta(
+            ubi, prev["ubi"])
+        # A dmesg ring wrap (or a reboot) makes the cumulative counter drop.
+        # The current value is then the whole content of the fresh ring, so it
+        # is counted as new instead of hiding a storm behind a zero delta.
+        record["counter_reset"] = any(record.get(key) for key in
+                                      ("mipi_reset", "ctx_reset", "sfc_reset",
+                                       "ubi_reset"))
         record["pid_changed"] = (prev["pid"] is not None and
                                  record.get("pid") is not None and
                                  record["pid"] != prev["pid"])
@@ -466,25 +486,26 @@ def run_cycles(args, baseline=None, cycles=None):
         record["pid_stable"] = not record["pid_changed"]
 
         log("cycle %d/%d: resume=%s api=%sms jpeg=%sms threads=%s "
-            "mipi=+%s ctx=+%s sfc=+%s ubi=+%s listen=%s pid=%s%s" % (
+            "mipi=+%s ctx=+%s sfc=+%s ubi=+%s listen=%s pid=%s%s%s" % (
                 n, args.cycles, record.get("resume_s"),
                 record.get("api_ms"), record.get("jpeg_ms"),
                 record.get("threads"), record.get("mipi_delta"),
                 record.get("ctx_delta"), record.get("sfc_delta"),
                 record.get("ubi_delta"), record.get("listen80"),
                 record.get("pid"),
+                " counter_reset" if record.get("counter_reset") else "",
                 "" if not record.get("ssh_error")
                 else " ssh_err=%s" % record["ssh_error"]))
         cycles.append(record)
 
-        if args.stop_on_sfc is not None:
+        if args.stop_on_sfc is not None and args.stop_on_sfc >= 0:
             sfc_sum = sum(r["sfc_delta"] for r in cycles
                           if r.get("sfc_delta"))
             if sfc_sum > args.stop_on_sfc:
                 raise RuntimeError(
                     "NAND sfc error appeared (KI-071): %d new line(s)" %
                     sfc_sum)
-        if args.stop_on_mipi is not None:
+        if args.stop_on_mipi is not None and args.stop_on_mipi >= 0:
             mipi_sum = sum(r["mipi_delta"] for r in cycles
                            if r.get("mipi_delta"))
             if mipi_sum > args.stop_on_mipi:
@@ -521,6 +542,7 @@ def summary(cycles):
     ctx = sum(c["ctx_delta"] for c in cycles if c.get("ctx_delta"))
     sfc = sum(c["sfc_delta"] for c in cycles if c.get("sfc_delta"))
     ubi = sum(c["ubi_delta"] for c in cycles if c.get("ubi_delta"))
+    resets = sum(1 for c in cycles if c.get("counter_reset"))
     threads = values("threads")
     return {
         "cycles": len(cycles),
@@ -542,6 +564,7 @@ def summary(cycles):
         "ctx_total": ctx,
         "sfc_total": sfc,
         "ubi_total": ubi,
+        "counter_resets": resets,
         "listen_missing": sum(1 for c in cycles if c.get("listen80") == 0),
         "dmabuf_drift_pct": drift("dmabuf_kb"),
         "rss_drift_pct": drift("rss_kb"),
@@ -586,6 +609,8 @@ def write_report(path, args, meta, cycles, stats):
         ("NAND sfc/ubi ошибки, суммарно",
          "%s / %s" % (stats["sfc_total"], stats["ubi_total"]),
          "0 (KI-071)"),
+        ("сбросов счётчиков dmesg (кольцо/ребут)",
+         stats["counter_resets"], "0"),
         ("циклов без :80", stats["listen_missing"], "0"),
         ("drift dma-buf / RSS / fd, %",
          "%s / %s / %s" % (stats["dmabuf_drift_pct"], stats["rss_drift_pct"],
