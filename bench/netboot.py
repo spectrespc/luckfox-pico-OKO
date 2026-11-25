@@ -46,12 +46,17 @@ NETMASK = "255.255.255.0"
 NFSROOT = os.environ.get("OKO_NFSROOT", f"{SERVER_IP}:/srv/nfs/rootfs")
 PASSWORD = os.environ.get("OKO_DUT_PASSWORD", "luckfox")
 CMA = os.environ.get("OKO_CMA_SIZE", "66M")
+# The shipped kernel keeps the 16 KiB default printk ring, which is smaller
+# than one verbose `pm_print_times` suspend/resume cycle.  Set
+# OKO_LOG_BUF_LEN=1M for PM profiling runs and read the whole cycle from dmesg.
+LOG_BUF_LEN = os.environ.get("OKO_LOG_BUF_LEN", "")
 
 SYS_BOOTARGS = (
     "root=/dev/nfs rw "
     f"nfsroot={NFSROOT},vers=3,proto=tcp,nolock "
     f"ip={DUT_IP}:{SERVER_IP}:{GATEWAY}:{NETMASK}:luckfox:eth0:off "
     f"rk_dma_heap_cma={CMA}"
+    + (f" log_buf_len={LOG_BUF_LEN}" if LOG_BUF_LEN else "")
 )
 
 NETBOOT_CMDS = [

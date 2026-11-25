@@ -681,6 +681,31 @@ def sleep_table(reading):
             "| %.2f | %.2f |" % (reading["resume_s"], reading["sleep_s"])]
 
 
+def kernel_pm_profile(notes=None):
+    """`oko-pm:` phase lines of the diagnostic PM kernel (empty otherwise)."""
+    try:
+        client = ssh_client()
+        try:
+            code, out, err = ssh_run(
+                client, "dmesg | grep oko-pm: | tail -12")
+        finally:
+            client.close()
+        if code != 0:
+            raise RuntimeError((out + err).strip())
+    except Exception as exc:                                # noqa: BLE001
+        if notes is not None:
+            notes.append("oko-pm профиль не снят: %s" % exc)
+        return []
+    return [line.strip() for line in out.splitlines() if "oko-pm:" in line]
+
+
+def profile_table(lines):
+    table = ["| Строка профиля |", "|---|"]
+    for line in lines:
+        table.append("| `%s` |" % line.replace("|", "\\|"))
+    return table
+
+
 def suspend_table(durations):
     if not durations:
         return [], {}
@@ -1399,11 +1424,13 @@ def scenario_aov(args, outdir, events):
             "idle_timeout_s": str(args.idle),
             "wake_interval_s": str(args.wake_interval),
             "wake_check_s": str(args.aov_wake_check),
-            "heartbeat": "false"})
+            "heartbeat": "true" if args.heartbeat_seconds > 0 else "false",
+            "heartbeat_interval_s": str(args.heartbeat_seconds)})
         events.write("setup", wake_interval=args.wake_interval,
                      wake_check=args.aov_wake_check,
                      aov_mcu=args.aov_mcu,
                      aov_keep_isp=args.aov_keep_isp,
+                     heartbeat_seconds=args.heartbeat_seconds,
                      seconds=args.aov_seconds)
         handle.set_phase("await-suspend")
         if wait_until_state(DOWN_STATES, 180) is None:
@@ -1425,7 +1452,11 @@ def scenario_aov(args, outdir, events):
                 transitions.append((ts, state, phase))
                 if phase == "awake" and len(aov_counts) < 40:
                     aov = {"aov_state": (snap or {}).get("aov_state"),
-                           "last_wake_src": (snap or {}).get("last_wake_src")}
+                           "last_wake_src": (snap or {}).get("last_wake_src"),
+                           "heartbeat_wakes":
+                               (snap or {}).get("heartbeat_wakes"),
+                           "timeout_streak":
+                               (snap or {}).get("timeout_streak")}
                     key = str(aov.get("aov_state"))
                     aov_counts[key] = aov_counts.get(key, 0) + 1
                     events.write("aov", ts=ts, **aov)
@@ -1509,12 +1540,24 @@ def scenario_aov(args, outdir, events):
             notes.append("STM8 пропал во время прогона: motor.present=false "
                          "(ts=%d)." % lost_at)
         if args.aov_mcu and aov_counts.get("timeout"):
-            notes.append("MCU не ответил по mailbox (aov timeout): "
-                         "аппаратная MCU-детекция не подтверждена.")
+            notes.append("aov_state=timeout на полном резюме: MCU не ответил "
+                         "серию mailbox-таймаутов, divinus должен снять "
+                         "aov_mcu и вернуть интервал 60 с.")
+        if args.aov_mcu and aov_counts.get("heartbeat"):
+            wakes = (args.heartbeat_seconds // args.wake_interval
+                     if args.wake_interval else 0)
+            notes.append("Tier 2: полный резюм по aov_state=heartbeat "
+                         "(heartbeat_interval_s=%d, wake_interval_s=%d, "
+                         "N=%d тихих циклов)." %
+                         (args.heartbeat_seconds, args.wake_interval, wakes))
         if args.aov_mcu and (aov_counts.get("quiet") or
                              aov_counts.get("motion")):
             notes.append("MCU ответил по mailbox (quiet/motion): "
                          "MCU-детекция работает на уровне handshake.")
+        if args.aov_mcu and not args.heartbeat_seconds and \
+                not aov_counts.get("quiet") and not aov_counts.get("motion"):
+            notes.append("aov_state на резюме не quiet/motion: проверьте "
+                         "handshake MCU по маркерам -h-* в UART.")
         table = ["| Интервал | Начало | Секунд | мВт·ч | мА·ч |",
                  "|---|---|---|---|---|"]
         energy = []
@@ -1547,6 +1590,14 @@ def scenario_aov(args, outdir, events):
                            sleep_table(last_sleep)))
             notes.append("Сон последнего цикла: %.2f с (resume-путь %.2f с)." %
                          (last_sleep["sleep_s"], last_sleep["resume_s"]))
+        profile = kernel_pm_profile(notes)
+        if profile:
+            tables.append(("oko-pm: фазы suspend/resume (debug-ядро)",
+                           profile_table(profile)))
+            notes.append("oko-pm: снято %d строк профиля фаз." % len(profile))
+        summary["full_resumes"] = len(wake_times)
+        summary["heartbeat_interval_s"] = args.heartbeat_seconds
+        summary["aov_state_counts"] = dict(aov_counts)
         suspend_rows = [row for row in rows
                         if row.get("phase") in ("suspend", "await-suspend")]
         floor = floor_stats(suspend_rows, args.channel)
@@ -2286,6 +2337,9 @@ def main():
                         help="keep CSI/ISP running for the MCU")
     parser.add_argument("--aov-seconds", type=float, default=180)
     parser.add_argument("--aov-wake-check", type=int, default=10)
+    parser.add_argument("--heartbeat-seconds", type=int, default=0,
+                        help="[sleep] heartbeat_interval_s for the AOV run "
+                             "(0 keeps the heartbeat off)")
     parser.add_argument("--expect-present", action="store_true",
                         help="exit 3 when STM8 motor answers disappear")
     parser.add_argument("--motor-sleep", default="keep",
