@@ -682,7 +682,13 @@
   teardown + exec остаётся обязательным. Остаётся только in-process
   реинициализация медиа (stop media, процесс/сервер живы), но она входит в
   конфликт с причиной `exec` — чистым освобождением dmabuf/RGA (KI-069).
-  Код эксперимента откатан, стенд восстановлен.
+  Важно: вендорский AOV-сэмпл (гайд V1.0.4, §3.1.2–3.1.3) процесс через `mem`
+  **тоже держит живым**, но перед сном паркует пайплайн: вычитывает остатки
+  кадров (`RK_MPI_VI_GetChnFrame`→`ReleaseChnFrame`), переводит ISP в
+  `SAMPLE_COMM_ISP_SingleFrame`, `RK_MPI_VI_PauseChn`, отвязывает SD/ethernet/
+  audio, затем `EnterSleep`; после пробуждения — `ISP_MultiFrame`,
+  `VI_ResumeChn`, `Bind*`. Наш эксперимент этот парк пропустил, поэтому и
+  получил шторм. Код эксперимента откатан, стенд восстановлен.
 
 - **KI-073. в `rk3x_i2c_irq` на I2C3 при циклах `[sleep]`.**
   2026-11-17 в AOV-прогоне (idle 30 s, `aov_mcu=1`) шина I2C3
@@ -1826,7 +1832,13 @@ Status: **experimental, not for release** (refreshed 2026-11-25). The MCU
   survive mem with a live pipeline, so teardown + exec remains mandatory. Only
   an in-process media re-init (stop media, keep process/server alive) is left,
   and it conflicts with the reason for the `exec` - clean dmabuf/RGA release
-  (KI-069). The experiment code was reverted and the bench restored.
+  (KI-069). Note: the vendor AOV sample (guide V1.0.4, 3.1.2-3.1.3) does keep
+  the process across mem, but it parks the pipeline first: drains the queued
+  frames (`RK_MPI_VI_GetChnFrame`->`ReleaseChnFrame`), switches the ISP to
+  `SAMPLE_COMM_ISP_SingleFrame`, calls `RK_MPI_VI_PauseChn`, unbinds SD/
+  Ethernet/audio, then `EnterSleep`; on wake it calls `ISP_MultiFrame`,
+  `VI_ResumeChn`, `Bind*`. Our experiment skipped that park, hence the storm.
+  The experiment code was reverted and the bench restored.
 
 - **KI-073. in `rk3x_i2c_irq` on I2C3 during `[sleep]` cycles.**
   On 2026-11-17 an AOV run (idle 30 s, `aov_mcu=1`) got a burst of

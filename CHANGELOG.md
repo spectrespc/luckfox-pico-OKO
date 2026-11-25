@@ -333,7 +333,11 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   только чистым `exec`. Teardown + exec остаётся обязательным; возможная
   альтернатива — in-process реинициализация медиа, но она конфликтует с
   освобождением dmabuf/RGA (KI-069). Код эксперимента откатан, стенд
-  восстановлен.
+  восстановлен. Уточнение: вендорский AOV-сэмпл (гайд V1.0.4 §3.1.2–3.1.3)
+  процесс через `mem` держит живым, но паркует пайплайн (drain frames,
+  `ISP_SingleFrame`, `VI_PauseChn`, `Unbind SD/Ethernet/audio`, затем
+  `EnterSleep`; после — `MultiFrame`/`ResumeChn`/`Bind*`) — именно этот парк
+  и нужно реализовать для быстрого resume.
 - **KI-072: keep-process across suspend rejected (2026-11-25).** The
   experimental "do not exec after resume" variant was tested: a live CSI/ISP
   across mem produces a continuous `mipi-csi2-hw ERR1:0x10 (fs/fe mis)`
@@ -341,7 +345,11 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   only a clean `exec` clears it. Teardown + exec remains mandatory; an
   in-process media re-init is the only alternative and conflicts with the
   dmabuf/RGA release (KI-069). The experiment code was reverted and the bench
-  restored.
+  restored. Clarification: the vendor AOV sample (guide V1.0.4, 3.1.2-3.1.3)
+  keeps the process across mem but parks the pipeline (drain frames,
+  `ISP_SingleFrame`, `VI_PauseChn`, `Unbind SD/Ethernet/audio`, then
+  `EnterSleep`; on wake `MultiFrame`/`ResumeChn`/`Bind*`) - that park is what
+  must be implemented for a fast resume.
 - **`bench/`: буфер dmesg для PM-профиля и heartbeat в AOV-прогоне.**
   `netboot.py` принимает `OKO_LOG_BUF_LEN` (например `1M`) и добавляет
   `log_buf_len=` в `sys_bootargs`: штатные 16 КиБ меньше одного цикла

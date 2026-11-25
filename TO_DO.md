@@ -467,7 +467,12 @@ i2ctransfer -y 3 w1@0x60 0x0A r8              # сон: режим/состоя�
       убивает HTTP/поток (KI-072). Остаётся только in-process
       реинициализация медиа (stop media, процесс/сервер живы), но она
       конфликтует с причиной `exec` — чистым освобождением dmabuf/RGA
-      (KI-069); нужен отдельный проект и решение владельца. Методика —
+      (KI-069); нужен отдельный проект и решение владельца. Опора — вендорский
+      AOV-гайд V1.0.4 §3.1.2–3.1.3: перед `mem` вычитать остатки кадров
+      (`RK_MPI_VI_GetChnFrame`→`ReleaseChnFrame`), `ISP_SingleFrame`,
+      `RK_MPI_VI_PauseChn`, `UnbindSdcard/Ethernet/Soundcard`, затем
+      `EnterSleep`; после пробуждения — `ISP_MultiFrame`, `VI_ResumeChn`,
+      `Bind*` и convergence-проверки. Процесс при этом остаётся жив. Методика —
       `last_suspend_time`, `output/bench/power/*`, `bench/boot_probe.py`.
 - [ ] **Frame-sync master/slave и dynamic FPS SC230AI — отложено.** Нет
       потребительской задачи; DTS sync-режим не задан. Регистры-кандидаты и
