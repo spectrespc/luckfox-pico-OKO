@@ -48,6 +48,10 @@
 #define HEARTBEAT_MARKER_PATH "/tmp/oko-sleep-heartbeat"
 /* Survives the exec restart so /api/sleep can explain why AOV was disarmed. */
 #define AOV_HEAL_MARKER_PATH "/tmp/oko-sleep-mcu-unresponsive"
+/* The HCD loses power in deep suspend; with [sleep] usb_on_motion the host is
+ * unbound before mem and bound again only when a wake needs WiFi/streaming. */
+#define XHCI_DRIVER_DIR "/sys/bus/platform/drivers/xhci-hcd"
+#define XHCI_DEVICE "xhci-hcd.0.auto"
 #define META_IMAGE_PATH "/oem/usr/share/oko/meta.img"
 #define META_ADDR 0x1000000UL
 #define META_MAP_SIZE 0x60000UL
@@ -185,6 +189,37 @@ static unsigned int sysfs_read_uint(const char *path)
     }
     value = strtoul(buf, NULL, 10);
     return value > 0xffffffffUL ? 0xffffffffU : (unsigned int)value;
+}
+
+static int usb_host_bound(void)
+{
+    return access(XHCI_DRIVER_DIR "/" XHCI_DEVICE, F_OK) == 0;
+}
+
+static int usb_host_set(int bind)
+{
+    char path[80];
+
+    if (usb_host_bound() == bind)
+    {
+        return 0;
+    }
+    snprintf(path, sizeof(path), "%s/%s", XHCI_DRIVER_DIR,
+             bind ? "bind" : "unbind");
+    if (sysfs_write_str(path, XHCI_DEVICE "\n") < 0)
+    {
+        HAL_WARNING("sleep", "cannot %s the USB host: %s\n",
+                    bind ? "bind" : "unbind", strerror(errno));
+        return -1;
+    }
+    HAL_INFO("sleep", "USB host %s\n", bind ? "bound" : "unbound");
+    if (bind && access("/usr/bin/oko-wifi", X_OK) == 0)
+    {
+        /* wlan0 disappears with the HCD; re-apply the WiFi configuration so
+         * the AP/STA comes back without waiting for the next boot. */
+        (void)system("/usr/bin/oko-wifi apply >/dev/null 2>&1");
+    }
+    return 0;
 }
 
 static const char *aov_state_name(void)
@@ -550,6 +585,12 @@ void sleep_policy_init(void)
         unlink(HEARTBEAT_MARKER_PATH);
     }
     aov_healed = access(AOV_HEAL_MARKER_PATH, F_OK) == 0;
+    /* Recover a host left unbound by a previous configuration or a failed
+     * suspend; with the feature off USB must be available from boot. */
+    if (!app_config.sleep_usb_on_motion && !usb_host_bound())
+    {
+        (void)usb_host_set(1);
+    }
     aov_probe();
 
     if (!app_config.sleep_enable)
@@ -690,6 +731,13 @@ void sleep_policy_report_motion(void)
         HAL_INFO("sleep", "motion in the wake window; stream stays on\n");
     }
     pthread_mutex_unlock(&lock);
+
+    /* A motion wake without AOV (or a motion detected in the probe window)
+     * needs the network/streaming path, so bring the host back. */
+    if (app_config.sleep_usb_on_motion && !usb_host_bound())
+    {
+        (void)usb_host_set(1);
+    }
 
     /* Confirmed motion is delivered by the event path; rebase the heartbeat
      * interval so the next quiet cycle does not add a duplicate frame. */
@@ -833,6 +881,15 @@ int sleep_policy_suspend(void)
     HAL_INFO("sleep", "suspending: PMU timeout %u ticks (%u s), aov %s\n",
              count, app_config.sleep_wake_interval_s,
              aov_armed ? "armed" : "off");
+
+    /* The USB host loses power in deep suspend anyway; unbinding it here
+     * keeps the hub and the WiFi dongle out of the resume path.  A failed
+     * unbind only costs the old resume time, so it is never fatal. */
+    if (app_config.sleep_usb_on_motion)
+    {
+        (void)usb_host_set(0);
+    }
+
     int rc = write_power_state();
     if (rc < 0)
     {
@@ -841,6 +898,10 @@ int sleep_policy_suspend(void)
         if (aov_armed)
         {
             (void)sysfs_write_str(AOV_PROXY_PATH, "0\n");
+        }
+        if (app_config.sleep_usb_on_motion)
+        {
+            (void)usb_host_set(1);
         }
         ec_set_state("awake");
         pthread_mutex_lock(&lock);
@@ -925,6 +986,12 @@ int sleep_policy_suspend(void)
             app_config_save();
         }
 
+        if (sleep_usb_bind_on_wake(app_config.sleep_usb_on_motion,
+                                   aov_state))
+        {
+            (void)usb_host_set(1);
+        }
+
         HAL_INFO("sleep", "resumed (EC wake src %d, last event %d, aov %s)\n",
                  last_wake_src, last_event, aov_state);
     }
@@ -982,7 +1049,8 @@ void sleep_policy_api_json(char *out, size_t size)
 
     snprintf(out, size,
              "{\"enable\":%s,\"pmu_timer_wake\":%s,\"aov_mcu\":%s,"
-             "\"aov_keep_isp\":%s,"
+             "\"aov_keep_isp\":%s,\"usb_on_motion\":%s,"
+             "\"usb_bound\":%s,"
              "\"aov_available\":%s,\"aov_state\":\"%s\","
              "\"idle_timeout_s\":%u,\"wake_interval_s\":%u,"
              "\"wake_check_s\":%u,\"pmu_timeout_hz\":%u,"
@@ -993,6 +1061,8 @@ void sleep_policy_api_json(char *out, size_t size)
              app_config.sleep_pmu_timer_wake ? "true" : "false",
              app_config.sleep_aov_mcu ? "true" : "false",
              app_config.sleep_aov_keep_isp ? "true" : "false",
+             app_config.sleep_usb_on_motion ? "true" : "false",
+             usb_host_bound() ? "true" : "false",
              aov_supported ? "true" : "false", aov_state_name(),
              app_config.sleep_idle_timeout_s,
              app_config.sleep_wake_interval_s,
@@ -1029,13 +1099,16 @@ void sleep_policy_status_json(char *out, size_t size)
     snprintf(out, size,
              "\"sleep\":{\"enabled\":%s,\"state\":\"%s\","
              "\"pmu_timer\":%s,\"aov\":%s,\"aov_available\":%s,"
-             "\"aov_state\":\"%s\",\"heartbeat_wakes\":%u,"
+             "\"aov_state\":\"%s\",\"usb_on_motion\":%s,"
+             "\"usb_bound\":%s,\"heartbeat_wakes\":%u,"
              "\"timeout_streak\":%u,\"idle_s\":%ld,"
              "\"last_wake_src\":%d,\"reason\":\"%s\",%s}",
              enabled ? "true" : "false", state_name(state),
              app_config.sleep_pmu_timer_wake ? "true" : "false",
              aov_active ? "true" : "false",
              aov_supported ? "true" : "false", aov_state_name(),
+             app_config.sleep_usb_on_motion ? "true" : "false",
+             usb_host_bound() ? "true" : "false",
              sysfs_read_uint(AOV_HEARTBEAT_WAKES_PATH),
              sysfs_read_uint(AOV_TIMEOUT_STREAK_PATH),
              idle > 0 ? idle : 0, last_wake_src, reason, heartbeat);

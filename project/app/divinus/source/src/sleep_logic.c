@@ -38,6 +38,15 @@ int sleep_aov_state_needs_heal(const char *state)
     return sleep_aov_state_is_timeout(state);
 }
 
+int sleep_usb_bind_on_wake(int usb_on_motion, const char *aov_state)
+{
+    if (!usb_on_motion || !aov_state)
+    {
+        return 0;
+    }
+    return strcmp(aov_state, "motion") == 0;
+}
+
 unsigned int sleep_default_wake_interval(int aov_available)
 {
     /* The product profile keeps its historical 10 s cadence; the AOV profile

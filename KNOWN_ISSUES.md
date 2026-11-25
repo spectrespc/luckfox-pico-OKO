@@ -661,6 +661,15 @@
   `two-tier-20261125/`. Живой MCU (quiet/motion) и полная валидация 8.2–8.6
   остаются за NAND-образом: netboot-rootfs не поднимает медиа
   (`CmaFree=0`, rockit error 11).
+  **2026-11-25, USB-хост вне resume-пути.** Ключ `[sleep] usb_on_motion`
+  (по умолчанию `false`) отвязывает `xhci-hcd.0.auto` перед `mem` и
+  привязывает обратно только на движение (AOV `motion` или IVS в probe),
+  с повторным `oko-wifi apply` для wlan0/AP. NAND #38, `aov_mcu=0`,
+  интервал 10 с: `last_suspend_time` = `0.195 10.069` (resume 0.195 с)
+  против 2.28 с с привязанным USB; в тихом цикле `usb_bound=false`;
+  после снятия ключа init вернул `xhci` и wlan0 (`[sleep] USB host
+  bound`). Ограничение: пока ключ включён и AP в тихом/tier-2 цикле,
+  USB-хаб и WiFi-донгл отвязаны; WiFi возвращается на движении.
 
 - **KI-073. в `rk3x_i2c_irq` на I2C3 при циклах `[sleep]`.**
   2026-11-17 в AOV-прогоне (idle 30 s, `aov_mcu=1`) шина I2C3
@@ -1782,6 +1791,16 @@ Status: **experimental, not for release** (refreshed 2026-11-25). The MCU
   and `two-tier-20261125/`. The live MCU (quiet/motion) and the full
   8.2–8.6 validation remain for the NAND image: the netboot rootfs does not
   bring the media stack up (`CmaFree=0`, rockit error 11).
+  **2026-11-25, the USB host stays out of the resume path.** The
+  `[sleep] usb_on_motion` key (default `false`) unbinds
+  `xhci-hcd.0.auto` before mem and binds it back only on motion (AOV
+  `motion` or IVS in the probe window), re-running `oko-wifi apply` for
+  wlan0/AP. NAND #38, `aov_mcu=0`, 10 s interval: `last_suspend_time` =
+  `0.195 10.069` (a 0.195 s resume) versus 2.28 s with the host bound;
+  `usb_bound=false` in a quiet cycle; disabling the key made init restore
+  `xhci` and wlan0 (`[sleep] USB host bound`). Limitation: while the key
+  is on and the AP is in a quiet/tier-2 cycle, the USB hub and the WiFi
+  dongle are unbound; WiFi returns on motion.
 
 - **KI-073. in `rk3x_i2c_irq` on I2C3 during `[sleep]` cycles.**
   On 2026-11-17 an AOV run (idle 30 s, `aov_mcu=1`) got a burst of

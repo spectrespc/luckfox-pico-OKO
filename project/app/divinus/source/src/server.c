@@ -6563,6 +6563,7 @@ if (EQUALS(req->uri, "/api/storage")) {
             bool pmuTimer = app_config.sleep_pmu_timer_wake;
             bool aov = app_config.sleep_aov_mcu;
             bool aovKeepIsp = app_config.sleep_aov_keep_isp;
+            bool usbOnMotion = app_config.sleep_usb_on_motion;
             unsigned int idle = app_config.sleep_idle_timeout_s;
             unsigned int interval = app_config.sleep_wake_interval_s;
             unsigned int check = app_config.sleep_wake_check_s;
@@ -6593,6 +6594,8 @@ if (EQUALS(req->uri, "/api/storage")) {
                     aov = query_bool(value); changed = true;
                 } else if (EQUALS(key, "aov_keep_isp")) {
                     aovKeepIsp = query_bool(value); changed = true;
+                } else if (EQUALS(key, "usb_on_motion")) {
+                    usbOnMotion = query_bool(value); changed = true;
                 } else if (EQUALS(key, "heartbeat")) {
                     heartbeat = query_bool(value); changed = true;
                 } else if (EQUALS(key, "heartbeat_interval_s") ||
@@ -6648,6 +6651,7 @@ if (EQUALS(req->uri, "/api/storage")) {
                 app_config.sleep_pmu_timer_wake = pmuTimer;
                 app_config.sleep_aov_mcu = aov;
                 app_config.sleep_aov_keep_isp = aovKeepIsp;
+                app_config.sleep_usb_on_motion = usbOnMotion;
                 app_config.sleep_idle_timeout_s = idle;
                 app_config.sleep_wake_interval_s = interval;
                 app_config.sleep_wake_check_s = check;

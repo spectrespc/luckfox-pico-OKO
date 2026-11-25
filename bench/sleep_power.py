@@ -1425,12 +1425,14 @@ def scenario_aov(args, outdir, events):
             "wake_interval_s": str(args.wake_interval),
             "wake_check_s": str(args.aov_wake_check),
             "heartbeat": "true" if args.heartbeat_seconds > 0 else "false",
-            "heartbeat_interval_s": str(args.heartbeat_seconds)})
+            "heartbeat_interval_s": str(args.heartbeat_seconds),
+            "usb_on_motion": "true" if args.usb_on_motion else "false"})
         events.write("setup", wake_interval=args.wake_interval,
                      wake_check=args.aov_wake_check,
                      aov_mcu=args.aov_mcu,
                      aov_keep_isp=args.aov_keep_isp,
                      heartbeat_seconds=args.heartbeat_seconds,
+                     usb_on_motion=args.usb_on_motion,
                      seconds=args.aov_seconds)
         handle.set_phase("await-suspend")
         if wait_until_state(DOWN_STATES, 180) is None:
@@ -2340,6 +2342,9 @@ def main():
     parser.add_argument("--heartbeat-seconds", type=int, default=0,
                         help="[sleep] heartbeat_interval_s for the AOV run "
                              "(0 keeps the heartbeat off)")
+    parser.add_argument("--usb-on-motion", action="store_true",
+                        help="[sleep] usb_on_motion: unbind the USB host "
+                             "before mem, bind it only on a motion wake")
     parser.add_argument("--expect-present", action="store_true",
                         help="exit 3 when STM8 motor answers disappear")
     parser.add_argument("--motor-sleep", default="keep",

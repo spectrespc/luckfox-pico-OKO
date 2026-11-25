@@ -26,6 +26,32 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Добавлено
 
+- **`[sleep] usb_on_motion`: USB-хост вне resume-пути (`KNOWN_ISSUES.md`
+  KI-072).** Deep suspend обесточивает USB-хост, и прежний resume
+  пере-нумеровал хаб и WiFi-донгл (~2.06 с из 2.22 с). Новый ключ (по
+  умолчанию `false`, совместимость сохраняется) отвязывает
+  `xhci-hcd.0.auto` перед `mem`; после тихого/tier-2/таймаут-резюма хост
+  остаётся отвязанным, а на движение (AOV `motion` или IVS в probe)
+  привязывается обратно с повторным `oko-wifi apply`, чтобы wlan0/AP
+  вернулись без перезагрузки. Стенд 2026-11-25 (NAND #38, `aov_mcu=0`,
+  интервал 10 с): `last_suspend_time` = `0.195 10.069` против
+  `2.28 10.07` с привязанным USB; `usb_bound=false` в тихом цикле;
+  после снятия ключа init вернул `xhci` и wlan0 (`[sleep] USB host
+  bound`, 192.168.43.1). `GET/POST /api/sleep` публикует
+  `usb_on_motion`/`usb_bound`.
+- **`[sleep] usb_on_motion`: the USB host stays out of the resume path
+  (`KNOWN_ISSUES.md` KI-072).** Deep suspend powers the USB host down and
+  the old resume re-enumerated the hub and the WiFi dongle (~2.06 s of
+  2.22 s). The new key (default `false`, so compatibility is preserved)
+  unbinds `xhci-hcd.0.auto` before mem; after a quiet/tier-2/timeout
+  resume the host stays unbound, while a motion wake (AOV `motion` or IVS
+  in the probe window) binds it again and re-runs `oko-wifi apply` so
+  wlan0/AP return without a reboot. Bench 2026-11-25 (NAND #38,
+  `aov_mcu=0`, 10 s interval): `last_suspend_time` = `0.195 10.069`
+  versus `2.28 10.07` with the host bound; `usb_bound=false` in a quiet
+  cycle; disabling the key made init restore `xhci` and wlan0
+  (`[sleep] USB host bound`, 192.168.43.1). `GET/POST /api/sleep`
+  publishes `usb_on_motion`/`usb_bound`.
 - **Двухуровневый сон AOV: тихий цикл не поднимает Linux, телеметрия
   каждые N циклов (`KNOWN_ISSUES.md` KI-072).** Ядро
   (`CONFIG_RV1106_HPMCU_FAST_WAKEUP`) считает тихие циклы в `.data` и

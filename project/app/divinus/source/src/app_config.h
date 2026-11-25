@@ -275,6 +275,10 @@ struct AppConfig {
     bool sleep_pmu_timer_wake;  /* program 0xff300048 before suspend */
     bool sleep_aov_mcu;         /* enable the AOV MCU wake proxy */
     bool sleep_aov_keep_isp;    /* keep CSI/ISP streaming across suspend */
+    /* Unbind the USB host before mem and bring it back only on a motion
+     * wake: the HCD loses power in deep suspend and re-enumerates the hub
+     * and the WiFi dongle on every resume (measured 2.06 s of 2.22 s). */
+    bool sleep_usb_on_motion;
     unsigned int sleep_idle_timeout_s;
     unsigned int sleep_wake_interval_s;
     unsigned int sleep_wake_check_s;

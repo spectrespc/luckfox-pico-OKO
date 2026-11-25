@@ -126,6 +126,10 @@ PMU-wake освобождает MCU и ждёт `AP_SUSPEND`/`AP_RESUME` в ок
 divinus, `N = heartbeat_interval_s / wake_interval_s`) возвращает Linux с
 `aov_state=heartbeat` для телеметрии, а третий таймаут mailbox подряд —
 терминальный резюм с `aov_state=timeout` (divinus снимает `aov_mcu`).
+При `[sleep] usb_on_motion` divinus отвязывает `xhci-hcd.0.auto` перед
+`mem` (HCD всё равно теряет питание) и привязывает обратно только на
+движение, повторяя `oko-wifi apply`; тихий resume сокращается с ~2.3 с до
+~0.2 с.
 
 Стенд 2026-11-17 (артефакты `output/bench/aov-image-1m/`,
 `output/bench/uar0-aov-fit-boot-20261117.log`): NAND грузит FIT с ядром по

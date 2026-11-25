@@ -704,6 +704,12 @@ bench/run.sh recover_dut.py --ssh --restart
 #   [sleep] enable:false, idle_timeout_s:15 в /userdata/divinus.yaml
 #   /etc/init.d/S21appinit stop; /etc/init.d/S21appinit start
 
+# USB-хост вне resume-пути (2026-11-25): ключ [sleep] usb_on_motion
+curl -s -u admin:oko-change-me http://127.0.0.1/api/sleep   # usb_on_motion/usb_bound
+ls /sys/bus/platform/drivers/xhci-hcd/   # нет xhci-hcd.0.auto = хост отвязан
+# рестарт после POST /api/sleep?usb_on_motion=1; перед mem divinus отвязывает
+# хост, на движение — bind + /usr/bin/oko-wifi apply (wlan0/AP возвращаются)
+
 # Профиль suspend/resume на netboot (только debug-ядро): фрагменты
 # rv1106-pm.config rv1106-pm-debug.config, загрузка с увеличенным ring buffer
 OKO_LOG_BUF_LEN=1M bench/run.sh netboot.py reboot

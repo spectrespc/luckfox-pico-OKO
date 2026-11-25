@@ -45,6 +45,13 @@ int main(void)
     CHECK(!sleep_aov_state_needs_heal("heartbeat"), "no heal on heartbeat");
     CHECK(!sleep_aov_state_needs_heal("quiet"), "no heal on quiet");
 
+    CHECK(sleep_usb_bind_on_wake(1, "motion"), "usb binds on motion wake");
+    CHECK(!sleep_usb_bind_on_wake(1, "heartbeat"), "usb stays off on hb");
+    CHECK(!sleep_usb_bind_on_wake(1, "timeout"), "usb stays off on timeout");
+    CHECK(!sleep_usb_bind_on_wake(1, "quiet"), "usb stays off on quiet");
+    CHECK(!sleep_usb_bind_on_wake(0, "motion"), "usb defer disabled");
+    CHECK(!sleep_usb_bind_on_wake(1, NULL), "usb NULL state");
+
     CHECK(sleep_default_wake_interval(1) == 2, "aov default interval 2 s");
     CHECK(sleep_default_wake_interval(0) == 10, "product default interval");
     CHECK(sleep_default_heartbeat_interval(1) == 300, "aov default heartbeat");

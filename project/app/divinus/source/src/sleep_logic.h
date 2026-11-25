@@ -24,6 +24,12 @@ int sleep_aov_state_is_timeout(const char *state);
  * MCU is unusable and AOV must be disarmed for this boot. */
 int sleep_aov_state_needs_heal(const char *state);
 
+/* Whether a full resume must bring the USB host back.  With
+ * `[sleep] usb_on_motion` the host is unbound before mem and only a motion
+ * wake needs it (WiFi/streaming); heartbeat and timeout wakes just probe and
+ * sleep again.  Without AOV the wake is decided later by report_motion(). */
+int sleep_usb_bind_on_wake(int usb_on_motion, const char *aov_state);
+
 /* AOV-profile defaults applied only when the key is absent from the YAML. */
 unsigned int sleep_default_wake_interval(int aov_available);
 unsigned int sleep_default_heartbeat_interval(int aov_available);

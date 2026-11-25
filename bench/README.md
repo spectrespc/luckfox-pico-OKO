@@ -496,6 +496,9 @@ bench/run.sh sleep_power.py --scenario aov --aov-mcu --aov-keep-isp  # AOV MCU
 bench/run.sh sleep_power.py --scenario aov --aov-mcu --heartbeat-seconds 300
 # двухуровневый сон: N = heartbeat_interval_s/wake_interval_s, tier-2 резюм
 # виден как aov_state=heartbeat, поля heartbeat_wakes/timeout_streak в JSON
+bench/run.sh sleep_power.py --scenario aov --usb-on-motion
+# USB-хост отвязывается перед mem и возвращается на движение:
+# resume-путь ~0.2 с вместо ~2.3 с, usb_bound=false в тихом цикле
 bench/run.sh recover_dut.py --ssh --restart             # после зависшего сна
 bench/run.sh sleep_power.py --scenario i2c --i2c-cycles 300 --expect-present
 bench/run.sh sleep_power.py --scenario aov --aov-seconds 60 --expect-present
