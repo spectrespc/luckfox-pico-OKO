@@ -22,14 +22,14 @@
 | Папка | Назначение |
 |---|---|
 | `config/` | Извлечённые дефконфиги для быстрой настройки: `buildroot_defconfig`, `kernel_defconfig`, `dts_config`. |
-| `bench/` | Утилиты тестового стенда: консоль по UART (telnet-мост ESP32 или `/dev/ttyACM*`, `uart.py`/`serial_exec.py`) и SSH-команды (`dut.py`), netboot через TFTP/NFS (`netboot.py`), прошивка SPI NAND по TFTP (`tftp_flash.py`, режим по умолчанию; раскладка читается из `output/image/.env.txt`, компоненты `idblock/uboot/env` доступны явно, перед записью idblock делается SSH-бэкап `/dev/mtdblock1` в `output/bench/backup/`, `--power-cycle` — холодный цикл питания через мост с перехватом U-Boot), питание DUT через ESP32-мост (`power.py`: `off`/`on`/`cycle`/`reset`, `recover_dut.py` — аварийное восстановление после зависшего `[sleep]`), переключение NAND/NFS через env U-Boot (`nfs_env.py`), проверка OSD по RTSP (`osd_check.py`), сквозная проверка UDP/RTP-раздачи через MediaMTX (`stream_check.py`), сквозная проверка событий и роликов (`event_check.py`), их soak (`clip_soak.py`), heartbeat сна (`heartbeat_check.py`), сквозная проверка MQTT (`mqtt_check.py`), матрица HTTP API (`api_check.py`), WebUI в headless Chromium (`ui_check.py`), проверка mDNS сырым UDP-запросом (`mdns_check.py`), soak 2BPP-рамок с контролем fd/RSS/счётчиков ядра (`rgn_boxes_check.py`), AF-метрика и CSV (`focus_check.py`), версии/прошивка контроллеров (`firmware_check.py`), выкатка бинарника в `/oem` (`deploy_divinus.py`), геометрия ePTZ и совмещение рамок/OSD на 0/90/180/270 (`geometry_check.py`), ночная точность YOLO по матрице `{vpss3, vi0} × {AIISP off, on}` (`yolo_night.py`), VPN WireGuard/AmneziaWG/OpenVPN (`vpn_check.py`), кадентность AOV-цикла по read-only монитору UART (`aov_cadence.py`), soak шины I2C3/STM32 EC (`ec_bus_soak.py`), 20-минутный soak двух аплинков (`uplink_soak.py`), venv. В сборке прошивки не участвует. |
+| `bench/` | Утилиты тестового стенда: консоль по UART (telnet-мост ESP32 или `/dev/ttyACM*`, `uart.py`/`serial_exec.py`) и SSH-команды (`dut.py`), netboot через TFTP/NFS (`netboot.py`), прошивка SPI NAND по TFTP (`tftp_flash.py`, режим по умолчанию; раскладка читается из `output/image/.env.txt`, компоненты `idblock/uboot/env` доступны явно, перед записью idblock делается SSH-бэкап `/dev/mtdblock1` в `output/bench/backup/`, `--power-cycle` — холодный цикл питания через мост с перехватом U-Boot), питание DUT через ESP32-мост (`power.py`: `off`/`on`/`cycle`/`reset`, `recover_dut.py` — аварийное восстановление после зависшего `[sleep]`), переключение NAND/NFS через env U-Boot (`nfs_env.py`), проверка OSD по RTSP (`osd_check.py`), сквозная проверка UDP/RTP-раздачи через MediaMTX (`stream_check.py`), сквозная проверка событий и роликов (`event_check.py`), их soak (`clip_soak.py`), heartbeat сна (`heartbeat_check.py`), сквозная проверка MQTT (`mqtt_check.py`), матрица HTTP API (`api_check.py`), WebUI в headless Chromium (`ui_check.py`), проверка mDNS сырым UDP-запросом (`mdns_check.py`), soak 2BPP-рамок с контролем fd/RSS/счётчиков ядра (`rgn_boxes_check.py`), AF-метрика и CSV (`focus_check.py`), версии/прошивка контроллеров (`firmware_check.py`), выкатка бинарника в `/oem` (`deploy_divinus.py`), бюджет старта `divinus` по меткам `/dev/kmsg` и проба вендорского `fastboot_client` (`boot_probe.py`, артефакты `output/bench/boot/`), геометрия ePTZ и совмещение рамок/OSD на 0/90/180/270 (`geometry_check.py`), ночная точность YOLO по матрице `{vpss3, vi0} × {AIISP off, on}` (`yolo_night.py`), VPN WireGuard/AmneziaWG/OpenVPN (`vpn_check.py`), кадентность AOV-цикла по read-only монитору UART (`aov_cadence.py`), soak шины I2C3/STM32 EC (`ec_bus_soak.py`), 20-минутный soak двух аплинков (`uplink_soak.py`), venv. В сборке прошивки не участвует. |
 | `services/` | Docker-сервисы стенда. `services/docker-compose.yml` — контейнер `oko-services`: TFTP (`output/image`), NFS-экспорт `output/srv/nfs/rootfs`, неактивные шаблоны WireGuard/AmneziaWG/OpenVPN (`conf/`), запуск — `tools/native/setup_netboot.sh`. `services/stream/` — отдельный профиль `oko-mediamtx` (MediaMTX, host-сеть): принимает RTP камеры на `5600/udp` и отдаёт RTSP/HLS/WebRTC; `services/events/` — профиль `oko-events` (FastAPI + ffmpeg, порт 8090): принимает JPEG-пачки и fMP4-ролики событий, хранит их в `output/srv/events`, транскодирует H.265 → H.264 для браузера; `services/mqtt/` — профиль `oko-mqtt` (mosquitto 2.0.20 на 1883 + рекордер на FastAPI/paho, порт 8092): брокер с паролями из env и ACL, JSON-архив событий/телеметрии в `output/srv/mqtt`; `services/converter/` — профиль `oko-converter` (FastAPI + rknn-toolkit2 2.5.0, порт 8091): принимает ONNX 640×384 и калибровочные JPEG, конвертирует в `.rknn` для rv1106, задачи и логи — в `output/srv/converter`. В сборке прошивки не участвуют. |
 | `research/` | Архив внешних исследований: заметки о переносимости upstream-кода и минимальные read-only снимки upstream-файлов с провенансом. В сборке прошивки не участвует. |
 | `media/` | Медиастек Rockchip: кодеки, 2D-ускорение, ISP, NPU, медиафреймворк и примеры. |
 | `project/` | Скрипты сборки, конфигурации плат и прикладные приложения. Основная точка входа сборки. |
 | `sysdrv/` | Системный уровень: исходники U-Boot, ядра, Buildroot, прошивка MCU и модули ядра. |
 | `tools/` | Хостовые инструменты: кросс-тулчейн, утилиты упаковки и прошивки образов. |
-| `output/` | Результаты сборки: готовые образы в `image/`, промежуточные артефакты в `out/`, лог `build_all.log`. В `output/srv/` — данные сервисов контейнера: NFS-экспорт `nfs/rootfs/`, секреты VPN `vpn/` и архив событий `events/` (`oko-events`, gitignore). В `output/bench/` — venv, кадры OSD-проверок, CSV/снимки фокуса в `focus/`, скриншоты WebUI `ui/` (gitignore). |
+| `output/` | Результаты сборки: готовые образы в `image/`, промежуточные артефакты в `out/`, лог `build_all.log`. В `output/srv/` — данные сервисов контейнера: NFS-экспорт `nfs/rootfs/`, секреты VPN `vpn/` и архив событий `events/` (`oko-events`, gitignore). В `output/bench/` — venv, кадры OSD-проверок, CSV/снимки фокуса в `focus/`, скриншоты WebUI `ui/`, метки старта и отчёты `boot/` (gitignore). |
 | `IMAGE/` | Готовые релизные образы: папка текущего релиза с `IMAGES/`, `PATCHES/`, `DEBUG_FILES/` и `build_info.txt`. |
 | `presentation/` | Материалы презентации проекта: `FUNCTIONS.md`, `SLIDES.md`, `OKO_DEVICE_PASSPORT.docx`, `OKO_FUNCTIONS.docx`, `img/`. В сборке прошивки не участвует. |
 | `.kilo/` | Служебная конфигурация Kilo: команды (`command/`), skill `oko-docs` (`skills/`), планы (`plans/`), настройки (`kilo.jsonc`). Проектных агентов здесь нет. |
@@ -66,10 +66,17 @@
 - `rkflash.sh` — прошивка собранного образа на плату.
 - `app/` — прикладные приложения: `oko-lunch` (OKO-лаунчер
   `oko-lunch.sh`/`oko-lunch-stop.sh`, вызывается `S21appinit`), `rkipc`
-  (исходники остаются в дереве как справочные, пакет не собирается), `divinus`
+  (исходники остаются в дереве как справочные, пакет собирается только для
+  TB-линии), `divinus`
   (вендоренный OpenIPC-стример, единственный стример в образе), `uvc_app_tiny`,
-  `ipcweb` (веб-интерфейс), `rk_smart_door`, `wifi_app`, `fastboot_client`,
-  `component` (общие компоненты).
+  `rk_smart_door`, `wifi_app`, `fastboot_client`
+  (демо thunder-boot медиастека, **не** Android fastboot; в образах не
+  используется, цель включается только при `RK_FASTBOOT_CLIENT`),
+  `component` (общие компоненты; собирается только явно добавленный
+  `component/fastboot_server`, остальное — по зависимостям `rkipc`).
+  Каталоги `component/rkadk`, `component/lvgl`, `component/rkfsmk` и `ipcweb`
+  удалены 2026-11-25 как неиспользуемые; upstream-ссылки и отметки полезного —
+  `TO_DO.md` §15.7.
 - `app/divinus/` — пакет `divinus`: `source/` (вендорские `src/`, `res/`, `doc/`,
   лицензии, пин коммита и локальные патчи — `compat.c` (ABI `mmap`), `region.c`
   (`@file`-провайдер текста OSD), `wifi.c` (`/api/wifi*`, обёртка
@@ -81,7 +88,8 @@
   `analytics/yolo_postprocess.c` (декод YOLOv5 и NMS),
   `analytics/models.c` (модели в `/userdata/models`), `hal/plus/rk_rknn.h`
   (`dlopen` `librknnmrt.so`); NV12→RGB888 считается на CPU в `yolo.c`;
-  переработанный WebUI —
+  `hal/boot_mark.c`/`.h` (метки стадий старта в `/dev/kmsg` для бюджета
+  «main → first_frame»); переработанный WebUI —
   `res/index.html` + `doc/WEBUI_REORG.md`; описание патчей — в `README.md`),
   `files/divinus.yaml` (фабричный
   конфиг с OSD-регионами), `Makefile` (кросс-сборка и стейджинг в
@@ -278,12 +286,16 @@
   источникам (`test_mpi_rgn.cpp`, `rkipc/video.c`, заголовки `rk_mpi_rgn.h`)
   и применимость к OKO; разбирается дефект пересоздания региона на лету
   (KI-063) и вопрос живой смены `ivs.boxes`.
+- `rkadk-guide/` — вендорский `Rockchip RKADK Development Guide` (EN, 152 с.,
+  2024-01-08): API записи/фото/стриминга, RTSP/RTMP, storage, OSD/watermark,
+  параметры/INI и examples; разбор, что из этого применимо к `divinus`, а что
+  не переносится (AOV — отдельный гайд). Снимок PDF — в `snapshot/`.
 - `rv1106-aov/` — внешние материалы по AOV, PMU/MCU и I2C RV1106: проект
   `dehai168` (deep suspend, FE-PHY, PMU-таймер; снимок worklog, AOV guide,
   `aov_service`/network/storage/media/record/OSD/fMP4/RKNN/IVS и скриптов),
   Luckfox #10/#99 (HPMCU/LPMCU, JTAG, `mcutool`), `luyi1888/rv1106-mcu`,
-  заметки по SCR1/RK3566, TRM V0.3 и даташит Rev 1.8 (домены питания,
-  PMU/MCU/I2C), rkbin release notes, Rockchip I2C guide, `Rockchip-Docs`
+  заметки по SCR1/RK3566, TRM V0.3 и даташиты Rev 1.8/2.0 (домены питания,
+  PMU/MCU/I2C, order info G2/G3), rkbin release notes, Rockchip I2C guide, `Rockchip-Docs`
   (pinctrl RV1106, IO-domain, power, camera 5.10, RGA) и X5 SC230AI
   (sync/FPS/HDR/gain); снимок `mcutool.c`, OpenOCD-конфигов и
   RK3566-примеров с провенансом; что переносимо в OKO, а что осталось
@@ -308,7 +320,8 @@
   RGA, OSD, IVS, прошивка, безопасность и инструменты.
 - `TO_DO.md` — план работ по фокусу/автофокусу (STM8), видеоаналитике на NPU
   и переносу полезного из вендорского `fastboot_client.c`:
-  состав этапов §1–§14, статус выполнения и открытые пункты (дата 2026-11-20).
+  состав этапов §1–§15 (включая каталог остатков вендорского кода и аудит
+  ядра), статус выполнения и открытые пункты (дата 2026-11-25).
 - `CHANGELOG.md` — история изменений OKO-форка (Keep a Changelog + SemVer).
 - `README.md` / `README_CN.md` — документация SDK (EN/CN).
 - `UPDATE_LOG.md` / `UPDATE_LOG_CN.md` — журнал изменений SDK (EN/CN).

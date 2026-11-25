@@ -1,7 +1,7 @@
 # Поддерживаемый функционал OKO
 
 Точка входа в описание возможностей прошивки OKO для Luckfox Pico Pro Max
-(RV1106, SPI NAND, Buildroot) с сенсором SC230AI: паспорт платформы, индекс по
+(RV1106G3, SPI NAND, Buildroot) с сенсором SC230AI: паспорт платформы, индекс по
 файлам статусов проверки и краткие команды проверки.
 
 Статус на 2026-11-21. Пометки: **работает** — проверено на стенде;
@@ -20,7 +20,8 @@
 
 | Параметр | Значение |
 |---|---|
-| Плата / SoC | Luckfox Pico Pro Max, Rockchip RV1106 (Cortex-A7 + NPU + ISP) |
+| Плата / SoC | Luckfox Pico Pro Max, Rockchip RV1106G3 (Cortex-A7 + NPU 1 Топс + ISP; QFN128, SIP 2 Гбит DDR3L) — [Datasheet Rev 2.0](https://rockchip.fr/RV1106%20datasheet%20V2.0.pdf) |
+| ОЗУ | 256 МБ DDR3L в корпусе SoC (SIP `RV1106G3`) — отдельно от 256 МБ SPI NAND |
 | Сенсор | SC230AI, режимы 1080p30 и 480p120 |
 | Загрузка | SPI NAND 256 МБ, U-Boot → ядро 5.10.160 → busybox init |
 | Корневая ФС | Buildroot |
@@ -172,7 +173,7 @@ bench/run.sh dut.py --host 192.168.52.33 'cat /proc/device-tree/usbdrd/usb@ffb00
 
 ## English
 
-Entry point for OKO capabilities on the Luckfox Pico Pro Max (RV1106, SPI NAND,
+Entry point for OKO capabilities on the Luckfox Pico Pro Max (RV1106G3, SPI NAND,
 Buildroot) with the SC230AI sensor: platform passport, an index of the
 verification-status files and short verification commands.
 
@@ -185,8 +186,10 @@ Status as of 2026-11-21. Markers: **works**, **limited**, **blocked**.
 | `VERIFIED_FUNCTIONS.md` | detailed evidence, limitations and reproduction commands |
 | `project/app/divinus/source/doc/README.md` | media stack gate results |
 
-Platform: Luckfox Pico Pro Max (RV1106), SC230AI, 256 MB SPI NAND, Buildroot,
-kernel 5.10.160. Partitions: `env` 256K, `idblock` 256K, `uboot` 512K, `boot` 6M,
+Platform: Luckfox Pico Pro Max (Rockchip RV1106G3: QFN128, SIP 2 Gb DDR3L =
+256 MB RAM, 1 TOPS NPU), SC230AI, 256 MB SPI NAND, Buildroot, kernel 5.10.160;
+datasheet: [RV1106 Datasheet Rev 2.0](https://rockchip.fr/RV1106%20datasheet%20V2.0.pdf).
+Partitions: `env` 256K, `idblock` 256K, `uboot` 512K, `boot` 6M,
 `oem` 40M, `userdata` 40M, `rootfs` 168M. Active DTS:
 `rv1106g-luckfox-pico-pro-max-sc230ai.dts`. Media stack: `divinus` (OpenIPC),
 H.265/H.264, JPEG, RTSP, WebUI. NPU stack: `rknpu` driver 0.9.8 (`20240828`,

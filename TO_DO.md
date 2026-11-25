@@ -8,11 +8,15 @@ WebUI и документация обновлены. Сон привода STM8
 Active-halt (AWU стендового STM8S003F3P6 не считает — KI-077); T8 —
 `tests/hardware_test.sh` 41/0 с 30-минутным soak, T9 проверен на уровне API;
 остаётся обновление по I2C (KI-075, обход ST-Link). Heartbeat-Snapshot сна
-камеры (§13) реализован 2026-11-18/19.
-Открытые пункты: сходимость AF на реальном объективе, геометрия NN-рамок и
-OSD под поворотом, наблюдаемость кропа ePTZ, mAP и ночная точность модели,
-перенос полезного из вендорского `fastboot_client.c` (§14, запланировано).
-Дата: 2026-11-21.
+камеры (§13) реализован 2026-11-18/19. Тихая кадентность `[sleep]` исправлена
+2026-11-24 (единицы PMU-таймаута, KI-072), AOV-MCU отработал на NAND на
+ядрах #37/#38 (2026-11-24/25), KI-079 и KI-080 закрыты.
+Открытые пункты: сходимость AF на реальном объективе, mAP и ночная точность
+модели, замена дефектного STM8 (KI-075/KI-077, §3.2), P3/P5 переноса из
+вендорского `fastboot_client.c` (§14; P1/P2/P4/P6/P7 закрыты 2026-11-25),
+остатки AOV — gate вендорского ISP-handover и overshoot 68–79 с окна
+`wake_check` (§8.1), интеграция rkipc-backlog (§15.3).
+Дата: 2026-11-25.
 
 Смежные подсистемы вне состава файла: MQTT-канал событий и телеметрии
 (2026-11-19) — статусы в `FEATURES_VERIFIED.md`/`FEATURES_UNVERIFIED.md`
@@ -21,7 +25,8 @@ OSD под поворотом, наблюдаемость кропа ePTZ, mAP �
 Состав файла: §1–§10 — фокус и автофокус; §11 — видеоаналитика на NPU
 (RKNN + YOLOv5n), события с кадрами и управление моделями через WebUI;
 §12 — сборка и окружение; §13 — сон камеры (proof-of-life кадром);
-§14 — разбор вендорского `fastboot_client.c` и перенос полезного.
+§14 — разбор вендорского `fastboot_client.c` и перенос полезного;
+§15 — каталог остатков вендорского кода и аудит ядра.
 
 ## 1. Цель
 
@@ -199,7 +204,7 @@ i2ctransfer -y 7 w2@0x60 0x05 0x00 r1         # статус focus
 |---|---|
 | `rkipc` `common/isp/rv1106/isp.c:1568-1688` | `rk_isp_get/set_af_mode`, `rk_isp_get_focus_level`, `rk_isp_af_focus_in/out`, `af_zoom_in/out` |
 | `rkipc` docs `docs/Rockchip_Developer_Guide_Linux_RKIPC_EN.md:929-936` | список IPC-команд AF |
-| `ipcweb` `src/image_api.cpp:107-113,335` | REST-поля `sAFMode`, `iZoomLevel`, `iFocusLevel` |
+| `ipcweb` `src/image_api.cpp:107-113,335` (каталог удалён 2026-11-25; [upstream](https://github.com/LuckfoxTECH/luckfox-pico/tree/main/project/app/ipcweb)) | REST-поля `sAFMode`, `iZoomLevel`, `iFocusLevel` |
 | `divinus` `src/hal/plus/rk_af_stats.c` | обёртки AF-статистики и `dlsym` уже добавлены |
 | `oko-motor` (пакет `stm8-motor`) | I2C-доступ к новому STM8 `0x60` (focus = motor 0, zoom = motor 1), `SET_POS 0x09`, `set-pos`/`home`, прошивка через I2C-загрузчик; старый `oko-ec motor`/`0x39` не используется |
 
@@ -220,7 +225,8 @@ i2ctransfer -y 7 w2@0x60 0x05 0x00 r1         # статус focus
   `3f36dcee4f05c02a48bcc48b8eea7e606fe7634e` (2026-11-05), добавлены
   I2C-загрузчик, раскладка `0x8000–0x9FFF`, `oko-motor`, `Makefile.stm8`
   и SDK-обёртка `Makefile`. Первичная прошивка — ST-Link (`factory.ihx`),
-  обновление — `oko-motor flash` / `/api/flash` (KI-035).
+  обновление — `oko-motor flash` / `/api/flash` (KI-075: на стендовом
+  экземпляре IAP-стирание не завершается, обход — ST-Link/SWIM).
 
 ## 5. Варианты реализации
 
@@ -284,11 +290,11 @@ I2C и не управляет обмотками напрямую. Реализ
 
 **Что учесть**
 
-- [ ] система координат: окно AFM задаётся в координатах сенсорного кадра,
-      а ROI из WebUI/ONVIF — в координатах стрима; нужен пересчёт с учётом
-      crop/ePTZ, масштаба и зеркала/флипа (`setMirrorFlip`);
+- [ ] пересчёт ROI из координат стрима в сенсорный базис: функция
+      `focus_geom_preview_to_sensor` (mirror/flip) и минимальный ROI 10 %
+      (`FOCUS_BP_MIN_ROI`) уже есть в `focus_geom.c` (см. §6); открытым
+      остаётся пересчёт окна при смене разрешения/сценария;
 - [ ] ROI у края кадра: проверить, что окно не выходит за границы сенсора;
-- [ ] при смене сценария/разрешения окно нужно пересчитывать;
 - [ ] для «всего кадра» проверить, что края не портят FV (виньетка, IR-засветка,
       OSD/маска) — при необходимости отбрасывать краевые окна;
 - [ ] сравнить оба режима на одном сюжете: точность, число шагов, время
@@ -298,8 +304,10 @@ I2C и не управляет обмотками напрямую. Реализ
 
 - [ ] полный кадр: AF сходится на типовых сценах (лицо/текст/пейзаж);
 - [ ] ROI: AF сходится на объекте в ROI, даже если фон резче объекта;
-- [ ] смена ROI не требует перезапуска приложения (проверено: ROI
-      применяется live, но сходимость на объекте ещё не доказана);
+- [x] смена ROI не требует перезапуска приложения: `focus.c` применяет новое
+      окно на ходу (флаг `pending` в рабочем цикле, без рестарта); прогон
+      2026-11-07 `OKO_FOCUS_AF_TESTS=1` прошёл. Сходимость на объекте остаётся
+      открытой (первые два критерия и §6);
 - [ ] оба режима укладываются в заданный таймаут и не гоняют мотор в упор.
 
 Прогон 2026-11-07 (`OKO_FOCUS_AF_TESTS=1`): обе ветки (`full`, `roi
@@ -318,7 +326,7 @@ I2C и не управляет обмотками напрямую. Реализ
 
 ## 7. Интеграция в приложение (`divinus`)
 
-Карта реализации:
+Карта реализации (закрыта):
 
 | Файл | Что менять |
 |---|---|
@@ -331,9 +339,13 @@ I2C и не управляет обмотками напрямую. Реализ
 | `project/app/divinus/source/src/...` (HTTP) | `/api/focus`: `enable`, `mode`, `roi`, `fps`, `motor` (`true/false` — драйвер, `focus/zoom/both` — устаревшая шкала), `scale`, `speed`, `move`, `position`, `home`, `zero`, `value`, `stop`, `reset`, `af` (`1`/`fine`/`cancel`) |
 | `project/app/divinus/source/doc/endpoints.md` | описание endpoint, полей JSON и кодов ошибок |
 
-**Реализовано:** ручное управление и автофокус в карточке Focus assist, а
-также `home`/`zero` с асинхронным job'ом и гейтом версии STM8. Детали
-алгоритма и ограничения — §5B, §6 и `KNOWN_ISSUES.md`.
+- [x] **Реализованы все строки таблицы** (2026-11-07…22): ручное управление и
+      автофокус в карточке Focus assist, `home`/`zero` с асинхронным job'ом и
+      гейтом версии STM8. Доказательство — `FEATURES_VERIFIED.md` («Помощь
+      фокусировке»: `cells_used=225`; «Мотор STM8 `0x60`»): `home` — полный ход
+      2960 (focus) / 2300 (zoom) шагов от любого счётчика (2026-11-22),
+      `api_check.py` с `OKO_FOCUS_MOTOR_TESTS=1`. Детали алгоритма и
+      ограничения — §5 (вариант B), §6 и `KNOWN_ISSUES.md`.
 
 Замечания:
 
@@ -375,19 +387,59 @@ i2ctransfer -y 3 w1@0x60 0x0A r8              # сон: режим/состоя�
 #   bench/run.sh sleep_power.py --scenario stm8 --stm8-soak 300
 ```
 
-### 8.1. AOV: отложенная задача (gate KI-072/KI-080)
+### 8.1. AOV: статус и остатки (gate KI-072)
 
-- [ ] Порт MCU `battery-ipc` с самостоятельным захватом ISP (вендорский
-      thunder-boot/AOV). Условие входа: живая консоль стенда (KI-078) и
-      вендорский ISP-handover. До этого AOV не используется; quiet-тесты
-      `[sleep]` — только с `aov_mcu=0`.
-- [ ] После порта: матрица `aov_keep_isp` × ≥10 циклов, sweep
-      `wake_interval_s`, диагностический `pm_wake_diag` (T3.2 плана
-      2026-11-23) и повторная проверка кадентности.
-- [ ] STM8: после отказа шины I2C3 (`aov_mcu=1`) добавить в прошивку
-      счётчик залипаний/восстановление PE-toggle для состояния «адрес принят,
-      данных нет» (ветка H1, KI-080) — только после подтверждения на
-      тестовой плате со ST-Link.
+- [x] **Порт MCU battery-ipc (2026-11-24).** Борд
+      `battery_ipc_demo_v10-SC230AI-ADC` портирован под Luckfox
+      (`i2c_addr = 0x32`, шина i2c4/m2) и воспроизводимо собирается
+      `./build.sh mcu battery_ipc_demo_v10-SC230AI-ADC` (`CHANGELOG.md`,
+      «Экспериментальная wakeup-IPC линия»). AOV-MCU на NAND, ядро `#37`:
+      7 полных циклов с MCU-прокси (`RT_USING_RK_AOV=y`), fast-AE
+      (SC230AI 640×480@120), детекция движения (`md_flag=1`), `-h-mbox-`,
+      resume без зависаний (KI-072, запись 2026-11-24).
+- [x] **Кадентность и свип (2026-11-24).** Причина плотного цикла — единицы
+      `PMU_WAKEUP_TIMEOUT_CNT` (`0xff300048`): счётчик тактируется 32 кГц
+      (32768 тиков/с), а divinus писал `×32`. `pmu_timeout_hz` по умолчанию
+      исправлен на 32768, старые конфиги (< 1000) мигрируют в
+      `app_config_parse`; после правки тихий `cycle` спит 10.08 с при
+      интервале 10 с и 60.08 с при 60 с — ровно один цикл на
+      `wake_interval_s`. V1 (`aov_mcu=1`, `keep_isp=1`, 60 с): интервалы
+      68–79 с, `last_wake_src=2`, I2C3 и STM8 2.3.2 живы на каждом
+      пробуждении (KI-080 закрыт). Артефакты
+      `output/bench/power/20261124-220827-cycle`,
+      `output/bench/power/20261125-073154-aov`.
+- [x] **Окно mailbox 500 мс (ядро `#38`, 2026-11-25).**
+      `RV1106_HPMCU_FAST_WKUP_TIMEOUT` уменьшено с 1000 до 500 мс, ядро
+      прошито в NAND: 4 `-h-wait-` / 4 `-h-mbox-` / 0 `-h-timeout-`,
+      решение MCU за ~0.2 с, фактический сон 60.28 с; фолбэк на 1000 мс не
+      потребовался.
+- [ ] **Вендорский ISP-handover — gate AOV.** Нужно, чтобы в suspend
+      ISP/CIF принадлежали MCU; без этого AOV = motion-resume + PMU-таймер
+      и gate не снят (`FEATURES_UNVERIFIED.md` §AOV, KI-072). Решение вне
+      AP-стороны. Вердикт `research/rv1106-aov` от 2026-11-25 подтверждает:
+      handover выполняется только MCU-стороной, JTAG/`mcutool` — лишь
+      диагностика на debug-образе (шаг 4–5 порядка проверок темы), не в этом
+      цикле (§15.6).
+- [ ] **Overshoot 68–79 с.** Окно `wake_check` в AOV-ветке добавляет
+      8–19 с к `wake_interval_s=60`: сократить окно или обосновать
+      стоимость пробуждения. Методика — сверять фактический цикл с
+      `wake_interval_s` по `[sleep]`-меткам и `output/bench/power/*`;
+      кандидаты — окно проверки и `IVS_SETTLE_S`; следующая
+      integration-итерация (§15.6).
+- [ ] **Frame-sync master/slave и dynamic FPS SC230AI — отложено.** Нет
+      потребительской задачи; DTS sync-режим не задан. Регистры-кандидаты и
+      порядок стендовой проверки — §15.6.
+- [ ] **Прошивка и матрица тестов Э5/Э7** экспериментальной wakeup-IPC
+      линии: статус bench-only — `update.img` собирается, прошивка через
+      полный `update.img` не выполнялась (`FEATURES_UNVERIFIED.md`,
+      «Wakeup-IPC»); консоль стенда доступна с 2026-11-23 (KI-078, RX
+      восстановлен), полный цикл netboot/flash не подтверждён. Расширение
+      TB-линии — только по решению владельца: вендорские файлы заморожены
+      (AGENTS.md §6).
+- [ ] **Решение владельца:** выводить ли AOV из экспериментального профиля
+      (сначала ISP-handover, затем выпуск).
+
+Ограничение: quiet-тесты `[sleep]` — только с `aov_mcu=0`.
 
 ## 9. Риски и ограничения
 
@@ -461,7 +513,8 @@ runtime 1.6.0, `/userdata` 40 МБ. В разделе — только неза�
 
 Модель собрана Docker-пайплайном `tools/rknn-toolkit2/`: YOLOv5n → ONNX
 640×384 → INT8 `.rknn` 2.6 МиБ, активирована на DUT (4D-NHWC, вход 640×384).
-Осталось измерить качество на валидационном наборе.
+Осталось измерить качество на валидационном наборе; в `VERIFIED_FUNCTIONS.md`
+чисел mAP пока нет (2026-11-25).
 
 - [ ] Проверить mAP на валидационном наборе (COCO val или свой размеченный);
       сравнить с float ONNX/`yolov5n.pt`, зафиксировать числа в `output/bench/`
@@ -477,10 +530,15 @@ runtime 1.6.0, `/userdata` 40 МБ. В разделе — только неза�
 NPU 28%, `librkpostisp.so` загружен, пропусков в `/live/0` не видно.
 Остаются ночная точность и замер памяти под кольцом.
 
-- [ ] Ночные сцены (ИК): точность на кадрах после AIISP и до него.
-- [ ] Замер CMA под кольцом: `max_frames=20` при 640×640 (~12 MB MMZ);
-      `cat /proc/media-mem` и `/proc/meminfo` до/после, плюс 20 событий подряд
-      без роста RSS/CMA.
+- [ ] Ночные сцены (ИК): точность на кадрах после AIISP и до него. На текущем
+      стенде нет ИК-подсветки и управляемого IR-cut (`/api/night` отдаёт
+      `ir_cut_pin1=999`, `irled_pin=999`, узла ircut в DTS Pro Max нет),
+      поэтому «ночь» с ИК физически недоступна; ambient-матрица C1–C4 снята
+      (`bench/yolo_night.py --phase ambient`), но числа не опубликованы —
+      сцена нестабильна (KI-005). Замер ждёт неподвижную сцену и ИК-железо.
+- [ ] Замер CMA под кольцом (KI-006): `max_frames=20` при 640×640 (~12 MB
+      MMZ); `cat /proc/media-mem` и `/proc/meminfo` до/после, плюс 20 событий
+      подряд без роста RSS/CMA.
 - [ ] При ограничении — гейт или предупреждение в `gating.c`; результат — в
       `VERIFIED_FUNCTIONS.md`.
 - [ ] Приёмка: задокументированная рабочая комбинация и явный отказ для
@@ -550,7 +608,9 @@ NPU 28%, `librkpostisp.so` загружен, пропусков в `/live/0` н�
       `hcitool_patch`/`mpv_patch` под новые версии или отключение пакетов
       (KI-046).
 - [ ] Сторонние `/oem`-blob'ы со старым ABI (`libssl.so.1.1`, Python 3.11):
-      пересобрать из SDK или добавить compat-копии (KI-045).
+      пересобрать из SDK или добавить compat-копии (KI-045; статус KI —
+      «принятое ограничение миграции», 2026-11-09; задача — по решению
+      владельца).
 
 ## 13. Сон камеры: proof-of-life кадром
 
@@ -571,26 +631,37 @@ NPU 28%, `librkpostisp.so` загружен, пропусков в `/live/0` н�
       `ui_check` 0; во время restore `/userdata` ушёл в `ro` (KI-071,
       power cycle вернул `rw`). Сверка с бортовым INA3221: −6.7 % тока.
       Артефакты — `output/bench/power/20261122-*`; методика — `TESTBENCH.md` §8.
-- [ ] **AOV MCU + интервал пробуждения 1 мин (2026-11-22).**
-      `wake_interval_s=60` даёт PMU-счётчик 1920, но deep suspend 2.4 с и цикл
-      12–18 с; `aov_state=off`, `mcu_run_count=0`, meta `ae_mode=1` не меняет
-      поведение. MCU-детекция и интервал 1 мин не подтверждены (KI-072);
-      нужен живой UART/MCU-лог или исправление AOV на стороне MCU/ISP.
+- [x] **AOV MCU + интервал пробуждения 1 мин (закрыто 2026-11-25).**
+      Причина прежнего поведения (deep suspend 2.4 с, цикл 12–18 с,
+      `aov_state=off`, `mcu_run_count=0`) — единицы `PMU_WAKEUP_TIMEOUT_CNT`
+      (KI-072, 2026-11-24). После правки: тихий сон 60.08 с при
+      `wake_interval_s=60`; AOV-ветка (`aov_mcu=1` + `keep_isp=1`)
+      просыпается по PMU-таймеру с MCU-детекцией (`md_flag=1`, `-h-mbox-`),
+      подтверждено на NAND, ядра `#37`/`#38` (2026-11-24/25); интервал
+      пробуждения 68–79 с из-за окна `wake_check` (§8.1). Артефакты
+      `output/bench/power/20261125-073154-aov`,
+      `output/bench/aov-test/summary_mbox500-20261125.20261125-073152.json`.
 - [x] **Сон с детекцией движения (IVS), 2026-11-22.** `motion`-сценарий:
       3 цикла, IVS `area=1000‰` на каждом wake → `awake`, бодрствование
       24–26 с, 15.25–17.94 мВт·ч/цикл (среднее 16.85) против 4.9 мВт·ч при
       `wake_check=5`; парный цикл без IVS при `wake_check=30` — ~17–20 мВт·ч,
       т.е. основной вклад даёт длинное окно проверки (KI-079). Артефакты —
       `output/bench/power/20261122-motion14/`, `...-cycle-wc30/`.
+      Ложное полнокадровое событие после wake закрыто 2026-11-24: окно
+      устоятия `IVS_SETTLE_S=3` в `ivs_events.c` отбрасывает ≥ 900‰ после
+      старта аналитики; `--scenario motion` × 3 — ни одного ложного события,
+      реальное движение детектируется (`area=515‰`) (KI-079, артефакты
+      `output/bench/power/20261124-222248-motion`, `.../20261125-073741-motion`).
 - [ ] **MCU-frame heartbeat (v2, следующий шаг).** MCU пишет low-res
       JPEG/raw + статистику (площадь, счётчик кадров) в shared DDR (адрес
       meta/ISP-окна, протокол shared-буфера), AP на timer-wake читает
       готовый кадр и отправляет без подъёма media/ISP — дешевле Snapshot по
-      энергии и времени цикла. Зависимости: handoff ISP MCU до suspend
-      (KI-072, архитектура AOV), `RT_USING_JPEG_ENC` в MCU-сборке, протокол
-      shared-буфера и валидация кадра на AP, wake по GPIO
-      (`wakeup_mode=1` в `wakeup_param`). Статус: **запланировано,
-      заблокировано KI-072/handoff**.
+      энергии и времени цикла. Зависимости: handshake MCU и fast-AE уже
+      работают (ядро `#38`, §8.1), блокирует только вендорский ISP-handover
+      до suspend (KI-072, архитектура AOV); `RT_USING_JPEG_ENC` в
+      MCU-сборке и протокол shared-буфера с валидацией кадра на AP не
+      проверялись; wake по GPIO (`wakeup_mode=1` в `wakeup_param`). Статус:
+      **запланировано, заблокировано ISP-handover (KI-072)**.
 
 ## 14. Разбор `fastboot_client.c` и перенос полезного в OKO
 
@@ -640,32 +711,269 @@ applications»), поэтому по `AGENTS.md` §6 он остаётся сп�
 
 ### 14.3. План переноса
 
-- [ ] **P1. Bench-probe таймингов.** Собрать файл как есть (без правок) под
-      `RK_APP_TYPE=RK_FASTBOOT_CLIENT` либо `make PKG_TARGET=fastboot_client-build`,
-      запустить с UART-консоли вместо `rkipc`, снять `dmesg`-метки и сравнить
-      стадии с `divinus`. Результат — числовой бюджет «время до первого кадра».
-      Правки вендорского файла не допускаются; обвязку запуска держать в `bench/`.
-- [ ] **P2. Порядок инициализации.** Проверить, соблюдает ли `divinus` при
-      быстром старте порядок VENC → VI → bind → AIQ; при расхождении оформить
-      правку в `project/app/divinus`.
-- [ ] **P3. IQ из резервированного окна.** Спроектировать чтение
-      cmdline-параметров (`rk_iqbin_addr/size`, `rk_color_mode`, `meta_load_addr`)
-      и `mmap` meta для сценария «камера до монтирования rootfs»; адреса
-      согласовать с `RK_META_PARAM` и с §13 v2.
-- [ ] **P4. Наблюдаемость старта.** Добавить в `divinus` маркеры стадий в
-      `/dev/kmsg` (`main`, `sys_init`, `venc`, `vi`, `bind`, `aiq start`) по
-      образцу `klog()`; проверить, что метки видны в UART-логе стенда.
-- [ ] **P5. Smart IR.** Сверить FSM day/night, GPIO ircut и PWM IR-LED с текущей
-      IR-логикой; переносить только при возврате к ИК-подсветке.
-- [ ] **P6. Явно не переносить.** Динамическую смену разрешения, `system()`
-      вызовы из медиа-потока, фиксированный порт 554, глобальное состояние
-      `g_*`, `get_cmd_val()` в текущем виде.
-- [ ] **P7. Документация.** В `STRUCTURE.md` пометить, что `fastboot_client` —
-      демо thunder-boot медиастека, а не Android fastboot, и в образах не
-      используется; в `INIT_ORDER.md` §1.1 сослаться на файл как на референс
-      порядка старта.
+- [x] **P1. Bench-probe таймингов.** Собран без правок под текущим SDK
+      (`make -C project/app/fastboot_client fastboot_client-build`), запущен с
+      UART-консоли вместо `divinus`. На продуктовом образе демо доходит до
+      `vi chn2` за 13.6 мс и падает на `RK_MPI_SYS_Bind(VI1→VENC1)`:
+      `vi_dev_init()` закомментирован (`:781`), `meta`/IQ-резерв и
+      preconfigured VI dev есть только в TB-образе. Числовой бюджет «до
+      первого кадра» для вендорской ветки недостижим; по плану P1 ограничен
+      бюджетом `divinus` из P4. Обвязка — `bench/boot_probe.py`, артефакты —
+      `output/bench/boot/` (подробности — §14.4).
+- [x] **P2. Порядок инициализации.** Проверен по коду и меткам: `divinus`
+      поднимает AIQ (`fnInit` → `fnPrepare` → `fnStart`) до VI и VENC;
+      вендорский VENC→VI→bind→AIQ — требование thunder-boot, а не обычной
+      загрузки. Перенос отклонён с доказательством (§14.4): выигрыш 15 мс из
+      811 мс, риск для проверенной цепочки `rk_pipeline_create()`.
+- [ ] **P3. IQ из резервированного окна.** Не начато: зависит от §13 v2 и
+      вендорского ISP-handover (KI-072). Адреса согласуются с `RK_META_PARAM`;
+      тот же механизм найден в `component/fastboot_server` (§15.2).
+- [x] **P4. Наблюдаемость старта.** Добавлен `hal/boot_mark.c`/`.h`: метки
+      `main`, `sys_init`, `aiq_init`, `aiq_prepare`, `aiq_start`, `vi`,
+      `vi_bind`, `venc`, `bind`, `first_frame` в `/dev/kmsg` с мкс-дельтами;
+      видны в `dmesg` и на UART-консоли стенда. Бюджет
+      `main → first_frame` — **810 836 мкс (0.811 с)** (§14.4).
+- [ ] **P5. Smart IR.** Не начато: ИК-железа на стенде нет (нет узла ircut и
+      управляемой ИК-подсветки, `/api/night` отдаёт `999`). FSM day/night,
+      GPIO ircut и PWM IR-LED сверять при возврате подсветки; см. §15.3.
+- [x] **P6. Явно не переносить.** Решение зафиксировано: динамическая смена
+      разрешения, `system()` из медиа-потока, фиксированный порт 554,
+      глобальное состояние `g_*` и `get_cmd_val()` в текущем виде в OKO не
+      переносятся.
+- [x] **P7. Документация.** `STRUCTURE.md` — пометка, что `fastboot_client` —
+      демо thunder-boot медиастека, а не Android fastboot, в образах не
+      используется; `INIT_ORDER.md` §1.1 — ссылка на файл как на референс
+      порядка старта TB-линии.
 
 Зависимости: P3 связан с §13 v2 (MCU-frame heartbeat) и KI-072; P1–P2, P4
-можно делать независимо. Критерий завершения — решение по каждому пункту
-(перенесено/отклонено) зафиксировано в `CHANGELOG.md`, а измерения P1 внесены
-в `VERIFIED_FUNCTIONS.md`.
+сделаны независимо. Критерий завершения — решение по каждому пункту
+(перенесено/отклонено) зафиксировано в `CHANGELOG.md`, а измерения P1/P4
+внесены в `VERIFIED_FUNCTIONS.md`.
+
+### 14.4. Результаты P1/P2/P4 (стенд, 2026-11-25)
+
+**P4 — метки стадий.** `hal/boot_mark.c` пишет в `/dev/kmsg` строку
+`divinus-boot: <stage> dt=<us>`; ядро добавляет к ней секунды с загрузки,
+поэтому метка видна и в `dmesg`, и в UART-логе. Дельта считается
+`CLOCK_MONOTONIC` между соседними вызовами. Метки стоят в `main.c:56`,
+`media.c` (`sys_init`), `hal/plus/rk_hal.c` (`aiq_init`, `aiq_prepare`,
+`aiq_start`, `vi`, `vi_bind`, `venc`, `bind`) и в видео-цикле
+(`first_frame`).
+
+Измерение после `SIGHUP`-перезапуска (DUT `192.168.52.33`, ядро продуктового
+образа; артефакт `output/bench/boot/20261125-110326-divinus.txt`):
+
+| Стадия | Δ, мкс | Доля |
+|---|---:|---:|
+| `main` | 0 | — |
+| `sys_init` | 194 780 | 24 % |
+| `aiq_init` | 518 248 | 64 % |
+| `aiq_prepare` | 6 338 | <1 % |
+| `aiq_start` | 1 874 | <1 % |
+| `vi` | 36 603 | 5 % |
+| `vi_bind` | 5 210 | <1 % |
+| `venc` | 2 192 | <1 % |
+| `bind` | 12 638 | 2 % |
+| `first_frame` | 32 953 | 4 % |
+| **Итого `main → first_frame`** | **810 836** | **0.811 с** |
+
+Повторный прогон 2026-11-25 (`output/bench/boot/20261125-110843-divinus.txt`)
+дал 764 400 мкс (0.764 с); разброс 0.76–0.81 с определяется `aiq_init`
+(450–518 мс).
+
+**P2 — порядок.** Фактическая последовательность меток:
+`sys_init → aiq_init → aiq_prepare → aiq_start → vi → vi_bind → venc → bind`.
+Она противоположна вендорской в части AIQ/VENC: `fastboot_client` сначала
+создаёт VENC и VI, затем bind, затем AIQ. Причина расхождения — назначение
+кода: TB-образ приходит с уже сконфигурированным VI dev (MCU/загрузчик), и
+первый кадр может появиться до AIQ, поэтому VENC обязателен раньше.
+Продуктовый образ грузится обычной загрузкой (`rkisp_hw: is_thunderboot: 0`),
+AIQ конфигурирует ISP до старта VI-потока, а `rk_video_create()` и
+`rk_channel_bind()` в `divinus` требуют уже созданную VPSS-группу
+(`hal/plus/rk_hal.c:359-477`). VENC-first означал бы разрыв этой цепочки;
+измеренный выигрыш (VENC+bind) — 15 мс из 811 мс. **Перенос не выполняется.**
+
+**P1 — вендорская ветка.** Файл собирается без правок (1 814 648 Б). Прогон
+с UART-консоли при остановленном `divinus`: метки `main` → `SYS_Init` →
+`venc chn1` → `venc chn2` → `vi ch1` → `vi chn2` за 13.6 мс, далее выход на
+`RK_MPI_SYS_Bind`. Причины: `vi_dev_init(0, 0)` закомментирован (`:781`);
+`/proc/cmdline` продукта не содержит `meta_load_addr`/`rk_iqbin_addr`, а
+`/dev/mem`-окно meta/IQ существует только в TB-разметке. Дополнительный
+дефект: путь `__FAILED` использует неинициализированные `fd`, `iq_mem`,
+`aiq_ctx`, `rk_night_mode` (`:822`, `:956-970`) — UB, поэтому процесс
+завершается без `main service exit`. Итог: числовой бюджет вендорской ветки
+на продукте не снимается, P1 закрыт в объёме фолбэка (бюджет `divinus`).
+Артефакт — `output/bench/boot/20261125-110452-vendor.txt`.
+
+## 15. Каталог остатков вендорского кода и аудит ядра
+
+Статус: аудит выполнен 2026-11-25 в режиме read-only; интеграция этого цикла —
+только §14 (P1/P2/P4). Вендорские файлы не редактировались (`AGENTS.md` §6).
+Сборка `project/app` собирает все каталоги с `Makefile` плюс явно
+`component/fastboot_server` (`project/app/Makefile:17-25`); `rkipc` исключён
+фильтром и возвращается только для `RK_APP_TYPE=RKIPC_RV1106_WAKEUP_IPC`.
+
+### 15.1. Каталог остатков (A1)
+
+Активная конфигурация: `.BoardConfig.mk` → `BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI.mk`
+(`RK_APP_TYPE=RKIPC_RV1106`, `RK_ENABLE_WIFI=y`, `RK_APP_IPCWEB_BACKEND`
+закомментирован, `RK_ENABLE_FASTBOOT` не задан).
+
+| Каталог | Назначение | Релевантность RV1106/SC230AI | Статус в сборке продукта | Лицензия | Вердикт |
+|---|---|---|---|---|---|
+| `component/fastboot_server` | TB-сервер: одиночный/dual/multi-cam быстрый старт медиастека, v4l2 luma link | TB-линия, другой сенсор/несколько камер | нет: `PKG_TARGET` пуст без `RK_FASTBOOT_SERVER`/`SMART_DOOR_RV1106_RMSL`/`RK_FASTBOOT_CLIENT_DUAL_CAMERA` (`Makefile:74-75`) | нет файла/заголовка лицензии — вендорский дроп SDK | справочник (§15.2) |
+| `component/rkadk` | RKADK: media/record/RTSP/AOV examples + PDF-гайды | RV1106 поддержан, но API не используется OKO | нет: каталог не входит в `app_src`, ссылок из других Makefile нет | Rockchip BSD-3 (`rkadk/rkadk/LICENSE`) | **удалён 2026-11-25** (§15.7) |
+| `component/lvgl` | LVGL GUI-библиотека | только CVR/face-gate сценарии | нет: `CONFIG_LVGL`/`RK_ENABLE_LVGL` не заданы (`Makefile:36-40`) | MIT (`lvgl/LICENCE.txt`) | **удалён 2026-11-25** (§15.7) |
+| `component/rkfsmk` | prebuilt `librkfsmk.so` + заголовок: FAT check/format, `repair_mp4`, выравнивание файлов | собирается в TB-ветке `rkipc` | нет: не в `app_src`; `out/` — устаревший артефакт | исходников нет; заголовок Apache-2.0 | **удалён 2026-11-25** (§15.7) |
+| `component/third_libs` | prebuilt freetype2/iconv/libjpeg9/libpng16 и libs по тулчейнам | зависимости `rkipc`/`rk_smart_door` | нет на продукте: вызывается только из `rkipc`/`rk_smart_door` | смешанные лицензии библиотек; своего LICENSE нет | справочник |
+| `uvc_app_tiny` | UVC-gadget демо (ISP/VI/VENC/UAC) | RV1106 UVC не используется | нет: `PKG_TARGET` пуст без `UVC_TINY` (`Makefile:27-31`) | Rockchip BSD-3 (`uvc_app/LICENSE`) | игнор |
+| `wifi_app` | wpa_supplicant 2.6 / hostapd / libnl / Realtek-сборки | **да**: `RK_ENABLE_WIFI=y` включает `build-wifi` | **да**, активна (`Makefile:45-46`) | wpa_supplicant/hostapd BSD, libnl LGPL-2.1 | справочник (активная сборка, не трогать) |
+| `STM32CubeC0` | STM32C0 HAL/CMSIS (C011/C031) | нужен для `stm32_acpi-ec` | не входит в сборку SDK; gitignored локальная зависимость (`.gitignore:13-14`) | Apache-2.0 + BSD-3 (`LICENSE.md`) | игнор (SDK-зависимость) |
+| `STM32CubeF1` | STM32F1 HAL/CMSIS | F1-порт EC (историческая линия) | то же | Apache-2.0 + BSD-3 | игнор |
+| `stm32_acpi-ec` | прошивка EC STM32 (CBT6, proto v3) | **да**, стенд и `GET_POWER`/`SET_POWER` | собирается отдельно: CMake + `arm-none-eabi`, не через `project/app/Makefile` | MIT (`LICENSE`) | справочник (git subtree, `STM32_FIRMWARE.md`) |
+| `rkipc` | вендорский IPC-демон | только TB-линия | продукт: нет (фильтр `project/app/Makefile:23`); TB: да | Rockchip BSD-3 (`rkipc/LICENSE`) | справочник; backlog — §15.3 |
+| `ipcweb` | REST-бэкенд для `rkipc` (Cgicc/JWT) | нет: зависит от rkipc socket-server | нет: `RK_APP_IPCWEB_BACKEND` не задан (`Makefile:32-33`) | Rockchip BSD-3 | **удалён 2026-11-25** (§15.7) |
+| `rk_smart_door` | демо умной двери: RMSL/IR-face, UVC/AI/AO | RV1103/1106, другой сенсор (sc3338) | нет: `PKG_TARGET` пуст без `SMART_DOOR_*` (`Makefile:16-26`) | Rockchip BSD-3 (`smart_door/LICENSE`) | только выводы (§15.4) |
+
+OKO-код (`divinus`, `oko-*`, `stm8-motor`, `vpn-tools`) и MCU-SDK вне
+каталога остатков; `fastboot_client` — в §14.
+
+### 15.2. `component/fastboot_server` (B1)
+
+Сверка с уже разобранным `fastboot_client.c` подтверждает оценку «~80 % дубль»:
+те же `klog()`, `get_cmd_val()`, `vi_dev_init()`/`vi_chn_init()`,
+`test_venc_init()` и `RK_MPI_SYS_Init`-последовательность.
+
+| Механизм | Файл:строки | Ценность | Дефекты | Вердикт |
+|---|---|---|---|---|
+| Одиночный сервер (meta из `/dev/mem`, VENC→VI→bind→AIQ) | `fastboot_server.c:430-729` | подтверждает порядок TB и даёт второй экземпляр меток | `get_cmd_val()` по подстроке; `aiq_ctx` без проверки после `sysctl_init`; `fork()` без `wait` | не переносить (дубль) |
+| meta/app-param из `meta_load_addr` | `fastboot_server.c:458-506` | тот же приём, что P3, но от `/dev/mem` | `metaSize` и смещения не валидируются (`MAP_FAILED` проверяется, размер — нет) | отложено вместе с P3 |
+| `fork()` после bind + `/tmp/aov_lunch` | `fastboot_server.c:556-572` | способ оставить сервис после выхода родителя | глобальное состояние, скрытая вторая копия медиастека | не переносить |
+| Dual-camera: AVS-склейка, ePTZ, cover/OSD, RTSP, два AIQ-контекста | `fastboot_server_dual_camera.c:206-280, 327-339, 576-808, 911-1017, 1377-1490` | ePTZ и OSD-идеи (в `divinus` уже есть), AVS — только для двух сенсоров | жёсткие `CAM_NUM=2`, `MMAP_START_FROM_ZERO`, OSD `/oem/usr/share/osd_image.data` | не переносить (нет второго сенсора) |
+| Multi-cam smart door: luma-link ISP flood/projector (`/dev/media3`, `/dev/media4`) | `fastboot_server_multi_cam.c:437-444, 446-682`; `v4l2_link.c` | работа с media-graph через `mediactl` | привязано к ИК-подсветке двери и двум ISP-сущностям | не переносить |
+| VENC `GetStream`-цикл и JPEG combo | `fastboot_server_dual_camera.c:281-390` | prime-кадры до RTSP (в `divinus` есть свой) | блокирующие вызовы в цикле | справочник |
+
+Вывод: уникальные части — multi-sensor и smart-door (AVS, luma-link, IR);
+для OKO переносимых механизмов нет, кроме уже учтённых в §14.
+
+### 15.3. `rkipc` вне AF: backlog (B2)
+
+Сверено с `divinus`: `night.c` (160), `region.c` (676), `ivs_events.c` (565),
+`server.c` (`/api/isp` :2128, `/api/night` :2439, `/api/osd` :2517,
+`/api/ivs` :5095), собственный RTSP-сервер и `rk_af_stats.c`. Интеграция —
+следующим циклом после согласования приоритетов; сейчас только backlog.
+
+| Механизм | `rkipc/rkipc/...` | Состояние в `divinus` | Приоритет | Вердикт |
+|---|---|---|---|---|
+| PWM IR-LED: `light_strength`, `light_brightness`, `fill_light_mode` | `common/isp/rv1106/isp.c:247-268, 622-677` | только GPIO on/off (`night.c:36-40`), PWM нет | высокий (при возврате ИК) | кандидат переноса |
+| Гистерезис day/night: `filter_level`, `filter_time` | `common/isp/rv1106/isp.c:678-722` | нет; переключение по ADC/GPIO без гистерезиса | средний | кандидат переноса |
+| IQ из резервной памяти (`rk_isp_fastboot_init`) | `common/isp/rv1106/isp.c:1690-1774` | нет (P3) | высокий, но заблокирован KI-072 | отложено |
+| Smart IR FSM (rk_smart_ir) | `project/app/fastboot_client/fastboot_client.c:140-264` (референс, не rkipc) | нет | низкий до ИК-железа | отложено (P5) |
+| OSD: bitmap-шрифты, `region_clip` | `common/osd/osd.c` (948), `common/region_clip/region_clip.c` (143) | 2BPP RGN + свой `region.c` | низкий | справочник |
+| ROI-кроп для энкодера | `common/roi/roi.c` | ePTZ-кроп (`/api/eptz`) | низкий | не переносить |
+| IVS rockiva (person/vehicle) | `common/rockiva/rockiva.c`, `common/ivm/event.c` (415) | IVS MD/OD + YOLO | низкий (лицензия библиотеки) | отложено |
+| socket-server IPC (5 860 строк) | `common/socket_server/server.c` | HTTP REST в `divinus` | — | не нужен |
+| RTSP-обвязка easymedia | `common/rtsp/rtsp.c` (139) | собственный RTSP | — | не нужен |
+| Групповой ISP (multi-cam) | `common/isp/rv1106/isp.c:1946-1975` | один сенсор | — | не нужен |
+
+Приоритеты: PWM IR и IQ-резерв — после появления ИК-железа и снятия KI-072;
+гистерезис — при следующей правке `night.c`; OSD/ROI/rockiva — по запросу.
+
+### 15.4. `rk_smart_door` (B3)
+
+- Лицензия: `smart_door/LICENSE` — текст Rockchip BSD-3-стиля (redistribution
+  разрешено), а не «без лицензии». Копирование кода всё равно запрещено:
+  `AGENTS.md` §6 (вендорский код — только справочник).
+- `rv1106_normal/main.c:88-193`: `RK_MPI_SYS_Init` → `rk_param_init` →
+  `rk_isp_configure_media_pipeline` → `rkaiq_3a` → цикл команд из
+  `/tmp/smart_door.ini` (rtsp/ai/ao/uvc). Полезного для `divinus` нет:
+  `rkaiq_3a` и `rk_param` — вендорские обёртки, а порядок AIQ после VI
+  противоположен измеренному в §14.4.
+- `rv1106_ir_face` (`comm_isp.c`, `vi_face.cpp`) и `rv1106_rmsl`
+  (`configs_skv.json`, `wifi/wifi_cmd.c`) завязаны на RMSL/face-библиотеки,
+  сенсор sc3338 и `librknnmrt`; на OKO-железе не воспроизводятся.
+- Вердикт: справочник; выводы — только «порядок TB-демо иной, чем у
+  продуктового `divinus`». Интеграции нет.
+
+### 15.5. `ipcweb` (B4)
+
+`ipcweb-backend` — CGI/REST-фронт над `rkipc` через `socket_client`
+(`src/rest_api.cpp:165-218`): network/NTP/DDNS/PPPoE/port, storage, video,
+audio, stream URL, image, system, OSD, ROI, event, peripherals; JWT/Cgicc.
+Собственного медиастека нет. Так как OKO не собирает `rkipc`
+(`project/app/Makefile:23`), весь слой неприменим; `divinus` уже отдаёт
+`/api/*` с той же функциональностью (проверено `bench/run.sh api_check.py`,
+138 проверок). Вердикт: **не нужен**; возможные заимствования — только схема
+ROI/DDNS/PPPoE, если появятся такие задачи.
+
+### 15.6. `research/rv1106-aov` → интеграционные вердикты (B5)
+
+- **Overshoot 68–79 с (`wake_check`).** Методика сокращения: снимать окно по
+  меткам `[sleep]` и `power`-артефактам (`output/bench/power/*`), сравнивать
+  фактический цикл с `wake_interval_s`; кандидаты — уменьшить окно проверки и
+  `IVS_SETTLE_S`, не трогая PMU-таймер. Работа — следующая integration-итерация,
+  в этом цикле не выполняется (§8.1).
+- **ISP-handover.** Блокировка подтверждена: в `research/rv1106-aov/README.md`
+  handover описан как обязанность MCU-стороны; AP-кодом не снимается (KI-072).
+- **JTAG / `mcutool`.** Только шаг 4–5 порядка проверок README темы и только на
+  debug-образе: `mcutool` (`0xff6c0000`) конфликтует с AOV-раскладкой OKO
+  (`HPMCU` из idblock, `rtos@40000`). Вне цикла.
+- **Frame-sync master/slave и dynamic FPS SC230AI.** Отложено: потребительской
+  задачи нет; DTS sync-режим не задаёт. Регистры-кандидаты — `0x3225`,
+  `0x3216/17`, `0x322e/2f` (master) и `0x320f/0x3230/0x3231` (slave),
+  `vts=33750/fps`.
+- **«Медиа-грабли» dehai — регресс-чеклист.** Ниже сжатая сверка с OKO.
+
+| Пункт dehai | Состояние в OKO | Что проверить |
+|---|---|---|
+| `VI GetChnFrame` для NV12 ненадёжен | YOLO берёт VI0/VI1/VPSS3, проверено на стенде | при смене источника кадра |
+| RGA-цель только MMZ, `MmzFlushCache(RK_FALSE)` | `rk_rga.c` импортирует fd, конвертер опционален | при включении RGA-конвертера |
+| stride/UV по `vir_height` | `yolo.c` учитывает `virWidth`/`size_with_stride` | граничные разрешения |
+| не блокировать в `GetStream` | `rk_video_thread` копирует пакет до `free` | при правках видео-цикла |
+| stage MP4 на TF + `rename` | `record.c` пишет файл напрямую | риск обрезанного файла при сбое |
+| OSD `pos` кратен 16 | `rk_rgn_pad16` | — |
+| fMP4 `trun=0x701`, `tfdt` v1 | свой writer `fmt/moof.c` | сверка с плеерами |
+| RKNN грузить лениво | `models_start`/`yolo_start` по конфигу | — |
+| IVS `MDInterval`/пороги | `ivs_events.c` + defaults | — |
+| watchdog/flock, остановка чужого rkipc | `oko-lunch` — единственный стример | — |
+
+Вердикты §15.4–§15.6 перенесены в §8.1 (AOV) и `CHANGELOG.md`; новых
+документов не создавалось.
+
+### 15.7. Удалённый вендорский код и upstream-ссылки
+
+2026-11-25 удалены каталоги, которые не включает ни один BoardConfig, не
+собирает продуктовый OKO и чей код/API никто не вызывает. Исходники остаются
+в вендорском репозитории
+[`LuckfoxTECH/luckfox-pico`](https://github.com/LuckfoxTECH/luckfox-pico/tree/main);
+ниже — прямые ссылки и отметки полезного на случай возврата.
+
+| Удалённый каталог | Upstream | Что там полезного | Почему удалён |
+|---|---|---|---|
+| `project/app/component/rkadk` | [rkadk](https://github.com/LuckfoxTECH/luckfox-pico/tree/main/project/app/component/rkadk) | RKADK API: record/RTSP/AOV/photo/stream, examples (`rkadk_aov_record_test.c`, `rkadk_record_test.c`), PDF-гайды; разбор — [`research/rkadk-guide/`](research/rkadk-guide/README.md) | 111 файлов, 3.4 МБ; ни одна цель `project/app` его не вызывает |
+| `project/app/component/lvgl` | [lvgl](https://github.com/LuckfoxTECH/luckfox-pico/tree/main/project/app/component/lvgl) | LVGL 9 и демо для CVR/face-gate GUI | 1088 файлов, 95 МБ; `RK_ENABLE_LVGL`/`CONFIG_LVGL` не заданы нигде |
+| `project/app/ipcweb` | [ipcweb](https://github.com/LuckfoxTECH/luckfox-pico/tree/main/project/app/ipcweb) | REST-бэкенд над rkipc socket-server: схемы OSD/ROI/DDNS/PPPoE, JWT, `www-rkipc` | 282 файла, 5.7 МБ; `RK_APP_IPCWEB_BACKEND` закомментирован во всех BoardConfig, зависит от снятого rkipc |
+| `project/app/component/rkfsmk` | [rkfsmk](https://github.com/LuckfoxTECH/luckfox-pico/tree/main/project/app/component/rkfsmk) | prebuilt `librkfsmk.so` без исходников: FAT check/format (`FsCheck`, `GetFat/SetFat`), `repair_mp4`, `kernel_*` предвыделение с выравниванием; заголовок Apache-2.0 | 8 файлов, 1.7 МБ; API (`rkfsmk_*`, `repair_mp4`, `kernel_*`) нигде не вызывается, `CMakeLists` не линкует `-lrkfsmk`; в `rkipc/Makefile` остаётся только guard `test ! -d`, поэтому правка вендорского Makefile не потребовалась |
+
+Проверка после удаления: `make -C project/app info` проходит, удалённых
+каталогов в `app_src` нет; OKO-код на них не ссылается. Для TB-ветки
+`make -C project/app/rkipc rkfsmk-build` завершается успешно: цель
+`rkfsmk-build` проверяет `test ! -d $(RK_APP_COMPONENT)/rkfsmk` и при
+отсутствии каталога ничего не делает.
+
+Кандидаты, оставленные осознанно (удалять только при отказе от
+соответствующих вендорских профилей):
+
+| Каталог | Upstream | Что полезного | Ограничение |
+|---|---|---|---|
+| `project/app/rk_smart_door` | [rk_smart_door](https://github.com/LuckfoxTECH/luckfox-pico/tree/main/project/app/rk_smart_door) | `rv1106_normal/main.c` (порядок SYS_Init → VI → rkaiq_3a), `common/uart/uart.c`, `wifi/wifi_cmd.c` | 126 МБ; нужен двум вендорским FASTBOOT-профилям (`RK_APP_TYPE="RK_FASTBOOT_SERVER SMART_DOOR_RV1106_NORMAL"`) и `luckfox-rv1106-tb-emmc-post.sh`; RMSL/face и sc3338 для OKO не переносимы |
+| `project/app/component/fastboot_server` | [fastboot_server](https://github.com/LuckfoxTECH/luckfox-pico/tree/main/project/app/component/fastboot_server) | `fastboot_server_dual_camera.c` (AVS, ePTZ, OSD/cover), `v4l2_link.c` (media-graph через mediactl) | 189 КБ; те же два вендорских профиля; разбор — §15.2 |
+| `project/app/uvc_app_tiny` | [uvc_app_tiny](https://github.com/LuckfoxTECH/luckfox-pico/tree/main/project/app/uvc_app_tiny) | UVC/UAC gadget (`uvc/`, `uac/`), ISP-обвязка | 37 МБ; `UVC_TINY` не задан ни в одном BoardConfig; ранее было решение «не трогать» (cleanup-план `1794156817413`, слой 3) |
+| `project/app/fastboot_client` | [fastboot_client](https://github.com/LuckfoxTECH/luckfox-pico/tree/main/project/app/fastboot_client) | P1-референс: VENC→VI→bind→AIQ, `klog()`, IQ из meta | 39 КБ; включается только вручную, оставлен как компактный справочник §14 |
+| `project/app/rkipc` | [rkipc](https://github.com/LuckfoxTECH/luckfox-pico/tree/main/project/app/rkipc) | IPC-демон, socket-server, OSD/IVS/ISP | 59 МБ; единственный потребитель — TB-линия `RKIPC_RV1106_WAKEUP_IPC`; backlog — §15.3 |
+| `component/third_libs` | [third_libs](https://github.com/LuckfoxTECH/luckfox-pico/tree/main/project/app/component/third_libs) | freetype2/iconv/libjpeg9/libpng16 и libs по тулчейнам | 7.5 МБ; зависимость `rkipc`/`rk_smart_door` |
+
+Вне git и удаляются/восстанавливаются отдельно: `project/app/STM32CubeC0`
+(105 МБ) и `project/app/STM32CubeF1` (150 МБ) — локальные SDK для
+`stm32_acpi-ec` в `.gitignore`; команды клонирования — `STM32_FIRMWARE.md`.
+Их удаление не меняет репозиторий.

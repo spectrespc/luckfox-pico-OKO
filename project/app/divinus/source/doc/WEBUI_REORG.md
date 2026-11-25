@@ -144,6 +144,9 @@ SoC, Uptime, IP, чипы возможностей и Refresh. Полей с `Ap
 Источник — исходники `project/app/ipcweb/ipcweb-backend` (`rest_api.cpp`,
 регистрация по префиксам имён API) и `doc/IPC_RESTful_API_Guide.md`. Код не
 переносился: бэкенд ipcweb привязан к `dbserver`/`mediaserver` и rockface.
+Каталог `project/app/ipcweb` удалён 2026-11-25 как неиспользуемый; исходники —
+[upstream](https://github.com/LuckfoxTECH/luckfox-pico/tree/main/project/app/ipcweb),
+отметки полезного — `TO_DO.md` §15.7.
 
 | Функция ipcweb | Решение |
 |---|---|

@@ -20,6 +20,7 @@
 | Параметр | Значение | Смысл |
 |---|---|---|
 | `RK_CHIP` | `rv1106` | SoC RV1106 |
+| SoC на плате | `RV1106G3` | заказной код RV1106 с SIP 2 Гбит (256 МБ) DDR3L, NPU 1 Топс; `RK_CHIP` в SDK остаётся `rv1106` ([Datasheet Rev 2.0, §2.1](https://rockchip.fr/RV1106%20datasheet%20V2.0.pdf)) |
 | `RK_APP_TYPE` | `RKIPC_RV1106` | тип приложения SDK; сборка `rkipc` отключена, лаунчер — `oko-lunch.sh` |
 | `RK_BOOT_MEDIUM` | `spi_nand` | загрузка с SPI NAND |
 | `RK_PARTITION_CMD_IN_ENV` | `256K(env),256K@256K(idblock),512K(uboot),6M(boot),40M(oem),40M(userdata),168M(rootfs)` | разметка 256 МБ NAND: `boot` 6 МБ, `oem` 40 МБ, `userdata` 40 МБ, `rootfs` 168 МБ |

@@ -1,7 +1,7 @@
 # Тестовый стенд OKO
 
 Паспорт и рабочие параметры лабораторного стенда для отладки прошивки Luckfox Pico
-Pro Max (RV1106) с автономной загрузкой из SPI NAND. Значения сверены с `bench/*.py`,
+Pro Max (RV1106G3) с автономной загрузкой из SPI NAND. Значения сверены с `bench/*.py`,
 `tools/native/*.sh` и активным BoardConfig на дату обновления.
 
 ## 1. Паспорт стенда
@@ -19,7 +19,8 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
 | Параметр | Значение |
 |---|---|
 | Плата | Luckfox Pico Pro Max |
-| SoC | Rockchip RV1106 (Cortex-A7 + NPU + ISP) |
+| SoC | Rockchip RV1106G3 (Cortex-A7 + NPU 1 Топс + ISP; QFN128, SIP 2 Гбит DDR3L = 256 МБ) — [Datasheet Rev 2.0](https://rockchip.fr/RV1106%20datasheet%20V2.0.pdf) |
+| ОЗУ | 256 МБ DDR3L в корпусе SoC; на DUT `grep MemTotal /proc/meminfo` → 177 176 кБ при `CmaTotal` 67 584 кБ (`rk_dma_heap_cma=66M`), что соответствует 256 МБ, а не 128 МБ |
 | Носитель загрузки | SPI NAND (`RK_BOOT_MEDIUM=spi_nand`) |
 | Корневая ФС | Buildroot, busybox init |
 | Сенсор | SC230AI (MIPI CSI, драйвер `sc230ai`, 1080p30 / 480p120; `HDR_X2` экспериментально; `divinus` кодирует 30 fps) |

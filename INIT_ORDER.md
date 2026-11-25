@@ -24,7 +24,7 @@ BootROM → U-Boot → ядро Linux → busybox init → init-скрипты �
 
 | Параметр | Значение | Комментарий |
 |---|---|---|
-| `RK_CHIP` | `rv1106` | RV1106 (Cortex-A7 + NPU + ISP) |
+| `RK_CHIP` | `rv1106` | RV1106 (Cortex-A7 + NPU 1 Топс + ISP); на плате Pico Max — RV1106G3 (SIP 2 Гбит DDR3L) |
 | `RK_APP_TYPE` | `RKIPC_RV1106` | тип приложения SDK; сборка `rkipc` отключена, лаунчер — `oko-lunch.sh` |
 | `RK_BOOT_MEDIUM` | `spi_nand` | загрузка с SPI NAND |
 | `RK_KERNEL_DTS` | `rv1106g-luckfox-pico-pro-max-sc230ai.dts` | device tree активной платы; `&sc3336`/`&mis5001` выключены |
@@ -81,6 +81,16 @@ MCU инициализирует SC230AI/ISP, делает fast-AE, перево
 продолжает загрузку. AP-политика сна (`video/aov_sleep.c`) при простое
 программирует `PMU_WAKEUP_TIMEOUT_CNT` (0xff300048) и пишет `mem` в
 `/sys/power/state`; пробуждение — по PMU timeout, MCU в нём не участвует.
+
+Референс порядка старта для TB-линии — `project/app/fastboot_client/fastboot_client.c`
+(вендорское демо thunder-boot медиастека, **не** Android fastboot; в образах
+не используется, цель включается только при `RK_FASTBOOT_CLIENT`). Там
+`RK_MPI_SYS_Init` → VENC (`test_venc_init`) → VI (`vi_chn_init`) → bind →
+AIQ, с комментарием «if is fast boot, must first init venc» (`:776-819`);
+`klog()` (`:676-685`) пишет метки стадий в `/dev/kmsg`, пригодные для замера
+бюджета по UART/`dmesg`. В продуктовом `divinus` порядок иной — AIQ → VI →
+VPSS → VENC (измерено 2026-11-25, см. `TO_DO.md` §14.4); менять его на
+TB-порядок в обычной загрузке не требуется.
 
 ### 1.2 Экспериментальный профиль `-AOV` (PMCU wake proxy, NO-GO 2026-11-17)
 

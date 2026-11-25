@@ -82,10 +82,12 @@ SDK. Это read-only файлы: **никогда не редактироват
 ## 6. Вендорский код — только справочник
 
 - Вендорский код: `project/app/rkipc`, `project/app/rk_smart_door`,
-  `project/app/fastboot_client`, `project/app/component/rkadk`,
+  `project/app/fastboot_client`, `project/app/component/fastboot_server`,
   `sysdrv/source/mcu` (RT-Thread), вендорские демо в `media/` и прочие
   унаследованные каталоги SDK Luckfox/Rockchip. **Читать — можно, править и
-  строить на нём продуктовые фичи — нет.**
+  строить на нём продуктовые фичи — нет.** Удалённые как неиспользуемые
+  `component/rkadk`, `component/lvgl`, `component/rkfsmk`, `ipcweb` и их
+  upstream-ссылки — `TO_DO.md` §15.7.
 - Продуктовые фичи реализуются в OKO-коде: `project/app/divinus`,
   `project/app/oko-*`, `tools/native`, `bench/`, OKO-файлы `project/cfg`,
   фрагменты ядра и DTS, склейки `sysdrv/drv_ko`.

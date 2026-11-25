@@ -26,6 +26,53 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Добавлено
 
+- **`divinus`: метки стадий старта в `/dev/kmsg` (P4, `TO_DO.md` §14).**
+  Добавлен `source/src/hal/boot_mark.c`/`.h`: `main`, `sys_init`,
+  `aiq_init`, `aiq_prepare`, `aiq_start`, `vi`, `vi_bind`, `venc`, `bind`,
+  `first_frame` с мкс-дельтой `CLOCK_MONOTONIC`; строки видны в `dmesg` и на
+  UART-консоли. Бюджет `main → first_frame` на стенде `192.168.52.33` —
+  0.764–0.811 с (`aiq_init` 450–518 мс, `sys_init` 195–216 мс, VENC+bind
+  ~15 мс); запись в `VERIFIED_FUNCTIONS.md`, артефакты `output/bench/boot/`.
+- **`divinus`: boot-stage markers in `/dev/kmsg` (P4, `TO_DO.md` §14).**
+  New `source/src/hal/boot_mark.c`/`.h`: `main`, `sys_init`, `aiq_init`,
+  `aiq_prepare`, `aiq_start`, `vi`, `vi_bind`, `venc`, `bind`,
+  `first_frame` with a `CLOCK_MONOTONIC` microsecond delta; the lines are
+  visible in `dmesg` and on the UART console. The `main → first_frame`
+  budget on the `192.168.52.33` bench is 0.764–0.811 s (`aiq_init`
+  450–518 ms, `sys_init` 195–216 ms, VENC+bind ~15 ms); recorded in
+  `VERIFIED_FUNCTIONS.md`, artifacts under `output/bench/boot/`.
+- **`bench/boot_probe.py`: бюджет старта `divinus` и проба вендорского
+  `fastboot_client`.** Подкоманды `divinus` (последний прогон меток из
+  `dmesg`), `vendor` (копирование бинаря в `/userdata/boot-probe`, запуск с
+  UART-консоли при остановленном `divinus`, съём `[app-cli]`-меток и stdout,
+  восстановление `divinus`), `marks`; артефакты `output/bench/boot/`;
+  описание и примеры — в `bench/README.md`.
+  Вендорское демо на продуктовом образе не стартует (VI dev/meta доступны
+  только в TB-образе) — зафиксировано в `TO_DO.md` §14.4.
+- **`bench/boot_probe.py`: divinus start-up budget and a vendor
+  `fastboot_client` probe.** Subcommands: `divinus` (last marker run from
+  `dmesg`), `vendor` (copy the binary to `/userdata/boot-probe`, launch it
+  from the UART console with `divinus` stopped, collect the `[app-cli]`
+  markers and stdout, restart `divinus`), and `marks`; artifacts under
+  `output/bench/boot/`, documented with examples in `bench/README.md`.
+  The vendor demo does not start on the product image
+  (the VI dev/meta are TB-only) — recorded in `TO_DO.md` §14.4.
+- **`research/rv1106-aov/snapshot/rockchip-rv1106-datasheet/RV1106_Datasheet_Rev2.0.pdf`
+  — снимок даташита RV1106 Rev 2.0 (2026-04-02, 31 с., 2 382 782 Б, sha256
+  `53476c5a…`).** Rev 1.8 оставлен рядом как предыдущая редакция (снимки
+  обновляются только новой копией). В README темы добавлены разбор Rev 2.0,
+  факты §2.1 order info (G2/G3 — QFN128, RV1106 — BGA313) и §2.2 top marking,
+  ссылка на зеркало `rockchip.fr` и строка провенанса; шапка снимка
+  пересчитана — 38 файлов, 39 799 861 Б. `research/README.md` и
+  `STRUCTURE.md` обновлены под Rev 2.0.
+- **`research/rv1106-aov/snapshot/rockchip-rv1106-datasheet/RV1106_Datasheet_Rev2.0.pdf`
+  — RV1106 Datasheet Rev 2.0 snapshot (2026-04-02, 31 pp., 2 382 782 B,
+  sha256 `53476c5a…`).** Rev 1.8 is kept alongside as the previous revision
+  (snapshots are only ever added, never rewritten). The topic README now has
+  a Rev 2.0 review, §2.1 order info (G2/G3 QFN128, RV1106 BGA313) and §2.2
+  top marking facts, the `rockchip.fr` mirror link and a provenance row; the
+  snapshot header is recomputed — 38 files, 39 799 861 B. `research/README.md`
+  and `STRUCTURE.md` were updated for Rev 2.0.
 - **`bench/aov_i2c_diag.py`: диагностика I2C3 на уровне регистров и падов.**
   Читает `CON/CLKDIV/IEN/IPD/FCNT/SCL_OE_DB/ST/DBGCTRL/CON1` (base `0xff460000`,
   `ST` — 0x220, `DBGCTRL` — 0x224, TRM V0.3 Part1 §15.4), уровни падов
@@ -198,9 +245,71 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   37 524 270 B (GPL + Rockchip/Horizon research copies), with pins/sha256
   in the provenance table; 22 selected dehai files are included and the rest
   were not copied. `research/README.md` and `STRUCTURE.md` were updated.
+- **`research/rkadk-guide/`: разбор вендорского RKADK-гайда (2026-11-25).**
+  Добавлена тема с read-only снимком
+  `Rockchip_Developer_Guide_Linux_Rkadk_EN.pdf` (152 с., создан 2024-01-08,
+  704 558 Б, sha256 `0f06e0b4…`, pin `824b817f…`). Разобрано, что из API
+  record/photo/stream/RTSP/RTMP/storage/OSD/параметров применимо к `divinus`
+  как чек-лист (файловый кэш и manual split, thumbnails, storage, OSD,
+  параметры VENC/муксера), и что не переносится: сам RKADK, RV1106/SC230AI-
+  специфика и AOV (отдельный гайд уже в `research/rv1106-aov/`). Обновлены
+  `research/README.md`, `STRUCTURE.md` и ссылка в `TO_DO.md` §15.7.
+- **`research/rkadk-guide/`: vendor RKADK guide review (2026-11-25).**
+  New topic with a read-only snapshot of
+  `Rockchip_Developer_Guide_Linux_Rkadk_EN.pdf` (152 pp., created 2024-01-08,
+  704 558 B, sha256 `0f06e0b4…`, pin `824b817f…`). It maps the
+  record/photo/stream/RTSP/RTMP/storage/OSD/parameter APIs to `divinus` as a
+  checklist (file cache and manual split, thumbnails, storage, OSD,
+  VENC/muxer parameters) and records what is not portable: RKADK itself,
+  RV1106/SC230AI specifics and AOV (a separate guide is already in
+  `research/rv1106-aov/`). `research/README.md`, `STRUCTURE.md` and the
+  `TO_DO.md` §15.7 link were updated.
 
 ### Изменено
 
+- **`TO_DO.md` §15: каталог остатков вендорского кода и аудит ядра
+  (2026-11-25).** Добавлен каталог всех каталогов `project/app` (назначение,
+  релевантность, статус сборки, лицензия, вердикт) и разбор
+  `component/fastboot_server` (подтверждён дубль ~80 %, уникальны только
+  multi-cam/AVS/luma-link), backlog `rkipc` вне AF (PWM IR-LED,
+  day/night-гистерезис, IQ-резерв), вердикты `rk_smart_door` и `ipcweb`,
+  integration-вердикты `research/rv1106-aov` и регресс-чеклист «медиа-граблей».
+  В §14 закрыты P1/P2/P4/P6/P7 (P3/P5 отложены) с измеренным бюджетом
+  `divinus` и прогоном вендорского демо; §8.1 дополнен вердиктами B5;
+  P7 отражён в `STRUCTURE.md` и `INIT_ORDER.md` §1.1.
+- **`TO_DO.md` §15: vendor code leftover catalogue and core audit
+  (2026-11-25).** Added a catalogue of every `project/app` directory
+  (purpose, relevance, build status, licence, verdict) and a review of
+  `component/fastboot_server` (~80 % duplicate confirmed; only
+  multi-cam/AVS/luma-link are unique), the `rkipc` backlog outside AF
+  (PWM IR-LED, day/night hysteresis, IQ reservation), the `rk_smart_door`
+  and `ipcweb` verdicts, the `research/rv1106-aov` integration verdicts and
+  the "media pitfalls" regression checklist. §14 closes P1/P2/P4/P6/P7
+  (P3/P5 deferred) with the measured `divinus` budget and the vendor demo
+  run; §8.1 gained the B5 verdicts; P7 is reflected in `STRUCTURE.md` and
+  `INIT_ORDER.md` §1.1.
+- **Паспорта платы и стенда уточнены до заказной модели SoC RV1106G3
+  (2026-11-25).** В `README_RU.md`, `FEATURES.md`, `TESTBENCH.md` и
+  `INIT_ORDER.md` вместо родового «RV1106» указана модель **RV1106G3**
+  (QFN128, Cortex-A7 + NPU 1 Топс + ISP, встроенные 2 Гбит DDR3L = 256 МБ
+  ОЗУ) со ссылкой на RV1106 Datasheet Rev 2.0 (2026-04-02). В `FEATURES.md`
+  добавлена отдельная строка «ОЗУ», чтобы не смешивать 256 МБ DDR3L с 256 МБ
+  SPI NAND. `RK_CHIP` в SDK остаётся `rv1106`: G3 — маркировка чипа, отдельного
+  BoardConfig для него нет. В `research/rv1106-aov/` добавлен разбор Rev 2.0.
+  Косвенное подтверждение на стенде: `MemTotal` 177 176 кБ при `CmaTotal`
+  67 584 кБ — это 256 МБ DDR3L, а не 128 МБ; строка «ОЗУ» добавлена и в
+  `TESTBENCH.md` §2.
+- **Board and bench passports refined to the orderable SoC RV1106G3
+  (2026-11-25).** `README_RU.md`, `FEATURES.md`, `TESTBENCH.md` and
+  `INIT_ORDER.md` now name the **RV1106G3** model (QFN128, Cortex-A7 + NPU
+  1 TOPS + ISP, on-package 2 Gb DDR3L = 256 MB RAM) instead of the generic
+  "RV1106", with a link to RV1106 Datasheet Rev 2.0 (2026-04-02).
+  `FEATURES.md` gained a separate RAM row so the 256 MB DDR3L is not confused
+  with the 256 MB SPI NAND. `RK_CHIP` in the SDK stays `rv1106`: G3 is a chip
+  marking, there is no separate BoardConfig. `research/rv1106-aov/` now
+  covers Rev 2.0. Bench cross-check: `MemTotal` 177 176 kB with `CmaTotal`
+  67 584 kB, i.e. 256 MB DDR3L rather than 128 MB; a RAM row was added to
+  `TESTBENCH.md` §2 as well.
 - **KI-072: кадентность AOV перепроверена после устранения KI-080
   (2026-11-24).** V1 (`aov_mcu=1`, `keep_isp=1`, `wake_interval_s=60`,
   240 с) дал 14 пробуждений с интервалами 14.9–20.4 с и окнами deep suspend
@@ -804,6 +913,28 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   profile is active as of 2026-11-23" sentence: after the work the
   `.BoardConfig.mk` symlink points back at the product `...-SC230AI.mk`, and
   AOV is enabled through the same symlink.
+- **`TO_DO.md`: актуализация после работ 2026-11-22…25.** Закрытые пункты
+  помечены `[x]` с датой и доказательством: карта реализации `divinus` (§7),
+  применение ROI на ходу (§5.1), порт MCU battery-ipc, кадентность и окно
+  mailbox 500 мс (§8.1), AOV-MCU с интервалом 1 мин и закрытие KI-079 (§13).
+  Из §8.1 удалён утративший смысл пункт про STM8-счётчик залипаний (причина
+  потери шины — meta-пин `ircut_b`, KI-080 закрыт 2026-11-24); добавлены
+  открытые остатки AOV: gate вендорского ISP-handover, overshoot 68–79 с окна
+  `wake_check`, прошивка и матрица тестов Э5/Э7, решение владельца о выводе
+  AOV из экспериментального профиля. В §11 отмечены ограничения ночного
+  замера (KI-005) и CMA (KI-006); в §4.5 ссылка `(KI-035)` исправлена на
+  KI-075. Нумерация разделов сохранена.
+- **`TO_DO.md`: refreshed after the 2026-11-22…25 work.** Closed items are now
+  marked `[x]` with dates and evidence: the `divinus` implementation map (§7),
+  live ROI application (§5.1), the battery-ipc MCU port, the cadence and the
+  500 ms mailbox window (§8.1), AOV-MCU with the 1-minute interval and the
+  KI-079 closure (§13). The obsolete STM8 sticky-counter item was removed from
+  §8.1 (the bus loss came from the `ircut_b` meta pin, KI-080 closed on
+  2026-11-24); the open AOV residuals were added: the vendor ISP-handover gate,
+  the 68–79 s `wake_check` overshoot, the E5/E7 flashing and test matrix, and
+  the owner decision on moving AOV out of the experimental profile. §11 now
+  notes the night-measurement (KI-005) and CMA (KI-006) limits; the `(KI-035)`
+  reference in §4.5 is corrected to KI-075. Section numbering is unchanged.
 
 ### Исправлено
 
@@ -1025,6 +1156,45 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Удалено
 
+- **Удалены неиспользуемые вендорские каталоги (2026-11-25).**
+  `project/app/component/rkadk` (111 файлов, 3.4 МБ),
+  `project/app/component/lvgl` (1088 файлов, 95 МБ),
+  `project/app/ipcweb` (282 файла, 5.7 МБ) и
+  `project/app/component/rkfsmk` (8 файлов, 1.7 МБ): ни один BoardConfig их не
+  включает, `project/app/Makefile` их не собирает, ссылок из OKO-кода нет.
+  У `rkfsmk` API (`rkfsmk_*`, `repair_mp4`, `kernel_*`) никто не вызывал и
+  `-lrkfsmk` не линковался; в `rkipc/Makefile` остаётся guard
+  `test ! -d`, поэтому правка вендорского Makefile не потребовалась, а
+  `make -C project/app/rkipc rkfsmk-build` после удаления проходит.
+  Удалены и устаревшие копии `librkfsmk.so`/`rkfsmk.h` из
+  `project/app/out/` и `output/out/`.
+  Upstream-ссылки и отметки полезного (RKADK API/examples, LVGL для
+  CVR/face-gate, REST-схемы OSD/ROI/DDNS/PPPoE, FAT/MP4-ремонт) —
+  `TO_DO.md` §15.7;
+  кандидаты, оставленные осознанно (`rk_smart_door`, `fastboot_server`,
+  `uvc_app_tiny`, `rkipc`, `third_libs`, MCU SDK), перечислены там
+  же. Проверка: `make -C project/app info` проходит, удалённых каталогов в
+  `app_src` нет.
+- **Unused vendor directories removed (2026-11-25).**
+  `project/app/component/rkadk` (111 files, 3.4 MB),
+  `project/app/component/lvgl` (1088 files, 95 MB),
+  `project/app/ipcweb` (282 files, 5.7 MB) and
+  `project/app/component/rkfsmk` (8 files, 1.7 MB): no BoardConfig enables
+  them, `project/app/Makefile` does not build them, and OKO code has no
+  references. The `rkfsmk` API (`rkfsmk_*`, `repair_mp4`, `kernel_*`) had no
+  callers and nothing linked `-lrkfsmk`; the `test ! -d` guard in
+  `rkipc/Makefile` keeps the vendor Makefile untouched, and
+  `make -C project/app/rkipc rkfsmk-build` still succeeds after the removal.
+  Stale `librkfsmk.so`/`rkfsmk.h` copies were also removed from
+  `project/app/out/` and `output/out/`.
+  Upstream links and notes on the useful parts (RKADK
+  API/examples, LVGL for CVR/face-gate, REST OSD/ROI/DDNS/PPPoE schemas,
+  FAT/MP4 repair)
+  are in `TO_DO.md` §15.7; the deliberately kept candidates (`rk_smart_door`,
+  `fastboot_server`, `uvc_app_tiny`, `rkipc`, `third_libs`, the
+  MCU SDKs) are listed there as well. Checked with
+  `make -C project/app info`: the removed directories are gone from
+  `app_src`.
 - **`research/rv1106-aov`: удалены 7 отработавших файлов снимка dehai.**
   Выводы применены в OKO или отвергнуты стендом, поэтому удалены
   `docs/design/aov.md`, `docs/07-todolist-aov.md`, `docs/04-worklog.md`,
