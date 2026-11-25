@@ -47,14 +47,16 @@ static inline void oko_aov_set_state(enum oko_aov_state state)
 	WRITE_ONCE(oko_aov_state, state);
 }
 #else
-/* Keep the PM code compilable when the feature is off; the constant folds
- * away and the interface is never exposed to user space.  Do not use a
- * macro named oko_aov_state: it would rename the enum tag in the inline
- * helper below. */
-static const bool oko_aov_enabled __maybe_unused = false;
-static const u32 oko_aov_heartbeat_wakes __maybe_unused = 0;
-static const u32 oko_aov_quiet_wakes __maybe_unused = 0;
-static const u32 oko_aov_timeout_streak __maybe_unused = 0;
+/* Keep the PM code compilable when the feature is off; the stores fold away
+ * and the interface is never exposed to user space.  Do not use a macro named
+ * oko_aov_state: it would rename the enum tag in the inline helper below.
+ * The stubs must be writable: the suspend path uses WRITE_ONCE on the
+ * counters even though IS_ENABLED() makes that code unreachable. */
+static bool oko_aov_enabled __maybe_unused;
+static u32 oko_aov_state __maybe_unused;
+static u32 oko_aov_heartbeat_wakes __maybe_unused;
+static u32 oko_aov_quiet_wakes __maybe_unused;
+static u32 oko_aov_timeout_streak __maybe_unused;
 
 static inline void oko_aov_set_state(enum oko_aov_state state)
 {
