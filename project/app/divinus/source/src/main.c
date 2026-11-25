@@ -34,6 +34,9 @@
 
 rtsp_handle rtspHandle;
 volatile char graceful = 0, keepRunning = 1;
+/* Set by handle_exit().  A signal may arrive while the AP is in mem: the
+ * in-process resume branches must not turn it into "keep running" again. */
+volatile char exitRequested = 0;
 
 void handle_error(int signo) {
     char msg[64];
@@ -49,6 +52,7 @@ void handle_error(int signo) {
 void handle_exit(int signo) {
     write(STDERR_FILENO, "Graceful shutdown...\n", 21);
     keepRunning = 0;
+    exitRequested = 1;
     graceful = (signo == SIGHUP);
 }
 
@@ -366,6 +370,12 @@ int main(int argc, char *argv[]) {
             sleep_policy_begin_wake_window();
             if (app_config.watchdog)
                 watchdog_start(app_config.watchdog);
+            if (exitRequested) {
+                /* The signal arrived during suspend: leave through the normal
+                 * teardown with the graceful flag the handler set. */
+                keepRunning = 0;
+                continue;
+            }
             graceful = 0;
             keepRunning = 1;
             sleep_policy_start();
@@ -392,6 +402,10 @@ int main(int argc, char *argv[]) {
             }
             if (hbWake)
                 heartbeat_before_suspend_ex(1);
+            if (exitRequested) {
+                keepRunning = 0;
+                continue;
+            }
             graceful = 0;
             keepRunning = 1;
             sleep_policy_start();
@@ -416,6 +430,10 @@ int main(int argc, char *argv[]) {
                     sleep_policy_clear_heartbeat_wake();
                 }
                 sleep_policy_begin_wake_window();
+                if (exitRequested) {
+                    keepRunning = 0;
+                    continue;
+                }
                 graceful = 0;
                 keepRunning = 1;
                 sleep_policy_start();
@@ -438,6 +456,11 @@ int main(int argc, char *argv[]) {
 
             services_stop(aovKeepPipeline);
             focus_motor_shutdown();
+
+            if (exitRequested) {
+                /* A signal arrived in mem: no second sleep, go to the tail. */
+                break;
+            }
 
             if (sleep_policy_suspend() == 0) {
                 HAL_INFO("sleep", "suspend cycle done; restarting into wake probe\n");

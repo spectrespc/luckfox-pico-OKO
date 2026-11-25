@@ -72,6 +72,10 @@ enum sleep_state
 };
 
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+/* Serialises bind/unbind and the oko-wifi re-apply: report_motion() runs in
+ * the IVS/YOLO/HTTP threads and two concurrent system() calls would race on
+ * the SIGCHLD handling. */
+static pthread_mutex_t usb_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_t thread;
 static volatile int running;
 static int thread_started;
@@ -202,10 +206,12 @@ static int usb_host_bound(void)
 static int usb_host_set(int bind)
 {
     char path[80];
+    int result = 0;
 
+    pthread_mutex_lock(&usb_lock);
     if (usb_host_bound() == bind)
     {
-        return 0;
+        goto out;
     }
     snprintf(path, sizeof(path), "%s/%s", XHCI_DRIVER_DIR,
              bind ? "bind" : "unbind");
@@ -213,7 +219,8 @@ static int usb_host_set(int bind)
     {
         HAL_WARNING("sleep", "cannot %s the USB host: %s\n",
                     bind ? "bind" : "unbind", strerror(errno));
-        return -1;
+        result = -1;
+        goto out;
     }
     HAL_INFO("sleep", "USB host %s\n", bind ? "bound" : "unbound");
     if (bind && access("/usr/bin/oko-wifi", X_OK) == 0)
@@ -222,7 +229,37 @@ static int usb_host_set(int bind)
          * the AP/STA comes back without waiting for the next boot. */
         (void)system("/usr/bin/oko-wifi apply >/dev/null 2>&1");
     }
-    return 0;
+out:
+    pthread_mutex_unlock(&usb_lock);
+    return result;
+}
+
+/* The event path must not block on the Wi-Fi re-apply, so the motion wake
+ * binds the host in a detached worker.  usb_lock serialises concurrent
+ * requests; a failure falls back to the synchronous call. */
+static void *usb_bind_worker(void *arg)
+{
+    (void)arg;
+    (void)usb_host_set(1);
+    return NULL;
+}
+
+static void usb_bind_async(void)
+{
+    pthread_t worker;
+
+    if (usb_host_bound())
+    {
+        return;
+    }
+    if (pthread_create(&worker, NULL, usb_bind_worker, NULL) == 0)
+    {
+        pthread_detach(worker);
+    }
+    else
+    {
+        (void)usb_host_set(1);
+    }
 }
 
 static const char *aov_state_name(void)
@@ -690,7 +727,9 @@ void sleep_policy_begin_wake_window(void)
 
 void sleep_policy_clear_heartbeat_wake(void)
 {
+    pthread_mutex_lock(&lock);
     heartbeat_wake = 0;
+    pthread_mutex_unlock(&lock);
     unlink(HEARTBEAT_MARKER_PATH);
 }
 
@@ -763,19 +802,22 @@ void sleep_policy_report_motion(void)
         state = SLEEP_AWAKE;
         HAL_INFO("sleep", "motion in the wake window; stream stays on\n");
     }
+    /* Confirmed motion outranks a pending tier-2 snapshot; keep the flag
+     * under the same lock as the state it belongs to. */
+    heartbeat_wake = 0;
     pthread_mutex_unlock(&lock);
 
     /* A motion wake without AOV (or a motion detected in the probe window)
-     * needs the network/streaming path, so bring the host back. */
-    if (app_config.sleep_usb_on_motion && !usb_host_bound())
+     * needs the network/streaming path, so bring the host back without
+     * blocking this (event/HTTP) thread. */
+    if (app_config.sleep_usb_on_motion)
     {
-        (void)usb_host_set(1);
+        usb_bind_async();
     }
 
     /* Confirmed motion is delivered by the event path; rebase the heartbeat
      * interval so the next quiet cycle does not add a duplicate frame. */
     heartbeat_set_due();
-    heartbeat_wake = 0;
 }
 
 int sleep_policy_should_suspend(void)
@@ -819,7 +861,12 @@ int sleep_policy_cycle_is_quiet_resume(void)
 
 int sleep_policy_cycle_is_heartbeat(void)
 {
-    return heartbeat_wake;
+    int value;
+
+    pthread_mutex_lock(&lock);
+    value = heartbeat_wake;
+    pthread_mutex_unlock(&lock);
+    return value;
 }
 
 int sleep_policy_suspend(void)
@@ -988,7 +1035,9 @@ int sleep_policy_suspend(void)
              * Persist it for the exec-restarted instance; CLOCK_MONOTONIC
              * skipped the suspended interval, so the normal due-gate would
              * suppress the very frame this wake exists for. */
+            pthread_mutex_lock(&lock);
             heartbeat_wake = 1;
+            pthread_mutex_unlock(&lock);
             FILE *marker = fopen(HEARTBEAT_MARKER_PATH, "w");
             if (marker)
             {

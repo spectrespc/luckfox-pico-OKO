@@ -1178,6 +1178,35 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Исправлено
 
+- **`[sleep] fast_resume`: сигналы во время suspend и флаги heartbeat.** В
+  не-`exec` режимах SIGTERM/SIGINT/SIGHUP, пришедший, пока AP был в `mem`,
+  больше не теряется: `handle_exit()` выставляет `exitRequested`, и
+  диспетчер после resume уходит в штатный teardown (или в `exec` для SIGHUP),
+  не запуская новый цикл сна. `heartbeat_wake` теперь пишется, сбрасывается и
+  читается под мьютексом политики, а привязка USB-хоста по движению вынесена
+  в отдельный поток с сериализацией bind/`oko-wifi apply`: поток событий не
+  блокируется на поднятии WiFi, и два `system()` не конкурируют.
+- **`[sleep] fast_resume`: signals during suspend and the heartbeat flags.**
+  In the non-`exec` modes a SIGTERM/SIGINT/SIGHUP that arrives while the AP is
+  in `mem` is no longer lost: `handle_exit()` sets `exitRequested`, and the
+  dispatcher leaves through the normal teardown after the resume (or `exec`
+  for SIGHUP) instead of starting another sleep cycle. `heartbeat_wake` is now
+  written, cleared and read under the policy mutex, and the motion USB bind
+  runs in a detached worker with a bind/`oko-wifi apply` mutex: the event
+  thread no longer blocks on the Wi-Fi re-apply and two `system()` calls
+  cannot race.
+- **bench: защита матрицы resume.** `--stop-on-sfc -1` действительно
+  отключает остановку (раньше прерывал первый же цикл); переполнение
+  dmesg-кольца или ребут больше не превращают дельты `mipi`/`sfc`/`ubi` в 0 —
+  остаток кольца считается новыми строками и помечается `counter_reset` в
+  `run.json` и отчёте; `sleep_power.py` снова восстанавливает `usb_on_motion`
+  (и `fast_resume`) после AOV-сценария.
+- **bench: resume-matrix safeguards.** `--stop-on-sfc -1` really disables the
+  stop (it used to abort the very first cycle); a dmesg ring wrap or a reboot
+  no longer turns the `mipi`/`sfc`/`ubi` deltas into 0 - the remaining ring
+  content is counted as new lines and flagged `counter_reset` in `run.json`
+  and the report; `sleep_power.py` restores `usb_on_motion` (and
+  `fast_resume`) after the AOV scenario again.
 - **`/api/record`: `enable=false` и `stop=1` теперь останавливают активную
   запись (KI-082).** Обработчик собирает `start`/`stop` в процессе разбора
   запроса и применяет команды после всех конфиг-ключей: `stop=1` и
