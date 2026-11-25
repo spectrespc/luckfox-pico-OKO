@@ -4,6 +4,81 @@
 
 #include <string.h>
 
+const char *sleep_fast_resume_name(sleep_fast_resume_mode mode)
+{
+    switch (mode)
+    {
+    case SLEEP_FAST_RESUME_LIVE:
+        return "live";
+    case SLEEP_FAST_RESUME_STOPSTART:
+        return "stopstart";
+    case SLEEP_FAST_RESUME_AIQ:
+        return "aiq";
+    default:
+        return "exec";
+    }
+}
+
+int sleep_fast_resume_from_name(const char *name, sleep_fast_resume_mode *mode)
+{
+    sleep_fast_resume_mode value;
+
+    if (!name || !mode)
+    {
+        return -1;
+    }
+    if (strcmp(name, "exec") == 0)
+    {
+        value = SLEEP_FAST_RESUME_EXEC;
+    }
+    else if (strcmp(name, "live") == 0)
+    {
+        value = SLEEP_FAST_RESUME_LIVE;
+    }
+    else if (strcmp(name, "stopstart") == 0)
+    {
+        value = SLEEP_FAST_RESUME_STOPSTART;
+    }
+    else if (strcmp(name, "aiq") == 0)
+    {
+        value = SLEEP_FAST_RESUME_AIQ;
+    }
+    else
+    {
+        return -1;
+    }
+    *mode = value;
+    return 0;
+}
+
+int sleep_fast_resume_teardown(sleep_fast_resume_mode mode)
+{
+    /* The live and aiq strategies keep the vendor pipeline up across mem. */
+    return mode == SLEEP_FAST_RESUME_EXEC ||
+           mode == SLEEP_FAST_RESUME_STOPSTART;
+}
+
+int sleep_fast_resume_park_aiq(sleep_fast_resume_mode mode)
+{
+    return mode == SLEEP_FAST_RESUME_AIQ;
+}
+
+int sleep_fast_resume_restart_services(sleep_fast_resume_mode mode)
+{
+    /* Only stopstart re-runs the service init in the same process. */
+    return mode == SLEEP_FAST_RESUME_STOPSTART;
+}
+
+int sleep_fast_resume_allowed(sleep_fast_resume_mode mode,
+                              int pause_available, int resume_available)
+{
+    if (mode == SLEEP_FAST_RESUME_AIQ)
+    {
+        return pause_available && resume_available;
+    }
+    return 1;
+}
+
 unsigned int sleep_heartbeat_wakes(unsigned int heartbeat_s,
                                    unsigned int wake_s)
 {

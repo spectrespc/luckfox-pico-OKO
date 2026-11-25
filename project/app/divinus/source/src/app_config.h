@@ -10,6 +10,7 @@
 #include "hal/config.h"
 #include "hal/support.h"
 #include "region.h"
+#include "sleep_logic.h"
 
 struct AppConfig {
     // [system]
@@ -287,6 +288,9 @@ struct AppConfig {
     bool sleep_heartbeat;
     unsigned int sleep_heartbeat_interval_s;  /* 0 = every quiet cycle */
     unsigned int sleep_heartbeat_retries;     /* send attempts, 0..10 */
+    /* Resume strategy; exec is the product default.  live/stopstart/aiq are
+     * AOV-profile experiments (see KNOWN_ISSUES KI-072). */
+    sleep_fast_resume_mode sleep_fast_resume;
 };
 
 extern struct AppConfig app_config;

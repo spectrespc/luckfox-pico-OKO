@@ -9,6 +9,29 @@
 #ifndef SLEEP_LOGIC_H
 #define SLEEP_LOGIC_H
 
+/* Sleep resume strategies of [sleep] fast_resume.  exec is the product
+ * default (teardown + execvp); the others are AOV-profile experiments. */
+typedef enum {
+    SLEEP_FAST_RESUME_EXEC = 0,  /* teardown + execvp (current design) */
+    SLEEP_FAST_RESUME_LIVE,      /* no teardown; live CSI/ISP across mem */
+    SLEEP_FAST_RESUME_STOPSTART, /* teardown + exec, then re-init in-process */
+    SLEEP_FAST_RESUME_AIQ        /* vendor park: pause AIQ, drain VI, resume */
+} sleep_fast_resume_mode;
+
+/* YAML/API spelling.  from_name() returns 0 on success, -1 on an unknown
+ * value (the caller keeps the current/default mode). */
+const char *sleep_fast_resume_name(sleep_fast_resume_mode mode);
+int sleep_fast_resume_from_name(const char *name, sleep_fast_resume_mode *mode);
+
+/* Strategy decisions, kept pure for tests/sleep_logic_test.c. */
+int sleep_fast_resume_teardown(sleep_fast_resume_mode mode);
+int sleep_fast_resume_park_aiq(sleep_fast_resume_mode mode);
+int sleep_fast_resume_restart_services(sleep_fast_resume_mode mode);
+/* 1 when the requested mode may run: aiq needs both pause and resume symbols;
+ * every other mode is always allowed. */
+int sleep_fast_resume_allowed(sleep_fast_resume_mode mode,
+                              int pause_available, int resume_available);
+
 /* N in "one userspace wake every N quiet cycles".  0 means "never wake
  * userspace from a quiet cycle" (the pre-two-tier behaviour) and is returned
  * when either interval is unusable. */

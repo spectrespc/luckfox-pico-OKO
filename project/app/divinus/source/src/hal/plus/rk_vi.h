@@ -152,6 +152,9 @@ typedef struct {
     int (*fnSetChannelConfig)(int pipe, int channel, rk_vi_chn *config);
     int (*fnReleaseChnFrame)(int pipe, int channel, const rk_common_frame_info *frame);
 
+    /* Vendor typo spelling is the exported symbol: DevEnableSinglelFrame. */
+    int (*fnDevEnableSinglelFrame)(int device, int frameCount);
+
     int (*fnBindPipe)(int device, rk_vi_bind *config);
     int (*fnCreatePipe)(int pipe, rk_vi_pipe *config);
     int (*fnDestroyPipe)(int pipe);
@@ -201,6 +204,9 @@ static int rk_vi_load(rk_vi_impl *vi_lib) {
         hal_symbol_load("rk_vi", vi_lib->handle, "RK_MPI_VI_ReleaseChnFrame")))
         return EXIT_FAILURE;
 
+
+    vi_lib->fnDevEnableSinglelFrame = (int(*)(int device, int frameCount))
+        dlsym(vi_lib->handle, "RK_MPI_VI_DevEnableSinglelFrame");
 
     if (!(vi_lib->fnBindPipe = (int(*)(int device, rk_vi_bind *config))
         hal_symbol_load("rk_vi", vi_lib->handle, "RK_MPI_VI_SetDevBindPipe")))

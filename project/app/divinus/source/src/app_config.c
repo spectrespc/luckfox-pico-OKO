@@ -476,6 +476,8 @@ void app_config_dump(FILE *file) {
     fprintf(file, "  heartbeat: %s\n", app_config.sleep_heartbeat ? "true" : "false");
     fprintf(file, "  heartbeat_interval_s: %d\n", app_config.sleep_heartbeat_interval_s);
     fprintf(file, "  heartbeat_retries: %d\n", app_config.sleep_heartbeat_retries);
+    fprintf(file, "  fast_resume: %s\n",
+        sleep_fast_resume_name(app_config.sleep_fast_resume));
 }
 
 enum ConfigError app_config_parse(void) {
@@ -707,6 +709,7 @@ enum ConfigError app_config_parse(void) {
     app_config.sleep_heartbeat = false;
     app_config.sleep_heartbeat_interval_s = 0;
     app_config.sleep_heartbeat_retries = 3;
+    app_config.sleep_fast_resume = SLEEP_FAST_RESUME_EXEC;
 
     struct IniConfig ini;
     memset(&ini, 0, sizeof(struct IniConfig));
@@ -1464,6 +1467,28 @@ enum ConfigError app_config_parse(void) {
             if (hb_int_err == CONFIG_PARAM_NOT_FOUND)
                 app_config.sleep_heartbeat_interval_s =
                     sleep_default_heartbeat_interval(1);
+        }
+
+        /* The non-exec resume strategies are AOV-profile experiments.  A
+         * product build (no wake proxy) or a typo keeps the verified exec
+         * path, so a hand-edited YAML cannot change the product behaviour. */
+        {
+            char name[16];
+
+            if (parse_param_value_n(&ini, "sleep", "fast_resume",
+                    name, sizeof(name)) == CONFIG_OK) {
+                sleep_fast_resume_mode mode;
+
+                if (sleep_fast_resume_from_name(name, &mode) != 0) {
+                    HAL_WARNING("config", "sleep.fast_resume=%s is unknown; "
+                        "using exec\n", name);
+                } else if (mode != SLEEP_FAST_RESUME_EXEC && !aov) {
+                    HAL_WARNING("config", "sleep.fast_resume=%s needs the AOV "
+                        "profile; using exec\n", name);
+                } else {
+                    app_config.sleep_fast_resume = mode;
+                }
+            }
         }
     }
     {

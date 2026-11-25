@@ -1687,3 +1687,60 @@ int sdk_stop(void) {
     HAL_INFO("media", "SDK had stopped successfully!\n");
     return EXIT_SUCCESS;
 }
+
+/* AOV fast-resume park.  Only the Rockchip HAL implements the vendor
+ * pause/resume and VI drain; every other platform reports "unsupported" so
+ * the dispatcher keeps the exec path. */
+int media_aiq_pause_available(void) {
+    switch (plat) {
+#if defined(__ARM_PCS_VFP)
+        case HAL_PLATFORM_RK: return rk_aiq_pause_available();
+#endif
+        default: return 0;
+    }
+}
+
+int media_aiq_pause(int single) {
+    switch (plat) {
+#if defined(__ARM_PCS_VFP)
+        case HAL_PLATFORM_RK: return rk_aiq_pause(single);
+#endif
+        default: return EXIT_FAILURE;
+    }
+}
+
+int media_aiq_resume(void) {
+    switch (plat) {
+#if defined(__ARM_PCS_VFP)
+        case HAL_PLATFORM_RK: return rk_aiq_resume();
+#endif
+        default: return EXIT_FAILURE;
+    }
+}
+
+int media_aiq_motion_detect(int enable) {
+    switch (plat) {
+#if defined(__ARM_PCS_VFP)
+        case HAL_PLATFORM_RK: return rk_aiq_motion_detect(enable);
+#endif
+        default: return EXIT_FAILURE;
+    }
+}
+
+int media_pipeline_drain(int timeout_ms) {
+    switch (plat) {
+#if defined(__ARM_PCS_VFP)
+        case HAL_PLATFORM_RK: return rk_pipeline_drain(timeout_ms);
+#endif
+        default: return EXIT_FAILURE;
+    }
+}
+
+int media_pipeline_wake_frame(void) {
+    switch (plat) {
+#if defined(__ARM_PCS_VFP)
+        case HAL_PLATFORM_RK: return rk_pipeline_wake_frame();
+#endif
+        default: return EXIT_FAILURE;
+    }
+}

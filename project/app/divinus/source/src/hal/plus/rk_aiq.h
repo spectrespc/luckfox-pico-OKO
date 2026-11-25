@@ -58,6 +58,12 @@ typedef struct {
     int (*fnPrepare)(rk_aiq_ctx *context, int width, int height, rk_aiq_work work);
     int (*fnStart)(rk_aiq_ctx *context);
     int (*fnStop)(rk_aiq_ctx *context);
+    /* Vendor AOV park: pause/resume the vicap stream without tearing the ISP
+     * context down.  Optional; the caller must gate on both pointers. */
+    void (*fnPause)(rk_aiq_ctx *context, bool isSingleMode);
+    void (*fnResume)(rk_aiq_ctx *context);
+    int (*fnStartMotionDetect)(rk_aiq_ctx *context);
+    int (*fnStopMotionDetect)(rk_aiq_ctx *context);
     int (*fnGetVersion)(char **version);
 
     int (*fnGetExpMode)(const rk_aiq_ctx *context, int *autoMode);
@@ -196,6 +202,29 @@ static int rk_aiq_load(rk_aiq_impl *aiq_lib) {
     if (!(aiq_lib->fnSetMirrorFlip = (int(*)(const rk_aiq_ctx*, bool, bool, int))
         hal_symbol_load("rk_aiq", aiq_lib->handle, "rk_aiq_uapi2_setMirrorFlip")))
         return EXIT_FAILURE;
+
+    /* The RV1106 librkaiq exports the uAPI2 names; the vendor AOV sample was
+     * written against the uAPI v1 ones, so both spellings are accepted. */
+    aiq_lib->fnPause = (void(*)(rk_aiq_ctx*, bool))
+        dlsym(aiq_lib->handle, "rk_aiq_uapi2_sysctl_pause");
+    if (!aiq_lib->fnPause)
+        aiq_lib->fnPause = (void(*)(rk_aiq_ctx*, bool))
+            dlsym(aiq_lib->handle, "rk_aiq_uapi_sysctl_pause");
+    aiq_lib->fnResume = (void(*)(rk_aiq_ctx*))
+        dlsym(aiq_lib->handle, "rk_aiq_uapi2_sysctl_resume");
+    if (!aiq_lib->fnResume)
+        aiq_lib->fnResume = (void(*)(rk_aiq_ctx*))
+            dlsym(aiq_lib->handle, "rk_aiq_uapi_sysctl_resume");
+    aiq_lib->fnStartMotionDetect = (int(*)(rk_aiq_ctx*))
+        dlsym(aiq_lib->handle, "rk_aiq_uapi2_sysctl_startMotionDetect");
+    if (!aiq_lib->fnStartMotionDetect)
+        aiq_lib->fnStartMotionDetect = (int(*)(rk_aiq_ctx*))
+            dlsym(aiq_lib->handle, "rk_aiq_uapi_sysctl_startMotionDetect");
+    aiq_lib->fnStopMotionDetect = (int(*)(rk_aiq_ctx*))
+        dlsym(aiq_lib->handle, "rk_aiq_uapi2_sysctl_stopMotionDetect");
+    if (!aiq_lib->fnStopMotionDetect)
+        aiq_lib->fnStopMotionDetect = (int(*)(rk_aiq_ctx*))
+            dlsym(aiq_lib->handle, "rk_aiq_uapi_sysctl_stopMotionDetect");
 
     aiq_lib->fnSwitchScene = (int(*)(const rk_aiq_ctx*, const char*, const char*))
         dlsym(aiq_lib->handle, "rk_aiq_uapi2_sysctl_switch_scene");

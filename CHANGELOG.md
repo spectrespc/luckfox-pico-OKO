@@ -26,6 +26,58 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Добавлено
 
+- **`[sleep] fast_resume`: переключатель стратегии resume (`exec|live|stopstart|aiq`).**
+  Экспериментальный ключ YAML и `POST /api/sleep?fast_resume=` (по умолчанию
+  `exec`, продуктовое поведение не меняется; не-`exec` принимается только при
+  наличии AOV-прокси). В `main` появился диспетчер resume: `exec` — прежний
+  teardown + `execvp`; `live` — процесс и медиа живут через `mem`;
+  `stopstart` — teardown и повторный старт сервисов в том же процессе
+  (`services_start(0)` без повторной загрузки моделей, STM8 не
+  перезапускается); `aiq` — вендорская парковка: `rk_aiq_uapi*_sysctl_pause/
+  resume` через dlsym (v2→v1), опциональные `*MotionDetect`, drain VI
+  `GetChnFrame→Release` и `RK_MPI_VI_DevEnableSinglelFrame`. Не-`exec` ветки
+  заново открывают wake-окно и снимают tier-2 heartbeat-флаг, чтобы кадр не
+  отправлялся в каждом цикле. Хост-тест `tests/sleep_logic_test.c` покрывает
+  имена режимов, матрицы teardown/park/restart и gating по символам. Матрица
+  на NAND #38 (2026-11-25, `aov_mcu=0`): `exec` 10/10 циклов зелёный
+  (wake→API 0.21 с, wake→JPEG 0.29 с, 25 потоков, `mipi`=0); `aiq` — первый
+  же цикл даёт `mipi-csi2-hw ERR`, HTTP 000, следующее пробуждение не
+  наступает (KI-072). `live`/`stopstart` сохраняют прежние вердикты KI-072.
+- **`[sleep] fast_resume`: the resume strategy switch (`exec|live|stopstart|aiq`).**
+  An experimental YAML key and `POST /api/sleep?fast_resume=` (default
+  `exec`, the product behaviour is unchanged; a non-`exec` value is accepted
+  only when the AOV proxy exists). `main` now has a resume dispatcher: `exec`
+  is the old teardown + `execvp`; `live` keeps the process and the media
+  across `mem`; `stopstart` tears the services down and re-runs the startup in
+  the same process (`services_start(0)` skips the one-shot model loader and
+  does not restart the STM8); `aiq` is the vendor park:
+  `rk_aiq_uapi*_sysctl_pause/resume` via dlsym (v2→v1), optional
+  `*MotionDetect`, VI drain `GetChnFrame→Release` and
+  `RK_MPI_VI_DevEnableSinglelFrame`. The non-`exec` branches open a new wake
+  window and consume the tier-2 heartbeat flag so the frame is not sent on
+  every cycle. The host test `tests/sleep_logic_test.c` covers the mode names,
+  the teardown/park/restart matrices and the symbol gating. The NAND #38
+  matrix (2026-11-25, `aov_mcu=0`): `exec` 10/10 cycles green (wake→API
+  0.21 s, wake→JPEG 0.29 s, 25 threads, `mipi`=0); `aiq` produces
+  `mipi-csi2-hw ERR`, HTTP 000 on its very first cycle and the next wake does
+  not arrive (KI-072). `live`/`stopstart` keep the earlier KI-072 verdicts.
+- **`bench/aov_resume_matrix.py`: матрица resume по циклам.**
+  Прогон `--mode exec|live|stopstart|aiq --cycles N --interval S`: на каждый
+  resume пишет `last_suspend_time`, время до `/api/status` 200 и JPEG
+  > 1000 Б, число потоков/fd/RSS/dma-buf, `pidof`, слушатель :80, счётчики
+  `mipi-csi2-hw ERR`, `mpp: ctx is no found` и NAND (`sfc`/`ubi`, KI-071);
+  по умолчанию прогон останавливается на первой новой ошибке NAND.
+  Конфиг теста задаётся сам и восстанавливается в `finally`; артефакты —
+  `output/bench/aov-test/fast-resume-20261125/<mode>/run.json` + `report.md`.
+- **`bench/aov_resume_matrix.py`: the per-cycle resume matrix.**
+  Runs `--mode exec|live|stopstart|aiq --cycles N --interval S` and records the
+  kernel resume path (`last_suspend_time`), the time to `/api/status` 200 and a
+  JPEG > 1000 B, the thread/fd/RSS/dma-buf footprint, `pidof`, the :80
+  listener and the `mipi-csi2-hw ERR`, `mpp: ctx is no found` and NAND
+  (`sfc`/`ubi`, KI-071) counters per resume; by default it stops on the first
+  new NAND error. It applies the test config itself and restores it in a
+  `finally` block; artifacts are
+  `output/bench/aov-test/fast-resume-20261125/<mode>/run.json` + `report.md`.
 - **Сохранён вендорский AP-side AOV-сэмпл Rockchip
   (`research/rv1106-aov-vendor-sample/`).** В SDK LubanCat RV06 нашёлся
   полный `project/app/aov_sample`, которого нет в Luckfox; тот же сэмпл

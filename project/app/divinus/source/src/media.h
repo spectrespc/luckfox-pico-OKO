@@ -29,6 +29,15 @@ extern rtsp_handle rtspHandle;
 int sdk_start(void);
 int sdk_stop(void);
 
+/* AOV fast-resume park (KI-072).  The platform-neutral wrappers keep main.c
+ * free of HAL conditionals; non-RV1106 platforms return EXIT_FAILURE. */
+int media_aiq_pause_available(void);
+int media_aiq_pause(int single);
+int media_aiq_resume(void);
+int media_aiq_motion_detect(int enable);
+int media_pipeline_drain(int timeout_ms);
+int media_pipeline_wake_frame(void);
+
 int media_start(void);
 void media_stop(void);
 /* True when at least one streaming destination (UDP or RTMP) is active. */

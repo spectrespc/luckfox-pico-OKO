@@ -92,6 +92,9 @@ static int quiet_request;
 static int quiet_suspend;
 /* Set by a tier-2 kernel wake, consumed by main after the probe window. */
 static int heartbeat_wake;
+/* motion_seq at the last resume: an in-process wake window must not override a
+ * motion report that arrived after it. */
+static unsigned long wake_seq;
 static struct timespec last_motion;
 static struct timespec probe_deadline;
 
@@ -661,6 +664,36 @@ void sleep_policy_init(void)
     }
 }
 
+void sleep_policy_begin_wake_window(void)
+{
+    if (!enabled)
+    {
+        return;
+    }
+
+    pthread_mutex_lock(&lock);
+    probe_mode = 1;
+    last_motion = mono_now();
+    if (motion_seq != wake_seq)
+    {
+        /* IVS/event path already reported motion after resume. */
+        state = SLEEP_AWAKE;
+    }
+    else
+    {
+        state = SLEEP_PROBE;
+        probe_deadline = last_motion;
+        probe_deadline.tv_sec += (time_t)app_config.sleep_wake_check_s;
+    }
+    pthread_mutex_unlock(&lock);
+}
+
+void sleep_policy_clear_heartbeat_wake(void)
+{
+    heartbeat_wake = 0;
+    unlink(HEARTBEAT_MARKER_PATH);
+}
+
 void sleep_policy_mark_wake(void)
 {
     FILE *file = fopen(SLEEP_PROBE_MARKER_PATH, "w");
@@ -1005,6 +1038,7 @@ int sleep_policy_suspend(void)
     state = SLEEP_AWAKE;
     last_motion = mono_now();
     motion_seq++;
+    wake_seq = motion_seq;
     pthread_mutex_unlock(&lock);
 
     return 0;
@@ -1050,6 +1084,7 @@ void sleep_policy_api_json(char *out, size_t size)
     snprintf(out, size,
              "{\"enable\":%s,\"pmu_timer_wake\":%s,\"aov_mcu\":%s,"
              "\"aov_keep_isp\":%s,\"usb_on_motion\":%s,"
+             "\"fast_resume\":\"%s\","
              "\"usb_bound\":%s,"
              "\"aov_available\":%s,\"aov_state\":\"%s\","
              "\"idle_timeout_s\":%u,\"wake_interval_s\":%u,"
@@ -1062,6 +1097,7 @@ void sleep_policy_api_json(char *out, size_t size)
              app_config.sleep_aov_mcu ? "true" : "false",
              app_config.sleep_aov_keep_isp ? "true" : "false",
              app_config.sleep_usb_on_motion ? "true" : "false",
+             sleep_fast_resume_name(app_config.sleep_fast_resume),
              usb_host_bound() ? "true" : "false",
              aov_supported ? "true" : "false", aov_state_name(),
              app_config.sleep_idle_timeout_s,

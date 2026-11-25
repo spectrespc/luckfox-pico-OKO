@@ -40,6 +40,11 @@ int sleep_policy_should_suspend(void);
  * heartbeat-кадр. */
 int sleep_policy_cycle_is_quiet_resume(void);
 
+/* 1, когда текущий цикл разбужен tier-2 heartbeat-пробуждением ядра: такой
+ * цикл обязан отправить кадр в обход interval-gate.  Для in-process resume
+ * флаг снимается sleep_policy_clear_heartbeat_wake(). */
+int sleep_policy_cycle_is_heartbeat(void);
+
 /* Выполнить suspend.  Блокируется до resume; вызывать после полного
  * teardown.  Возвращает 0, если AP проснулся, -1 — если suspend не удался
  * (тогда main должен просто перезапустить процесс). */
@@ -47,6 +52,15 @@ int sleep_policy_suspend(void);
 
 /* main: отметить, что следующий экземпляр должен начать с окна проверки. */
 void sleep_policy_mark_wake(void);
+
+/* In-process resume (fast_resume != exec): open the motion-check window in the
+ * same process instead of the exec-restart marker path.  A motion report that
+ * already arrived after resume keeps the state awake. */
+void sleep_policy_begin_wake_window(void);
+
+/* In-process resume: the tier-2 flag and its exec-restart marker are consumed
+ * by the resume branch, so a later sleep cycle does not send the frame again. */
+void sleep_policy_clear_heartbeat_wake(void);
 
 /* JSON-фрагмент без ведущей запятой: "sleep":{"enabled":...}. */
 void sleep_policy_status_json(char *out, size_t size);

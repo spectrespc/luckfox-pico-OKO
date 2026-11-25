@@ -6570,6 +6570,8 @@ if (EQUALS(req->uri, "/api/storage")) {
             bool heartbeat = app_config.sleep_heartbeat;
             unsigned int hbInterval = app_config.sleep_heartbeat_interval_s;
             unsigned int hbRetries = app_config.sleep_heartbeat_retries;
+            sleep_fast_resume_mode fastResume =
+                app_config.sleep_fast_resume;
             bool motion = false, changed = false;
             char *query = req->query;
 
@@ -6596,6 +6598,17 @@ if (EQUALS(req->uri, "/api/storage")) {
                     aovKeepIsp = query_bool(value); changed = true;
                 } else if (EQUALS(key, "usb_on_motion")) {
                     usbOnMotion = query_bool(value); changed = true;
+                } else if (EQUALS(key, "fast_resume")) {
+                    sleep_fast_resume_mode mode;
+
+                    if (sleep_fast_resume_from_name(value, &mode) != 0) {
+                        reply_error(req->clntFd, "blocked",
+                            "fast_resume must be exec, live, stopstart or aiq",
+                            "");
+                        return;
+                    }
+                    fastResume = mode;
+                    changed = true;
                 } else if (EQUALS(key, "heartbeat")) {
                     heartbeat = query_bool(value); changed = true;
                 } else if (EQUALS(key, "heartbeat_interval_s") ||
@@ -6647,6 +6660,14 @@ if (EQUALS(req->uri, "/api/storage")) {
                         "flash the -AOV image with the MCU in the idblock");
                     return;
                 }
+                if (fastResume != SLEEP_FAST_RESUME_EXEC &&
+                    !sleep_policy_aov_available()) {
+                    reply_error(req->clntFd, "blocked",
+                        "fast_resume experiments need the AOV profile",
+                        "flash the -AOV image or use fast_resume=exec");
+                    return;
+                }
+                app_config.sleep_fast_resume = fastResume;
                 app_config.sleep_enable = enable;
                 app_config.sleep_pmu_timer_wake = pmuTimer;
                 app_config.sleep_aov_mcu = aov;

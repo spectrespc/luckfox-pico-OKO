@@ -74,6 +74,16 @@ int rk_aiq_switch_scene(const char *main, const char *sub);
 int rk_aiq_update_iq(const char *file);
 int rk_aiq_set_work_mode(int mode);
 
+/* Vendor AOV park (KI-072): pause/resume the vicap stream without a teardown.
+ * The motion-detect calls are optional (our librkaiq does not export them). */
+int rk_aiq_pause_available(void);
+int rk_aiq_pause(int single);
+int rk_aiq_resume(void);
+int rk_aiq_motion_detect(int enable);
+/* Drain the queued VI frames before mem; queue one frame for the wake path. */
+int rk_pipeline_drain(int timeout_ms);
+int rk_pipeline_wake_frame(void);
+
 int rk_ivs_create(hal_ivs_config *config);
 int rk_ivs_set_config(hal_ivs_config *config);
 int rk_ivs_get_results(hal_ivs_result *result, int timeoutMs);

@@ -2104,6 +2104,43 @@ int rk_aiq_set_work_mode(int mode)
         ? EXIT_FAILURE : EXIT_SUCCESS;
 }
 
+/* Vendor AOV park: pause the vicap stream in a single-frame mode without
+ * tearing the ISP context down.  Both symbols are optional; the caller gates
+ * the whole strategy on rk_aiq_pause_available(). */
+int rk_aiq_pause_available(void)
+{
+    return _rk_aiq_ctx && rk_aiq.fnPause && rk_aiq.fnResume;
+}
+
+int rk_aiq_pause(int single)
+{
+    if (!rk_aiq_pause_available()) return EXIT_FAILURE;
+    rk_aiq.fnPause(_rk_aiq_ctx, single != 0);
+    HAL_INFO("rk_aiq", "vicap stream paused (single mode %d)\n", single != 0);
+    return EXIT_SUCCESS;
+}
+
+int rk_aiq_resume(void)
+{
+    if (!rk_aiq_pause_available()) return EXIT_FAILURE;
+    rk_aiq.fnResume(_rk_aiq_ctx);
+    HAL_INFO("rk_aiq", "vicap stream resumed\n");
+    return EXIT_SUCCESS;
+}
+
+int rk_aiq_motion_detect(int enable)
+{
+    if (!_rk_aiq_ctx) return EXIT_FAILURE;
+    if (enable) {
+        if (!rk_aiq.fnStartMotionDetect) return EXIT_FAILURE;
+        return rk_aiq.fnStartMotionDetect(_rk_aiq_ctx)
+            ? EXIT_FAILURE : EXIT_SUCCESS;
+    }
+    if (!rk_aiq.fnStopMotionDetect) return EXIT_FAILURE;
+    return rk_aiq.fnStopMotionDetect(_rk_aiq_ctx)
+        ? EXIT_FAILURE : EXIT_SUCCESS;
+}
+
 static char ivsCreated;
 static rk_ivs_result_info ivsResultInfo;
 static unsigned short ivsFrameWidth, ivsFrameHeight;
@@ -2114,6 +2151,47 @@ static unsigned short ivsFrameWidth, ivsFrameHeight;
  * build), and its picture size has to match the VI frame, so the analytic
  * size gets its own scaled channel as in rkipc's video.2. */
 #define RK_IVS_VI_CHN 2
+
+/* Vendor AOV park drains the queued VI frames (GetChnFrame -> Release) until
+ * the next get fails, so stale frames do not sit in the queue across mem.
+ * The main channel is bound to VPSS, the IVS channel has a user queue; both
+ * are drained best-effort. */
+int rk_pipeline_drain(int timeout_ms)
+{
+    const int channels[2] = { _rk_vi_chn, RK_IVS_VI_CHN };
+    int drained = 0;
+
+    for (int i = 0; i < 2; i++) {
+        int count = 0;
+
+        for (;;) {
+            rk_common_frame_info frame;
+
+            memset(&frame, 0, sizeof(frame));
+            if (rk_vi.fnGetChnFrame(_rk_vi_pipe, channels[i], &frame,
+                    timeout_ms))
+                break;
+            rk_vi.fnReleaseChnFrame(_rk_vi_pipe, channels[i], &frame);
+            count++;
+            if (count >= 64)
+                break;
+        }
+        drained += count;
+        HAL_INFO("rk_vi", "park drain: vi%d released %d frame(s)\n",
+            channels[i], count);
+    }
+    return drained;
+}
+
+/* Wake frame for the parked VI device: the vendor API queues exactly one new
+ * frame so the resumed ISP/VPSS graph has fresh input.  Optional. */
+int rk_pipeline_wake_frame(void)
+{
+    if (!rk_vi.fnDevEnableSinglelFrame)
+        return EXIT_FAILURE;
+    return rk_vi.fnDevEnableSinglelFrame(_rk_vi_dev, 1)
+        ? EXIT_FAILURE : EXIT_SUCCESS;
+}
 
 int rk_ivs_create(hal_ivs_config *config)
 {

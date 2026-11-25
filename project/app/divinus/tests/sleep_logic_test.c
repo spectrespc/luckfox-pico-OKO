@@ -2,7 +2,8 @@
  * Host test for the two-tier AOV sleep helpers (sleep_logic.c).
  *
  * Covers the tier-2 period N, the kernel aov_state classifier used to pick the
- * heartbeat path, the self-heal decision and the AOV-profile defaults.
+ * heartbeat path, the self-heal decision, the AOV-profile defaults and the
+ * fast-resume strategy matrices.
  *
  * Run from the repository root:
  *   gcc -std=c99 -Wall -Wextra -O2 \
@@ -12,6 +13,7 @@
  *       -o /tmp/sleep_logic_test && /tmp/sleep_logic_test
  */
 #include <stdio.h>
+#include <string.h>
 
 #include "sleep_logic.h"
 
@@ -27,8 +29,66 @@ static int failures;
         }                                       \
     } while (0)
 
+static void test_fast_resume(void)
+{
+    const sleep_fast_resume_mode modes[] = {
+        SLEEP_FAST_RESUME_EXEC, SLEEP_FAST_RESUME_LIVE,
+        SLEEP_FAST_RESUME_STOPSTART, SLEEP_FAST_RESUME_AIQ
+    };
+    const char *names[] = { "exec", "live", "stopstart", "aiq" };
+    const int teardown[] = { 1, 0, 1, 0 };
+    const int park[] = { 0, 0, 0, 1 };
+    const int restart[] = { 0, 0, 1, 0 };
+    size_t i;
+
+    for (i = 0; i < sizeof(modes) / sizeof(modes[0]); i++) {
+        sleep_fast_resume_mode parsed = SLEEP_FAST_RESUME_EXEC;
+
+        CHECK(strcmp(sleep_fast_resume_name(modes[i]), names[i]) == 0,
+            names[i]);
+        CHECK(sleep_fast_resume_from_name(names[i], &parsed) == 0 &&
+            parsed == modes[i], "round trip");
+        CHECK(sleep_fast_resume_teardown(modes[i]) == teardown[i],
+            "teardown matrix");
+        CHECK(sleep_fast_resume_park_aiq(modes[i]) == park[i],
+            "park_aiq matrix");
+        CHECK(sleep_fast_resume_restart_services(modes[i]) == restart[i],
+            "restart matrix");
+    }
+
+    {
+        sleep_fast_resume_mode parsed = SLEEP_FAST_RESUME_LIVE;
+
+        CHECK(sleep_fast_resume_from_name("bogus", &parsed) == -1 &&
+            parsed == SLEEP_FAST_RESUME_LIVE, "unknown name rejected");
+        CHECK(sleep_fast_resume_from_name(NULL, &parsed) == -1, "NULL name");
+        CHECK(sleep_fast_resume_from_name("exec", NULL) == -1, "NULL mode");
+        CHECK(sleep_fast_resume_from_name("EXEC", &parsed) == -1,
+            "names are case sensitive");
+        CHECK(strcmp(sleep_fast_resume_name((sleep_fast_resume_mode)99),
+            "exec") == 0, "unknown mode prints exec");
+    }
+
+    CHECK(sleep_fast_resume_allowed(SLEEP_FAST_RESUME_AIQ, 1, 1) == 1,
+        "aiq allowed with pause+resume");
+    CHECK(sleep_fast_resume_allowed(SLEEP_FAST_RESUME_AIQ, 0, 1) == 0,
+        "aiq needs pause");
+    CHECK(sleep_fast_resume_allowed(SLEEP_FAST_RESUME_AIQ, 1, 0) == 0,
+        "aiq needs resume");
+    CHECK(sleep_fast_resume_allowed(SLEEP_FAST_RESUME_AIQ, 0, 0) == 0,
+        "aiq blocked without symbols");
+    CHECK(sleep_fast_resume_allowed(SLEEP_FAST_RESUME_EXEC, 0, 0) == 1,
+        "exec always allowed");
+    CHECK(sleep_fast_resume_allowed(SLEEP_FAST_RESUME_LIVE, 0, 0) == 1,
+        "live always allowed");
+    CHECK(sleep_fast_resume_allowed(SLEEP_FAST_RESUME_STOPSTART, 0, 0) == 1,
+        "stopstart always allowed");
+}
+
 int main(void)
 {
+    test_fast_resume();
+
     CHECK(sleep_heartbeat_wakes(300, 2) == 150, "N 300/2");
     CHECK(sleep_heartbeat_wakes(5, 2) == 2, "N 5/2");
     CHECK(sleep_heartbeat_wakes(2, 2) == 1, "N 2/2");
