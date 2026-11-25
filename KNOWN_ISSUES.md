@@ -468,7 +468,8 @@
   Статус: **экспериментальный, не для выпуска** (актуализировано
   2026-11-25). Handshake MCU и кадентность работают: PMU-таймаут
   программируется в тиках 32 кГц, quiet-сон равен `wake_interval_s`,
-  AOV-ветка = **motion-resume + PMU-таймер**. KI-073/KI-074/KI-080 закрыты.
+  AOV-ветка = **motion-resume + PMU-таймер**. KI-073 — патч применён;
+  KI-074 и KI-080 закрыты.
   Остатки: overshoot 68–79 с (окно `wake_check`), окно mailbox 500 мс
   (итог 2026-11-25 ниже) и gate вендорского **ISP-handover**
   (`FEATURES_UNVERIFIED.md` §AOV) — без него AOV не для выпуска.
@@ -1501,7 +1502,8 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
 Status: **experimental, not for release** (refreshed 2026-11-25). The MCU
    handshake and the cadence work: the PMU timeout is programmed in 32 kHz
    ticks, the quiet sleep equals `wake_interval_s`, and the AOV branch is
-   **motion-resume + PMU timer**. KI-073/KI-074/KI-080 are closed. Residuals:
+   **motion-resume + PMU timer**. KI-073 is patched; KI-074 and KI-080 are
+   closed. Residuals:
    the 68–79 s overshoot (the `wake_check` window), the 500 ms mailbox window
    (bench result below) and the vendor **ISP-handover** gate
    (`FEATURES_UNVERIFIED.md` §AOV) — without it AOV is not release-ready.
