@@ -461,7 +461,7 @@ i2ctransfer -y 3 w1@0x60 0x0A r8              # сон: режим/состоя�
       USB-хаба и WiFi-донгла, код `rv1106_pm.c` ≤10 мс; без USB 0.12–0.17 с.
       Профиль — KI-072 (2026-11-25), артефакты
       `output/bench/aov-test/resume-profile-20261125/`.
-- [ ] **Латентность события без `execvp`-рестарта.** Проверено 2026-11-25:
+- [x] **Латентность события без `execvp`-рестарта.** Проверено 2026-11-25:
       вариант «оставить процесс и подсистемы живыми через mem» отклонён —
       живой CSI/ISP даёт шторм `mipi-csi2-hw ERR1:0x10 (fs/fe mis)` и
       убивает HTTP/поток (KI-072). Остаётся только in-process
@@ -485,6 +485,17 @@ i2ctransfer -y 3 w1@0x60 0x0A r8              # сон: режим/состоя�
       `common/isp/rv1106/isp.c:747-761` — HDR-путь, не AOV; для SC230AI
       поддержку pause/resume нужно проверить. Методика —
       `last_suspend_time`, `output/bench/power/*`, `bench/boot_probe.py`.
+      **2026-11-25, V3 `aiq` реализован и проверен — отклонён.** Обёртки
+      `rk_aiq_uapi2_sysctl_pause/resume` (v2), drain VI
+      `GetChnFrame→Release` и `DevEnableSinglelFrame` добавлены;
+      `[sleep] fast_resume` (дефолт `exec`) прогоняется
+      `bench/aov_resume_matrix.py`. На NAND #38 `--mode aiq` даёт
+      `mipi-csi2-hw ERR` +1…+4 за цикл, HTTP 000 в окне пробуждения и
+      следующее пробуждение не наступает: процесс жив (22 потока), но поток
+      SC230AI не паркуется, пока venc/VPSS/IVS читают кадры. `exec`-контроль
+      10/10 (wake→API 0.21 с, wake→JPEG 0.29 с). Ключ оставлен
+      диагностическим с дефолтом `exec`; `live`/`stopstart`/`aiq` в
+      продакшн не включать (KI-072).
 - [ ] **Frame-sync master/slave и dynamic FPS SC230AI — отложено.** Нет
       потребительской задачи; DTS sync-режим не задан. Регистры-кандидаты и
       порядок стендовой проверки — §15.6.

@@ -712,6 +712,34 @@
   `fnStart/fnStop`) и согласование сервера/IVS — отдельный проект; для
   SC230AI поддержку pause/resume надо проверить. Код эксперимента откатан,
   стенд восстановлен power cycle.
+  **2026-11-25, AIQ pause/resume (V3 `fast_resume=aiq`) проверен и отклонён.**
+  В HAL добавлены dlsym-обёртки `rk_aiq_uapi2_sysctl_pause/resume` (v2;
+  v1-имён в `librkaiq.so` нет), `start/stopMotionDetect` (символов нет —
+  вызовы опциональны), drain VI по `RK_MPI_VI_GetChnFrame→ReleaseChnFrame`
+  для chn 0 и IVS-chn 2 и `RK_MPI_VI_DevEnableSinglelFrame`; в `main` —
+  диспетчер `[sleep] fast_resume` (`exec|live|stopstart|aiq`, дефолт
+  `exec`). Прогон `bench/aov_resume_matrix.py --mode aiq` на NAND #38
+  (`aov_mcu=0`, idle 15 с, interval 20 с, wake_check 10 с,
+  `usb_on_motion=1`): процесс не разбирается, resume-путь 0.20 с, потоков
+  22, но каждый цикл даёт `mipi-csi2-hw ERR` (+1…+4), `/api/status` и
+  `/image.jpg` — 000 (12–13 с без ответа), слушателя :80 в пробе нет, а на
+  следующем цикле AP вообще не проснулся за 180 с (UART и сеть молчат).
+  Power cycle вернул DUT (`sfc`/`ubi` = 0, `pidof`=1, :80 жив). Вывод:
+  uAPI2 pause/resume на этом медиастеке не паркует поток SC230AI при живых
+  потребителях (venc/VPSS/IVS продолжают читать), поэтому вендорская схема
+  «процесс жив + AIQ paused» без остановки потребителей не работает.
+  `fast_resume` оставлен диагностическим ключом с дефолтом `exec`
+  (продуктовое поведение не меняется); `aiq`/`live`/`stopstart` —
+  экспериментальные, в продакшн не включать. Артефакт:
+  `output/bench/aov-test/fast-resume-20261125/aiq/`.
+  Контроль `exec` на том же стенде: 10/10 циклов, wake→API 0.21 с
+  (p90 0.22), wake→JPEG 0.29 с (p90 0.31), 25 потоков, `mipi`=0. При
+  `wake_check_s=5` окно слишком коротко для полного старта после `exec` —
+  измерения теряются, для матриц нужно `wake_check_s≥10`. Побочно: при
+  коротком интервале (5–10 с) в этой серии появились
+  `rockchip-sfc ... DMA timeout` и `ubi_io_read: error -5` (KI-071); power
+  cycle вернул `rw`, матрица теперь считает `sfc`/`ubi` и останавливается
+  на первой новой ошибке.
 
 - **KI-073. в `rk3x_i2c_irq` на I2C3 при циклах `[sleep]`.**
   2026-11-17 в AOV-прогоне (idle 30 s, `aov_mcu=1`) шина I2C3
@@ -1886,6 +1914,36 @@ Status: **experimental, not for release** (refreshed 2026-11-25). The MCU
   `fnStart/fnStop`; pause/resume wrappers and SC230AI support need to be
   verified. The experiment code was reverted and the bench restored with a
   power cycle.
+  **2026-11-25, AIQ pause/resume (V3 `fast_resume=aiq`) tested and rejected.**
+  The HAL gained dlsym wrappers for `rk_aiq_uapi2_sysctl_pause/resume` (v2;
+  the v1 names are absent from `librkaiq.so`), optional
+  `start/stopMotionDetect` (the symbols are absent, so the calls are skipped),
+  a VI drain via `RK_MPI_VI_GetChnFrame→ReleaseChnFrame` for chn 0 and the IVS
+  chn 2, and `RK_MPI_VI_DevEnableSinglelFrame`; `main` gained the
+  `[sleep] fast_resume` dispatcher (`exec|live|stopstart|aiq`, default
+  `exec`). `bench/aov_resume_matrix.py --mode aiq` on NAND #38
+  (`aov_mcu=0`, idle 15 s, interval 20 s, wake_check 10 s,
+  `usb_on_motion=1`): the process stays alive, the resume path is 0.20 s and
+  the thread count is 22, but every cycle produces `mipi-csi2-hw ERR`
+  (+1…+4), `/api/status` and `/image.jpg` return 000 for 12–13 s, the probe
+  sees no :80 listener, and on the next cycle the AP did not wake within
+  180 s (UART and network silent). A power cycle restored the DUT
+  (`sfc`/`ubi` = 0, `pidof`=1, :80 alive). Conclusion: uAPI2 pause/resume does
+  not park the SC230AI stream on this media stack while the consumers
+  (venc/VPSS/IVS) keep reading, so the vendor's "live process + paused AIQ"
+  model does not work without stopping the consumers. `fast_resume` stays as
+  a diagnostic key with the `exec` default (the product behaviour is
+  unchanged); `aiq`/`live`/`stopstart` are experimental and must not be
+  enabled in production. Artifact:
+  `output/bench/aov-test/fast-resume-20261125/aiq/`.
+  The `exec` control on the same bench: 10/10 cycles, wake→API 0.21 s
+  (p90 0.22), wake→JPEG 0.29 s (p90 0.31), 25 threads, `mipi`=0. With
+  `wake_check_s=5` the window is too short for the full start after `exec`,
+  so measurements are lost; the matrices need `wake_check_s≥10`. Side effect:
+  at a short interval (5–10 s) this series produced
+  `rockchip-sfc ... DMA timeout` and `ubi_io_read: error -5` (KI-071); a power
+  cycle restored `rw`, and the matrix now counts `sfc`/`ubi` and stops on the
+  first new error.
 
 - **KI-073. in `rk3x_i2c_irq` on I2C3 during `[sleep]` cycles.**
   On 2026-11-17 an AOV run (idle 30 s, `aov_mcu=1`) got a burst of
