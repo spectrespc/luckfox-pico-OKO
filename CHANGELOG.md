@@ -326,6 +326,22 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Изменено
 
+- **KI-072: keep-process через suspend отклонён (2026-11-25).** Проверен
+  экспериментальный вариант «не делать `exec` после resume»: живой CSI/ISP
+  через mem даёт непрерывный шторм `mipi-csi2-hw ERR1:0x10 (fs/fe mis)`,
+  HTTP-сервер и поток умирают, хотя процесс и sshd живы; шторм снимается
+  только чистым `exec`. Teardown + exec остаётся обязательным; возможная
+  альтернатива — in-process реинициализация медиа, но она конфликтует с
+  освобождением dmabuf/RGA (KI-069). Код эксперимента откатан, стенд
+  восстановлен.
+- **KI-072: keep-process across suspend rejected (2026-11-25).** The
+  experimental "do not exec after resume" variant was tested: a live CSI/ISP
+  across mem produces a continuous `mipi-csi2-hw ERR1:0x10 (fs/fe mis)`
+  storm and the HTTP server/stream die while the process and sshd stay alive;
+  only a clean `exec` clears it. Teardown + exec remains mandatory; an
+  in-process media re-init is the only alternative and conflicts with the
+  dmabuf/RGA release (KI-069). The experiment code was reverted and the bench
+  restored.
 - **`bench/`: буфер dmesg для PM-профиля и heartbeat в AOV-прогоне.**
   `netboot.py` принимает `OKO_LOG_BUF_LEN` (например `1M`) и добавляет
   `log_buf_len=` в `sys_bootargs`: штатные 16 КиБ меньше одного цикла

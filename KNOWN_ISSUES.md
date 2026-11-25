@@ -670,6 +670,19 @@
   после снятия ключа init вернул `xhci` и wlan0 (`[sleep] USB host
   bound`). Ограничение: пока ключ включён и AP в тихом/tier-2 цикле,
   USB-хаб и WiFi-донгл отвязаны; WiFi возвращается на движении.
+  **2026-11-25, keep-process отклонён.** Экспериментальный вариант «не делать
+  `exec` после resume, оставить процесс и подсистемы живыми» проверен на NAND
+  #38 (`aov_mcu=0`, `keep_process=1`, USB привязан): ядро резюмится и
+  main-цикл продолжает работу (pid не менялся, в логе `kept the process alive
+  across suspend`), но живой CSI/ISP через mem даёт непрерывный шторм
+  `mipi-csi2-hw ERR1:0x10 (fs/fe mis,vc: 0)` (~30/с, 261 строка за минуту),
+  HTTP-сервер и поток умирают (`/api/status` и `/image.jpg` — 000), хотя sshd
+  и главный цикл живы; шторм прекращается только после чистого `exec`.
+  Вывод: вендорский медиастек не переживает mem с живым пайплайном, поэтому
+  teardown + exec остаётся обязательным. Остаётся только in-process
+  реинициализация медиа (stop media, процесс/сервер живы), но она входит в
+  конфликт с причиной `exec` — чистым освобождением dmabuf/RGA (KI-069).
+  Код эксперимента откатан, стенд восстановлен.
 
 - **KI-073. в `rk3x_i2c_irq` на I2C3 при циклах `[sleep]`.**
   2026-11-17 в AOV-прогоне (idle 30 s, `aov_mcu=1`) шина I2C3
@@ -1801,6 +1814,19 @@ Status: **experimental, not for release** (refreshed 2026-11-25). The MCU
   `xhci` and wlan0 (`[sleep] USB host bound`). Limitation: while the key
   is on and the AP is in a quiet/tier-2 cycle, the USB hub and the WiFi
   dongle are unbound; WiFi returns on motion.
+  **2026-11-25, keep-process rejected.** The experimental "do not exec after
+  resume, keep the process and its subsystems alive" variant was tested on
+  NAND #38 (`aov_mcu=0`, `keep_process=1`, USB bound): the kernel resumes and
+  the main loop continues (the PID did not change, the log says `kept the
+  process alive across suspend`), but a live CSI/ISP across mem produces a
+  continuous `mipi-csi2-hw ERR1:0x10 (fs/fe mis,vc: 0)` storm (~30/s, 261
+  lines in a minute) and the HTTP server/stream die (`/api/status` and
+  `/image.jpg` return 000), while sshd and the main loop stay alive; the storm
+  stops only after a clean `exec`. Conclusion: the vendor media stack does not
+  survive mem with a live pipeline, so teardown + exec remains mandatory. Only
+  an in-process media re-init (stop media, keep process/server alive) is left,
+  and it conflicts with the reason for the `exec` - clean dmabuf/RGA release
+  (KI-069). The experiment code was reverted and the bench restored.
 
 - **KI-073. in `rk3x_i2c_irq` on I2C3 during `[sleep]` cycles.**
   On 2026-11-17 an AOV run (idle 30 s, `aov_mcu=1`) got a burst of
