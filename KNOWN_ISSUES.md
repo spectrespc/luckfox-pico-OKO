@@ -472,7 +472,8 @@
   KI-074 и KI-080 закрыты.
   Остатки: overshoot 68–79 с (окно `wake_check`), окно mailbox 500 мс
   (итог 2026-11-25 ниже) и gate вендорского **ISP-handover**
-  (`FEATURES_UNVERIFIED.md` §AOV) — без него AOV не для выпуска.
+  (`FEATURES_UNVERIFIED.md` §AOV) — 2026-11-25 он признан нереализуемым на
+  этом железе (вердикт ниже), поэтому AOV остаётся экспериментальным.
   Артефакты: `output/bench/aov-test/quiet-differential-20261117.md`,
   `gicdiag-wfi-20261117.md`, `mcu-reset-experiment-20261117.md`,
   `quiet_keepisp{0,1}.*`, `quiet_motion.*`, `quiet_{mcuonce,mcunotify,hybrid,gpiomask,viidle}.*`,
@@ -583,6 +584,55 @@
   `output/bench/aov-test/summary_mbox500-20261125.20261125-073152.json`,
   `.../20261125-073741-motion`, `.../20261125-074156-cycle`,
   `.../20261125-074709-cycle`.
+
+  **2026-11-25, вердикт по ISP-handover: на этом железе не реализуемо
+  (сработало стоп-правило плана).** Проверены обе половины схемы «AP
+  отпускает media, MCU владеет ISP во время deep suspend AP».
+  1) `aov_mcu=1` + `keep_isp=0` (полный teardown media), `wake_interval_s=60`,
+     ядро `#38`. Цикл проходит и сон равен 60.63 с (`last_suspend_time`
+     = `2.317593445 60.629098777`), но **не через handshake**: read-only
+     монитор моста `:2324` показывает `-h-wait-`, MCU стартует, и все записи
+     SC230AI по i2c4 падают — `[SC230AI] ERR write multi-regs, retry=10..1,
+     addr=0x0103` и затем то же для `0x3e00/0x3e01/0x3e02/0x3e09`;
+     `set_firstae` блокируется, окно mailbox 500 мс истекает → `-h-timeout-`
+     → `wake up status:0x00000000` → `rv1106 exit sleep`. AP просыпается по
+     таймауту ядра, а MCU добивает burst уже после resume
+     (`stop_stream end, complete:1`, `gpio0_int_status is 0,
+     share_data->md_flag is 1`, tick 4480). При `keep_isp=1` те же регистры
+     пишутся и приходит `-h-mbox-` (записи 2026-11-17/25). Вывод: пока AP
+     отпускает media, сенсор для MCU недоступен (питание/клоки/шина), а
+     «владеть ISP» без сенсора нельзя. Артефакты:
+     `output/bench/aov-test/keepisp0-20261125b/report.md` и `events.log`,
+     `output/bench/aov-test/quiet_keepisp0-20261125b.20261125-141406.log`,
+     `output/bench/aov-test/summary_keepisp0-20261125b.20261125-141406.json`.
+  2) Вендорский AOV устроен иначе: руководство `Rockchip RV1106 AOV`
+     V1.0.4 (2024-02-21; снимок
+     `research/rv1106-aov/snapshot/dehai168-rv1106-aov-ipc/docs/design/aov-guide-extract.txt`)
+     определяет AOV как цикл «сон → пробуждение → один кадр → сон», старт
+     `--suspend_time 1000` мс (стр. 15). Во сне питание есть **только у
+     PMUIO** (`:197`), базовая мощность сна ≈5 мВт (`:609`), 3V3_STB
+     0.05 мА (`:642`), весь AOV-цикл 1000 мс сна + 75 мс работы = **39 мВт**
+     (`:646`). Сенсор в это время в standby или обесточен (§3.2.3), то есть
+     кадров во сне нет по построению.
+  3) Прошивка MCU: обе ветки `applications/battery-ipc/stream.c` — AOV
+     (`RT_USING_RK_AOV`, `:640-643`) и demo-ветка (`:556-559`) —
+     заканчиваются `rt_hw_interrupt_disable(); sysTick_stop(); while (1)
+     asm("wfi");`. При этом вендорская борда
+     `battery_ipc_demo_v10-SC230AI-ADC` — **не**-AOV вариант (в её defconfig
+     нет `RT_USING_RK_AOV`), то есть отдельного «непрерывного» режима в
+     поставляемом коде нет.
+  4) В PMU RV1106 нет per-domain keep-alive: `pmu_cru_con0` содержит один
+     общий `RV1106_PMU_POWER_OFF_ENA` (`rv1106_pm.c:880-887`). Чтобы оставить
+     VI/ISP-домен живым, его пришлось бы снять — тогда SoC не выключается и
+     выигрыша по мощности относительно бодрствования нет.
+  Стоп-правило плана `.kilo/plans/1795603530004-ki072-isp-handover-close.md`
+  применено: реализация handover (этапы 2–3) не начиналась, MCU-образ и
+  ядро не менялись. AOV остаётся в вендорской совместимой схеме
+  **`aov_mcu=1` + `keep_isp=1` + PMU-таймер**: движение проверяется MCU
+  fast-AE в окне handshake, латентность равна `wake_interval_s` (+ ~0.2 с
+  handshake и resume-путь ~2.3 с), а более короткий интервал повышает
+  среднюю мощность — политику интервала выбирает владелец. Gate AOV
+  переформулирован в `TO_DO.md` §8.1; JPEG-снапшот с MCU остаётся в TO_DO.
 
 - **KI-073. в `rk3x_i2c_irq` на I2C3 при циклах `[sleep]`.**
   2026-11-17 в AOV-прогоне (idle 30 s, `aov_mcu=1`) шина I2C3
@@ -1506,7 +1556,8 @@ Status: **experimental, not for release** (refreshed 2026-11-25). The MCU
    closed. Residuals:
    the 68–79 s overshoot (the `wake_check` window), the 500 ms mailbox window
    (bench result below) and the vendor **ISP-handover** gate
-   (`FEATURES_UNVERIFIED.md` §AOV) — without it AOV is not release-ready.
+   (`FEATURES_UNVERIFIED.md` §AOV) — on 2026-11-25 it was proven not
+   implementable on this hardware (verdict below), so AOV stays experimental.
    Artifacts: `output/bench/aov-test/quiet-differential-20261117.md`,
   `gicdiag-wfi-20261117.md`, `mcu-reset-experiment-20261117.md`,
   `quiet_keepisp{0,1}.*`, `quiet_motion.*`,
@@ -1621,6 +1672,59 @@ Status: **experimental, not for release** (refreshed 2026-11-25). The MCU
   `output/bench/aov-test/summary_mbox500-20261125.20261125-073152.json`,
   `.../20261125-073741-motion`, `.../20261125-074156-cycle`,
   `.../20261125-074709-cycle`.
+
+  **2026-11-25, ISP-handover verdict: not implementable on this hardware
+  (the plan's stop rule fired).** Both halves of "the AP releases media and
+  the MCU owns the ISP during the AP deep suspend" were tested.
+  1) `aov_mcu=1` + `keep_isp=0` (full media teardown), `wake_interval_s=60`,
+     kernel `#38`. The cycle completes and the sleep is 60.63 s
+     (`last_suspend_time` = `2.317593445 60.629098777`), but **not through
+     the handshake**: the bridge read-only monitor `:2324` shows `-h-wait-`,
+     the MCU boots, and every SC230AI write over i2c4 fails —
+     `[SC230AI] ERR write multi-regs, retry=10..1, addr=0x0103` and then the
+     same for `0x3e00/0x3e01/0x3e02/0x3e09`; `set_firstae` blocks, the
+     500 ms mailbox window expires → `-h-timeout-` → `wake up
+     status:0x00000000` → `rv1106 exit sleep`. The AP resumes on the kernel
+     timeout and the MCU only finishes its burst after the resume
+     (`stop_stream end, complete:1`, `gpio0_int_status is 0,
+     share_data->md_flag is 1`, tick 4480). With `keep_isp=1` the same
+     registers do get written and `-h-mbox-` arrives (2026-11-17/25 runs).
+     Conclusion: while the AP releases media the sensor is unreachable for
+     the MCU (power, clocks, bus), and the ISP cannot be owned without the
+     sensor. Artifacts: `output/bench/aov-test/keepisp0-20261125b/report.md`
+     and `events.log`,
+     `output/bench/aov-test/quiet_keepisp0-20261125b.20261125-141406.log`,
+     `output/bench/aov-test/summary_keepisp0-20261125b.20261125-141406.json`.
+  2) The vendor AOV works differently: the `Rockchip RV1106 AOV` guide
+     V1.0.4 (2024-02-21; snapshot
+     `research/rv1106-aov/snapshot/dehai168-rv1106-aov-ipc/docs/design/aov-guide-extract.txt`)
+     defines AOV as a "sleep → wake → one frame → sleep" duty cycle with
+     `--suspend_time 1000` ms (p. 15). During the sleep **only PMUIO is
+     powered** (`:197`), the base sleep power is ~5 mW (`:609`), 3V3_STB is
+     0.05 mA (`:642`), and the whole AOV cycle — 1000 ms asleep plus 75 ms
+     of work — is **39 mW** (`:646`). The sensor is in standby or powered
+     down in that window (§3.2.3), so frames during the sleep do not exist
+     by design.
+  3) MCU firmware: both branches of `applications/battery-ipc/stream.c` —
+     AOV (`RT_USING_RK_AOV`, `:640-643`) and the demo branch (`:556-559`) —
+     end in `rt_hw_interrupt_disable(); sysTick_stop(); while (1)
+     asm("wfi");`. The vendor `battery_ipc_demo_v10-SC230AI-ADC` board is
+     the **non**-AOV variant (its defconfig has no `RT_USING_RK_AOV`), so
+     there is no separate "continuous" mode in the shipped code at all.
+  4) The RV1106 PMU has no per-domain keep-alive: `pmu_cru_con0` carries a
+     single global `RV1106_PMU_POWER_OFF_ENA` (`rv1106_pm.c:880-887`).
+     Keeping the VI/ISP domain alive would require clearing it, and then the
+     SoC does not power down at all, so there is no power advantage over
+     staying awake.
+  The plan's stop rule (`.kilo/plans/1795603530004-ki072-isp-handover-close.md`)
+  was applied: the handover implementation (stages 2–3) never started and
+  neither the MCU image nor the kernel changed. AOV stays on the
+  vendor-compatible scheme **`aov_mcu=1` + `keep_isp=1` + PMU timer**: the
+  MCU checks motion with fast-AE inside the handshake window, so the motion
+  latency equals `wake_interval_s` (+ ~0.2 s handshake and a ~2.3 s resume
+  path), and a shorter interval raises the average power — the interval
+  policy is the owner's call. The AOV gate was reworded in `TO_DO.md` §8.1;
+  the MCU JPEG snapshot stays in TO_DO.
 
 - **KI-073. in `rk3x_i2c_irq` on I2C3 during `[sleep]` cycles.**
   On 2026-11-17 an AOV run (idle 30 s, `aov_mcu=1`) got a burst of

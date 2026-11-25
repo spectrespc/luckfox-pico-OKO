@@ -580,14 +580,30 @@ mcutool, LPMCU), медиа-грабли и soak-инструментация. �
   - `rmmod rockit` в рантайме вешает систему (refcnt −1);
   - `/userdata` у них ~2 МБ, YUV/записи только на TF.
   - Официальная схема AOV (из `docs/design/aov.md`, файл удалён из снимка
-    2026-11-25): `SetSuspendTime(1000)` → ISP single frame → umount TF →
-    `echo mem`; HPMCU-wakeup держит sensor/ISP и по PMU-таймеру отдаёт
-    ~1 fps lapse (`AOV_LAPSE`, `rkadk_aov.c`/`rkadk_muxer.c`), а MCU
-    FastAeMd/mailbox переключает пайплайн на `MultiFrame` 20–30 fps.
-    Trust-образ — `RV1106TOS_WAKEUP.ini` + `rv1106_hpmcu_wakeup_*.bin@0x40000`;
-    приоритет источников: MCU motion → PMU 1 с → GPIO (PIR не делали).
+    2026-11-25; **сверена с руководством 2026-11-25 — правка ниже**):
+    `SetSuspendTime(1000)` → ISP single frame → umount TF → `echo mem`;
+    HPMCU-wakeup переживает цикл и по PMU-таймеру отдаёт ~1 fps lapse
+    (`AOV_LAPSE`, `rkadk_aov.c`/`rkadk_muxer.c`), а MCU FastAeMd/mailbox
+    переключает пайплайн на `MultiFrame` 20–30 fps.
+    Trust-образ — `RV1106TOS_WAKEUP.ini` + `rv1106_hpmcu_wakeup_*.bin@0x40000`.
     MVP-состояния: `ALWAYS_ON ↔ AOV_IDLE → PREPARE_SLEEP → SLEEPING →
     POST_WAKE → LAPSE_1FPS|FULL_RECORD`, API `/api/v1/aov/*`.
+  - **Уточнение по руководству V1.0.4 (2026-11-25), важно для OKO:**
+    `snapshot/dehai168-rv1106-aov-ipc/docs/design/aov-guide-extract.txt`
+    описывает AOV как **цикл «сон → пробуждение → один кадр → сон»**
+    (`--suspend_time 1000` мс, стр. 15), а не как непрерывное владение ISP.
+    Во сне «питание есть только у PMUIO, остальные IO обесточены» (`:197`),
+    базовый сон ≈5 мВт (`:609`), 3V3_STB 0.05 мА (`:642`), весь цикл
+    «1000 мс сна + 75 мс работы» = **39 мВт** (`:646`); сенсор в это время в
+    standby либо обесточен (§3.2.3). Источники пробуждения — PMU-таймер,
+    PIR/GPIO-кнопка, WiFi/4G (§1.1, §3.2.2), MCU-прерывания «по движению»
+    в схеме нет: `battery-ipc/stream.c` в обеих ветках заканчивается
+    `sysTick_stop(); while (1) asm("wfi")` (`:556-559`, `:640-643`), а
+    «непрерывная» demo-борда `battery_ipc_demo_v10-SC230AI-ADC` — это
+    не-AOV вариант (без `RT_USING_RK_AOV`). Вывод для OKO: «MCU держит
+    ISP/SC230AI при мёртвом AP» не переносимо и не поддерживается железом
+    (в PMU один общий `RV1106_PMU_POWER_OFF_ENA`, `rv1106_pm.c:880-887`);
+    совместимая схема — `aov_mcu=1` + `keep_isp=1` + PMU-таймер (KI-072).
   - Их собственные результаты (`docs/07-todolist-aov.md`,
     `docs/04-worklog.md`; удалены 2026-11-25; MIS5001, на SC230AI не
     переносятся): `lapse_loop` 5/5, `wake_ms≈3071` при 3000 мс;

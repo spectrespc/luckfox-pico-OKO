@@ -267,6 +267,53 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Изменено
 
+- **KI-072: вендорский ISP-handover признан нереализуемым на этом железе
+  (2026-11-25).** План `.kilo/plans/1795603530004-ki072-isp-handover-close.md`
+  остановлен по собственному стоп-правилу: схема «AP отпускает media, MCU
+  владеет ISP/SC230AI во время deep suspend» не поддерживается ни железом, ни
+  вендорской прошивкой. Стенд: `aov_mcu=1` + `keep_isp=0` (60 с, ядро `#38`)
+  даёт сон 60.63 с (`last_suspend_time`), но handshake детерминированно
+  уходит в `-h-timeout-` — MCU не может писать регистры сенсора
+  (`[SC230AI] ERR write multi-regs addr=0x0103`, 10 ретраев), burst
+  заканчивается уже после resume. Руководство Rockchip AOV V1.0.4 определяет
+  AOV как цикл «сон → пробуждение → один кадр → сон» (`--suspend_time 1000`
+  мс), во сне питание есть только у PMUIO (базовый сон ≈5 мВт, 3V3_STB
+  0.05 мА, цикл «1000 мс сна + 75 мс работы» = 39 мВт), сенсор в standby;
+  обе ветки `applications/battery-ipc/stream.c` заканчиваются
+  `sysTick_stop(); while (1) asm("wfi")`, а «непрерывная» demo-борда —
+  не-AOV вариант. В PMU RV1106 один общий `RV1106_PMU_POWER_OFF_ENA`, per-domain
+  keep нет. Итог: AOV остаётся на совместимой схеме `aov_mcu=1` +
+  `keep_isp=1` + PMU-таймер; в KI-072 (RU+EN) и
+  `research/rv1106-aov/README.md` записаны доказательства и цитаты, gate в
+  `TO_DO.md` §8.1 переформулирован в решение владельца (политика интервала,
+  выпуск без handover, отдельный проект «перенос `divinus` через suspend» для
+  латентности < 2 с). Артефакты:
+  `output/bench/aov-test/keepisp0-20261125b`,
+  `output/bench/aov-test/quiet_keepisp0-20261125b.20261125-141406.log`.
+- **KI-072: the vendor ISP-handover is not implementable on this hardware
+  (2026-11-25).** The plan `.kilo/plans/1795603530004-ki072-isp-handover-close.md`
+  was stopped by its own stop rule: "the AP releases media and the MCU owns
+  the ISP/SC230AI during the AP deep suspend" is supported neither by the
+  hardware nor by the vendor firmware. On the bench `aov_mcu=1` +
+  `keep_isp=0` (60 s, kernel `#38`) sleeps for 60.63 s
+  (`last_suspend_time`) but the handshake deterministically ends in
+  `-h-timeout-` — the MCU cannot write the sensor registers
+  (`[SC230AI] ERR write multi-regs addr=0x0103`, 10 retries) and its burst
+  only completes after the resume. The Rockchip AOV guide V1.0.4 defines AOV
+  as a "sleep -> wake -> one frame -> sleep" cycle (`--suspend_time 1000`
+  ms) where only PMUIO is powered during the sleep (base sleep about 5 mW,
+  3V3_STB 0.05 mA, a "1000 ms asleep + 75 ms of work" cycle = 39 mW) and the
+  sensor stays in standby; both `applications/battery-ipc/stream.c`
+  branches end in `sysTick_stop(); while (1) asm("wfi")`, and the
+  "continuous" demo board is the non-AOV variant. The RV1106 PMU has a single
+  global `RV1106_PMU_POWER_OFF_ENA` and no per-domain keep. As a result AOV
+  stays on the compatible `aov_mcu=1` + `keep_isp=1` + PMU timer scheme;
+  KI-072 (RU+EN) and `research/rv1106-aov/README.md` now carry the evidence
+  and quotes, and the gate in `TO_DO.md` §8.1 became an owner decision
+  (interval policy, release without handover, a separate "carry `divinus`
+  across suspend" project for a sub-2 s latency). Artifacts:
+  `output/bench/aov-test/keepisp0-20261125b`,
+  `output/bench/aov-test/quiet_keepisp0-20261125b.20261125-141406.log`.
 - **`TO_DO.md` §15: каталог остатков вендорского кода и аудит ядра
   (2026-11-25).** Добавлен каталог всех каталогов `project/app` (назначение,
   релевантность, статус сборки, лицензия, вердикт) и разбор
