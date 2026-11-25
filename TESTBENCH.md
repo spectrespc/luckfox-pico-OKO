@@ -8,7 +8,7 @@ Pro Max (RV1106) с автономной загрузкой из SPI NAND. Зн�
 
 | Поле | Значение |
 |---|---|
-| Дата обновления | `2026-11-23` |
+| Дата обновления | `2026-11-25` |
 | Ответственный | `<ФИО>` |
 | Статус | активен |
 | Назначение | сборка прошивки и прошивка SPI NAND для отладки IPC |
@@ -153,7 +153,7 @@ bench/run.sh tftp_flash.py --no-reset                 # остаться в U-Bo
 через Maskrom, §7A); при обрыве питания во время `mtd write` прошивка
 повторяется тем же способом (U-Boot остаётся доступен по UART).
 
-### 7-AOV. Экспериментальный профиль `-AOV` (NO-GO, не для выпуска)
+### 7-AOV. Экспериментальный профиль `-AOV` (не для выпуска)
 
 Профиль `BoardConfig ...-SC230AI-AOV.mk` (KI-072) меняет idblock и таблицу
 разделов: Hpmcu+SPL+DDR+usbplug ~300 КБ, поэтому idblock 1M, а `uboot`,
@@ -293,6 +293,23 @@ passed, 300 циклов I2C — 0 ошибок.
 V1 с `aov_mcu=1`/`keep_isp=1` по-прежнему теряет I2C3. Один AOV-прогон
 снова оставил `/userdata` в `ro` (KI-071), поэтому sweep 20/40/120
 остановлен; после каждого такого прогона нужен холодный power cycle.
+
+**2026-11-25, ядро #38: окно mailbox 500 мс.** `RV1106_HPMCU_FAST_WKUP_TIMEOUT`
+уменьшено до 500 мс, ядро собрано в `-AOV` и прошито только `boot`
+(`bench/run.sh tftp_flash.py --components boot --power-cycle`). V1
+(`aov_mcu=1`, `keep_isp=1`, `wake_interval_s=60`, 260 с) на NAND:
+монитор моста `:2324` — 4 `-h-wait-`/4 `-h-mbox-`/0 `-h-timeout-`,
+три пробуждения, интервалы 75.5/75.3 с, сон 60.28 с по
+`last_suspend_time`, iomux `i2c3m1`, SDA/SCL=1, STM8 2.3.2 на каждом wake;
+`--scenario motion` × 3 без ложных полнокадровых событий; тихий `cycle` —
+сон 10.07 с при 10 с и 60.09 с при 60 с. `api_check` 138/0, `ui_check`
+passed. Артефакты: `output/bench/power/20261125-073154-aov`,
+`output/bench/aov-test/summary_mbox500-20261125.20261125-073152.json`,
+`.../20261125-073741-motion`, `.../20261125-074156-cycle`,
+`.../20261125-074709-cycle`, `.../20261125-075350-i2c`. Gate остаётся
+вендорский ISP-handover (KI-072); контроль I2C даёт 4–5 одиночных
+`sleep show`-ошибок `device reports 0.0.0` на 300 циклов при живой шине и
+`present=true` — прежний, не связанный с KI-080 эффект.
 
 Диагностика resume (KI-074): в `-AOV` можно собрать ядро с фрагментом
 `rv1106-pm-debug.config` (по умолчанию он не включён) — появляется
@@ -1296,7 +1313,7 @@ DTS есть `rockchip,rv1106`, все `.ko` пересобраны `./build.sh 
    (`ivs.enable: false`, `yolo.enable: false`), иначе лабораторная сцена
    даёт постоянное движение ~1000 ‰ и таймер простоя не истекает.
 3. В `[sleep]` поставить `enable: true`, `idle_timeout_s: 30`,
-   `wake_interval_s: 10`, `wake_check_s: 5`, `pmu_timeout_hz: 32`; SIGHUP
+   `wake_interval_s: 10`, `wake_check_s: 5`, `pmu_timeout_hz: 32768`; SIGHUP
    divinus (`kill -HUP $(pidof divinus)`).
 4. Наблюдение: `GET /api/status` → `sleep.state/idle_s`. Ожидаемый цикл:
    30 с `awake` → `suspending` → ~10 с сеть/DUT недоступны (deep suspend) →
@@ -1312,10 +1329,14 @@ DTS есть `rockchip,rv1106`, все `.ko` пересобраны `./build.sh 
    быть без ошибок; `ls /proc/$(pidof divinus)/fd | wc -l` — 113–116.
 7. Откат/выключение: `[sleep] enable: false` + SIGHUP; сон полностью
    перестаёт вмешиваться, остальные подсистемы не меняются.
-8. Калибровка: PMU timeout считает **32 тика в секунду** (вендорский
-   `rkadk_aov.c`: `io -4 0xff300048 seconds*32`). Значение 320 = ~10 с;
-   при замене `pmu_timeout_hz` замерять фактический период по логу
-   `[sleep] suspending ... (N s)` и возврату сети.
+8. Калибровка: `PMU_WAKEUP_TIMEOUT_CNT` (`0xff300048`) считает тики
+   **32 кГц, 32768 тиков/с** (проверено 2026-11-24: 32768 → 1.07 с,
+   327680 → 10.07 с, 1920000 → 58.66 с; `count=0` выключает timeout-wake
+   и AP не просыпается). Поэтому `pmu_timeout_hz: 32768`; легаси-значение
+   32 divinus мигрирует при загрузке. Фактический сон мерить по
+   `cat /sys/kernel/wakeup_reasons/last_suspend_time` — второе число это
+   сон, первое resume-путь; окно `PM: suspend entry/exit` в `dmesg`
+   сном **не является** (monotonic не идёт в deep suspend).
 9. Heartbeat-кадр (Snapshot): в `[sleep]` добавить `heartbeat: true`,
    `heartbeat_interval_s: 0`, `heartbeat_retries: 3`, включить `[http_post]`
    с `host: 192.168.52.200:8090` и `url: /ingest/frame`; SIGHUP. На тихом
@@ -1456,6 +1477,57 @@ bench/run.sh sleep_power.py --scenario motion
 bench/run.sh sleep_power.py --scenario cycle --wake-check 30  # парный baseline
 ```
 
+### 2026-11-24: microSD — проверка, восстановление FAT и coredump-дампы
+
+Порядок проверки (все команды — на DUT, кроме помеченных «хост»):
+
+```sh
+# 1. Состояние с точки зрения продукта
+curl -s -u admin:oko-change-me http://127.0.0.1/api/storage
+cat /run/oko-sd.state            # present/mounted/error/fs
+mount | grep sdcard
+dmesg | grep -iE 'mmc1|mmcblk1|FAT'
+
+# 2. Карта видна, но чтение падает (I/O error на любой сектор)?
+hexdump -C -n 96 /dev/mmcblk1p1
+#    → power cycle через мост (bench/run.sh power.py cycle), затем повторить.
+#    Не читать за конец карты (`dd skip` больше объёма): запрос mmc
+#    зависает в D-state и требует power cycle.
+
+# 3. ФС битая (invalid access to FAT / dirty bit): только при размонтированной
+#    карте, read-only проверка, затем восстановление по первому FAT
+umount /mnt/sdcard
+fsck.fat -n -F 1 -v /dev/mmcblk1p1     # отчёт: файлы, обрезанные цепочки
+fsck.fat -a -F 1 -v /dev/mmcblk1p1     # правка; обычно нужен второй проход
+fsck.fat -a -F 1 -v /dev/mmcblk1p1     # удаляет битые каталоги (/recordings)
+
+# 4. Монтирование и проверка записи
+curl -s -u admin:oko-change-me -X POST \
+  'http://127.0.0.1/api/storage?action=mount'
+dd if=/dev/zero of=/mnt/sdcard/.fs-test bs=1M count=4
+sync; rm -f /mnt/sdcard/.fs-test
+#    запись и удаление тестового ролика:
+curl -s -u admin:oko-change-me 'http://127.0.0.1/api/record?enable=true&start=1'
+sleep 7
+curl -s -u admin:oko-change-me 'http://127.0.0.1/api/record?stop=1'
+curl -s -u admin:oko-change-me 'http://127.0.0.1/api/record?enable=false'
+```
+
+После восстановления `fsck` создаёт `FSCK*.REC` (фрагменты потерянных
+цепочек) — их и старые `core-*` можно удалить. Одна ловушка: `action=unmount`
+требует токен (`format_token`/`reload the Storage section`). `stop=1` и
+`enable=false` останавливают активную запись безусловно (KI-082 закрыто),
+но непрерывная сессия (`continuous`) запускается только при старте
+приложения и в рантайме снимается тем же `stop=1`.
+
+Дампы падений пишет `/usr/bin/coredump2sdcard.sh` (`core_pattern` с pipe):
+он пишет только при смонтированной карте и ≥ 128 МБ свободных, иначе дамп
+отбрасывается. Проверка: `sh -c 'ulimit -c unlimited; kill -SEGV $$'` — с
+картой появляется `/mnt/sdcard/core-<pid>-sh`, без карты не появляется
+ничего (ни в rootfs, ни в `/userdata`). Скрипт генерируется в
+`project/build.sh` (`__BUILD_ENABLE_COREDUMP_SCRIPT`); на стенде обновляется
+копированием в `/usr/bin/coredump2sdcard.sh` без пересборки.
+
 ### 2026-11-19: MQTT — события и телеметрия камеры (`services/mqtt`)
 
 Профиль `oko-mqtt` (`network_mode: host`): брокер `eclipse-mosquitto:2.0.20`
@@ -1547,6 +1619,17 @@ suspend, теряются (память только RAM). Пароль лежи
   (`wpa_supplicant` + `iw`) ассоциируется по WPA2-PSK/CCMP, получает DHCP
   `192.168.43.1x`, ping и HTTP к `192.168.43.1` отвечают; неверный пароль —
   без ассоциации, DUT остаётся в AP.
+- **microSD: дампы падений — только на смонтированную карту.** Coredump-handler
+  `/usr/bin/coredump2sdcard.sh` (генерируется в `project/build.sh`) пишет
+  `core-<pid>-<name>` в `/mnt/sdcard` только при `mountpoint -q /mnt/sdcard`
+  и свободных ≥ 128 МБ, иначе дамп отбрасывается. Карту вынимать только
+  после штатного unmount: обрыв питания при записи рвёт FAT (KI-081).
+  Процедура проверки/восстановления — §8, «2026-11-24: microSD».
+- **`/api/record`: `stop=1` и `enable=false` останавливают активную запись.**
+  Команды применяются после разбора всех ключей запроса, порядок ключей не
+  важен; `stop=1` работает и в `continuous`; `stop=1&start=1` — рестарт
+  сессии. Непрерывная сессия стартует только при загрузке приложения
+  (KI-082 закрыто, 2026-11-24).
 - **CMA накапливается после тяжёлых медиа-прогонов.** После двух и более
   подряд прогонов `ui_check.py`/`geometry_check.py` или ручной отладки
   ePTZ/поворота перезагружайте DUT. Решающие признаки: `cma_alloc ... ret:

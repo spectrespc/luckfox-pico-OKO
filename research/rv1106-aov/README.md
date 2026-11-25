@@ -18,15 +18,19 @@
 для Luckfox Pico Max (RV1106G3, 256 МБ, MIS5001, SPI NAND + TF), не форк SDK.
 24 коммита, `main` = `07a2f553bc83eae8ccb3fa7a805403da6aef6dd7`, `LICENSE` в
 корне **нет**. Правки ядра/DTS/U-Boot/Trust в репозитории не лежат — только
-описаны в `docs/04-worklog.md` (75 сессий) и `docs/design/aov*.md`.
+описаны в `docs/04-worklog.md` (75 сессий) и `docs/design/aov*.md`
+(эти файлы удалены из снимка 2026-11-25 после переноса выводов).
 Их «AOV» — это PMU-timer 1 fps + пользовательский `echo mem`; MCU-детекция
 движения не сделана (для MIS5001 нет wakeup-прошивки), в soak'ах движение
 эмулируется `debug_motion_interval`.
 
 Локальная копия `../rv1106-aov-ipc` (pin тот же, `git status` чистый)
-разобрана; 22 ключевых файла (7 684 761 Б) сохранены в
-`snapshot/dehai168-rv1106-aov-ipc/`: design/worklog, AOV guide PDF,
-`aov_service.c`, network/storage/media/record/OSD/fMP4/RKNN/IVS и скрипты.
+разобрана; после зачистки 2026-11-25 в `snapshot/dehai168-rv1106-aov-ipc/`
+осталось 15 файлов (7 577 570 Б): AOV guide PDF, design-материалы
+ISP-handover, storage/media/record/OSD/fMP4/RKNN и soak-скрипты.
+Отработавшие `worklog`/`todolist`/`aov.md`, `aov_service.c`,
+`network_service.c`, `detect_service.c` и `test_aov_fephy_off_mem.sh`
+удалены — их выводы перенесены в этот README (см. «Проверенные факты»).
 Лицензии нет; снимок включён по решению владельца проекта как read-only
 research copy, не для переиспользования кода.
 
@@ -54,7 +58,7 @@ DDR — только данные, таймер `0xFE7F0000`, INTMUX `0xFE790000
 
 Лицензии: `rv1106-mcu` и `rk3566-mcu` — GPL-3.0; конфиги OpenOCD —
 `GPL-2.0-or-later` (SPDX в файле); у `rv1106-aov-ipc` лицензии нет, поэтому
-его 22 выбранных файла включены в `snapshot/` по решению владельца проекта
+его 15 выбранных файлов включены в `snapshot/` по решению владельца проекта
 как read-only research copy, не для переиспользования кода.
 
 **`RV1106 TRM V0.3 Part1`** — 877 страниц, 2022-03-24, основной первоисточник
@@ -119,7 +123,7 @@ all rights reserved), включён по решению владельца ка
 | **SCR1/toolchain** | Подтверждает, что OKO использует правильное семейство: RISC-V, xPack 10.2.0, `-march=rv32imc -mabi=ilp32 -misa-spec=2.2` | Флаги из RK3566-заметок; наш `defconfig` уже `CONFIG_ARCH_RISCV=y`, toolchain тот же |
 | **Mailbox/PMU wake** | Концептуальная схема «MCU → PMU → AP»: `PMU_INT_MASK_CON`/`PMU_WAKEUP_INT_CON`/`PMU_WAKEUP_INT_ST`, soft IRQ | Адреса RK3566 (`0xFDD9xxxx`, `0xFE780000`) к RV1106 напрямую не применимы; на RV1106 у OKO свой mailbox-протокол (`-h-wait-`/`-h-mbox-`) |
 | **LPMCU register map** | В вендорском HAL OKO уже есть `LPMCU_BOOT_ADDR`, soft IRQ, reset-hold и `WFI_HALTED` — это готовая отправная точка для эксперимента | TRM p279 §7.6.2 подтверждает роль LPMCU в software low-power procedure; ISA/debug не описаны, прошивки/драйвера нет; формат `BOOT_ADDR` (20 бит) не подтверждён |
-| **AOV-чеклист dehai** | Независимо подтверждает обязательные шаги: deep + `rockchip,rv1106`, FE-PHY off, PMU `ms×32`, `last_resume_reason` | Код не переносить: лицензии нет, другой сенсор, MCU-детекции нет; снимок — read-only reference |
+| **AOV-чеклист dehai** | Независимо подтверждает обязательные шаги: deep + `rockchip,rv1106`, FE-PHY off, PMU `ms×32`, `last_resume_reason`. Итог 2026-11-24/25: «PMU `ms×32`» перенесён в divinus (счётчик 32 кГц), кадентность и motion-resume подтверждены; FE-PHY и `last_resume_reason` стендом отвергнуты; deep+compatible и LPMCU изложены в разделах «Переносимо» и «Про периодический опрос» | Код не переносить: лицензии нет, другой сенсор, MCU-детекции нет; снимок удалённых частей заменён выжимкой фактов в этом README |
 | **Медиа-грабли (вне AOV)** | Полезный regression-чеклист: VI NV12 через `GetChnFrame` ненадёжен, RGA-цель только MMZ, `MmzFlushCache(RK_FALSE)`, stride/UV по `vir_height`, не блокировать `GetStream`, stage MP4 на TF, OSD `pos` кратен 16, fMP4 `trun=0x701`, RKNN грузить лениво | Это их выводы для MIS5001/их сборки; в OKO часть уже решена иначе |
 
 ### HPMCU/LPMCU vs RK3566
@@ -235,6 +239,11 @@ TRM (гл. 15, p444–457) и Rockchip I2C Developer Guide (V2.2.0) дают б�
   upstream-запись про fastae V2.3.2-rc1.
 
 ### Что взять из кода и скриптов dehai
+
+Ссылки на файлы и номера строк ниже — из снимка до зачистки 2026-11-25:
+сами `aov_service.c`, `network_service.c`, `detect_service.c`, `aov.md`,
+`worklog` и `todolist` удалены, факты сохранены в этом разделе и в
+«Проверенные факты».
 
 - **Порядок `prepare_sleep`** (`src/aov/aov_service.c:350-390`): остановить
   preview → завершить event-запись → оставить motion armed (ring пополняется
@@ -460,10 +469,37 @@ suspend, потому что MCU ждёт ISP от AP» это не решает
 исправлено переносом `ircut_b` на GPIO1_D1 в
 `project/make_meta/sensor_init/sc230ai_init.c`; V1 на NAND #37 — 14/14
 пробуждений с живой шиной. Из snapshot темы для этого не понадобился ни один
-файл (PDF остаются справкой), поэтому зачистка `snapshot/` не выполнялась.
-Кадентность KI-072 материалами темы не закрывается: окно deep suspend
-2.26–2.27 с не зависит от `wake_interval_s` (10/60), `last_resume_reason`
-пуст.
+файл (PDF остаются справкой). Кадентность KI-072 материалами темы на
+2026-11-24 не закрывалась: окно deep suspend 2.26–2.27 с не зависит от
+`wake_interval_s` (10/60), `last_resume_reason` пуст; 2026-11-25 она
+закрыта своей правкой в divinus (счётчик PMU в тиках 32 кГц).
+
+**Итог 2026-11-24 по KI-072/KI-079 (чеклист dehai подтвердился частично).**
+Пункт чеклиста **«PMU ms×32»** (`dehai168…/docs/design/aov.md:65`, файл
+удалён из снимка 2026-11-25, факт сохранён здесь:
+`io -4 0xff300048 $((ms*32))`) оказался верным и **перенесён в divinus**:
+счётчик `PMU_WAKEUP_TIMEOUT_CNT` тактируется 32 кГц (32768 тиков/с), а
+прежняя формула `wake_interval_s × 32` давала 59 мс вместо 60 с. Замеры
+стенда: 32768 → 1.07 с, 327680 → 10.07 с, 1920000 → 58.66 с; после правки
+тихий цикл и AOV V1 держат интервал (`KNOWN_ISSUES.md`, KI-072). Пункт
+**«FE-PHY off»** для OKO **не подтвердился**: unbind `rk_gmac-dwmac`
+не меняет сон, а rebind не поднимает встроенный FE-PHY (`phy_poll_reset
+failed`). Пункт **«last_resume_reason»** на этом ядре пуст, источник
+пробуждения пришлось мерить через `last_suspend_time` и метки моста.
+Медиа-чеклист дал для KI-079 только идею «окна устоятия» — реализовано
+своей правкой в `ivs_events.c` (3 с, ≥ 900‰). Неприменённые выводы `aov.md`
+(deep+compatible, LPMCU) изложены выше, PDF/гайды остаются справкой.
+
+**Зачистка `snapshot/` 2026-11-25.** После переноса выводов удалены 7
+отработавших файлов dehai (выводы применены или отвергнуты стендом):
+`docs/design/aov.md`, `docs/07-todolist-aov.md`, `docs/04-worklog.md`,
+`src/aov/aov_service.c`, `src/system/network_service.c`,
+`src/detect/detect_service.c`, `scripts/test_aov_fephy_off_mem.sh`.
+Уникальные факты этих файлов сведены в «Проверенные факты» → «Во внешних
+источниках» и в разделы «Переносимо» и «Что взять из кода и скриптов
+dehai». Оставлены PDF/TRM, материалы отложенного ISP-handover (JTAG,
+mcutool, LPMCU), медиа-грабли и soak-инструментация. Повторное снятие
+удалённых файлов не требуется; при необходимости — «Как обновить снимок».
 
 ## Проверенные факты
 
@@ -533,6 +569,25 @@ suspend, потому что MCU ждёт ISP от AP» это не решает
     SC200AI/SC3338; MCU-детекция отложена;
   - `rmmod rockit` в рантайме вешает систему (refcnt −1);
   - `/userdata` у них ~2 МБ, YUV/записи только на TF.
+  - Официальная схема AOV (из `docs/design/aov.md`, файл удалён из снимка
+    2026-11-25): `SetSuspendTime(1000)` → ISP single frame → umount TF →
+    `echo mem`; HPMCU-wakeup держит sensor/ISP и по PMU-таймеру отдаёт
+    ~1 fps lapse (`AOV_LAPSE`, `rkadk_aov.c`/`rkadk_muxer.c`), а MCU
+    FastAeMd/mailbox переключает пайплайн на `MultiFrame` 20–30 fps.
+    Trust-образ — `RV1106TOS_WAKEUP.ini` + `rv1106_hpmcu_wakeup_*.bin@0x40000`;
+    приоритет источников: MCU motion → PMU 1 с → GPIO (PIR не делали).
+    MVP-состояния: `ALWAYS_ON ↔ AOV_IDLE → PREPARE_SLEEP → SLEEPING →
+    POST_WAKE → LAPSE_1FPS|FULL_RECORD`, API `/api/v1/aov/*`.
+  - Их собственные результаты (`docs/07-todolist-aov.md`,
+    `docs/04-worklog.md`; удалены 2026-11-25; MIS5001, на SC230AI не
+    переносятся): `lapse_loop` 5/5, `wake_ms≈3071` при 3000 мс;
+    media+motion soak2000 — `done ok=2000 fail=0`, `FULL_RECORD`×500,
+    12 непустых MP4 по 190–240 кадров; periodic reinit 24/50 восстановился;
+    отключение AOV возвращает Phase 1 (`--record 8` frames=230,
+    `--detect 25` PASSED). Их firmware gap: для MIS5001 нет wakeup-прошивки
+    MCU (только SC200AI/SC3338), RKADK по умолчанию `-DENABLE_AOV=OFF`;
+    до `deep-compatible` + FE-PHY off `mem` не резюмился (TF-проба видела
+    `before_mem*`, но не `RESUME_OK`).
 - Luckfox `#10`:
   - документации на MCU Rockchip не даёт;
   - JTAG — IEEE 1149.1, двухпроводный SWD/cJTAG;
@@ -658,8 +713,10 @@ suspend, потому что MCU ждёт ISP от AP» это не решает
 
 ## Провенанс снимков
 
-Снимок: 44 файла, 37 524 270 Б. Лимита на число файлов и размер нет.
-Дата снятия — 2026-11-24. Файлы не редактировались.
+Снимок: 37 файлов, 37 417 079 Б. Лимита на число файлов и размер нет.
+Дата снятия — 2026-11-24; зачистка отработавших файлов — 2026-11-25
+(удалено 7 файлов dehai, 107 191 Б; повторное снятие — «Как обновить
+снимок»). Файлы не редактировались.
 
 | Upstream path | Локальный путь | Лицензия / SPDX | sha256 | Размер | Дата | Pin |
 |---|---|---|---|---|---|---|
@@ -679,7 +736,7 @@ suspend, потому что MCU ждёт ISP от AP» это не решает
 
 ### dehai168/rv1106-aov-ipc (pin `07a2f553…`)
 
-Репозиторий без `LICENSE`; 22 выбранных файла включены по решению владельца
+Репозиторий без `LICENSE`; после зачистки 2026-11-25 осталось 15 выбранных файлов, они включены по решению владельца
 проекта как read-only research copy, не для переиспользования кода. Полный
 репозиторий не копировался: UI, `www/`, `third_party/`, `models/`, `assets/`
 и остальные файлы остались в локальной копии `../rv1106-aov-ipc`.
@@ -687,25 +744,18 @@ suspend, потому что MCU ждёт ISP от AP» это не решает
 | Upstream path | Локальный путь | Лицензия | sha256 | Размер | Дата | Pin |
 |---|---|---|---|---|---|---|
 | `README.md` | `snapshot/dehai168-rv1106-aov-ipc/README.md` | no LICENSE (all rights reserved; owner-approved research copy) | `6ada9d1a3eb75c6a740eecaf101f5a76d2f7d6bc831e075e767c1fd239f4d213` | 3514 | 2026-11-24 | `07a2f553bc83eae8ccb3fa7a805403da6aef6dd7` |
-| `docs/04-worklog.md` | `snapshot/dehai168-rv1106-aov-ipc/docs/04-worklog.md` | no LICENSE (all rights reserved; owner-approved research copy) | `52ed8eb0a399aeae44331bad3f67f810cf2216c71a55bd1c26c00dd84c525d66` | 40028 | 2026-11-24 | `07a2f553bc83eae8ccb3fa7a805403da6aef6dd7` |
-| `docs/07-todolist-aov.md` | `snapshot/dehai168-rv1106-aov-ipc/docs/07-todolist-aov.md` | no LICENSE (all rights reserved; owner-approved research copy) | `cc2b806d9e72230947b6e26ace47d4384b43badf9912714ff267e1c5a51cabdd` | 3290 | 2026-11-24 | `07a2f553bc83eae8ccb3fa7a805403da6aef6dd7` |
-| `docs/design/aov.md` | `snapshot/dehai168-rv1106-aov-ipc/docs/design/aov.md` | no LICENSE (all rights reserved; owner-approved research copy) | `7fd7248d483ecab26793f806132a33a93a94f01e2ec204c34d6b9f31f71183eb` | 8845 | 2026-11-24 | `07a2f553bc83eae8ccb3fa7a805403da6aef6dd7` |
 | `docs/design/aov-probe-notes.md` | `snapshot/dehai168-rv1106-aov-ipc/docs/design/aov-probe-notes.md` | no LICENSE (all rights reserved; owner-approved research copy) | `bd2ec08787a23655f4e29b54eb835e36b17d2d61614b4c135bce7d7717f0cfd7` | 4377 | 2026-11-24 | `07a2f553bc83eae8ccb3fa7a805403da6aef6dd7` |
 | `docs/design/aov-resume-blockers.md` | `snapshot/dehai168-rv1106-aov-ipc/docs/design/aov-resume-blockers.md` | no LICENSE (all rights reserved; owner-approved research copy) | `b1a663704c16fd2dc89ea57836f93005c0dded260a7f086c1520ef347e6e5d5c` | 3810 | 2026-11-24 | `07a2f553bc83eae8ccb3fa7a805403da6aef6dd7` |
 | `docs/design/aov-hpmcu-wakeup-plan.md` | `snapshot/dehai168-rv1106-aov-ipc/docs/design/aov-hpmcu-wakeup-plan.md` | no LICENSE (all rights reserved; owner-approved research copy) | `438b11bd880d0cbbefbfc6de842fa3e6214ccfab9304c50bfd96f316b73e4fb1` | 3584 | 2026-11-24 | `07a2f553bc83eae8ccb3fa7a805403da6aef6dd7` |
 | `docs/design/aov-guide-extract.txt` | `snapshot/dehai168-rv1106-aov-ipc/docs/design/aov-guide-extract.txt` | no LICENSE (all rights reserved; owner-approved research copy) | `d25de2ea56e5ecd9b8f785f7b3e43a9335b5578bbe36900b2a2d0dfb94d927bd` | 30853 | 2026-11-24 | `07a2f553bc83eae8ccb3fa7a805403da6aef6dd7` |
 | `docs/Rockchip_RV1106_Developer_Guide_Linux_AOV_CN.pdf` | `snapshot/dehai168-rv1106-aov-ipc/docs/Rockchip_RV1106_Developer_Guide_Linux_AOV_CN.pdf` | Rockchip doc, no LICENSE in repo (owner-approved research copy) | `e51a74d6e8fc90684d9148e5dd6732f61eae04bbf584e50613a83c6705c0da57` | 7 377 217 | 2026-11-24 | `07a2f553bc83eae8ccb3fa7a805403da6aef6dd7` |
 | `config/default_config.json` | `snapshot/dehai168-rv1106-aov-ipc/config/default_config.json` | no LICENSE (all rights reserved; owner-approved research copy) | `292e0230eeb53dc305587f11db3f63b3d04a9da6434941fb6bfa1472ec5e503a` | 4139 | 2026-11-24 | `07a2f553bc83eae8ccb3fa7a805403da6aef6dd7` |
-| `src/aov/aov_service.c` | `snapshot/dehai168-rv1106-aov-ipc/src/aov/aov_service.c` | no LICENSE (all rights reserved; owner-approved research copy) | `30f3cf7d8d4d159bf17f5a4b730f2bfa12627ba7bbaa89b5d38ed7f0a729ad7a` | 15424 | 2026-11-24 | `07a2f553bc83eae8ccb3fa7a805403da6aef6dd7` |
-| `src/system/network_service.c` | `snapshot/dehai168-rv1106-aov-ipc/src/system/network_service.c` | no LICENSE (all rights reserved; owner-approved research copy) | `c6a438a54e8d602259448e3070d195c21503e8c69728bcfb7ec287161aeae8ba` | 14699 | 2026-11-24 | `07a2f553bc83eae8ccb3fa7a805403da6aef6dd7` |
 | `src/system/storage_service.c` | `snapshot/dehai168-rv1106-aov-ipc/src/system/storage_service.c` | no LICENSE (all rights reserved; owner-approved research copy) | `1db825e13f8332900db86aa611aee45b8460d8bc3ae7c89a2ef4a8c25d371f66` | 21252 | 2026-11-24 | `07a2f553bc83eae8ccb3fa7a805403da6aef6dd7` |
 | `src/media/media_service.c` | `snapshot/dehai168-rv1106-aov-ipc/src/media/media_service.c` | no LICENSE (all rights reserved; owner-approved research copy) | `e4c2d40354f670b1febec54774c76ea84e278443bb78a9de441f5d0017ab67e1` | 52322 | 2026-11-24 | `07a2f553bc83eae8ccb3fa7a805403da6aef6dd7` |
 | `src/media/media_osd.c` | `snapshot/dehai168-rv1106-aov-ipc/src/media/media_osd.c` | no LICENSE (all rights reserved; owner-approved research copy) | `ef874308fc0845e78ee15ef2053b4de974354b8b3a3ffc17b9a2947a738d2230` | 21070 | 2026-11-24 | `07a2f553bc83eae8ccb3fa7a805403da6aef6dd7` |
 | `src/record/record_service.c` | `snapshot/dehai168-rv1106-aov-ipc/src/record/record_service.c` | no LICENSE (all rights reserved; owner-approved research copy) | `b3124f574e20a77d4d91086bcacc519e2aa76503d94fc6cab67934bad42c94d9` | 29492 | 2026-11-24 | `07a2f553bc83eae8ccb3fa7a805403da6aef6dd7` |
 | `src/web/fmp4_mux.c` | `snapshot/dehai168-rv1106-aov-ipc/src/web/fmp4_mux.c` | no LICENSE (all rights reserved; owner-approved research copy) | `3ce0f3bafb936ee31a68c2a4cfbe6527bb61d86406103e6df9a6490c96d53c32` | 12874 | 2026-11-24 | `07a2f553bc83eae8ccb3fa7a805403da6aef6dd7` |
 | `src/face/rknn_face.c` | `snapshot/dehai168-rv1106-aov-ipc/src/face/rknn_face.c` | no LICENSE (all rights reserved; owner-approved research copy) | `237759b70797c20592c2583a5fc127d21488cbc7bd6dc3bc42bb1cae80af7c14` | 10414 | 2026-11-24 | `07a2f553bc83eae8ccb3fa7a805403da6aef6dd7` |
-| `src/detect/detect_service.c` | `snapshot/dehai168-rv1106-aov-ipc/src/detect/detect_service.c` | no LICENSE (all rights reserved; owner-approved research copy) | `45f62d23965d6a967302548faeec35d6c1a5a34ee1b392c5a2be0273b076db37` | 23661 | 2026-11-24 | `07a2f553bc83eae8ccb3fa7a805403da6aef6dd7` |
-| `scripts/test_aov_fephy_off_mem.sh` | `snapshot/dehai168-rv1106-aov-ipc/scripts/test_aov_fephy_off_mem.sh` | no LICENSE (all rights reserved; owner-approved research copy) | `14b7275b48324b2a16afaa056897a31eee21a6ad7feee8d0c3573e47b39f3a7b` | 1244 | 2026-11-24 | `07a2f553bc83eae8ccb3fa7a805403da6aef6dd7` |
 | `scripts/run_aov_soak.sh` | `snapshot/dehai168-rv1106-aov-ipc/scripts/run_aov_soak.sh` | no LICENSE (all rights reserved; owner-approved research copy) | `b6422a1109252353bf958be58ce89aedb01979f6b828b0e4a765d46a80040ffe` | 975 | 2026-11-24 | `07a2f553bc83eae8ccb3fa7a805403da6aef6dd7` |
 | `scripts/ipc_watchdog.sh` | `snapshot/dehai168-rv1106-aov-ipc/scripts/ipc_watchdog.sh` | no LICENSE (all rights reserved; owner-approved research copy) | `80e8ee9226b2ca0cf8c3f36b0d38f99614525d399431795e1331bf202eebdc79` | 1677 | 2026-11-24 | `07a2f553bc83eae8ccb3fa7a805403da6aef6dd7` |
 
@@ -739,7 +789,7 @@ suspend, потому что MCU ждёт ISP от AP» это не решает
 
 - `dehai168/rv1106-aov-ipc` — остальные файлы репозитория (UI, `www/`,
   `third_party/`, `models/`, `assets/` и не выбранные docs/src) не
-  копировались; 22 выбранных файла — в таблице выше. У репозитория нет
+  копировались; 15 оставшихся файлов — в таблице выше (7 отработавших удалены 2026-11-25). У репозитория нет
   `LICENSE`; снимок включён по решению владельца проекта.
 - `Rockchip_RV1106_Developer_Guide_Linux_AOV_CN.pdf` — включён в снимок dehai
   (таблица выше) вместе с текстовым экстрактом.
@@ -797,7 +847,7 @@ cp /tmp/kilo/rv1106-src/linux-rockchip-029415.html research/rv1106-aov/snapshot/
 Исходный URL I2C guide (`http://pro934ad4.pic3.ysjianzhan.cn/...`) отдаёт
 403; для проверки используется зеркало `as-jackson/Rockchip-Docs`.
 
-Для dehai скопировать 22 пути из таблицы `dehai168/rv1106-aov-ipc`, для
+Для dehai скопировать 15 путей из таблицы `dehai168/rv1106-aov-ipc`, для
 Rockchip-Docs — 5 путей, для X5 — 4 пути из соответствующих таблиц; для
 остальных репозиторных снимков — перечисленные файлы в те же пути
 `snapshot/`. Затем пересчитать `sha256sum`, обновить таблицу провенанса, дату

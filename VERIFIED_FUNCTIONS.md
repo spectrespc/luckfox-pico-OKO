@@ -38,7 +38,7 @@
 | AIISP + YOLO одновременно | работает (640×640 демо) | 2026-11-05, `vpss3`, 3 fps: AIISP off — main 30.25 fps, NPU 28%, max gap 44 мс; AIISP on — `librkpostisp.so` в `/proc/<pid>/maps`, main 32.79 fps, NPU 28%, max gap 41 мс; контроль без YOLO — 30.32 fps, NPU 0%. Плата жива, пропусков в `/live/0` не видно | Ночная точность и CMA под кольцом не измерялись: на стенде нет цели/разметки; проверка на демо-модели 640×640, не на целевой 640×384 |
 | IVS MD: старт/стоп | работает | `GET /api/ivs?enable=true&mode=md`, затем `enable=false`; `/api/ivs` отвечает, процесс не падает | Событие движения на статичной сцене не наблюдалось — детекция ограничена сценой/настройками |
 | OSD main + IVS + AIISP | работает (ранее) | OSD-регионы видны в RTSP main; в текущей сессии `SetBitmap`-ошибок в `logread` не найдено | `osd.scope=all` заблокирован; JPEG-снимок OSD не содержит |
-| Запись H.265 + квота | работает | `GET /api/record?enable=true&start=1`, 6 с записи; файл в `/mnt/sdcard/recordings` содержит 150 кадров, 5.0 с, hevc 1920x1080, успешно декодируется | Нужна смонтированная microSD; текущий сегмент может превысить `max_bytes` до ротации |
+| Запись H.265 + квота | работает | `GET /api/record?enable=true&start=1`, 6 с записи; файл в `/mnt/sdcard/recordings` содержит 150 кадров, 5.0 с, hevc 1920x1080, успешно декодируется; 2026-11-24 остановка: `enable=false`, одиночный `stop=1`, `stop=1&enable=false` и `enable=false&stop=1`, `stop=1` при `continuous=true` и `stop=1&start=1` в одном запросе дают `recording:false`/`true` как ожидается, конфиг-запрос `max_bytes` сессию не трогает, сегмент после stop финализирован (hevc 1920x1080, 6.33 с, 166 кадров декодированы PyAV), IVS-клип + `stop=1` + новый старт переживает таймер клипа (KI-082); WebUI Start/Stop и `api_check.py` 138/138 | Нужна смонтированная microSD; текущий сегмент может превысить `max_bytes` до ротации |
 | microSD: mount/read, `/api/storage` | работает | `GET /api/storage` → `sd_mounted=true`, `device=/dev/mmcblk1p1`, `fs=vfat`, `total_mb=15177`; `/run/oko-sd.state` создан udev-правилом | Запись разрешена только ниже `/mnt/sdcard` |
 | WebUI: модели через браузер | работает | `bench/ui_check.py` с новым `oem`: список источников YOLO — только `vpss3`/`vi0`; файл `ui-test.rknn` загружается из карточки Models, активация показывает `rknn_init failed (-1): the model was probably built by an incompatible rknn-toolkit2`, удаление убирает строку; скриншоты в `output/bench/ui/` | Chromium требует `libasound.so.2`; без root он распаковывается из `apt-get download libasound2t64` |
 | WebUI: разделы и API | работает | `GET /` → HTTP 200 (`<title>Divinus</title>`); `/api/status`, `/api/streams`, `/api/record`, `/api/storage` отвечают | Аутентификация — по настройкам `web_*` |
@@ -86,8 +86,9 @@
 | OSD: NPU в строке CPU | работает | `/tmp/osd-sys.txt` — literal `\n` (backslash + n) и реальный перевод строки в конце: `CPU 20% NPU 0%\nMEM FREE 81%\nT 61.8C` (`od -c`); три текст-полосы в вырезке sys-региона `output/bench/osd-fix2/`; `GET /api/yolo?enable=1` → `NPU 17%`, после disable — 0%; регион 4 `text=@/tmp/osd-sys.txt` | Текст в кадре не распознавался OCR; проверка по байтам файла и полосам яркости |
 | UDP/RTP-раздача `[stream]` | работает | 2026-11-10, стенд `192.168.52.15` → `192.168.52.200:5600`, MediaMTX 1.21.3 (`services/stream/`): в консоли `UDP streaming initialized on port 5600`, `Added UDP client 192.168.52.200:5600 (ID 0)`, `Starting streaming to udp://192.168.52.200:5600...`; `ffprobe` без пароля: `hevc Main 1920x1080 30/1`; 10 мин (`output/bench/stream/20261110-193242/`): 17 922 кадра 29.87 fps против 29.85 fps у RTSP камеры, задержка ретрансляции 1–7 мс (медиана; 6.5 мс на 10-минутном прогоне, 15 699 совпадений, 1 мс после перехода на монотонное сопоставление кадров), 82 кадра в ошибке (0.46 %); `reboot` — поток поднялся сам; два `dest` (unicast + multicast) — `ID 0`/`ID 1`, multicast вторым адресом `seq` 59648→62536 без разрывов (`/tmp`-проба, 2889 пакетов) | Multicast первым адресом — `seq/ssrc=0` (KI-052); H.265 не играет в Chromium (KI-053); потери без FEC (KI-051) |
 | Два аплинка eth0 + Wi-Fi STA | работает | 2026-11-12: одновременно два default (`eth0` 100, `wlan0` 600), WebUI/API доступны с `192.168.52.33` и `192.168.44.50`; dead-шлюз eth → `eth0` demote до 10100, `ip route get 8.8.8.8` → `wlan0`, возврат после восстановления шлюза; dead-шлюз wlan → demote до 10600 и возврат; `ip link set eth0 down` → трафик через wlan, после up — снова eth0; equal metric 100/100 разведён до 100/101; пустой `oko_wlan_mode` нормализуется в `sta` и STA считается аплинком; fake `root=/dev/nfs` не меняет eth-метрику и resolv; `bench/uplink_soak.py` — 41 проверка / 0 сбоев за 20,8 мин с чередованием линков | Ручной тест Wi-Fi-аплинка использовал временную открытую точку доступа на host `wlan0` (hostapd в контейнере `oko-services`), в образ не входит; netboot-ветка проверена подменой `/proc/cmdline`, реальный NFS-boot не гонялся |
-| Питание: DUT и `[sleep]` через INA3221 моста | работает | 2026-11-22: `bench/ina_log.py` + `bench/sleep_power.py`, CH3 = вход 5 В DUT; `off` 0.8 мА (медиана, переходный отсчёт исключён), `boot` 308 мА, `idle` 364 мА / 1.72 Вт, полка deep suspend 86 мА (min 47, p05 124, p10 160), окно deep suspend 2.4 с за цикл ≈13 с (dmesg `PM: suspend entry/exit`), цикл 4.9 мВт·ч / 1.03 мА·ч (медиана); 60-мин soak: 279 циклов, ≥200 heartbeat, `fail_streak=0`, `api_check` и `ui_check` код 0; во время restore `/userdata` ушёл в `ro` (KI-071, power cycle вернул `rw`); сверка с бортовым INA3221 на STM8-soak: 232.0 мА против 225.4 мА (−6.7 % тока, −5.4 % мощности). Артефакты: `output/bench/power/20261122-{levels,cycle,peaks,stm8c,soak3}/` | Разрешение 2 Гц не видит миллисекундные пики (для `peaks` — 8 Гц, 125 мс); полка оценивается по распределению из-за окна 2.4 с; YOLO-пик не измерен — на стенде нет `.rknn`; мост держит ≤3 сессий, скрипт использует одну |
-| Сон с IVS (движение) | работает (ограничено) | 2026-11-22, `bench/sleep_power.py --scenario motion`, IVS `min_area=30`, `sensitivity=3`, `idle_timeout=30`, `wake_check=30`: 3/3 цикла после wake → `awake`, `/api/ivs` даёт `md area=1000‰` (полный кадр), бодрствование 24–26 с, энергия цикла 15.25–17.94 мВт·ч (среднее 16.85) против 4.9 мВт·ч при `wake_check=5`; парный цикл без IVS при `wake_check=30` — ~17–20 мВт·ч, т.е. основной вклад даёт длинное окно проверки. Артефакты: `output/bench/power/20261122-motion14/`, `20261122-cycle-wc30/` | IVS на этом кадре фиксирует полнокадровое «движение» при каждом wake (вероятно ISP/экспозиция), поэтому короткий probe не используется; снижение `sensitivity` до 1 и `min_area` до 50 не помогло; для тихого сна IVS выключать или уменьшать `wake_check` (KI-079) |
+| Питание: DUT и `[sleep]` через INA3221 моста | работает | 2026-11-22: `bench/ina_log.py` + `bench/sleep_power.py`, CH3 = вход 5 В DUT; `off` 0.8 мА (медиана, переходный отсчёт исключён), `boot` 308 мА, `idle` 364 мА / 1.72 Вт, полка 86 мА (min 47, p05 124, p10 160) — **позже признана недействительной**: окно `PM: suspend entry/exit` 2.4 с — это resume-путь, а сон был 81 мс из-за неверных единиц PMU-таймаута (KI-072); после правки 2026-11-24 полка deep suspend 32.8–36 мА (`output/bench/power/20261124-221009-cycle`), цикл 4.9 мВт·ч / 1.03 мА·ч (медиана, прежний 13-с цикл); 60-мин soak: 279 циклов, ≥200 heartbeat, `fail_streak=0`, `api_check` и `ui_check` код 0; во время restore `/userdata` ушёл в `ro` (KI-071, power cycle вернул `rw`); сверка с бортовым INA3221 на STM8-soak: 232.0 мА против 225.4 мА (−6.7 % тока, −5.4 % мощности). Артефакты: `output/bench/power/20261122-{levels,cycle,peaks,stm8c,soak3}/` | Разрешение 2 Гц не видит миллисекундные пики (для `peaks` — 8 Гц, 125 мс); полка оценивается по распределению тока (2 Гц не даёт границ окна сна); YOLO-пик не измерен — на стенде нет `.rknn`; мост держит ≤3 сессий, скрипт использует одну |
+| Сон с IVS (движение) | работает (ограничено) | 2026-11-24, `bench/sleep_power.py --scenario motion`, IVS `min_area=30`, `sensitivity=3`, `wake_check=30`: 3/3 пробуждения без IVS-событий в `/api/ivs` (окно устоятия 3 с, результаты ≥ 900‰ отбрасываются); контроль реального движения вне окна — зум даёт `md area=728/440/871/657‰`. До правки (2026-11-22) было 3/3 `md area=1000‰` (полный кадр) и бодрствование 24–26 с. Артефакты: `output/bench/power/20261124-222248-motion/`, `20261122-motion14/`, `20261122-cycle-wc30/` | Ложное полнокадровое событие после wake — переход AE/ISP после рестарта пайплайна; KI-079 закрыт 2026-11-24 окном устоятия (первые 3 с после старта аналитики отбрасываются только результаты ≥ 900‰). Снижение `sensitivity`/`min_area` на это не влияло. Моторный зум-тест — суррогат реального движения (весь кадр меняется), для приёмочного теста нужна сцена с объектом |
+| Питание: интервал PMU-пробуждения `[sleep]` | работает | 2026-11-24: счётчик `0xff300048` тактируется 32 кГц (32768 тиков/с; PVTM-путь активен, `sleep freq (hz):32768`); калибровка 32768/327680/1920000 тиков → сон 1.07/10.07/58.66 с по `last_suspend_time`; `pmu_timeout_hz` по умолчанию 32768, легаси-значение 32 мигрирует при загрузке. Тихий `cycle`: сон 10.08 с при `wake_interval_s=10` и 60.08 с при 60, ровно один цикл на интервал; V1 AOV (`aov_mcu=1`, `keep_isp=1`, 60 с) — интервалы 68–79 с, I2C3 `i2c3m1`, STM8 2.3.2 на каждом пробуждении. Артефакты: `output/bench/power/20261124-{220827-cycle,221009-cycle,221339-aov,222016-cycle}`, `output/bench/eth-probe-20261124/` | Окно `PM: suspend entry→exit` в dmesg — resume-путь, не сон; `count=0` выключает timeout-wake (AP спит до power cycle). Unbind `rk_gmac-dwmac` на сон не влияет, rebind не поднимает встроенный FE-PHY. AOV gate по вендорскому ISP-handover не снят. 2026-11-25, ядро #38: окно mailbox 500 мс — 4/4 `-h-mbox-`, 0 `-h-timeout-`; motion-scenario 3 цикла без ложных событий (`output/bench/power/20261125-073154-aov`, `.../20261125-073741-motion`) |
 
 ### Причина смены DHCP-адреса
 
@@ -129,7 +130,8 @@ curl -s 'http://<DUT_IP>/api/status'
 curl -s 'http://<DUT_IP>/api/streams'
 curl -s 'http://<DUT_IP>/api/storage'
 curl -s 'http://<DUT_IP>/api/record?enable=true&start=1'
-curl -s 'http://<DUT_IP>/api/record?enable=true&stop=1'
+curl -s 'http://<DUT_IP>/api/record?stop=1'
+curl -s 'http://<DUT_IP>/api/record?enable=false'
 ```
 
 Формат карты (разрушающая операция, только после подтверждения):
@@ -281,7 +283,11 @@ bench/run.sh sleep_power.py --scenario cycle --wake-check 30
 docker compose -f services/events/docker-compose.yml up -d
 bench/run.sh sleep_power.py --scenario soak --soak-minutes 60
 
-# окна deep suspend на DUT (после прогона)
+# фактический сон последнего цикла (dmesg entry→exit — это resume-путь!)
+cat /sys/kernel/wakeup_reasons/last_suspend_time
+# ожидаемо: "<resume ~2.4> <сон ≈ wake_interval_s + 0.07>"
+
+# окна resume-пути (не сна) в dmesg
 dmesg | grep 'PM: suspend' | tail
 ```
 
@@ -299,7 +305,14 @@ bench/run.sh sleep_power.py --scenario i2c --i2c-cycles 300 --expect-present
 `output/bench/power/20261123-101015-i2c/`. Это чистый контроль для KI-080:
 вне suspend шина и привод не деградируют. Прогоны `aov` с `aov_mcu=1`
 наоборот дают отказ I2C3/AP (KI-080), поэтому в реестр как «работает» не
-вносятся.
+вносятся. Повтор 2026-11-24 на том же образе (после правки KI-080/KI-072)
+дал 3–5 одиночных ошибок команд из 600 (`present=true` в конце, в `dmesg`
+нет `rk3x`/`SCL hold`/Oops): это таймауты отдельных команд при занятом
+STM8, а не отказ шины; артефакты `output/bench/power/20261124-2228*-i2c/`.
+Повтор 2026-11-25 на ядре #38: 4–5 таких же одиночных ошибок на 300 циклов,
+все — `sleep show` с `device reports 0.0.0` (нулевой ответ GET_STATE во время
+движения мотора), `present=true` в конце, шина `i2c3m1`, SDA/SCL=1; артефакты
+`output/bench/power/20261125-075350-i2c/`, `.../20261125-075624-i2c/`.
 
 ### Запись и защита от NAND
 
@@ -313,7 +326,7 @@ curl -s 'http://<DUT_IP>/api/record?enable=true&start=1'
 curl -s 'http://<DUT_IP>/api/storage?action=mount'
 curl -s 'http://<DUT_IP>/api/record?enable=true&start=1'
 sleep 5
-curl -s 'http://<DUT_IP>/api/record?enable=true&stop=1'
+curl -s 'http://<DUT_IP>/api/record?stop=1'
 ls -l /mnt/sdcard/recordings
 ffprobe -v error -show_entries format=duration /mnt/sdcard/recordings/*.mp4
 ```

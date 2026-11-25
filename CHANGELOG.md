@@ -780,8 +780,151 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   no KI status is claimed as fixed. Artifacts:
   `output/bench/nand-aov-20261124/`.
 
+- **Документация AOV: KI-079/KI-080 сведены в архив, KI-072 актуализирован.**
+  В `KNOWN_ISSUES.md` длинные записи KI-079 и KI-080 перенесены в «Архив
+  закрытых записей» (компактные строки), у KI-072 обновлены заголовок и
+  статус: handshake и кадентность работают, остатки — overshoot 68–79 с и gate
+  ISP-handover; добавлен итог стенда 2026-11-25 по окну 500 мс. Синхронно
+  обновлены `TESTBENCH.md` §7-AOV, `FEATURES_UNVERIFIED.md` §AOV,
+  `VERIFIED_FUNCTIONS.md` и `bench/README.md`; `research/rv1106-aov/README.md`
+  и индекс `research/README.md` приведены к составу снимка после зачистки.
+- **AOV documentation: KI-079/KI-080 moved to the archive, KI-072
+  refreshed.** In `KNOWN_ISSUES.md` the long KI-079 and KI-080 entries moved
+  to the closed-entries archive (compact lines), and the KI-072 heading and
+  status were refreshed: the handshake and the cadence now work, residuals are
+  the 68–79 s overshoot and the ISP-handover gate; the 2026-11-25 500 ms
+  bench result was added. `TESTBENCH.md` §7-AOV, `FEATURES_UNVERIFIED.md`
+  §AOV, `VERIFIED_FUNCTIONS.md` and `bench/README.md` were updated in sync;
+  `research/rv1106-aov/README.md` and the `research/README.md` index now match
+  the snapshot after the cleanup.
+
 ### Исправлено
 
+- **`/api/record`: `enable=false` и `stop=1` теперь останавливают активную
+  запись (KI-082).** Обработчик собирает `start`/`stop` в процессе разбора
+  запроса и применяет команды после всех конфиг-ключей: `stop=1` и
+  `enable=false` останавливают сессию безусловно, независимо от `enable`,
+  `continuous` и порядка ключей; `start=1` требует `record_enable=true` по
+  итогам запроса; `stop=1&start=1` перезапускает сессию. Запрос только с
+  конфиг-ключами активную сессию не трогает. `record_stop()` дополнительно
+  отменяет таймер событийного клипа (`recordEventActive`/`+1`), чтобы
+  осиротевший таймер IVS не закрыл следующую сессию. Стенд 2026-11-24:
+  `enable=false`, отдельный `stop=1`, оба порядка `stop=1`/`enable=false`,
+  stop в `continuous`, рестарт одним запросом, конфиг-запрос `max_bytes`,
+  IVS-клип + stop + новый старт (сессия жива спустя таймер клипа), WebUI
+  Start/Stop, `api_check.py` 138/138; артефакты — `output/bench/ki082/`.
+- **`/api/record`: `enable=false` and `stop=1` now stop an active recording
+  (KI-082).** The handler collects `start`/`stop` while parsing the query and
+  applies the commands after every config key: `stop=1` and `enable=false`
+  stop the session unconditionally, regardless of `enable`, `continuous` or
+  the key order; `start=1` requires `record_enable=true` in the final request
+  state; `stop=1&start=1` restarts the session. A request with only config
+  keys leaves the live session alone. `record_stop()` also cancels the motion
+  clip timer (`recordEventActive`/`+1`), so an orphaned IVS timer cannot close
+  the next session. Bench 2026-11-24: `enable=false`, a standalone `stop=1`,
+  both `stop=1`/`enable=false` orders, stop in `continuous`, a one-request
+  restart, a config-only `max_bytes` request, an IVS clip + stop + fresh start
+  (the session survives past the clip timer), the WebUI Start/Stop buttons and
+  `api_check.py` 138/138; artifacts in `output/bench/ki082/`.
+- **microSD: coredump-дампы больше не пишутся в rootfs и не забивают карту
+  (KI-081).** В `project/build.sh` (`__BUILD_ENABLE_COREDUMP_SCRIPT`) handler
+  `/usr/bin/coredump2sdcard.sh` теперь пишет дамп только если `/mnt/sdcard`
+  действительно смонтирован (`mountpoint -q`) и свободно ≥ 128 МБ, иначе
+  дамп отбрасывается. Раньше `cat > /mnt/sdcard/core-$1-$2` без карты падал
+  в rootfs, а с картой копил дампы без предела (30 файлов divinus/npu_probe,
+  ~1.4 ГиБ); обрыв питания во время такой записи дал порчу FAT. Стенд
+  2026-11-24: карта `SC16G` восстановлена `fsck.fat -a -F 1` (два прохода),
+  мусор и битые каталоги очищены, карта монтируется (15177 МБ свободно),
+  запись 7.9 МБ MP4 проверена; handler проверен с картой (core создаётся) и
+  без карты (дамп не создаётся).
+- **microSD: crash dumps no longer land on the rootfs or fill the card
+  (KI-081).** In `project/build.sh` (`__BUILD_ENABLE_COREDUMP_SCRIPT`) the
+  `/usr/bin/coredump2sdcard.sh` handler now writes a dump only when
+  `/mnt/sdcard` is really mounted (`mountpoint -q`) and at least 128 MB are
+  free; otherwise the dump is dropped. Previously
+  `cat > /mnt/sdcard/core-$1-$2` fell through to the rootfs without a card
+  and accumulated dumps without limit with one (30 divinus/npu_probe files,
+  ~1.4 GiB); a power loss during such a write corrupted the FAT. Bench
+  2026-11-24: the `SC16G` card was recovered with `fsck.fat -a -F 1` (two
+  passes), the junk and broken directories were removed, the card mounts
+  again (15177 MB free) and a 7.9 MB MP4 write was verified; the handler was
+  tested with the card (a core is created) and without it (no dump).
+- **KI-072: интервал PMU-пробуждения теперь соблюдается.** Причина «плотного
+  цикла» — единицы `PMU_WAKEUP_TIMEOUT_CNT` (`0xff300048`): счётчик тактируется
+  32 кГц (32768 тиков/с, активен PVTM-путь), а divinus писал
+  `wake_interval_s × 32`; `wake_interval_s=60` давал 1920 тиков = 59 мс сна.
+  Прежние «окна deep suspend 2.26 с» оказались resume-путём: метки `dmesg`
+  идут по `CLOCK_MONOTONIC`, которая в сне не продвигается, реальный сон
+  отдаёт `last_suspend_time` (было 81 мс). Калибровка на стенде: 32768 тиков →
+  1.07 с, 327680 → 10.07 с, 1920000 → 58.66 с; `count=0` выключает
+  timeout-wake совсем. `pmu_timeout_hz` по умолчанию стал **32768**, старые
+  конфиги со значением < 1000 мигрируют при загрузке
+  (`app_config_parse`). Стенд: тихий `cycle` спит 10.08 с при интервале 10 с и
+  60.08 с при 60 (ровно 1 цикл на интервал), V1 (`aov_mcu=1`, `keep_isp=1`,
+  60 с) — интервалы 68–79 с, I2C3 и STM8 живы. Unbind `rk_gmac-dwmac` на сон
+  не влияет, а rebind не поднимает встроенный FE-PHY, поэтому методика dehai
+  для OKO не применяется.
+- **KI-072: the PMU wake interval is now honoured.** The "dense cycle" cause
+  was the unit of `PMU_WAKEUP_TIMEOUT_CNT` (`0xff300048`): the counter runs at
+  32 kHz (32768 ticks/s, PVTM path) while divinus wrote
+  `wake_interval_s × 32`, so `wake_interval_s=60` programmed 1920 ticks = a
+  59 ms sleep. The earlier "2.26 s deep-suspend windows" were the resume path:
+  `dmesg` timestamps use `CLOCK_MONOTONIC`, which does not advance in suspend,
+  and the real sleep comes from `last_suspend_time` (81 ms before the fix).
+  Bench calibration: 32768 ticks → 1.07 s, 327680 → 10.07 s, 1920000 →
+  58.66 s; `count=0` disables the timeout wake entirely. The
+  `pmu_timeout_hz` default is now **32768** and old configs with a value below
+  1000 are migrated on load (`app_config_parse`). Bench: the quiet `cycle`
+  sleeps 10.08 s at a 10 s interval and 60.08 s at 60 s (one cycle per
+  interval), V1 (`aov_mcu=1`, `keep_isp=1`, 60 s) shows 68–79 s intervals with
+  I2C3 and the STM8 alive. Unbinding `rk_gmac-dwmac` does not change the sleep
+  and rebinding does not bring the integrated FE-PHY back, so dehai's
+  technique does not apply to OKO.
+- **KI-079: ложное полнокадровое IVS-событие после пробуждения убрано.**
+  Первые MD-результаты после рестарта пайплайна видят переход AE/ISP и дают
+  `area=1000‰` на весь кадр. В `ivs_events.c` добавлено окно устоятия
+  `IVS_SETTLE_S=3` после старта аналитики: результаты с площадью ≥ 900‰ в нём
+  отбрасываются, движение с меньшей площадью проходит; журнал, действия и
+  отсрочка сна не затрагиваются. Стенд: `--scenario motion` 3 цикла — 0/3
+  событий на пробуждении (было 3/3), контроль движения зумом вне окна даёт
+  `md area=728/440/871/657‰`.
+- **KI-079: the false full-frame IVS event after a wake is removed.** The
+  first MD results after a pipeline restart see the AE/ISP transition and
+  report `area=1000‰` over the whole frame. `ivs_events.c` now keeps a
+  `IVS_SETTLE_S=3` settle window after the analytics start: results with an
+  area ≥ 900‰ inside it are dropped while smaller motion passes; the journal,
+  actions and the sleep postponement are untouched. Bench: `--scenario motion`,
+  3 cycles — 0/3 events on wake (was 3/3); a zoom-move control outside the
+  window reports `md area=728/440/871/657‰`.
+- **KI-072: окно mailbox HPMCU уменьшено до 500 мс.**
+  `RV1106_HPMCU_FAST_WKUP_TIMEOUT` снижено с 1000 до 500 мс: измеренное
+  решение MCU ~0.2 с даёт запас 2.5×. Ядро `#38` собрано в профиле `-AOV`,
+  прошито в NAND (`boot`) и проверено на стенде 2026-11-25: монитор моста
+  насчитал 4 `-h-wait-`/4 `-h-mbox-`/0 `-h-timeout-`; V1 (60 с, 260 с) —
+  3 пробуждения, интервалы 75.5/75.3 с, сон 60.28 с, `i2c3m1` и STM8 2.3.2
+  на каждом wake, `dmesg` без `rk3x`/Oops. Фолбэк на 1000 мс не
+  потребовался. Артефакты: `output/bench/power/20261125-073154-aov`,
+  `output/bench/aov-test/summary_mbox500-20261125.*`.
+- **KI-072: the HPMCU mailbox window is reduced to 500 ms.**
+  `RV1106_HPMCU_FAST_WKUP_TIMEOUT` dropped from 1000 to 500 ms: the measured
+  MCU decision takes ~0.2 s, a 2.5× margin. Kernel `#38` was built in the
+  `-AOV` profile, flashed to NAND (`boot`) and verified on the bench on
+  2026-11-25: the bridge monitor counted 4 `-h-wait-`/4 `-h-mbox-`/
+  0 `-h-timeout-`; V1 (60 s, 260 s) — 3 wakes, intervals 75.5/75.3 s, a
+  60.28 s sleep, `i2c3m1` and STM8 2.3.2 on every wake, `dmesg` free of
+  `rk3x`/Oops. The 1000 ms fallback was not needed. Artifacts:
+  `output/bench/power/20261125-073154-aov`,
+  `output/bench/aov-test/summary_mbox500-20261125.*`.
+- **`bench/sleep_power.py`: сон измеряется по `last_suspend_time`.**
+  Отчёт больше не выдаёт окно `PM: suspend entry/exit` за длительность сна:
+  оно подписано как resume-путь, добавлена таблица фактического сна из
+  `/sys/kernel/wakeup_reasons/last_suspend_time`. Именно это расхождение
+  породило неверный вывод «окно 2.26 с не масштабируется».
+- **`bench/sleep_power.py`: sleep is measured from `last_suspend_time`.**
+  The report no longer presents the `PM: suspend entry/exit` window as the
+  sleep length: it is labelled as the resume path and a real-sleep table from
+  `/sys/kernel/wakeup_reasons/last_suspend_time` was added. That mismatch had
+  produced the wrong "the 2.26 s window does not scale" conclusion.
 - **KI-080: I2C3 больше не умирает после AOV-пробуждения.** Причина — не
   контроллер rk3x, а конфликт пина в meta-образе AOV: sensor-init для SC230AI
   объявлял `ircut_b` на GPIO1_D3, который на этой плате занят под I2C3_M1 SCL
@@ -872,6 +1015,29 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   only unique commit of `feat/sleep-heartbeat-snapshot` (`4842f2ac7`, the
   `stm32_acpi-ec` MIT license) duplicates the `main` commit `a59954b1e` —
   identical trees confirmed by `git diff`.
+
+### Удалено
+
+- **`research/rv1106-aov`: удалены 7 отработавших файлов снимка dehai.**
+  Выводы применены в OKO или отвергнуты стендом, поэтому удалены
+  `docs/design/aov.md`, `docs/07-todolist-aov.md`, `docs/04-worklog.md`,
+  `src/aov/aov_service.c`, `src/system/network_service.c`,
+  `src/detect/detect_service.c`, `scripts/test_aov_fephy_off_mem.sh`.
+  Уникальные факты перенесены в `research/rv1106-aov/README.md`
+  («Проверенные факты» → «Во внешних источниках», «Переносимо»); таблица
+  провенанса и счётчик обновлены (37 файлов, 37 417 079 Б), индекс
+  `research/README.md` синхронизирован. PDF/TRM и материалы отложенных
+  направлений (JTAG, mcutool, LPMCU, ISP-handover) оставлены как справка.
+- **`research/rv1106-aov`: 7 spent dehai snapshot files removed.** Their
+  conclusions were either applied in OKO or refuted on the bench, so
+  `docs/design/aov.md`, `docs/07-todolist-aov.md`, `docs/04-worklog.md`,
+  `src/aov/aov_service.c`, `src/system/network_service.c`,
+  `src/detect/detect_service.c` and `scripts/test_aov_fephy_off_mem.sh` were
+  deleted. The unique facts moved to `research/rv1106-aov/README.md`
+  ("Проверенные факты" → "Во внешних источниках", "Переносимо"); the
+  provenance table and counter were updated (37 files, 37 417 079 B) and the
+  `research/README.md` index was synced. The PDFs/TRM and the deferred-topic
+  material (JTAG, mcutool, LPMCU, ISP-handover) stay as reference.
 
 ## [0.4.0] — 2026-11-20
 

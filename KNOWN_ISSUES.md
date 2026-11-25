@@ -355,8 +355,8 @@
   и деградация NAND). Артефакты: `output/bench/nand-aov-20261124/`
   (`sfc-watch.log`, `ubi_state.txt`, `dmesg.txt`).
 
-- **KI-072. Профиль `-AOV`: 1M-раскладка и окно ядра/MCU исправлены,
-  handshake MCU не отвечает.** Hpmcu (117 КБ) + SPL + DDR + usbplug дают
+- **KI-072. Профиль `-AOV`: 1M-раскладка, handshake MCU и кадентность
+  исправлены; открыт gate ISP-handover.** Hpmcu (117 КБ) + SPL + DDR + usbplug дают
   idblock ~300 КБ; продуктовый idblock 256K расширен до 1M, все разделы
   после него сдвинуты на 768K (rootfs уменьшен до 167M, сумма 255.25 МБ).
   Отдельного meta-раздела нет — 256 МБ NAND заняты, поэтому blob лежит в
@@ -465,10 +465,13 @@
      `Image.gz` в `build.sh`. Окно проверено на ядре #26 с motion-метой:
      6 из 6 `-h-wait-` → `-h-mbox-`, ни одного `-h-timeout-`
      (`output/bench/aov-test/quiet_motion1000.20261118-094013.log`).
-  Статус: **экспериментальный, не для выпуска**. Блокеры — KI-073 (патч
-  применён), KI-074 (исправлено), длинный тихий сон = **NO-GO на стороне
-  AP** (нужен вендорский разбор захвата ISP/PMU). AOV в текущем виде —
-  **motion-resume**; quiet-ветка с `aov_keep_isp` непригодна для выпуска.
+  Статус: **экспериментальный, не для выпуска** (актуализировано
+  2026-11-25). Handshake MCU и кадентность работают: PMU-таймаут
+  программируется в тиках 32 кГц, quiet-сон равен `wake_interval_s`,
+  AOV-ветка = **motion-resume + PMU-таймер**. KI-073/KI-074/KI-080 закрыты.
+  Остатки: overshoot 68–79 с (окно `wake_check`), окно mailbox 500 мс
+  (итог 2026-11-25 ниже) и gate вендорского **ISP-handover**
+  (`FEATURES_UNVERIFIED.md` §AOV) — без него AOV не для выпуска.
   Артефакты: `output/bench/aov-test/quiet-differential-20261117.md`,
   `gicdiag-wfi-20261117.md`, `mcu-reset-experiment-20261117.md`,
   `quiet_keepisp{0,1}.*`, `quiet_motion.*`, `quiet_{mcuonce,mcunotify,hybrid,gpiomask,viidle}.*`,
@@ -531,6 +534,54 @@
   `last_suspend_time` = `2.266882594 0.080939000`. Артефакты:
   `output/bench/power/20261124-212527-aov` (V1), `.../20261124-213300-cycle`
   (тихий цикл), `.../20261124-213239-i2c` (контроль 300 циклов, 0 ошибок).
+
+  **2026-11-24, корень кадентности найден: единицы PMU-таймаута.**
+  Окно `PM: suspend entry` → `exit` в dmesg — это **resume-путь**: метки
+  ядра идут по `CLOCK_MONOTONIC`, которая в deep suspend не продвигается.
+  Фактический сон отдаёт только `/sys/kernel/wakeup_reasons/last_suspend_time`
+  (`<resume-путь> <сон>`); прежние `2.266882594 0.080939000` означали
+  2.27 с resume и **81 мс сна**. Внешняя сверка по меткам ESP32-моста: от
+  `-WFI-` до `wake up status` ~70 мс, то есть AP действительно просыпался
+  почти сразу. Причина — единицы счётчика `PMU_WAKEUP_TIMEOUT_CNT`
+  (`0xff300048`): divinus писал `wake_interval_s × 32`, а счётчик
+  тактируется 32 кГц (32768 тиков/с; активен PVTM-путь, в консоли
+  `sleep freq (hz):32768`). Замеры: 32768 → 1.07 с, 327680 → 10.07 с,
+  1920000 → 58.66 с (линейно, ~30.4 мкс/тик); при `count=0`
+  `TIMEOUT_WAKEUP` выключен и AP не просыпается вовсе (проверено,
+  восстановление power cycle). `pmu_timeout_hz` по умолчанию исправлен на
+  **32768**, старые конфиги со значением < 1000 мигрируют на 32768 при
+  загрузке (`app_config_parse`), `app_config_save` пишет новое значение.
+  Проверка после правки: тихий `cycle` — сон 10.08 с при интервале 10 с и
+  60.08 с при 60 с, ровно один цикл на `wake_interval_s`; V1 (`aov_mcu=1`,
+  `keep_isp=1`, 60 с) — интервалы 68–79 с, `last_wake_src=2`, I2C3
+  `i2c3m1`, SDA/SCL=1 и STM8 2.3.2 на каждом пробуждении; `dmesg` без
+  `rk3x`/Oops. Артефакты: `output/bench/power/20261124-220827-cycle`,
+  `.../20261124-221009-cycle`, `.../20261124-221339-aov`,
+  `.../20261124-222016-cycle`; замеры тиков —
+  `output/bench/eth-probe-20261124/`. Остаток: AOV-ветка по-прежнему
+  просыпается по PMU-таймеру и проверяет движение в окне (вендорский
+  ISP-handover не реализован), поэтому gate AOV не снят. Отдельно
+  проверено и не подтвердилось: unbind `rk_gmac-dwmac` перед сном ничего
+  не меняет (81 мс и с линком, и без линка, и без драйвера), а
+  rebind на этой плате не поднимает встроенный FE-PHY (`phy_poll_reset
+  failed`), то есть методика dehai для OKO неприменима.
+
+  **2026-11-25, окно mailbox 500 мс (ядро #38).** `RV1106_HPMCU_FAST_WKUP_TIMEOUT`
+  уменьшено с 1000 до 500 мс, ядро `#38` собрано в профиле `-AOV` и прошито
+  в NAND (`boot`, offset 0x1c0000). V1 (`aov_mcu=1`, `keep_isp=1`,
+  `wake_interval_s=60`, 260 с): read-only монитор моста `:2324` дал
+  **4 `-h-wait-`, 4 `-h-mbox-`, 0 `-h-timeout-`** — решение MCU приходит
+  за ~0.2 с, запас 2.5×; три пробуждения с `aov_state=off`, интервалы
+  75.5/75.3 с (overshoot окна `wake_check`), фактический сон 60.28 с
+  (`last_suspend_time`), на каждом wake iomux `i2c3m1`, SDA/SCL=1,
+  STM8 2.3.2 `present=true`, `dmesg` без `rk3x`/Oops. Фолбэк на 1000 мс не
+  потребовался. В том же прогоне `--scenario motion` × 3 — ни одного
+  ложного полнокадрового события (регресс KI-079), реальное движение
+  детектируется (`md area=515‰`); тихий `cycle` — сон 10.07 с при 10 с и
+  60.09 с при 60 с. Артефакты: `output/bench/power/20261125-073154-aov`,
+  `output/bench/aov-test/summary_mbox500-20261125.20261125-073152.json`,
+  `.../20261125-073741-motion`, `.../20261125-074156-cycle`,
+  `.../20261125-074709-cycle`.
 
 - **KI-073. в `rk3x_i2c_irq` на I2C3 при циклах `[sleep]`.**
   2026-11-17 в AOV-прогоне (idle 30 s, `aov_mcu=1`) шина I2C3
@@ -932,155 +983,35 @@
   запись остаётся открытой. Пул HTTP-сессий моста по-прежнему 3/3 (`429`),
   это отдельная проблема, на telnet не влияет.
 
-- **KI-079. IVS при пробуждении из `[sleep]` даёт полнокадровое движение и
-  не даёт короткому probe завершиться.**
-  2026-11-22, стенд, ESP32 INA3221: `bench/sleep_power.py --scenario motion`,
-  IVS `min_area=30`, `sensitivity=3`, `idle_timeout_s=30`,
-  `wake_interval_s=10`, `wake_check_s=30`. В 3/3 циклах после PMU wake
-  состояние сразу `awake`; `/api/ivs` отдаёт событие `md`, `area=1000‰`,
-  bbox на весь кадр (`[0,0,640,352]`) — вероятно, переход ISP/экспозиции.
-  Камера бодрствует 24–26 с, энергия цикла 15.25–17.94 мВт·ч (среднее
-  16.85) против 4.9 мВт·ч при `wake_check=5`. Парный цикл без IVS при
-  `wake_check=30` даёт сопоставимые ~17–20 мВт·ч, т.е. основной вклад —
-  длинное окно проверки, а IVS лишь переводит `probe → awake`. Снижение
-  `sensitivity` до 1 и `min_area` до 50 не помогло. Обход: для тихого сна
-  выключать IVS (или уменьшать `wake_check`); артефакты
-  `output/bench/power/20261122-motion14/`, `...-cycle-wc30/`.
-  Статус: **открыто**.
-
-- **KI-080. AOV-MCU (`aov_mcu=1`) оставляет шину I2C3 мёртвой или AP не
-  выходит из suspend; пропажа STM8 — следствие отказа шины, не отдельный
-  баг привода.**
-  2026-11-23, стенд, AOV-образ (`aov_available=true`, ядро `5.10.160 #26`).
-  Контроль T1.1: 300 циклов `oko-motor sleep show` + `move zoom ±5` без
-  suspend — 0 ошибок команд, `0x60` отвечает, `motor.present=true`,
-  артефакт `output/bench/power/20261123-101015-i2c/`.
-  V1 (`aov_mcu=1`, `aov_keep_isp=1`, `wake_interval_s=60`, 60 с): после
-  чистого старта `i2cdetect -r -y 3` пуст — нет `0x40/0x41/0x42/0x60`;
-  GPIO1_D2/SDA=1, GPIO1_D3/SCL=0. Unbind мастера `ff460000.i2c` (i2c3)
-  отпускает SCL: `devmem 0xff530070` меняется с `0x06000800` (SCL=0) на
-  `0x06000C00` (SCL=1), а повторный bind возвращает `0x40/0x41/0x42/0x60`
-  без Oops и ошибок в dmesg — **H2 подтверждён**: линию удерживает сам
-  контроллер rk3x, а не внешний slave. Ошибочный unbind `ff470000.i2c`
-  (i2c4/сенсор) 2026-11-23 дал Oops `rkcif_set_default_fmt`; его трогать
-  нельзя. Шаг unbind/rebind i2c3 теперь в лестнице по умолчанию
-  (`--no-ladder-rebind` отключает); `oko-motor reset` и `oko-ec reset` на
-  мёртвой шине не проходят. Артефакт:
-  `output/bench/stm8/20261123-160739-v1-correct-unbind/result.json`.
-  **2026-11-23 16:35, ядро #29:** в DTS добавлен `resets` для i2c3, в
-  `rk3x_i2c_resume` — полный reset контроллера (reset-on-resume), ядро
-  собрано и прошито. V1 всё равно теряет I2C3 за 60 с; предупреждений
-  «suspend with a busy transfer» нет, то есть сброс контроллера сам по себе
-  отказ не устраняет. Остаются H1/H3 (удержание slave) или транзакция,
-  начатая после resume; рабочий обход — unbind/rebind i2c3. Патч **откатан**
-  в исходниках, стенд возвращён на стабильное #27. После восстановления
-  NAND AOV на #27 всё равно зависает на первом suspend (проверены
-  `wake_interval_s` 10/40/60), поэтому AOV остаётся NO-GO, T2.2 не закрыт.
-  **2026-11-24, после откота на #27:** холодный power cycle вернул `rw` и
-  шину, но теперь зависает и тихий `cycle` (без AOV), и AOV при
-  `wake_interval_s` 10/40/60: AP уходит в suspend и не просыпается
-  (`/api/status=000`), лечится только холодным power cycle. Исторические
-  данные 2026-11-22 (#27): 20/60 с работали, deep suspend 2.26–2.42 с;
-  сейчас suspend-путь стенда нестабилен (HPMCU/PMU или износ NAND).
-  Не-suspend регрессия на #27: `api_check` 139/0, `ui_check` passed,
-  300 циклов I2C — 0 ошибок.
-  **2026-11-24, сверка с upstream `i2c-rk3x.c`:** в master/v5.10 нет
-  H2-фикса; upstream упростил PM до `adapt_div` и не содержит vendor-кода
-  `suspend_noirq`/reset. Полезный для KI-073 spurious START уже есть в
-  vendor (`REG_INT_MBRF | REG_INT_START`, upstream `02fe0fbd8a`). Из
-  upstream стоит забрать только `19cde9c92b` (`disable_irq` вокруг
-  polled-передачи) и `b57e90189f` (`clk_enable` перед `clk_get_rate`);
-  к H2 они не относятся.
-  **2026-11-24, backport из Rockchip develop-5.10 (ядро #32):** перенесены
-  атомарная запись `CON`+счётчика в `rk3x_i2c_start` (start вынесен из-под
-  лока вызывающего), клампы `START/STOP_SETUP_MAX`, очистка
-  `REG_INT_START` в общем IPD и `disable_irq` вокруг polled-передачи.
-  Результат: тихий `cycle` и AOV `aov_mcu=0` снова работают (3 окна
-  deep suspend 2.25–2.29 с, `restored=true`), 300 циклов I2C — 0 ошибок,
-  `api_check` 139/0. V1 (`aov_mcu=1`, `keep_isp=1`) всё ещё теряет I2C3
-  за 60 с, лестница восстанавливает. То есть backport снял зависание
-  AP/тихого цикла, но H2 не закрыл.
-  **2026-11-24, проверка гипотезы «MCU блокирует I2C3»:** в вендорских
-  примерах MCU работает только с i2c4. Плата
-  `oko-wakeup-sc230ai-ADC` имеет `CONFIG_RT_USING_I2C3` **не установлен**,
-  `CONFIG_RT_USING_I2C4=y`, iomux настраивает только `i2c4_m2`, а приложение
-  `battery-ipc` i2c3 не трогает. Собранный `rtthread.bin` содержит только
-  `i2c4`. Значит, MCU не занимает шину STM8/EC; SC230AI продолжает работать
-  потому, что MCU владеет i2c4/ISP. H2 остаётся на стороне AP: AOV-fast-wake
-  и состояние контроллера i2c3, а не арбитраж с MCU.
-  **2026-11-24, #33:** в `rk3x_i2c_suspend_noirq` добавлен `-EBUSY` при
-  `busy`; V1 по-прежнему теряет I2C3, сообщений об отмене suspend нет
-  (`busy=false` в момент входа), тихий `cycle` работает (2.26–2.27 с).
-  То есть отказ не ловится на границе suspend с активной транзакцией.
-  **2026-11-24, #34:** i2c3 удерживается в reset через весь suspend
-  (`resets` в DTS, `.suspend` assert / `.resume` deassert + `adapt_div`).
-  V1 всё равно теряет I2C3; тихий `cycle` работает (2.26–2.28 с).
-  Значит, удержание контроллера в reset не освобождает линию: вероятен
-  внешний slave (STM8/EC, H1/H3) либо отказ уже после resume в отдельной
-  транзакции. Следующий шаг — bus-recovery 9 тактами SCL или hardening
-  STM8/EC, а не reset контроллера.
-  **2026-11-24, #35/#36:** добавлены `clk_unprepare` обоих клоков на
-  suspend (как при unbind) и повторное применение default pinctrl на
-  resume. V1 всё равно теряет I2C3; тихий `cycle` работает (2.25–2.30 с).
-  Итог серии: reset, удержание в reset, gate клоков, busy-abort и pinctrl
-  на resume не закрывают H2. Вендорский MCU i2c3 не использует
-  (`RT_USING_I2C3` выключен, приложение без пользователя i2c3), поэтому
-  включать его бессмысленно: это лишь добавит второго потенциального
-  мастера на шину STM8/EC. Остаются внешний slave/питание домена i2c3
-  или HPMCU fast-wake — нужен вендорский ответ/bus-recovery.
-  V2 (`aov_mcu=1`, `aov_keep_isp=0`, 60 с): AP после suspend не отвечает
-  более 8 мин (логгер отработал 476 с, `/api/status` = `000`), нужен power
-  cycle. V3 (`aov_mcu=0`) на исправной ФС даёт тихий цикл: deep suspend
-  2.26–2.40 с, STM8 на месте; часть прогонов испорчена KI-071 (`/userdata`
-  ушёл в `ro`) и исчерпанием пула сессий моста, поэтому критерий «10 циклов
-  подряд» не закрыт.
-  Слой отказа — HPMCU wake proxy / AP suspend, а не `motor.sleep_enable`
-  и не прошивка STM8. Артефакты:
-  `output/bench/stm8/20261123-101042-matrix/` (V1, V2, V3 и
-  `layer/dmesg-dead-bus.txt`), `output/bench/power/20261123-100835-aov/`.
-  Статус: **открыто**; для закрытия нужны консоль (KI-078) и вендорский
-  ISP-handover, gate — в `FEATURES_UNVERIFIED.md` §AOV.
-  **2026-11-24, ветка `feature/rockchip-kernel-upstream`:** поверх #32 добавлен
-  `2b42b35` (msg обнуляется только в IDLE), а также SFC/PM-бэкпорты
-  (KI-071/KI-072); H2 они не закрывают по определению. На netboot-ядре `#37`
-  (NFS root, `aov_mcu=0`) десятки циклов сна и 30 сканов I2C3 прошли без потери
-  шины, `dmesg` без `rk3x`/`scl hold`; V1 (`aov_mcu=1`) не тестировался —
-  AOV остаётся NO-GO. Рабочий обход остаётся unbind/rebind i2c3.
-  **2026-11-24, V1 на NAND (ядро `#37`, `aov_mcu=1`+`keep_isp=1`):** H2
-  воспроизведён. 7 AOV-циклов прошли с resume и восстановлением потока, но
-  затем `oko-ec scan` показал пустую шину (`0x40/0x41/0x42/0x60` absent).
-  Unbind/rebind `ff460000.i2c` **во время** активных циклов шину не вернул;
-  после выключения сна (`enable=false`) и повторного unbind/rebind все
-  четыре адреса вернулись, SCL в высоком уровне. То есть `2b42b35` и PM-фиксы
-  H2 не закрывают — отказ по-прежнему на стороне AP/HPMCU-wake, а не
-  обработчика NAK. Артефакты: `output/bench/nand-aov-20261124/`
-  (`uar0.log`, `aov-console-markers.txt`, `i2c_scan.txt`, `i2c_pads.txt`).
-  **2026-11-24, причина найдена и устранена.** Отказ был не в контроллере
-  rk3x: на мёртвой шине поле iomux GPIO1_D3 (I2C3_M1 SCL) в `0xff538018`
-  равно 0 (GPIO), а регистры GPIO1 с загрузки держат пад выходом низкого
-  уровня (`DDR_H` b11=1, `DR_H` b11=0), поэтому SCL физически прижат к земле,
-  `i2cdetect -r -y 3` пуст, а unbind/rebind, reset контроллера и gate клоков
-  не помогают. Источник записи — meta-образ AOV: в
-  `project/make_meta/sensor_init/sc230ai_init.c` было `ircut_b =
-  GPIO1_D3` (в `meta.img` по смещению 2048+40 лежит 59), а MCU battery-ipc
-  (`fast_ae.c`, `ircut_switch()`) на каждом решении AE/день-ночь заново
-  применяет функцию пина: `IOMUX_FUNC0 | OUTPUT | LOW`.
-  Детерминированное подтверждение: masked-запись `0xff000000` в `0xff538018`
-  (только D3 → GPIO при `DR`=0) даёт ровно полевую картину KI-080 (`state=2`,
-  пустой скан), обратная запись `0xff003300` возвращает
-  `0x40/0x41/0x42/0x60` без unbind и power cycle
-  (`bench/aov_i2c_diag.py --mux-loss --restore-mux`). Правка: `ircut_b`
-  переведён на GPIO1_D1 (в продукте IR-cut нет), `./build.sh meta`, новый
-  `meta.img` отдан на стенд (`/oem/usr/share/oko/meta.img`, перезагрузка).
-  V1 (`aov_mcu=1`, `keep_isp=1`, 60 с, 240 с): 14 пробуждений, на каждом
-  iomux = `i2c3m1`, SCL=1, STM8 `0x60` и `motor.present=true` живы весь
-  прогон; до правки iomux был partial и шина мертва уже на первом wake.
-  Артефакты: `output/bench/power/20261124-212527-aov` (после),
-  `output/bench/power/20261124-205523-aov` и `.../211531-aov` (до),
-  `output/bench/i2c-diag/20261124-210247` (воспроизведение MUX-loss).
-  Остаток: KI-072 (плотный цикл 15–20 с вместо 60 с, `aov_state=off`) и общий
-  gate AOV по ISP-handover (`FEATURES_UNVERIFIED.md` §AOV).
-  Статус: **закрыто** (2026-11-24) в части потери шины I2C3.
+- **KI-081. microSD: FAT рвётся и запись блокируется; coredump-handler пишет
+  дампы в `/mnt/sdcard` без проверки монтирования.**
+  2026-11-24, стенд. После серии AOV/sleep-циклов карта `SC16G` (14.8 GiB)
+  перестала читаться: `hexdump`/`mount` → `I/O error`, при этом `mmcblk1`
+  определяется (CID/CSD читаются). После power cycle клин контроллера снялся
+  (8 ГиБ чтения без ошибок, ~22.6 МБ/с), но ФС осталась битой:
+  `FAT-fs (mmcblk1p1): invalid access to FAT (entry 0x0dddddd8)`, dirty bit,
+  оба FAT с записями вне диапазона, `/recordings` и `/oko-outbox` указывали
+  на корневой каталог. `/run/oko-sd.state`: `error=mount-failed`, запись
+  заблокирована. `fsck.fat -a -F 1` в два прохода восстановил ФС (262 файла),
+  удалил битые каталоги и создал 259 `FSCK*.REC`; после очистки (30
+  core-файлов divinus/npu_probe/sh + FSCK-фрагменты, ~1.4 ГиБ) карта снова
+  монтируется, 15177 МБ свободно, запись 7.9 МБ MP4 проверена.
+  Причина мусора: `core_pattern = | /usr/bin/coredump2sdcard.sh %p %e`, а
+  скрипт (генерируется в `project/build.sh`) делал
+  `cat > /mnt/sdcard/core-$1-$2` без проверки монтирования и места: без
+  карты дампы падали в rootfs (`/mnt/sdcard/core-1200-sh`), с картой —
+  копились без предела; обрыв питания во время такой записи и дал
+  dirty-bit/FAT-порчу. Правка (integration-патч вендорского
+  `project/build.sh`, AGENTS §6): handler пишет только при
+  `mountpoint -q /mnt/sdcard` и свободных ≥ 128 МБ, иначе дамп
+  отбрасывается. Проверено: с картой `kill -SEGV` даёт `core-<pid>-sh` на
+  карте, без карты дамп не создаётся ни в rootfs, ни в `/userdata`.
+  Остаток: причина многочисленных падений divinus/npu_probe не исследована
+  (дампы удалены, symbols нет); порча при обрыве питания остаётся возможной —
+  карту вынимать только после `action=unmount`. Артефакт:
+  `output/bench/sd-repair-20261124/` (до/после, fsck, тест записи и handler).
+  Статус: **карта восстановлена, handler исправлен** (2026-11-24); падения —
+  отдельная задача.
 
 ### Архив закрытых записей
 
@@ -1101,7 +1032,9 @@
 - KI-065. IVS: ложные события без движения — введён `ivs.min_area` (площадь кадра в %), в событии `area`/`cause`, исправлена утечка MD-буфера. — исправлено (2026-11-15); остаток: OD не проверен — закрыт ссылкой на KI-015.
 - KI-066. Паника `rga2_reg: irq handler err` при старте IVS сразу после остановки YOLO: после перевода IVS на VI chn2 не воспроизводится. — закрыто (2026-11-15); regression-watch: запись в архиве, не воспроизводится на VI chn2.
 - KI-069. SIGHUP-рестарт утекал дескрипторами и CMA: перед `execvp()` все дескрипторы с 3 помечаются `FD_CLOEXEC`, 20 рестартов без роста fd. — закрыто (2026-11-15).
-- KI-080. I2C3 умирала после AOV-пробуждения: meta-образ объявлял `ircut_b` на GPIO1_D3 (= I2C3_M1 SCL), и MCU battery-ipc (`fast_ae.c`) на каждом решении AE/день-ночь переводил пад в GPIO-output-low. `ircut_b` перенесён на GPIO1_D1, `meta.img` пересобран; V1 14/14 пробуждений с живой шиной и STM8. — закрыто (2026-11-24) в части шины; остаток — KI-072 и gate AOV по ISP-handover.
+- KI-079. IVS после `[sleep]`-пробуждения давал ложное полнокадровое событие (`area=1000‰`) и будил камеру: в `ivs_events.c` добавлено окно устоятия `IVS_SETTLE_S=3` после старта аналитики — результаты ≥ 900‰ в нём отбрасываются, движение с меньшей площадью проходит. `--scenario motion` 3 цикла без ложных событий, реальное движение детектируется (`area=515‰`). — закрыто (2026-11-24); артефакты `output/bench/power/20261124-222248-motion`, `.../20261125-073741-motion`.
+- KI-080. I2C3 умирала после AOV-пробуждения: meta-образ объявлял `ircut_b` на GPIO1_D3 (= I2C3_M1 SCL), и MCU battery-ipc (`fast_ae.c`) на каждом решении AE/день-ночь переводил пад в GPIO-output-low. `ircut_b` перенесён на GPIO1_D1, `meta.img` пересобран; V1 14/14 пробуждений с живой шиной и STM8. — закрыто (2026-11-24) в части шины; остаток — KI-072 (overshoot 68–79 с и gate AOV по ISP-handover).
+- KI-082. `/api/record` игнорировал `stop=1` при `enable=false` и в `continuous`: команды `start`/`stop` собираются в цикле и применяются после всех ключей, `stop=1` и `enable=false` останавливают сессию безусловно (порядок ключей не важен), `record_stop()` отменяет таймер IVS-клипа. — закрыто (2026-11-24); доказательство — прогон стенда 2026-11-24, артефакты `output/bench/ki082/`.
 
 ## English
 
@@ -1452,8 +1385,8 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   NAND degradation). Artifacts: `output/bench/nand-aov-20261124/`
   (`sfc-watch.log`, `ubi_state.txt`, `dmesg.txt`).
 
-- **KI-072. `-AOV` profile: 1M layout and the kernel/MCU window are fixed,
-  the MCU handshake does not answer.** Hpmcu (117 KB) + SPL + DDR + usbplug
+- **KI-072. `-AOV` profile: the 1M layout, the MCU handshake and the cadence
+  are fixed; the ISP-handover gate stays open.** Hpmcu (117 KB) + SPL + DDR + usbplug
   make a ~300 KB idblock; the product 256K idblock is enlarged to 1M and every
   following partition moves by 768K (rootfs shrinks to 167M, total 255.25 MB).
   There is no meta partition — the 256 MB NAND is full — so the blob lives in
@@ -1510,8 +1443,7 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   healthy answer always fell into `-h-timeout-`; the result is now latched.
   Bench (11 complete cycles): `[STREAM]: gpio0_int_status is 0,
   share_data->md_flag is 1, tick:172..204` → `-h-mbox-` →
-  `[sleep] resumed (… aov motion)`. Still open: the MCU reports motion in a
-  the meta `wakeup_param` is now initialized by the build
+  `[sleep] resumed (… aov motion)`. The meta `wakeup_param` is now initialized by the build
   (`RK_META_AOV_AE_WAKEUP_MODE`, `tools/native/patch_meta_aov.py`): 0 — use
   AE, 1 — force motion, 2 — force quiet. Bench 2026-11-17: with
   `ae_mode=2` the MCU logs `md_flag is 0` and answers AP_SUSPEND — **0**
@@ -1566,11 +1498,14 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
      the empty-`Image.gz` guard in `build.sh`. The window is verified on kernel
      #26 with motion meta: 6 of 6 `-h-wait-` → `-h-mbox-`, no `-h-timeout-`
      (`output/bench/aov-test/quiet_motion1000.20261118-094013.log`).
-  Status: **experimental, not for release**. Blockers are KI-073 (patched),
-  KI-074 (fixed) and the long quiet sleep = **NO-GO on the AP side** (needs a
-  vendor look at the ISP/PMU handover). AOV as it stands is
-  **motion-resume**; the quiet branch with `aov_keep_isp` is not
-  release-ready. Artifacts: `output/bench/aov-test/quiet-differential-20261117.md`,
+Status: **experimental, not for release** (refreshed 2026-11-25). The MCU
+   handshake and the cadence work: the PMU timeout is programmed in 32 kHz
+   ticks, the quiet sleep equals `wake_interval_s`, and the AOV branch is
+   **motion-resume + PMU timer**. KI-073/KI-074/KI-080 are closed. Residuals:
+   the 68–79 s overshoot (the `wake_check` window), the 500 ms mailbox window
+   (bench result below) and the vendor **ISP-handover** gate
+   (`FEATURES_UNVERIFIED.md` §AOV) — without it AOV is not release-ready.
+   Artifacts: `output/bench/aov-test/quiet-differential-20261117.md`,
   `gicdiag-wfi-20261117.md`, `mcu-reset-experiment-20261117.md`,
   `quiet_keepisp{0,1}.*`, `quiet_motion.*`,
   `quiet_{mcuonce,mcunotify,hybrid,gpiomask,viidle}.*`,
@@ -1635,6 +1570,55 @@ Verified functions are in `VERIFIED_FUNCTIONS.md`, feature status in
   `output/bench/power/20261124-212527-aov` (V1),
   `.../20261124-213300-cycle` (quiet cycle), `.../20261124-213239-i2c`
   (300-cycle control, 0 errors).
+
+  **2026-11-24, cadence root cause found: the PMU timeout unit.**
+  The dmesg `PM: suspend entry` → `exit` window is the **resume path**:
+  kernel log timestamps use `CLOCK_MONOTONIC`, which does not advance in
+  deep suspend.  Only `/sys/kernel/wakeup_reasons/last_suspend_time`
+  (`<resume path> <sleep>`) reports the real sleep; the earlier
+  `2.266882594 0.080939000` meant 2.27 s of resume and **81 ms asleep**.
+  The ESP32 bridge timestamps confirm it: ~70 ms from `-WFI-` to
+  `wake up status`, so the AP really woke almost immediately.  The cause is
+  the unit of `PMU_WAKEUP_TIMEOUT_CNT` (`0xff300048`): divinus wrote
+  `wake_interval_s × 32`, but the counter runs on the 32 kHz sleep clock
+  (32768 ticks/s; the PVTM path is active and the console prints
+  `sleep freq (hz):32768`).  Measurements: 32768 → 1.07 s, 327680 → 10.07 s,
+  1920000 → 58.66 s (linear, ~30.4 µs/tick); with `count=0` the
+  `TIMEOUT_WAKEUP` bit is off and the AP never wakes (verified, recovered by
+  a power cycle).  The `pmu_timeout_hz` default is now **32768**; old configs
+  with a value < 1000 are migrated on load (`app_config_parse`) and
+  `app_config_save` persists the new value.  After the fix: the quiet
+  `cycle` sleeps 10.08 s at a 10 s interval and 60.08 s at 60 s, one cycle
+  per `wake_interval_s`; V1 (`aov_mcu=1`, `keep_isp=1`, 60 s) shows 68–79 s
+  intervals, `last_wake_src=2`, I2C3 `i2c3m1`, SDA/SCL=1 and STM8 2.3.2 on
+  every wake; `dmesg` has no `rk3x`/Oops.  Artifacts:
+  `output/bench/power/20261124-220827-cycle`, `.../20261124-221009-cycle`,
+  `.../20261124-221339-aov`, `.../20261124-222016-cycle`; tick measurements
+  in `output/bench/eth-probe-20261124/`.  Residual: the AOV branch still
+  wakes on the PMU timer and checks motion inside the window (the vendor ISP
+  handover is not implemented), so the AOV gate stays.  Checked and refuted
+  separately: unbinding `rk_gmac-dwmac` before suspend changes nothing
+  (81 ms with the link up, with the link down and without the driver), and
+  rebinding does not bring the integrated FE-PHY back on this board
+  (`phy_poll_reset failed`), so dehai's technique does not apply to OKO.
+
+  **2026-11-25, 500 ms mailbox window (kernel #38).**
+  `RV1106_HPMCU_FAST_WKUP_TIMEOUT` was reduced from 1000 to 500 ms, kernel
+  `#38` was built in the `-AOV` profile and flashed to NAND (`boot`,
+  offset 0x1c0000). V1 (`aov_mcu=1`, `keep_isp=1`, `wake_interval_s=60`,
+  260 s): the read-only bridge monitor `:2324` counted **4 `-h-wait-`,
+  4 `-h-mbox-`, 0 `-h-timeout-`** — the MCU decision arrives in ~0.2 s, a
+  2.5× margin; three wakes with `aov_state=off`, intervals 75.5/75.3 s (the
+  `wake_check` overshoot), real sleep 60.28 s (`last_suspend_time`), on every
+  wake iomux `i2c3m1`, SDA/SCL=1, STM8 2.3.2 `present=true`, `dmesg` free of
+  `rk3x`/Oops. The 1000 ms fallback was not needed. In the same session
+  `--scenario motion` × 3 produced no false full-frame events (KI-079
+  regression), real motion is detected (`md area=515‰`); a quiet `cycle`
+  slept 10.07 s at 10 s and 60.09 s at 60 s. Artifacts:
+  `output/bench/power/20261125-073154-aov`,
+  `output/bench/aov-test/summary_mbox500-20261125.20261125-073152.json`,
+  `.../20261125-073741-motion`, `.../20261125-074156-cycle`,
+  `.../20261125-074709-cycle`.
 
 - **KI-073. in `rk3x_i2c_irq` on I2C3 during `[sleep]` cycles.**
   On 2026-11-17 an AOV run (idle 30 s, `aov_mcu=1`) got a burst of
@@ -2038,158 +2022,39 @@ DDR re-init.
   netboot/flash cycle. The bridge HTTP session pool is still 3/3 (`429`);
   that is a separate problem and does not affect telnet.
 
-- **KI-079. IVS reports full-frame motion on every `[sleep]` wake, so the
-  short probe never completes.**
-  2026-11-22, bench, ESP32 INA3221: `bench/sleep_power.py --scenario motion`,
-  IVS `min_area=30`, `sensitivity=3`, `idle_timeout_s=30`,
-  `wake_interval_s=10`, `wake_check_s=30`. In 3/3 cycles the state is
-  `awake` immediately after the PMU wake; `/api/ivs` returns an `md` event
-  with `area=1000‰` and a full-frame bbox (`[0,0,640,352]`) — likely an
-  ISP/exposure transition. The camera stays awake for 24–26 s and the cycle
-  costs 15.25–17.94 mWh (mean 16.85) versus 4.9 mWh at `wake_check=5`.
-  A matched cycle without IVS at `wake_check=30` gives a comparable
-  ~17–20 mWh, so the long check window dominates and IVS only changes
-  `probe → awake`. Lowering `sensitivity` to 1 and `min_area` to 50 did not
-  help. Workaround: disable IVS for quiet sleep (or shorten
-  `wake_check`); artifacts `output/bench/power/20261122-motion14/`,
-  `...-cycle-wc30/`. Status: **open**.
-
-- **KI-080. AOV-MCU (`aov_mcu=1`) leaves the I2C3 bus dead or the AP
-  suspended; the missing STM8 is a bus failure, not a separate motor bug.**
-  2026-11-23, bench, AOV image (`aov_available=true`, kernel `5.10.160 #26`).
-  Control T1.1: 300 cycles of `oko-motor sleep show` + `move zoom ±5` without
-  suspend — 0 command errors, `0x60` answers, `motor.present=true`
-  (`output/bench/power/20261123-101015-i2c/`).
-  V1 (`aov_mcu=1`, `aov_keep_isp=1`, `wake_interval_s=60`, 60 s): after one
-  clean run `i2cdetect -r -y 3` is empty — no `0x40/0x41/0x42/0x60`;
-  GPIO1_D2/SDA=1, GPIO1_D3/SCL=0. Unbinding the `ff460000.i2c` master
-  (i2c3) releases SCL: `devmem 0xff530070` changes from `0x06000800`
-  (SCL=0) to `0x06000C00` (SCL=1), and binding it again restores
-  `0x40/0x41/0x42/0x60` without an Oops or dmesg errors — **H2 is
-  confirmed**: the rk3x controller itself holds the line, not an external
-  slave. The mistaken unbind of `ff470000.i2c` (i2c4/the sensor) on
-  2026-11-23 produced an `rkcif_set_default_fmt` Oops; do not touch it. The
-  i2c3 unbind/rebind is now a default ladder step (`--no-ladder-rebind`
-  disables it); `oko-motor reset` and `oko-ec reset` cannot run on a dead
-  bus. Artifact:
-  `output/bench/stm8/20261123-160739-v1-correct-unbind/result.json`.
-  **2026-11-23 16:35, kernel #29:** the board DTS now wires `resets` for
-  i2c3 and `rk3x_i2c_resume` performs a full controller reset
-  (reset-on-resume); the kernel was built and flashed. V1 still loses I2C3
-  within 60 s and there are no "suspend with a busy transfer" warnings, so
-  the controller reset alone does not fix the failure. It is still an
-  external-slave hold (H1/H3) or a transaction started after resume; the
-  working workaround is unbind/rebind of i2c3. The patch was **reverted** in
-  the source tree and the bench is back on the stable #27. After the NAND
-  recovery AOV on #27 still hangs on the first suspend (tested
-  `wake_interval_s` 10/40/60), so AOV remains NO-GO and T2.2 stays open.
-  **2026-11-24, after reverting to #27:** a cold power cycle restored `rw`
-  and the bus, but now even a quiet `cycle` (no AOV) and AOV at
-  `wake_interval_s` 10/40/60 hang: the AP suspends and never wakes
-  (`/api/status=000`), recoverable only by a cold power cycle. Historical
-  2026-11-22 data (#27): 20/60 worked with a 2.26–2.42 s deep suspend; the
-  bench suspend path is now unstable (HPMCU/PMU or NAND wear). Non-suspend
-  regression on #27: `api_check` 139/0, `ui_check` passed, 300 I2C cycles —
-  0 errors.
-  **2026-11-24, upstream `i2c-rk3x.c` review:** master/v5.10 contain no H2
-  fix; upstream simplified PM to `adapt_div` only and has no vendor
-  `suspend_noirq`/reset code. The spurious START fix for KI-073 is already
-  in the vendor driver (`REG_INT_MBRF | REG_INT_START`, upstream
-  `02fe0fbd8a`). Only `19cde9c92b` (`disable_irq` around a polled transfer)
-  and `b57e90189f` (`clk_enable` before `clk_get_rate`) are worth taking;
-  neither addresses H2.
-  **2026-11-24, Rockchip develop-5.10 backport (kernel #32):** atomic
-  `CON`+count write in `rk3x_i2c_start` (start moved out of the caller
-  lock), `START/STOP_SETUP_MAX` clamps, `REG_INT_START` clearing in the
-  common IPD, and `disable_irq` around a polled transfer. Result: the quiet
-  `cycle` and AOV `aov_mcu=0` work again (3 deep-suspend windows
-  2.25–2.29 s, `restored=true`), 300 I2C cycles — 0 errors, `api_check`
-  139/0. V1 (`aov_mcu=1`, `keep_isp=1`) still loses I2C3 within 60 s and
-  the ladder recovers. The backport removed the AP/quiet-cycle hang but did
-  not close H2.
-  **2026-11-24, checking the "MCU blocks I2C3" hypothesis:** the vendor MCU
-  examples use i2c4 only. The `oko-wakeup-sc230ai-ADC` board has
-  `CONFIG_RT_USING_I2C3` **not set**, `CONFIG_RT_USING_I2C4=y`, its iomux
-  configures only `i2c4_m2`, and the `battery-ipc` app never touches i2c3.
-  The built `rtthread.bin` contains only `i2c4`. So the MCU does not occupy
-  the STM8/EC bus; SC230AI keeps working because the MCU owns i2c4/ISP.
-  H2 remains on the AP side: AOV fast wake and the i2c3 controller state,
-  not arbitration with the MCU.
-  **2026-11-24, #33:** `rk3x_i2c_suspend_noirq` now returns `-EBUSY` when
-  `busy`; V1 still loses I2C3 and there are no suspend-abort messages
-  (`busy=false` on entry), while the quiet `cycle` still works
-  (2.26–2.27 s). The failure is not caught at the suspend boundary with an
-  active transfer.
-  **2026-11-24, #34:** i2c3 is held in reset for the whole suspend window
-  (`resets` in DTS, `.suspend` assert / `.resume` deassert + `adapt_div`).
-  V1 still loses I2C3; the quiet `cycle` works (2.26–2.28 s). Holding the
-  controller in reset does not release the line: an external slave
-  (STM8/EC, H1/H3) or a post-resume transaction is more likely. The next
-  step is 9-clock bus recovery or STM8/EC hardening, not another controller
-  reset.
-  **2026-11-24, #35/#36:** `clk_unprepare` of both clocks on suspend (as
-  unbind does) and re-applying the default pinctrl state on resume were
-  added. V1 still loses I2C3; the quiet `cycle` works (2.25–2.30 s). The
-  series conclusion: reset, reset-hold, clock gating, busy abort and
-  pinctrl on resume do not close H2. The vendor MCU does not use i2c3
-  (`RT_USING_I2C3` disabled, no i2c3 consumer), so enabling it is pointless:
-  it would only add a second potential master to the STM8/EC bus. The
-  remaining candidates are an external slave/i2c3 power domain or the
-  HPMCU fast wake; vendor input or bus recovery is needed.
-  V2 (`aov_mcu=1`, `aov_keep_isp=0`, 60 s): the AP does not answer for more
-  than 8 minutes after suspend (logger ran 476 s, `/api/status` = `000`);
-  a power cycle is required. V3 (`aov_mcu=0`) on a healthy filesystem gives
-  a quiet cycle: deep suspend 2.26–2.40 s and the STM8 stays present; some
-  runs were spoiled by KI-071 (`/userdata` became `ro`) and by bridge session
-  exhaustion, so the "10 cycles in a row" criterion is not closed.
-  The failing layer is the HPMCU wake proxy / AP suspend, not
-  `motor.sleep_enable` and not STM8 firmware. Artifacts:
-  `output/bench/stm8/20261123-101042-matrix/` (V1, V2, V3 and
-  `layer/dmesg-dead-bus.txt`), `output/bench/power/20261123-100835-aov/`.
-  Status: **open**; closing needs the console (KI-078) and a vendor
-  ISP-handover; the gate is in `FEATURES_UNVERIFIED.md` §AOV.
-  **2026-11-24, `feature/rockchip-kernel-upstream` branch:** `2b42b35` (msg
-  cleared only in IDLE) plus the SFC/PM backports (KI-071/KI-072) were added on
-  top of #32; by definition they do not close H2. On the netboot kernel `#37`
-  (NFS root, `aov_mcu=0`) dozens of sleep cycles and 30 I2C3 scans kept the bus
-  alive with no `rk3x`/`scl hold` in `dmesg`.
-  **2026-11-24, V1 on NAND (kernel `#37` flashed, `aov_mcu=1`+`keep_isp=1`):**
-  H2 reproduced. Seven AOV cycles resumed and restored the stream, but then
-  `oko-ec scan` showed an empty bus (`0x40/0x41/0x42/0x60` absent).
-  Unbind/rebind of `ff460000.i2c` **during** the active cycles did not bring
-  the bus back; after disabling sleep (`enable=false`) and repeating
-  unbind/rebind all four addresses returned and SCL was high. So `2b42b35`
-  and the PM fixes do not close H2 — the failure is still on the AP/HPMCU-wake
-  side, not in the NAK handler. AOV stays NO-GO; the unbind/rebind i2c3
-  workaround (with sleep disabled) remains. Artifacts:
-  `output/bench/nand-aov-20261124/` (`uar0.log`, `aov-console-markers.txt`,
-  `i2c_scan.txt`, `i2c_pads.txt`).
-  **2026-11-24, root cause found and fixed.** The failure was not the rk3x
-  controller: on the dead bus the GPIO1_D3 iomux field (I2C3_M1 SCL) in
-  `0xff538018` is 0 (GPIO), while the GPIO1 registers have driven that pad low
-  since boot (`DDR_H` b11=1, `DR_H` b11=0). SCL is therefore tied to ground,
-  `i2cdetect -r -y 3` is empty, and unbind/rebind, controller reset and clock
-  gating cannot help. The writer was the AOV meta image:
-  `project/make_meta/sensor_init/sc230ai_init.c` declared `ircut_b =
-  GPIO1_D3` (`meta.img` carries 59 at offset 2048+40), and the battery-ipc MCU
-  (`fast_ae.c`, `ircut_switch()`) re-applies that pin function
-  (`IOMUX_FUNC0 | OUTPUT | LOW`) on every AE/day-night decision.
-  Deterministic confirmation: a masked write of `0xff000000` to `0xff538018`
-  (D3 → GPIO with `DR`=0) reproduces the field picture exactly (`state=2`,
-  empty scan), and `0xff003300` brings `0x40/0x41/0x42/0x60` back without
-  unbind or a power cycle (`bench/aov_i2c_diag.py --mux-loss --restore-mux`).
-  Fix: `ircut_b` moved to GPIO1_D1 (the product has no IR-cut), `./build.sh
-  meta`, the new `meta.img` was pushed to the bench
-  (`/oem/usr/share/oko/meta.img`, reboot). V1 (`aov_mcu=1`, `keep_isp=1`,
-  60 s interval, 240 s): 14 wakes, every one with iomux = `i2c3m1`, SCL=1,
-  and STM8 `0x60` / `motor.present=true` alive for the whole run; before the
-  fix the iomux was partial and the bus died on the first wake. Artifacts:
-  `output/bench/power/20261124-212527-aov` (after), `.../20261124-205523-aov`
-  and `.../211531-aov` (before), `output/bench/i2c-diag/20261124-210247`
-  (MUX-loss reproduction). Residual: KI-072 (dense 15–20 s cycle instead of
-  60 s, `aov_state=off`) and the AOV ISP-handover gate
-  (`FEATURES_UNVERIFIED.md` §AOV).
-  Status: **closed** (2026-11-24) for the I2C3 bus loss.
+- **KI-081. microSD: the FAT gets corrupted and recording is blocked; the
+  coredump handler writes to `/mnt/sdcard` without checking the mount.**
+  2026-11-24, bench. After a series of AOV/sleep cycles the `SC16G` card
+  (14.8 GiB) stopped reading: `hexdump`/`mount` → `I/O error`, although
+  `mmcblk1` still enumerated (CID/CSD readable). A power cycle cleared the
+  controller wedge (8 GiB of reads without errors, ~22.6 MB/s), but the FS
+  stayed broken: `FAT-fs (mmcblk1p1): invalid access to FAT
+  (entry 0x0dddddd8)`, dirty bit, both FATs with out-of-range entries,
+  `/recordings` and `/oko-outbox` pointing at the root directory.
+  `/run/oko-sd.state`: `error=mount-failed`, recording blocked.
+  `fsck.fat -a -F 1` needed two passes and restored the FS (262 files),
+  deleted the broken directories and created 259 `FSCK*.REC` files; after
+  removing 30 core files (divinus/npu_probe/sh) plus the FSCK fragments
+  (~1.4 GiB) the card mounts again with 15177 MB free and a 7.9 MB MP4
+  write is verified. Source of the junk:
+  `core_pattern = | /usr/bin/coredump2sdcard.sh %p %e`, and the script
+  (generated in `project/build.sh`) did
+  `cat > /mnt/sdcard/core-$1-$2` with no mount or free-space check: without
+  a card the dumps landed on the rootfs (`/mnt/sdcard/core-1200-sh`), with
+  a card they accumulated without limit; a power loss during such a write
+  produced the dirty-bit/FAT corruption. Fix (integration patch of the
+  vendor `project/build.sh`, AGENTS §6): the handler writes only when
+  `mountpoint -q /mnt/sdcard` and at least 128 MB are free, otherwise the
+  dump is dropped. Verified: with the card a `kill -SEGV` produces
+  `core-<pid>-sh` on the card; without the card no dump appears in the
+  rootfs or `/userdata`. Residual: the cause of the numerous divinus and
+  npu_probe crashes is not investigated (the dumps were removed and there
+  are no symbols); power-loss corruption is still possible, so remove the
+  card only after `action=unmount`. Artifact:
+  `output/bench/sd-repair-20261124/` (before/after, fsck, write and handler
+  tests).
+  Status: **card recovered, handler fixed** (2026-11-24); the crashes are a
+  separate task.
 
 ### Closed entries archive
 
@@ -2210,4 +2075,6 @@ and numbers are never reused.
 - KI-065. IVS: false events without motion — `ivs.min_area` (percent of the frame) and `area`/`cause` in the event were added, and the MD buffer leak was fixed. — fixed (2026-11-15); residual: OD is unverified and covered by KI-015.
 - KI-066. Kernel panic `rga2_reg: irq handler err` when IVS starts right after YOLO stops: not reproducible after IVS moved to VI chn2. — closed (2026-11-15); regression-watch: the entry stays in the archive and is not reproducible on VI chn2.
 - KI-069. A SIGHUP restart leaked descriptors and CMA: before `execvp()` every descriptor from 3 is marked `FD_CLOEXEC`, and 20 restarts show no fd growth. — closed (2026-11-15).
-- KI-080. I2C3 died after an AOV wake: the meta image declared `ircut_b` on GPIO1_D3 (= I2C3_M1 SCL) and the battery-ipc MCU (`fast_ae.c`) turned the pad into a GPIO output low on every AE/day-night decision. `ircut_b` moved to GPIO1_D1 and `meta.img` was rebuilt; V1 kept the bus and the STM8 alive on 14/14 wakes. — closed (2026-11-24) for the bus loss; residual: KI-072 and the AOV ISP-handover gate.
+- KI-079. IVS reported a false full-frame event (`area=1000‰`) after a `[sleep]` wake and kept the camera awake: `ivs_events.c` now has an `IVS_SETTLE_S=3` settle window after the analytics start — results ≥ 900‰ inside it are dropped, while motion covering less of the frame still passes. Three `--scenario motion` cycles produced no false events and real motion is detected (`area=515‰`). — closed (2026-11-24); artifacts `output/bench/power/20261124-222248-motion`, `.../20261125-073741-motion`.
+- KI-080. I2C3 died after an AOV wake: the meta image declared `ircut_b` on GPIO1_D3 (= I2C3_M1 SCL) and the battery-ipc MCU (`fast_ae.c`) turned the pad into a GPIO output low on every AE/day-night decision. `ircut_b` moved to GPIO1_D1 and `meta.img` was rebuilt; V1 kept the bus and the STM8 alive on 14/14 wakes. — closed (2026-11-24) for the bus loss; residual: KI-072 (68–79 s overshoot and the AOV ISP-handover gate).
+- KI-082. `/api/record` ignored `stop=1` when `enable=false` and in `continuous` mode: `start`/`stop` are collected during the parse and applied after every config key, `stop=1` and `enable=false` stop the session unconditionally (the key order does not matter), and `record_stop()` cancels the IVS clip timer. — closed (2026-11-24); evidence: the 2026-11-24 bench run, artifacts in `output/bench/ki082/`.
