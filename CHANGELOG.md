@@ -797,6 +797,13 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   §AOV, `VERIFIED_FUNCTIONS.md` and `bench/README.md` were updated in sync;
   `research/rv1106-aov/README.md` and the `research/README.md` index now match
   the snapshot after the cleanup.
+- **`STRUCTURE.md`: актуальный профиль платы.** Убрана устаревшая фраза
+  «на 2026-11-23 активен AOV-профиль»: после работ симлинк `.BoardConfig.mk`
+  возвращён на продуктовый `...-SC230AI.mk`, AOV включается тем же симлинком.
+- **`STRUCTURE.md`: current board profile.** Removed the stale "the AOV
+  profile is active as of 2026-11-23" sentence: after the work the
+  `.BoardConfig.mk` symlink points back at the product `...-SC230AI.mk`, and
+  AOV is enabled through the same symlink.
 
 ### Исправлено
 
