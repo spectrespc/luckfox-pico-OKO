@@ -35,6 +35,10 @@ void heartbeat_set_due(void);
  * successful PUT, -1 on failure or when the gate says "not now".  Never
  * blocks longer than retries * (3 s connect + 1 s pause). */
 int heartbeat_before_suspend(void);
+/* Same send, but `force` skips the CLOCK_MONOTONIC interval gate: a tier-2
+ * AOV wake exists only to deliver this frame, and the monotonic clock did not
+ * advance while the AP was suspended. */
+int heartbeat_before_suspend_ex(int force);
 
 /* Nested JSON object for GET /api/sleep. */
 void heartbeat_status_json(char *out, size_t size);

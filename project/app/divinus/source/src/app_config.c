@@ -1,4 +1,5 @@
 #include "app_config.h"
+#include "sleep_logic.h"
 
 const char *appconf_paths[] = {"./divinus.yaml", "/etc/divinus.yaml", NULL};
 
@@ -1430,13 +1431,37 @@ enum ConfigError app_config_parse(void) {
         &app_config.sleep_pmu_timer_wake);
     parse_bool(&ini, "sleep", "aov_mcu", &app_config.sleep_aov_mcu);
     parse_bool(&ini, "sleep", "aov_keep_isp", &app_config.sleep_aov_keep_isp);
-    /* Parsed even while disabled so app_config_save() keeps the tuned values. */
     parse_int(&ini, "sleep", "idle_timeout_s", 10, 86400,
         &app_config.sleep_idle_timeout_s);
-    parse_int(&ini, "sleep", "wake_interval_s", 1, 3600,
-        &app_config.sleep_wake_interval_s);
-    parse_int(&ini, "sleep", "wake_check_s", 1, 60,
-        &app_config.sleep_wake_check_s);
+    {
+        /* OKO AOV profile: a 2 s MCU sampling cadence and one telemetry
+         * heartbeat every 300 s are the defaults, but only when the key is
+         * absent.  The proxy attribute exists exactly on the AOV kernel/DTS,
+         * so the product profile keeps its built-in cadence. */
+        enum ConfigError wake_err, hb_err, hb_int_err;
+        int aov = access("/sys/devices/platform/rockchip-suspend/aov_wakeproxy",
+            F_OK) == 0;
+
+        wake_err = parse_int(&ini, "sleep", "wake_interval_s", 1, 3600,
+            &app_config.sleep_wake_interval_s);
+        parse_int(&ini, "sleep", "wake_check_s", 1, 60,
+            &app_config.sleep_wake_check_s);
+        hb_err = parse_bool(&ini, "sleep", "heartbeat",
+            &app_config.sleep_heartbeat);
+        hb_int_err = parse_int(&ini, "sleep", "heartbeat_interval_s", 0, 86400,
+            &app_config.sleep_heartbeat_interval_s);
+
+        if (aov) {
+            if (wake_err == CONFIG_PARAM_NOT_FOUND)
+                app_config.sleep_wake_interval_s =
+                    sleep_default_wake_interval(1);
+            if (hb_err == CONFIG_PARAM_NOT_FOUND)
+                app_config.sleep_heartbeat = true;
+            if (hb_int_err == CONFIG_PARAM_NOT_FOUND)
+                app_config.sleep_heartbeat_interval_s =
+                    sleep_default_heartbeat_interval(1);
+        }
+    }
     {
         /* pmu_timeout_hz is the PMU counter rate: 32768 ticks/s (32 kHz
          * sleep clock).  Configs written before 2026-11-24 carry 32, a
@@ -1454,9 +1479,6 @@ enum ConfigError app_config_parse(void) {
         if (pmu_hz >= 1000)
             app_config.sleep_pmu_timeout_hz = (unsigned int)pmu_hz;
     }
-    parse_bool(&ini, "sleep", "heartbeat", &app_config.sleep_heartbeat);
-    parse_int(&ini, "sleep", "heartbeat_interval_s", 0, 86400,
-        &app_config.sleep_heartbeat_interval_s);
     parse_int(&ini, "sleep", "heartbeat_retries", 0, 10,
         &app_config.sleep_heartbeat_retries);
 

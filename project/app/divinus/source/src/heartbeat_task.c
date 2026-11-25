@@ -157,7 +157,7 @@ void heartbeat_set_due(void)
     if (now != gate_s) gate_s = now;
 }
 
-int heartbeat_before_suspend(void)
+int heartbeat_before_suspend_ex(int force)
 {
     hal_jpegdata jpeg = {0};
     char headers[320];
@@ -166,7 +166,7 @@ int heartbeat_before_suspend(void)
     int sent;
 
     if (!gate_ready()) return -1;
-    if (!heartbeat_due()) {
+    if (!force && !heartbeat_due()) {
         HAL_INFO("heartbeat", "interval gate: cycle skipped\n");
         return -1;
     }
@@ -218,6 +218,11 @@ int heartbeat_before_suspend(void)
     }
     state_save();
     return sent ? 0 : -1;
+}
+
+int heartbeat_before_suspend(void)
+{
+    return heartbeat_before_suspend_ex(0);
 }
 
 void heartbeat_status_json(char *out, size_t size)

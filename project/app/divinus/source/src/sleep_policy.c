@@ -31,6 +31,7 @@
 #include "focus_motor.h"
 #include "hal/macros.h"
 #include "heartbeat_task.h"
+#include "sleep_logic.h"
 
 #define PMU_BASE 0xff300000UL
 #define PMU_TIMEOUT_OFF 0x048UL
@@ -38,6 +39,15 @@
 
 #define AOV_PROXY_PATH "/sys/devices/platform/rockchip-suspend/aov_wakeproxy"
 #define AOV_STATE_PATH "/sys/devices/platform/rockchip-suspend/aov_state"
+#define AOV_HEARTBEAT_WAKES_PATH \
+    "/sys/devices/platform/rockchip-suspend/aov_heartbeat_wakes"
+#define AOV_TIMEOUT_STREAK_PATH \
+    "/sys/devices/platform/rockchip-suspend/aov_timeout_streak"
+/* A tier-2 resume restarts the process; the new instance sends the heartbeat
+ * even though CLOCK_MONOTONIC did not advance across the suspended interval. */
+#define HEARTBEAT_MARKER_PATH "/tmp/oko-sleep-heartbeat"
+/* Survives the exec restart so /api/sleep can explain why AOV was disarmed. */
+#define AOV_HEAL_MARKER_PATH "/tmp/oko-sleep-mcu-unresponsive"
 #define META_IMAGE_PATH "/oem/usr/share/oko/meta.img"
 #define META_ADDR 0x1000000UL
 #define META_MAP_SIZE 0x60000UL
@@ -76,6 +86,8 @@ static unsigned long suspend_seq;
  * window expired, 0 for the normal idle timeout. */
 static int quiet_request;
 static int quiet_suspend;
+/* Set by a tier-2 kernel wake, consumed by main after the probe window. */
+static int heartbeat_wake;
 static struct timespec last_motion;
 static struct timespec probe_deadline;
 
@@ -84,6 +96,7 @@ static volatile unsigned int *pmu_timeout;
 /* AOV wake proxy (kernel CONFIG_RV1106_HPMCU_FAST_WAKEUP). */
 static int aov_supported;
 static int aov_active;
+static int aov_healed;
 static char aov_reason[64];
 static const char *sleep_reason = "";
 
@@ -151,6 +164,27 @@ static int sysfs_write_str(const char *path, const char *value)
     n = write(fd, value, strlen(value));
     close(fd);
     return n == (ssize_t)strlen(value) ? 0 : -1;
+}
+
+static int sysfs_write_uint(const char *path, unsigned int value)
+{
+    char buf[16];
+
+    snprintf(buf, sizeof(buf), "%u\n", value);
+    return sysfs_write_str(path, buf);
+}
+
+static unsigned int sysfs_read_uint(const char *path)
+{
+    char buf[16];
+    unsigned long value;
+
+    if (sysfs_read(path, buf, sizeof(buf)) < 0)
+    {
+        return 0;
+    }
+    value = strtoul(buf, NULL, 10);
+    return value > 0xffffffffUL ? 0xffffffffU : (unsigned int)value;
 }
 
 static const char *aov_state_name(void)
@@ -271,10 +305,15 @@ static void aov_prepare(void)
 
     if (!app_config.sleep_aov_mcu)
     {
+        if (aov_healed)
+        {
+            snprintf(aov_reason, sizeof(aov_reason), "mcu_unresponsive");
+        }
         /* Clear a proxy left armed by a previous configuration. */
         if (aov_supported)
         {
             (void)sysfs_write_str(AOV_PROXY_PATH, "0\n");
+            (void)sysfs_write_uint(AOV_HEARTBEAT_WAKES_PATH, 0);
         }
         return;
     }
@@ -297,6 +336,8 @@ static void aov_prepare(void)
 
     aov_active = 1;
     (void)sysfs_write_str(AOV_PROXY_PATH, "0\n");
+    (void)sysfs_write_uint(AOV_HEARTBEAT_WAKES_PATH, 0);
+    unlink(AOV_HEAL_MARKER_PATH);
     HAL_INFO("sleep", "AOV wake proxy is available\n");
 }
 
@@ -503,6 +544,12 @@ void sleep_policy_init(void)
     last_motion = now;
     state = SLEEP_DISABLED;
     load_wake_info();
+    heartbeat_wake = access(HEARTBEAT_MARKER_PATH, F_OK) == 0;
+    if (heartbeat_wake)
+    {
+        unlink(HEARTBEAT_MARKER_PATH);
+    }
+    aov_healed = access(AOV_HEAL_MARKER_PATH, F_OK) == 0;
     aov_probe();
 
     if (!app_config.sleep_enable)
@@ -647,6 +694,7 @@ void sleep_policy_report_motion(void)
     /* Confirmed motion is delivered by the event path; rebase the heartbeat
      * interval so the next quiet cycle does not add a duplicate frame. */
     heartbeat_set_due();
+    heartbeat_wake = 0;
 }
 
 int sleep_policy_should_suspend(void)
@@ -686,6 +734,11 @@ int sleep_policy_should_suspend(void)
 int sleep_policy_cycle_is_quiet_resume(void)
 {
     return quiet_suspend;
+}
+
+int sleep_policy_cycle_is_heartbeat(void)
+{
+    return heartbeat_wake;
 }
 
 int sleep_policy_suspend(void)
@@ -743,6 +796,24 @@ int sleep_policy_suspend(void)
     }
     *pmu_timeout = count;
     __sync_synchronize();
+
+    /* Tier 2: let the kernel return to Linux once every N quiet cycles.  The
+     * kernel counts those cycles itself (CLOCK_MONOTONIC does not advance
+     * while the AP is suspended), so N is the whole policy handover. */
+    if (aov_armed)
+    {
+        unsigned int wakes = app_config.sleep_heartbeat
+            ? sleep_heartbeat_wakes(app_config.sleep_heartbeat_interval_s,
+                                    app_config.sleep_wake_interval_s)
+            : 0;
+
+        if (sysfs_write_uint(AOV_HEARTBEAT_WAKES_PATH, wakes) < 0)
+            HAL_WARNING("sleep", "cannot program aov_heartbeat_wakes; "
+                        "userspace stays asleep across quiet cycles\n");
+        else
+            HAL_INFO("sleep", "tier 2: %u quiet cycle(s) per userspace wake\n",
+                     wakes);
+    }
 
     /* Put the STM8 focus/zoom controller into its I2C-idle sleep chain while
        the AP is suspended.  Best effort: a missing motor controller must not
@@ -817,6 +888,43 @@ int sleep_policy_suspend(void)
             aov_state[strcspn(aov_state, "\n")] = '\0';
         }
 
+        if (sleep_aov_state_is_heartbeat(aov_state))
+        {
+            /* Tier 2: the kernel woke Linux for telemetry, not for motion.
+             * Persist it for the exec-restarted instance; CLOCK_MONOTONIC
+             * skipped the suspended interval, so the normal due-gate would
+             * suppress the very frame this wake exists for. */
+            heartbeat_wake = 1;
+            FILE *marker = fopen(HEARTBEAT_MARKER_PATH, "w");
+            if (marker)
+            {
+                fclose(marker);
+            }
+            HAL_INFO("sleep", "tier 2 heartbeat wake\n");
+        }
+
+        if (sleep_aov_state_needs_heal(aov_state))
+        {
+            /* The kernel only resumes on a mailbox timeout after three in a
+             * row, so this is the terminal state of a dead MCU. */
+            HAL_WARNING("sleep", "MCU did not answer %u mailbox timeouts in "
+                        "a row; disarming AOV until the next boot\n",
+                        sysfs_read_uint(AOV_TIMEOUT_STREAK_PATH));
+            aov_healed = 1;
+            snprintf(aov_reason, sizeof(aov_reason), "mcu_unresponsive");
+            aov_active = 0;
+            app_config.sleep_aov_mcu = false;
+            app_config.sleep_wake_interval_s = 60;
+            (void)sysfs_write_uint(AOV_HEARTBEAT_WAKES_PATH, 0);
+            (void)sysfs_write_str(AOV_PROXY_PATH, "0\n");
+            FILE *marker = fopen(AOV_HEAL_MARKER_PATH, "w");
+            if (marker)
+            {
+                fclose(marker);
+            }
+            app_config_save();
+        }
+
         HAL_INFO("sleep", "resumed (EC wake src %d, last event %d, aov %s)\n",
                  last_wake_src, last_event, aov_state);
     }
@@ -878,6 +986,7 @@ void sleep_policy_api_json(char *out, size_t size)
              "\"aov_available\":%s,\"aov_state\":\"%s\","
              "\"idle_timeout_s\":%u,\"wake_interval_s\":%u,"
              "\"wake_check_s\":%u,\"pmu_timeout_hz\":%u,"
+             "\"heartbeat_wakes\":%u,\"timeout_streak\":%u,"
              "\"enabled\":%s,\"state\":\"%s\",\"idle_s\":%ld,"
              "\"last_wake_src\":%d,\"reason\":\"%s\",\"heartbeat\":%s}",
              app_config.sleep_enable ? "true" : "false",
@@ -889,6 +998,8 @@ void sleep_policy_api_json(char *out, size_t size)
              app_config.sleep_wake_interval_s,
              app_config.sleep_wake_check_s,
              app_config.sleep_pmu_timeout_hz,
+             sysfs_read_uint(AOV_HEARTBEAT_WAKES_PATH),
+             sysfs_read_uint(AOV_TIMEOUT_STREAK_PATH),
              enabled ? "true" : "false", state_name(state),
              idle > 0 ? idle : 0, last_wake_src, reason, heartbeat);
     pthread_mutex_unlock(&lock);
@@ -918,12 +1029,15 @@ void sleep_policy_status_json(char *out, size_t size)
     snprintf(out, size,
              "\"sleep\":{\"enabled\":%s,\"state\":\"%s\","
              "\"pmu_timer\":%s,\"aov\":%s,\"aov_available\":%s,"
-             "\"aov_state\":\"%s\",\"idle_s\":%ld,"
+             "\"aov_state\":\"%s\",\"heartbeat_wakes\":%u,"
+             "\"timeout_streak\":%u,\"idle_s\":%ld,"
              "\"last_wake_src\":%d,\"reason\":\"%s\",%s}",
              enabled ? "true" : "false", state_name(state),
              app_config.sleep_pmu_timer_wake ? "true" : "false",
              aov_active ? "true" : "false",
              aov_supported ? "true" : "false", aov_state_name(),
+             sysfs_read_uint(AOV_HEARTBEAT_WAKES_PATH),
+             sysfs_read_uint(AOV_TIMEOUT_STREAK_PATH),
              idle > 0 ? idle : 0, last_wake_src, reason, heartbeat);
     pthread_mutex_unlock(&lock);
 }

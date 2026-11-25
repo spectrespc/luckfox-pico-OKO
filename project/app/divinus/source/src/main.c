@@ -240,12 +240,17 @@ int main(int argc, char *argv[]) {
 
     while (keepRunning) {
         if (sleep_policy_should_suspend()) {
+            int heartbeatWake = sleep_policy_cycle_is_heartbeat();
+
             /* A quiet probe cycle is the only place a heartbeat snapshot is
-             * sent.  It blocks the entry into suspend for at most
-             * heartbeat_retries * (3 s connect + 1 s pause); a failure still
-             * lets the camera sleep (the receiver notices the gap). */
-            if (sleep_policy_cycle_is_quiet_resume() && heartbeat_due())
-                heartbeat_before_suspend();
+             * sent.  A tier-2 kernel wake exists only to deliver it and the
+             * monotonic clock did not advance across the suspended interval,
+             * so that path skips the due-gate.  It blocks the entry into
+             * suspend for at most heartbeat_retries * (3 s connect + 1 s
+             * pause); a failure still lets the camera sleep. */
+            if (heartbeatWake ||
+                (sleep_policy_cycle_is_quiet_resume() && heartbeat_due()))
+                heartbeat_before_suspend_ex(heartbeatWake);
             HAL_INFO("sleep", "entering the sleep cycle\n");
             sleepPending = 1;
             graceful = 1;

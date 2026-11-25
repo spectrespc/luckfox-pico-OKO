@@ -6682,7 +6682,7 @@ if (EQUALS(req->uri, "/api/storage")) {
             return;
         }
         {
-            char sleepJson[1024];
+            char sleepJson[1280];
             sleep_policy_api_json(sleepJson, sizeof(sleepJson));
             reply_json(req->clntFd, sleepJson, strlen(sleepJson));
         }
@@ -6706,7 +6706,7 @@ if (EQUALS(req->uri, "/api/storage")) {
             sprintf(uptime, "%ld:%02ld:%02ld", si.uptime / 3600, (si.uptime % 3600) / 60, si.uptime % 60);
         else
             sprintf(uptime, "%ld:%02ld", si.uptime / 60, si.uptime % 60);
-        char sleepJson[512];
+        char sleepJson[640];
         sleep_policy_status_json(sleepJson, sizeof(sleepJson));
         respLen = sprintf(response,
             "HTTP/1.1 200 OK\r\n"
