@@ -477,7 +477,12 @@ i2ctransfer -y 3 w1@0x60 0x0A r8              # сон: режим/состоя�
       (0 `mipi-csi2-hw`), но сервер/RTSP/IVS-потоки не восстанавливаются
       (3 потока, `/api/status` 000, `mpp: ctx is no found in chan server`) —
       нужен гранулярный HAL pause/resume (`VI_PauseChn`, `ISP_SingleFrame`/
-      `MultiFrame`) и согласование потоков, а не полный stop/start. Методика —
+      `MultiFrame`) и согласование потоков, а не полный stop/start. Вендорский
+      пример in-process pause/resume без `SYS_Exit` уже есть в дереве:
+      `project/app/rkipc/rkipc/common/isp/rv1106/isp.c:747-761`
+      (`RK_MPI_VI_PauseChn` → `rk_isp_deinit` → `rk_isp_init` →
+      `RK_MPI_VI_ResumeChn`, HDR-путь) — тот же приём нужен для парковки;
+      в нашем HAL `rk_vi` pause/resume не обёрнут. Методика —
       `last_suspend_time`, `output/bench/power/*`, `bench/boot_probe.py`.
 - [ ] **Frame-sync master/slave и dynamic FPS SC230AI — отложено.** Нет
       потребительской задачи; DTS sync-режим не задан. Регистры-кандидаты и
