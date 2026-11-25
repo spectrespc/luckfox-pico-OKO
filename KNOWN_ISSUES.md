@@ -633,6 +633,10 @@
   handshake и resume-путь ~2.3 с), а более короткий интервал повышает
   среднюю мощность — политику интервала выбирает владелец. Gate AOV
   переформулирован в `TO_DO.md` §8.1; JPEG-снапшот с MCU остаётся в TO_DO.
+  **Решение владельца 2026-11-25:** вердикт принят — AOV остаётся на схеме
+  `aov_mcu=1` + `keep_isp=1` + PMU-таймер (интервал по умолчанию 60 с),
+  ISP-handover и MCU-JTAG-исследование не делаются; открытым остаётся только
+  выпуск AOV из экспериментального профиля (`TO_DO.md` §8.1).
 
 - **KI-073. в `rk3x_i2c_irq` на I2C3 при циклах `[sleep]`.**
   2026-11-17 в AOV-прогоне (idle 30 s, `aov_mcu=1`) шина I2C3
@@ -1724,7 +1728,11 @@ Status: **experimental, not for release** (refreshed 2026-11-25). The MCU
   latency equals `wake_interval_s` (+ ~0.2 s handshake and a ~2.3 s resume
   path), and a shorter interval raises the average power — the interval
   policy is the owner's call. The AOV gate was reworded in `TO_DO.md` §8.1;
-  the MCU JPEG snapshot stays in TO_DO.
+  the MCU JPEG snapshot stays in TO_DO. **Owner decision 2026-11-25:** the
+  verdict is accepted — AOV stays on `aov_mcu=1` + `keep_isp=1` + the PMU
+  timer (60 s interval by default); neither the ISP-handover nor an MCU JTAG
+  study will be done, and only the release of AOV out of the experimental
+  profile remains open (`TO_DO.md` §8.1).
 
 - **KI-073. in `rk3x_i2c_irq` on I2C3 during `[sleep]` cycles.**
   On 2026-11-17 an AOV run (idle 30 s, `aov_mcu=1`) got a burst of

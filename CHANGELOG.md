@@ -290,6 +290,9 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   латентности < 2 с). Артефакты:
   `output/bench/aov-test/keepisp0-20261125b`,
   `output/bench/aov-test/quiet_keepisp0-20261125b.20261125-141406.log`.
+  Решение владельца 2026-11-25: вердикт принят, AOV остаётся на схеме
+  `aov_mcu=1` + `keep_isp=1` + PMU-таймер (60 с), открыт только вопрос
+  выпуска из экспериментального профиля.
 - **KI-072: the vendor ISP-handover is not implementable on this hardware
   (2026-11-25).** The plan `.kilo/plans/1795603530004-ki072-isp-handover-close.md`
   was stopped by its own stop rule: "the AP releases media and the MCU owns
@@ -314,6 +317,9 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   across suspend" project for a sub-2 s latency). Artifacts:
   `output/bench/aov-test/keepisp0-20261125b`,
   `output/bench/aov-test/quiet_keepisp0-20261125b.20261125-141406.log`.
+  Owner decision 2026-11-25: the verdict is accepted; AOV stays on
+  `aov_mcu=1` + `keep_isp=1` + the PMU timer (60 s), with only the release
+  out of the experimental profile still open.
 - **`TO_DO.md` §15: каталог остатков вендорского кода и аудит ядра
   (2026-11-25).** Добавлен каталог всех каталогов `project/app` (назначение,
   релевантность, статус сборки, лицензия, вердикт) и разбор
