@@ -1425,7 +1425,18 @@ function __BUILD_ENABLE_COREDUMP_SCRIPT() {
 	coredump2sdcard="$RK_PROJECT_PACKAGE_ROOTFS_DIR/usr/bin/coredump2sdcard.sh"
 	cat >$coredump2sdcard <<EOF
 #!/bin/sh
-exec cat -  > "/mnt/sdcard/core-\$1-\$2"
+# OKO: write crash dumps only to a mounted microSD with enough free space.
+# Writing to /mnt/sdcard while the card is absent lands on the rootfs, and
+# unbounded cores fill the card; a power loss during such a write corrupts
+# the FAT (KI-081).  Cores are a debug aid, so dropping them is fine.
+if ! mountpoint -q /mnt/sdcard; then
+	exit 0
+fi
+free_kb=\$(df -k /mnt/sdcard 2>/dev/null | awk 'NR==2 {print \$4}')
+if [ "\${free_kb:-0}" -lt 131072 ]; then
+	exit 0
+fi
+exec cat - > "/mnt/sdcard/core-\$1-\$2"
 EOF
 	chmod a+x $coredump2sdcard
 
