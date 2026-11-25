@@ -91,6 +91,18 @@ bool oko_aov_enabled;
 EXPORT_SYMBOL_GPL(oko_aov_enabled);
 u32 oko_aov_state = OKO_AOV_OFF;
 EXPORT_SYMBOL_GPL(oko_aov_state);
+/*
+ * Two-tier AOV wake counters.  They live in ordinary .data and therefore
+ * survive the sleep: the AP image stays in DDR while it is in self-refresh,
+ * so the quiet-cycle counter is the authoritative tier-2 clock (CLOCK_MONOTONIC
+ * in user space does not advance across a suspend).
+ */
+u32 oko_aov_heartbeat_wakes;
+EXPORT_SYMBOL_GPL(oko_aov_heartbeat_wakes);
+u32 oko_aov_quiet_wakes;
+EXPORT_SYMBOL_GPL(oko_aov_quiet_wakes);
+u32 oko_aov_timeout_streak;
+EXPORT_SYMBOL_GPL(oko_aov_timeout_streak);
 static bool oko_aov_supported;
 
 static const char * const oko_aov_state_name[] = {
@@ -100,6 +112,7 @@ static const char * const oko_aov_state_name[] = {
 	[OKO_AOV_QUIET] = "quiet",
 	[OKO_AOV_MOTION] = "motion",
 	[OKO_AOV_TIMEOUT] = "timeout",
+	[OKO_AOV_HEARTBEAT] = "heartbeat",
 };
 
 static ssize_t aov_wakeproxy_show(struct device *dev,
@@ -120,12 +133,57 @@ static ssize_t aov_wakeproxy_store(struct device *dev,
 		return -EOPNOTSUPP;
 
 	WRITE_ONCE(oko_aov_enabled, value);
-	if (!value)
+	if (!value) {
 		oko_aov_set_state(OKO_AOV_OFF);
+		WRITE_ONCE(oko_aov_quiet_wakes, 0);
+		WRITE_ONCE(oko_aov_timeout_streak, 0);
+	}
 
 	return count;
 }
 static DEVICE_ATTR_RW(aov_wakeproxy);
+
+/*
+ * Tier 2 period in quiet cycles: divinus writes heartbeat_interval_s /
+ * wake_interval_s before `echo mem`, and 0 disables the userspace wake.
+ */
+static ssize_t aov_heartbeat_wakes_show(struct device *dev,
+					struct device_attribute *attr,
+					char *buf)
+{
+	return sprintf(buf, "%u\n", READ_ONCE(oko_aov_heartbeat_wakes));
+}
+
+static ssize_t aov_heartbeat_wakes_store(struct device *dev,
+					 struct device_attribute *attr,
+					 const char *buf, size_t count)
+{
+	unsigned int value;
+
+	if (kstrtouint(buf, 0, &value))
+		return -EINVAL;
+	if (value > 86400)
+		return -EINVAL;
+
+	WRITE_ONCE(oko_aov_heartbeat_wakes, value);
+
+	return count;
+}
+static DEVICE_ATTR_RW(aov_heartbeat_wakes);
+
+static ssize_t aov_quiet_wakes_show(struct device *dev,
+				    struct device_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%u\n", READ_ONCE(oko_aov_quiet_wakes));
+}
+static DEVICE_ATTR_RO(aov_quiet_wakes);
+
+static ssize_t aov_timeout_streak_show(struct device *dev,
+				       struct device_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%u\n", READ_ONCE(oko_aov_timeout_streak));
+}
+static DEVICE_ATTR_RO(aov_timeout_streak);
 
 static ssize_t aov_state_show(struct device *dev,
 			      struct device_attribute *attr, char *buf)
@@ -594,7 +652,10 @@ static int pm_config_probe(struct platform_device *pdev)
 		dev_info(&pdev->dev, "AOV MCU is not declared; aov_wakeproxy is disabled\n");
 	}
 	if (device_create_file(&pdev->dev, &dev_attr_aov_wakeproxy) ||
-	    device_create_file(&pdev->dev, &dev_attr_aov_state))
+	    device_create_file(&pdev->dev, &dev_attr_aov_state) ||
+	    device_create_file(&pdev->dev, &dev_attr_aov_heartbeat_wakes) ||
+	    device_create_file(&pdev->dev, &dev_attr_aov_quiet_wakes) ||
+	    device_create_file(&pdev->dev, &dev_attr_aov_timeout_streak))
 		dev_warn(&pdev->dev, "cannot create AOV sysfs attributes\n");
 #endif
 

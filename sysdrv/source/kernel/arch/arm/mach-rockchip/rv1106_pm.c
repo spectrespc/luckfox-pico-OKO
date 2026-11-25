@@ -6,6 +6,7 @@
 #include <linux/init.h>
 #include <linux/io.h>
 #include <linux/kernel.h>
+#include <linux/math64.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
 #include <linux/suspend.h>
@@ -15,6 +16,7 @@
 #include <asm/fiq_glue.h>
 #include <asm/tlbflush.h>
 #include <asm/suspend.h>
+#include <clocksource/arm_arch_timer.h>
 #include <dt-bindings/suspend/rockchip-rv1106.h>
 #include <linux/irqchip/arm-gic.h>
 #include <linux/rockchip/oko_aov.h>
@@ -81,6 +83,119 @@ static struct rv1106_sleep_ddr_data ddr_data;
 
 /* OKO AOV: PMU timeout value written by divinus, restored on RE_ENTER_SLEEP. */
 static u32 pmu_timeout_cnt;
+
+/*
+ * OKO (KI-072): per-marker timing of the suspend enter/exit path.
+ *
+ * The console markers ("-01234-WFI-43210-") show the order of the phases but
+ * not their cost, and the generic `pm_print_times` only covers the driver
+ * model above the SoC code.  This records the arch timer at every marker and
+ * prints one summary line per cycle, so the phases that actually dominate the
+ * resume path can be read from dmesg.
+ *
+ * Compiled in only when the PM debug fragments are part of the build
+ * (rv1106-pm.config: CONFIG_PM_SLEEP_DEBUG); the release AOV image keeps the
+ * plain marker stream and pays no extra timer read.
+ */
+enum oko_pm_mark {
+	OKO_PM_M_ENTER = 0,	/* about to gate the clocks */
+	OKO_PM_M_CLK_S,
+	OKO_PM_M_SOC_S,
+	OKO_PM_M_PLL_S,
+	OKO_PM_M_GPIO_S,
+	OKO_PM_M_VD_S,
+	OKO_PM_M_WFI_IN,
+	OKO_PM_M_WFI_OUT,
+	OKO_PM_M_VD_R,
+	OKO_PM_M_GPIO_R,
+	OKO_PM_M_PLL_R,
+	OKO_PM_M_SOC_R,
+	OKO_PM_M_CLK_R,
+	OKO_PM_M_HS_IN,
+	OKO_PM_M_HS_OUT,
+	OKO_PM_M_HPT,
+	OKO_PM_M_FIQ,
+	OKO_PM_M_EXIT,
+	OKO_PM_M_MAX
+};
+
+#if IS_ENABLED(CONFIG_RV1106_HPMCU_FAST_WAKEUP) && IS_ENABLED(CONFIG_PM_SLEEP_DEBUG)
+
+static u64 oko_pm_mark[OKO_PM_M_MAX];
+
+static inline void oko_pm_stamp(enum oko_pm_mark m)
+{
+	oko_pm_mark[m] = arch_timer_read_counter();
+}
+
+static unsigned long oko_pm_us(enum oko_pm_mark from, enum oko_pm_mark to)
+{
+	u64 delta = oko_pm_mark[to] - oko_pm_mark[from];
+	u32 rate = arch_timer_get_rate();
+
+	if (!rate)
+		return 0;
+	return (unsigned long)div_u64(delta * 1000000ULL, rate);
+}
+
+static void oko_pm_report(const char *tag)
+{
+	static const struct {
+		const char *name;
+		enum oko_pm_mark from, to;
+	} phase[] = {
+		{ "clk_s", OKO_PM_M_ENTER, OKO_PM_M_CLK_S },
+		{ "soc_cfg", OKO_PM_M_CLK_S, OKO_PM_M_SOC_S },
+		{ "plls_s", OKO_PM_M_SOC_S, OKO_PM_M_PLL_S },
+		{ "gpio_s", OKO_PM_M_PLL_S, OKO_PM_M_GPIO_S },
+		{ "vd_s", OKO_PM_M_GPIO_S, OKO_PM_M_VD_S },
+		{ "pre_wfi", OKO_PM_M_VD_S, OKO_PM_M_WFI_IN },
+		{ "vd_r", OKO_PM_M_WFI_OUT, OKO_PM_M_VD_R },
+		{ "gpio_r", OKO_PM_M_VD_R, OKO_PM_M_GPIO_R },
+		{ "plls_r", OKO_PM_M_GPIO_R, OKO_PM_M_PLL_R },
+		{ "soc_r", OKO_PM_M_PLL_R, OKO_PM_M_SOC_R },
+		{ "clk_r", OKO_PM_M_SOC_R, OKO_PM_M_CLK_R },
+	};
+	unsigned long pre = oko_pm_us(OKO_PM_M_ENTER, OKO_PM_M_WFI_IN);
+	unsigned long post = oko_pm_us(OKO_PM_M_SOC_R, OKO_PM_M_EXIT);
+	int i;
+
+	/*
+	 * The arch timer is gated while the SoC sleeps: the counter does not
+	 * advance during the sleep and resynchronises inside soc_sleep_restore
+	 * ("soc_r"), so that phase carries the whole sleep interval.  Never
+	 * derive the sleep time or the total from this clock - use
+	 * /sys/kernel/wakeup_reasons/last_suspend_time for that.  What is
+	 * valid here: `pre` (enter path), the resume phases before the
+	 * resync, and `post` (clock restore after the resync).
+	 */
+	pr_info("oko-pm: %s (us)", tag);
+	for (i = 0; i < ARRAY_SIZE(phase); i++)
+		pr_cont(" %s=%lu", phase[i].name,
+			oko_pm_us(phase[i].from, phase[i].to));
+	pr_cont(" pre=%lu post=%lu mbox=%lu\n", pre, post,
+		oko_pm_us(OKO_PM_M_HS_IN, OKO_PM_M_HS_OUT));
+}
+
+/*
+ * A quiet cycle never returns to Linux, so the exit marks stay stale: report
+ * only the two costs that are valid - the SoC wake up to the point before the
+ * arch-timer resync, and the MCU handshake itself.
+ */
+static void oko_pm_report_quiet(void)
+{
+	pr_info("oko-pm: quiet (us) wake_soc=%lu mbox=%lu\n",
+		oko_pm_us(OKO_PM_M_WFI_OUT, OKO_PM_M_PLL_R),
+		oko_pm_us(OKO_PM_M_HS_IN, OKO_PM_M_HS_OUT));
+}
+
+#else
+
+static inline void oko_pm_stamp(enum oko_pm_mark m) { }
+static inline void oko_pm_report(const char *tag) { }
+static inline void oko_pm_report_quiet(void) { }
+
+#endif /* CONFIG_RV1106_HPMCU_FAST_WAKEUP && CONFIG_PM_SLEEP_DEBUG */
 
 static const struct rk_sleep_config *slp_cfg;
 
@@ -1256,53 +1371,117 @@ RE_ENTER_SLEEP:
 	    READ_ONCE(oko_aov_enabled) && pmu_timeout_cnt)
 		writel(pmu_timeout_cnt, pmu_base + RV1106_PMU_WAKEUP_TIMEOUT_CNT);
 
+	oko_pm_stamp(OKO_PM_M_ENTER);
 	clock_suspend();
+	oko_pm_stamp(OKO_PM_M_CLK_S);
 	rkpm_printch('0');
 
 	soc_sleep_config();
+	oko_pm_stamp(OKO_PM_M_SOC_S);
 	rkpm_printch('1');
 
 	plls_suspend();
+	oko_pm_stamp(OKO_PM_M_PLL_S);
 	rkpm_printch('2');
 
 	gpio_config();
+	oko_pm_stamp(OKO_PM_M_GPIO_S);
 	rkpm_printch('3');
 
 	vd_log_regs_save();
 	rkpm_regs_rgn_dump();
+	oko_pm_stamp(OKO_PM_M_VD_S);
 	rkpm_printch('4');
 
 	rkpm_printstr("-WFI-");
+	oko_pm_stamp(OKO_PM_M_WFI_IN);
 	cpu_suspend(0, rockchip_lpmode_enter);
+	oko_pm_stamp(OKO_PM_M_WFI_OUT);
 
 	rkpm_printch('4');
 
 	vd_log_regs_restore();
+	oko_pm_stamp(OKO_PM_M_VD_R);
 	rkpm_printch('3');
 	rkpm_regs_rgn_dump();
 
 	gpio_restore();
+	oko_pm_stamp(OKO_PM_M_GPIO_R);
 	rkpm_printch('2');
 
 	plls_resume();
+	oko_pm_stamp(OKO_PM_M_PLL_R);
 	rkpm_printch('1');
 
 	soc_sleep_restore();
+	oko_pm_stamp(OKO_PM_M_SOC_R);
 	rkpm_printch('0');
 
 	clock_resume();
+	oko_pm_stamp(OKO_PM_M_CLK_R);
 	rkpm_printch('-');
 
 	/* Check whether it's time_out wakeup */
 	if (IS_ENABLED(CONFIG_RV1106_HPMCU_FAST_WAKEUP) &&
 	    READ_ONCE(oko_aov_enabled)) {
-		if (hpmcu_fast_wkup()) {
-			rkpm_gicv2_dist_restore(gicd_base, &gicd_ctx_save);
-			goto RE_ENTER_SLEEP;
-		} else {
-			rkpm_gicv2_dist_restore(gicd_base, &gicd_ctx_save);
-			rkpm_gicv2_cpu_restore(gicd_base, gicc_base, &gicc_ctx_save);
+		int quiet;
+
+		oko_pm_stamp(OKO_PM_M_HS_IN);
+		quiet = hpmcu_fast_wkup();
+		oko_pm_stamp(OKO_PM_M_HS_OUT);
+
+		/*
+		 * OKO (KI-072): a mailbox timeout is a quiet cycle too, but the
+		 * AP must not stay in the re-sleep loop forever when the MCU is
+		 * dead.  After OKO_AOV_TIMEOUT_LIMIT timeouts in a row the AP
+		 * resumes Linux with aov_state=timeout, so divinus can disarm
+		 * AOV; before that the cycle is handled exactly like quiet.
+		 */
+		if (!quiet && READ_ONCE(oko_aov_state) == OKO_AOV_TIMEOUT) {
+			u32 streak = READ_ONCE(oko_aov_timeout_streak) + 1;
+
+			WRITE_ONCE(oko_aov_timeout_streak, streak);
+			if (streak < OKO_AOV_TIMEOUT_LIMIT)
+				quiet = 1;
 		}
+
+		if (quiet) {
+			u32 wakes = READ_ONCE(oko_aov_quiet_wakes) + 1;
+			u32 period = READ_ONCE(oko_aov_heartbeat_wakes);
+
+			if (READ_ONCE(oko_aov_state) != OKO_AOV_TIMEOUT)
+				WRITE_ONCE(oko_aov_timeout_streak, 0);
+			WRITE_ONCE(oko_aov_quiet_wakes, wakes);
+
+			/*
+			 * OKO two-tier wake: every `period` quiet cycles the AP
+			 * returns to Linux for the telemetry heartbeat; the rest
+			 * re-enter sleep without ever running the driver model.
+			 */
+			if (period && wakes >= period) {
+				WRITE_ONCE(oko_aov_quiet_wakes, 0);
+				oko_aov_set_state(OKO_AOV_HEARTBEAT);
+				oko_pm_report("heartbeat");
+			} else {
+				rkpm_gicv2_dist_restore(gicd_base,
+							&gicd_ctx_save);
+				oko_pm_report_quiet();
+				goto RE_ENTER_SLEEP;
+			}
+		} else {
+			/*
+			 * Full resume: motion, or a terminal timeout that userspace
+			 * must see.  The quiet cadence restarts; the timeout streak
+			 * is kept for the terminal timeout so divinus can log it,
+			 * and cleared on motion (or when the proxy is disarmed).
+			 */
+			WRITE_ONCE(oko_aov_quiet_wakes, 0);
+			if (READ_ONCE(oko_aov_state) != OKO_AOV_TIMEOUT)
+				WRITE_ONCE(oko_aov_timeout_streak, 0);
+		}
+
+		rkpm_gicv2_dist_restore(gicd_base, &gicd_ctx_save);
+		rkpm_gicv2_cpu_restore(gicd_base, gicc_base, &gicc_ctx_save);
 	}
 
 	if (rk_hptimer_get_mode(hptimer_base) == RK_HPTIMER_SOFT_ADJUST_MODE) {
@@ -1310,13 +1489,18 @@ RE_ENTER_SLEEP:
 					 RK_HPTIMER_SOFT_ADJUST_MODE))
 			rkpm_printstr("WARN: can't wait hptimer soft adjust mode!\n");
 	}
+	oko_pm_stamp(OKO_PM_M_HPT);
 
 	fiq_glue_resume();
+	oko_pm_stamp(OKO_PM_M_FIQ);
 
 	rv1106_dbg_irq_finish();
 
 	local_fiq_enable();
+	oko_pm_stamp(OKO_PM_M_EXIT);
 	rkpm_printstr("rv1106 exit sleep\n");
+
+	oko_pm_report("resume");
 
 	return 0;
 }

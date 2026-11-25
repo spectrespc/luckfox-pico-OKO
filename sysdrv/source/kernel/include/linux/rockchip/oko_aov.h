@@ -23,11 +23,24 @@ enum oko_aov_state {
 	OKO_AOV_QUIET,
 	OKO_AOV_MOTION,
 	OKO_AOV_TIMEOUT,
+	OKO_AOV_HEARTBEAT,
 };
+
+/*
+ * OKO two-tier AOV wake: consecutive mailbox timeouts after which the AP
+ * resumes Linux even when the heartbeat period is not reached, so divinus can
+ * disarm an unresponsive MCU instead of sleeping on a dead proxy forever.
+ */
+#define OKO_AOV_TIMEOUT_LIMIT 3
 
 #ifdef CONFIG_RV1106_HPMCU_FAST_WAKEUP
 extern bool oko_aov_enabled;
 extern u32 oko_aov_state;
+/* Quiet cycles (including mailbox timeouts) between two full Linux resumes.
+ * 0 keeps the old "never resume from a quiet cycle" behaviour. */
+extern u32 oko_aov_heartbeat_wakes;
+extern u32 oko_aov_quiet_wakes;
+extern u32 oko_aov_timeout_streak;
 
 static inline void oko_aov_set_state(enum oko_aov_state state)
 {
@@ -39,6 +52,9 @@ static inline void oko_aov_set_state(enum oko_aov_state state)
  * macro named oko_aov_state: it would rename the enum tag in the inline
  * helper below. */
 static const bool oko_aov_enabled __maybe_unused = false;
+static const u32 oko_aov_heartbeat_wakes __maybe_unused = 0;
+static const u32 oko_aov_quiet_wakes __maybe_unused = 0;
+static const u32 oko_aov_timeout_streak __maybe_unused = 0;
 
 static inline void oko_aov_set_state(enum oko_aov_state state)
 {
