@@ -248,6 +248,15 @@ TRM (гл. 15, p444–457) и Rockchip I2C Developer Guide (V2.2.0) дают б�
 - `rv1106_hpmcu_tb_sc230ai_v1.90` (2023-12-15) — наш текущий TB-образ;
   upstream-запись про fastae V2.3.2-rc1.
 
+### Вендорский AP-side AOV-сэмпл
+
+Полный Rockchip-сэмпл `project/app/aov_sample` (LubanCat RV06 SDK, он же в
+jetkvm/rv1106-system) сохранён отдельной темой:
+[`../rv1106-aov-vendor-sample/README.md`](../rv1106-aov-vendor-sample/README.md).
+Кратко: вендорский AOV держит процесс живым, паузит AIQ
+(`rk_aiq_uapi_sysctl_pause/resume` + `stop/startMotionDetect`) и вычитывает
+кадры перед `mem`, а не делает `RK_MPI_SYS_Exit`/VI stop.
+
 ### Что взять из кода и скриптов dehai
 
 Ссылки на файлы и номера строк ниже — из снимка до зачистки 2026-11-25:

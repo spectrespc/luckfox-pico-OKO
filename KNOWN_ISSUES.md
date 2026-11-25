@@ -703,13 +703,15 @@
   `RK_MPI_SYS_Exit/Init` в одном процессе не восстанавливает граф потоков
   и вендорский контекст; вендор делает гранулярно `VI_PauseChn` →
   `ISP_SingleFrame` → `Mem` → `ISP_MultiFrame` → `VI_ResumeChn` в одном
-  приложении со своими потоками, а не полный stop/start. Нужен HAL-слой
-  для pause/resume и согласование сервера/IVS — отдельный проект. Вендорский
-  пример такого приёма без `SYS_Exit` есть в дереве:
-  `project/app/rkipc/rkipc/common/isp/rv1106/isp.c:747-761` — HDR-путь
-  `RK_MPI_VI_PauseChn` → `rk_isp_deinit` → `rk_isp_init` →
-  `RK_MPI_VI_ResumeChn`; в нашем HAL `rk_vi` pause/resume не обёрнут. Код
-  эксперимента откатан, стенд восстановлен power cycle.
+  приложении со своими потоками, а не полный stop/start. Точный вендорский
+  AOV-сэмпл сохранён в `research/rv1106-aov-vendor-sample/`:
+  `SAMPLE_COMM_ISP_SingleFrame` — это `rk_aiq_uapi_sysctl_pause` +
+  `stopMotionDetect` (не `VI_PauseChn`), затем drain кадров и `mem`;
+  после пробуждения — `MultiFrame` (`sysctl_resume` + `startMotionDetect`).
+  Нужны обёртки AIQ pause/resume в нашем HAL (`rk_aiq` сейчас даёт только
+  `fnStart/fnStop`) и согласование сервера/IVS — отдельный проект; для
+  SC230AI поддержку pause/resume надо проверить. Код эксперимента откатан,
+  стенд восстановлен power cycle.
 
 - **KI-073. в `rk3x_i2c_irq` на I2C3 при циклах `[sleep]`.**
   2026-11-17 в AOV-прогоне (idle 30 s, `aov_mcu=1`) шина I2C3
@@ -1876,11 +1878,14 @@ Status: **experimental, not for release** (refreshed 2026-11-25). The MCU
   granularly with `VI_PauseChn` -> `ISP_SingleFrame` -> `Mem` ->
   `ISP_MultiFrame` -> `VI_ResumeChn` inside one coordinated application, not
   a full stop/start. A HAL pause/resume layer plus server/IVS coordination is
-  a separate project. The vendor already shows the pattern without `SYS_Exit`
-  in the tree: `project/app/rkipc/rkipc/common/isp/rv1106/isp.c:747-761` is
-  the HDR path `RK_MPI_VI_PauseChn` -> `rk_isp_deinit` -> `rk_isp_init` ->
-  `RK_MPI_VI_ResumeChn`; our `rk_vi` HAL does not wrap pause/resume. The
-  experiment code was reverted and the bench restored with a power cycle.
+  a separate project. The exact vendor AOV sample is saved in
+  `research/rv1106-aov-vendor-sample/`: `SAMPLE_COMM_ISP_SingleFrame` is
+  `rk_aiq_uapi_sysctl_pause` + `stopMotionDetect` (not `VI_PauseChn`),
+  followed by a frame drain and `mem`; on wake `MultiFrame` is
+  `sysctl_resume` + `startMotionDetect`. Our `rk_aiq` HAL exposes only
+  `fnStart/fnStop`; pause/resume wrappers and SC230AI support need to be
+  verified. The experiment code was reverted and the bench restored with a
+  power cycle.
 
 - **KI-073. in `rk3x_i2c_irq` on I2C3 during `[sleep]` cycles.**
   On 2026-11-17 an AOV run (idle 30 s, `aov_mcu=1`) got a burst of

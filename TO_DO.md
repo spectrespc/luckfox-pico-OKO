@@ -468,21 +468,22 @@ i2ctransfer -y 3 w1@0x60 0x0A r8              # сон: режим/состоя�
       реинициализация медиа (stop media, процесс/сервер живы), но она
       конфликтует с причиной `exec` — чистым освобождением dmabuf/RGA
       (KI-069); нужен отдельный проект и решение владельца. Опора — вендорский
-      AOV-гайд V1.0.4 §3.1.2–3.1.3: перед `mem` вычитать остатки кадров
-      (`RK_MPI_VI_GetChnFrame`→`ReleaseChnFrame`), `ISP_SingleFrame`,
-      `RK_MPI_VI_PauseChn`, `UnbindSdcard/Ethernet/Soundcard`, затем
-      `EnterSleep`; после пробуждения — `ISP_MultiFrame`, `VI_ResumeChn`,
-      `Bind*` и convergence-проверки. Процесс при этом остаётся жив. Проверено
-      2026-11-25: полный `sdk_stop`/`sdk_start` в одном процессе шторм снимает
-      (0 `mipi-csi2-hw`), но сервер/RTSP/IVS-потоки не восстанавливаются
-      (3 потока, `/api/status` 000, `mpp: ctx is no found in chan server`) —
-      нужен гранулярный HAL pause/resume (`VI_PauseChn`, `ISP_SingleFrame`/
-      `MultiFrame`) и согласование потоков, а не полный stop/start. Вендорский
-      пример in-process pause/resume без `SYS_Exit` уже есть в дереве:
-      `project/app/rkipc/rkipc/common/isp/rv1106/isp.c:747-761`
-      (`RK_MPI_VI_PauseChn` → `rk_isp_deinit` → `rk_isp_init` →
-      `RK_MPI_VI_ResumeChn`, HDR-путь) — тот же приём нужен для парковки;
-      в нашем HAL `rk_vi` pause/resume не обёрнут. Методика —
+      вендорский AOV-сэмпл Rockchip (`research/rv1106-aov-vendor-sample/`):
+      перед `mem` — `SAMPLE_COMM_ISP_SingleFrame` (= `rk_aiq_uapi_sysctl_pause`
+      + `stopMotionDetect`), вычитать кадры (`RK_MPI_VI_GetChnFrame`→
+      `ReleaseChnFrame`), при необходимости `UnbindSdcard/Soundcard/Ethernet`,
+      затем `EnterSleep`; после пробуждения — `MultiFrame`
+      (`sysctl_resume` + `startMotionDetect`), кадр через
+      `RK_MPI_VI_DevEnableSinglelFrame`, IVA/запись при движении. Процесс
+      жив, `SYS_Exit` нет. Проверено 2026-11-25: полный
+      `sdk_stop`/`sdk_start` в одном процессе шторм снимает (0
+      `mipi-csi2-hw`), но сервер/RTSP/IVS-потоки не восстанавливаются
+      (3 потока, `/api/status` 000, `mpp: ctx is no found in chan server`).
+      Нужен именно AIQ pause/resume + drain без остановки SDK: в нашем HAL
+      `rk_aiq` есть только `fnStart/fnStop`, обёрток `pause/resume` и
+      `start/stopMotionDetect` нет. `VI_PauseChn` из
+      `common/isp/rv1106/isp.c:747-761` — HDR-путь, не AOV; для SC230AI
+      поддержку pause/resume нужно проверить. Методика —
       `last_suspend_time`, `output/bench/power/*`, `bench/boot_probe.py`.
 - [ ] **Frame-sync master/slave и dynamic FPS SC230AI — отложено.** Нет
       потребительской задачи; DTS sync-режим не задан. Регистры-кандидаты и

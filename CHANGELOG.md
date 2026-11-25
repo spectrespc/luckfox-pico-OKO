@@ -26,6 +26,32 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Добавлено
 
+- **Сохранён вендорский AP-side AOV-сэмпл Rockchip
+  (`research/rv1106-aov-vendor-sample/`).** В SDK LubanCat RV06 нашёлся
+  полный `project/app/aov_sample`, которого нет в Luckfox; тот же сэмпл
+  лежит в `jetkvm/rv1106-system` (blob-SHA совпадают). Снимок ключевых
+  файлов: `sample_comm_aov_rv1106.c` (`ms*32.768`, `echo mem`,
+  bind/unbind SD/Ethernet/audio), `sample_comm_isp.c`
+  (`SingleFrame/MultiFrame` = `rk_aiq_uapi_sysctl_pause/resume` +
+  `stop/startMotionDetect`), `sample_aov_vi.c`,
+  `sample_aov_vi_iva_venc.c`, вендорские `resume_suspend_test*.sh`.
+  Главный вывод: вендорский AOV держит процесс живым и **паузит AIQ**, а не
+  делает `RK_MPI_SYS_Exit`/VI stop; перед `mem` вычитывает кадры. Это
+  недостающий вариант между нашими `keep_process` и `park_process`; в HAL
+  `rk_aiq` нужно добавить pause/resume и motion-detect.
+- **Saved the vendor AP-side Rockchip AOV sample
+  (`research/rv1106-aov-vendor-sample/`).** The LubanCat RV06 SDK carries
+  the full `project/app/aov_sample` that Luckfox lacks; the same sample is in
+  `jetkvm/rv1106-system` (identical blob SHAs). The snapshot covers
+  `sample_comm_aov_rv1106.c` (`ms*32.768`, `echo mem`, SD/Ethernet/audio
+  bind/unbind), `sample_comm_isp.c` (`SingleFrame/MultiFrame` =
+  `rk_aiq_uapi_sysctl_pause/resume` + `stop/startMotionDetect`),
+  `sample_aov_vi.c`, `sample_aov_vi_iva_venc.c` and the vendor
+  `resume_suspend_test*.sh`. Key conclusion: the vendor AOV keeps the process
+  alive and **pauses AIQ** instead of `RK_MPI_SYS_Exit`/VI stop, and drains
+  frames before `mem`. That is the missing variant between our
+  `keep_process` and `park_process`; the `rk_aiq` HAL needs pause/resume and
+  motion-detect.
 - **`[sleep] usb_on_motion`: USB-хост вне resume-пути (`KNOWN_ISSUES.md`
   KI-072).** Deep suspend обесточивает USB-хост, и прежний resume
   пере-нумеровал хаб и WiFi-донгл (~2.06 с из 2.22 с). Новый ключ (по
