@@ -73,6 +73,16 @@ Subsystem (гл. 8, с. 281–298), I2C (гл. 15, с. 444–460), SPI (гл. 23
 (pins 85/86), их IO-питание `GPIO1_VCC3V3` (pin 81), отдельное от
 `DVDD_i`/`VDD_LOGIC`; I2C1 — в PMU-блоке, на GPIO0_A5/A6.
 
+**`RV1106 Datasheet Rev 2.0`** (2026-04-02, 31 страница, зеркало `rockchip.fr`)
+— редакция, где в §2.1 order info сведены все три заказные версии:
+`RV1106G2` (QFN128, `Cortex A7 + MCU + 1.0 TOPS NPU + 1Gb DDR3L + 5 МП@30`),
+`RV1106G3` (QFN128, `Cortex A7 + MCU + 1.0 TOPS NPU + 2Gb DDR3L + 8 МП@15`) и
+`RV1106` (BGA313, внешняя DDR2/DDR3/DDR3L/DDR4). Там же §2.2 top marking,
+§2.3 package dimension и §2.6 pin number list для G2/G3. Относительно Rev 1.8
+исправлена оценка NPU: у обеих SIP-версий 1.0 TOPS (в Rev 1.8 у G2 было
+0.5 TOPS). Наш DUT (Luckfox Pico Max) несёт именно `RV1106G3`: 2 Гбит
+DDR3L в корпусе, то есть 256 МБ ОЗУ.
+
 **`rkbin/doc/release/RV1106_EN.md`** — журнал версий RV1106-бинарей. Для темы:
 `hpmcu_wakeup_v1.00` (первый HPMCU sleep wake-up), `ddr_*_v1.15`
 (конфигурация таймеров под suspend/resume), `ddr_924MHz_tb_v1.13`
@@ -642,6 +652,15 @@ mcutool, LPMCU), медиа-грабли и soak-инструментация. �
   - p17 — I2C3 M1 GPIO1_D3/D2 (pins 85/86), `GPIO1_VCC3V3` pin 81;
     HPMCU/LPMCU JTAG on GPIO1_B2/B3 и GPIO3_A4–A7;
   - p20 — `DVDD_i` (LOGIC) 0.81–0.95 В; `GPIO1_VCC3V3`/`PMU_VCC3V3` 3.3 В.
+- RV1106 Datasheet Rev 2.0 (2026-04-02, 31 с.):
+  - §2.1 (p16) — order information: `RV1106G2`/`RV1106G3` — QFN128,
+    `RV1106G3` = 1.0 TOPS NPU + 2Gb DDR3L + 8 МП@15, `RV1106G2` = 1.0 TOPS
+    NPU + 1Gb DDR3L + 5 МП@30, `RV1106` — BGA313 без SIP-памяти;
+  - §2.2 (p16) — top marking: `RVXXXX` chip name, subcontractor code,
+    die lot, date code; отдельные POD-рисунки G2/G3 и RV1106;
+  - §1.2.2 — встроенная память `RV1106G3` (DDR3L SIP) описана явно;
+  - revision history (p2) — 2.0 от 2026-04-02, среди правок «Correct NPU
+    performance as 1 TOPS» (в Rev 1.8 у G2 стояло 0.5 TOPS).
 - rkbin release notes (pin `3e288fe8…`): wakeup v1.00, DDR v1.15 timer for
   suspend/resume, DDR v1.13 sleep/resume, wrap v2.03rc4 AVS resume fix,
   tb_sc230ai v1.90. Локальный `rkbin` имеет DDR v1.15/wakeup v1.00/tb v1.90.
@@ -695,6 +714,8 @@ mcutool, LPMCU), медиа-грабли и soak-инструментация. �
   https://rockchip.fr/Rockchip%20RV1106%20TRM%20V0.3%20Part1.pdf
 - RV1106 Datasheet Rev 1.8 (зеркало):
   https://atta.szlcsc.com/upload/public/pdf/source/20250728/0F25565987B346BAFAE15AD3F3BED3E9.pdf
+- RV1106 Datasheet Rev 2.0:
+  https://rockchip.fr/RV1106%20datasheet%20V2.0.pdf
 - rkbin RV1106 release notes:
   https://github.com/rockchip-linux/rkbin/blob/master/doc/release/RV1106_EN.md
 - Rockchip I2C Developer Guide V2.2.0 (original; 403 на 2026-11-24):
@@ -713,8 +734,9 @@ mcutool, LPMCU), медиа-грабли и soak-инструментация. �
 
 ## Провенанс снимков
 
-Снимок: 37 файлов, 37 417 079 Б. Лимита на число файлов и размер нет.
-Дата снятия — 2026-11-24; зачистка отработавших файлов — 2026-11-25
+Снимок: 38 файлов, 39 799 861 Б. Лимита на число файлов и размер нет.
+Дата снятия — 2026-11-24 (Rev 2.0 даташита добавлен 2026-11-25); зачистка
+отработавших файлов — 2026-11-25
 (удалено 7 файлов dehai, 107 191 Б; повторное снятие — «Как обновить
 снимок»). Файлы не редактировались.
 
@@ -730,6 +752,7 @@ mcutool, LPMCU), медиа-грабли и soak-инструментация. �
 | `rk3566-mcu/rk3566_mbox.dts` | `snapshot/liamhays-rk3566-mcu/rk3566_mbox.dts` | GPL-2.0 (Rockchip BSP, per header); repo GPL-3.0 | `8142d059872b0dce3876beb25a8e133a4e17349fa74ef2d476f75003f6178cd7` | 735 | 2026-11-24 | `16e975a9a405dc4d79ab510bdbf37a1d5bb1a060` |
 | `rockchip-rv1106-trm/Rockchip_RV1106_TRM_V0.3_Part1.pdf` | `snapshot/rockchip-rv1106-trm/Rockchip_RV1106_TRM_V0.3_Part1.pdf` | Rockchip doc; all rights reserved (research copy) | `dc0121f7b67611af35c84b7a49e4a0c33585999059ad5a9bbf5b331c15ac9184` | 24 621 576 | 2026-11-24 | V0.3, 2022-03-24, 877 с.; static PDF |
 | `rockchip-rv1106-datasheet/RV1106_Datasheet_Rev1.8.pdf` | `snapshot/rockchip-rv1106-datasheet/RV1106_Datasheet_Rev1.8.pdf` | Rockchip datasheet; all rights reserved (research copy) | `2cac8eded045e404dc67d4d4662684cbef48ffb1737e3533f52e798e5ba4a017` | 1 919 244 | 2026-11-24 | Rev 1.8, 2025-03-12, 25 с.; static PDF |
+| `rockchip-rv1106-datasheet/RV1106_Datasheet_Rev2.0.pdf` | `snapshot/rockchip-rv1106-datasheet/RV1106_Datasheet_Rev2.0.pdf` | Rockchip datasheet; all rights reserved (research copy) | `53476c5ad66bc0cb8da5d7c5c4e72cd6f3365c9ad3209a36855a523c7b453284` | 2 382 782 | 2026-11-25 | Rev 2.0, 2026-04-02, 31 с.; static PDF |
 | `rockchip-i2c-guide/Rockchip_Developer_Guide_I2C_EN.pdf` | `snapshot/rockchip-i2c-guide/Rockchip_Developer_Guide_I2C_EN.pdf` | Rockchip public doc; all rights reserved (research copy) | `c3f463921e446e7afd70b87f9a77dd9fc32f3568728c3ecf5a42f1a7981a98cb` | 315 278 | 2026-11-24 | local = mirror `a1717bfc5f2412d7b1c06633debb896154699807`; original URL 403 |
 | `rockchip-linux-rkbin/doc/release/RV1106_EN.md` | `snapshot/rockchip-linux-rkbin/doc/release/RV1106_EN.md` | Rockchip release notes (repo) | `cde13f19c93dce5a15dd806582f494a1f3f22f3dcfde76476fcdbf856c6f6b36` | 43 323 | 2026-11-24 | `3e288fe814e059dd06833495f845cab04ac20a5c` |
 | `linux-rockchip/2022-February/029415.html` | `snapshot/linux-rockchip/2022-February/029415.html` | public mailing list; kernel patch GPL-2.0-or-later | `686d5cbdd6ee292d6dde8a9dea330cdb96c1999d9a4c4bf6ecd3d8db15387080` | 5 043 | 2026-11-24 | 2022-02-10, no pin |
@@ -833,12 +856,14 @@ git -C /tmp/kilo/research-src/x5-libcam-sensor rev-parse HEAD
 ```bash
 curl -sS -L -o /tmp/kilo/rv1106-src/rv1106-trm-v0.3-part1.pdf 'https://rockchip.fr/Rockchip%20RV1106%20TRM%20V0.3%20Part1.pdf'
 curl -sS -L -o /tmp/kilo/rv1106-src/atta.pdf 'https://atta.szlcsc.com/upload/public/pdf/source/20250728/0F25565987B346BAFAE15AD3F3BED3E9.pdf'
+curl -sS -L -o /tmp/kilo/rv1106-src/RV1106_Datasheet_Rev2.0.pdf 'https://rockchip.fr/RV1106%20datasheet%20V2.0.pdf'
 curl -sS -L -o /tmp/kilo/rv1106-src/rkbin-RV1106_EN.md 'https://raw.githubusercontent.com/rockchip-linux/rkbin/master/doc/release/RV1106_EN.md'
 curl -sS -L -o /tmp/kilo/rv1106-src/rockchip-i2c-guide-en.pdf 'https://raw.githubusercontent.com/as-jackson/Rockchip-Docs/main/en/Common/I2C/Rockchip_Developer_Guide_I2C_EN.pdf'
 curl -sS -L -o /tmp/kilo/rv1106-src/linux-rockchip-029415.html 'https://lists.infradead.org/pipermail/linux-rockchip/2022-February/029415.html'
-sha256sum /tmp/kilo/rv1106-src/rv1106-trm-v0.3-part1.pdf /tmp/kilo/rv1106-src/atta.pdf /tmp/kilo/rv1106-src/rkbin-RV1106_EN.md /tmp/kilo/rv1106-src/rockchip-i2c-guide-en.pdf /tmp/kilo/rv1106-src/linux-rockchip-029415.html
+sha256sum /tmp/kilo/rv1106-src/rv1106-trm-v0.3-part1.pdf /tmp/kilo/rv1106-src/atta.pdf /tmp/kilo/rv1106-src/RV1106_Datasheet_Rev2.0.pdf /tmp/kilo/rv1106-src/rkbin-RV1106_EN.md /tmp/kilo/rv1106-src/rockchip-i2c-guide-en.pdf /tmp/kilo/rv1106-src/linux-rockchip-029415.html
 cp /tmp/kilo/rv1106-src/rv1106-trm-v0.3-part1.pdf research/rv1106-aov/snapshot/rockchip-rv1106-trm/Rockchip_RV1106_TRM_V0.3_Part1.pdf
 cp /tmp/kilo/rv1106-src/atta.pdf research/rv1106-aov/snapshot/rockchip-rv1106-datasheet/RV1106_Datasheet_Rev1.8.pdf
+cp /tmp/kilo/rv1106-src/RV1106_Datasheet_Rev2.0.pdf research/rv1106-aov/snapshot/rockchip-rv1106-datasheet/RV1106_Datasheet_Rev2.0.pdf
 cp /tmp/kilo/rv1106-src/rockchip-i2c-guide-en.pdf research/rv1106-aov/snapshot/rockchip-i2c-guide/Rockchip_Developer_Guide_I2C_EN.pdf
 cp /tmp/kilo/rv1106-src/rkbin-RV1106_EN.md research/rv1106-aov/snapshot/rockchip-linux-rkbin/doc/release/RV1106_EN.md
 cp /tmp/kilo/rv1106-src/linux-rockchip-029415.html research/rv1106-aov/snapshot/linux-rockchip/2022-February/029415.html
