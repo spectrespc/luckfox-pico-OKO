@@ -278,7 +278,7 @@ struct AppConfig {
     unsigned int sleep_idle_timeout_s;
     unsigned int sleep_wake_interval_s;
     unsigned int sleep_wake_check_s;
-    unsigned int sleep_pmu_timeout_hz;  /* PMU timeout ticks per second (32) */
+    unsigned int sleep_pmu_timeout_hz;  /* PMU timeout clock: 32768 ticks/s */
     /* Heartbeat snapshot: one proof-of-life JPEG before a quiet re-suspend. */
     bool sleep_heartbeat;
     unsigned int sleep_heartbeat_interval_s;  /* 0 = every quiet cycle */

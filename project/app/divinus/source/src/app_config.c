@@ -696,7 +696,11 @@ enum ConfigError app_config_parse(void) {
     app_config.sleep_idle_timeout_s = 600;
     app_config.sleep_wake_interval_s = 10;
     app_config.sleep_wake_check_s = 3;
-    app_config.sleep_pmu_timeout_hz = 32; /* measured on the bench */
+    /* The PMU wake-timeout counter is clocked by the 32 kHz sleep clock
+     * (PVTM or the 32k-ext path), so one second is 32768 ticks.  The older
+     * value 32 made every requested interval a sub-second sleep; it is
+     * migrated on load, see app_config_parse(). */
+    app_config.sleep_pmu_timeout_hz = 32768;
     app_config.sleep_heartbeat = false;
     app_config.sleep_heartbeat_interval_s = 0;
     app_config.sleep_heartbeat_retries = 3;
@@ -1433,8 +1437,23 @@ enum ConfigError app_config_parse(void) {
         &app_config.sleep_wake_interval_s);
     parse_int(&ini, "sleep", "wake_check_s", 1, 60,
         &app_config.sleep_wake_check_s);
-    parse_int(&ini, "sleep", "pmu_timeout_hz", 1, 1000,
-        &app_config.sleep_pmu_timeout_hz);
+    {
+        /* pmu_timeout_hz is the PMU counter rate: 32768 ticks/s (32 kHz
+         * sleep clock).  Configs written before 2026-11-24 carry 32, a
+         * misread of the dmesg entry/exit window that is dominated by the
+         * resume path; migrate any value below 1000 to the hardware rate.
+         * Zero, missing and out-of-range keys keep the built-in 32768. */
+        int pmu_hz = (int)app_config.sleep_pmu_timeout_hz;
+
+        if (parse_int(&ini, "sleep", "pmu_timeout_hz", 1, 131072,
+                &pmu_hz) == CONFIG_OK && pmu_hz < 1000) {
+            HAL_WARNING("config", "pmu_timeout_hz=%d is the legacy unit; "
+                "using 32768 ticks/s\n", pmu_hz);
+            pmu_hz = 32768;
+        }
+        if (pmu_hz >= 1000)
+            app_config.sleep_pmu_timeout_hz = (unsigned int)pmu_hz;
+    }
     parse_bool(&ini, "sleep", "heartbeat", &app_config.sleep_heartbeat);
     parse_int(&ini, "sleep", "heartbeat_interval_s", 0, 86400,
         &app_config.sleep_heartbeat_interval_s);

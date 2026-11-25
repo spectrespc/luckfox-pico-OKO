@@ -728,6 +728,10 @@ int sleep_policy_suspend(void)
         }
     }
 
+    /* The PMU wake timeout counts ticks of the 32 kHz sleep clock, so a
+     * 60 s interval is 1 966 080 ticks (the counter is 32-bit).  A stale
+     * "32 ticks/s" config used to turn every interval into a 60 ms sleep;
+     * app_config_parse() migrates that legacy value. */
     count = app_config.sleep_wake_interval_s * app_config.sleep_pmu_timeout_hz;
     if (count == 0)
     {

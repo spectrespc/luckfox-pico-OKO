@@ -342,7 +342,7 @@ mjpeg:
 #   idle_timeout_s: 600   # motion-free time before the first suspend, 10..86400
 #   wake_interval_s: 10   # PMU timeout between motion checks, 1..3600
 #   wake_check_s: 3       # motion-check window after resume, 1..60
-#   pmu_timeout_hz: 32    # PMU timeout ticks per second (measured on the bench)
+#   pmu_timeout_hz: 32768 # PMU wake-timeout clock, ticks per second (32 kHz)
 #   heartbeat: false      # send one JPEG proof-of-life before a quiet re-suspend
 #   heartbeat_interval_s: 0   # quiet cycles between heartbeats; 0 — every cycle
 #   heartbeat_retries: 3  # send attempts before giving up and sleeping anyway
