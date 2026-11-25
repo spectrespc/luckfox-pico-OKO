@@ -615,12 +615,14 @@ SUSPEND_RE = re.compile(r"\[\s*(\d+\.\d+)\]\s+PM: suspend (entry|exit)")
 
 
 def kernel_suspend_durations(notes=None):
-    """Deep-suspend window durations from the kernel ring buffer.
+    """`PM: suspend entry` -> `exit` windows from the kernel ring buffer.
 
-    `/api/sleep` is unreachable before and after the real suspend, so the
-    network phase overstates the low-power window.  `PM: suspend entry/exit`
-    in dmesg gives exact durations; the ring buffer only keeps the latest
-    part of a long run, so the count is reported as "last N windows".
+    Kernel log timestamps use CLOCK_MONOTONIC, which does not advance while
+    the AP is in deep suspend, so this window is the **resume path only**;
+    it used to be misread as the sleep length (a 60 s sleep shows ~2.4 s).
+    Use `last_suspend_sleep()` for the asleep time.  The ring buffer only
+    keeps the latest part of a long run, so the count is reported as
+    "last N windows".
     """
     try:
         client = ssh_client()
@@ -647,6 +649,36 @@ def kernel_suspend_durations(notes=None):
             durations.append(round(stamp - pending, 2))
             pending = None
     return durations
+
+
+def last_suspend_sleep(notes=None):
+    """Asleep time of the last suspend from /sys/kernel/wakeup_reasons.
+
+    The kernel writes "<resume path> <sleep>" into `last_suspend_time`,
+    where the second value is derived from boottime and therefore *includes*
+    the deep-suspend window.  It is the only direct sleep measurement on the
+    device; one reading covers the last cycle of the run.
+    """
+    try:
+        client = ssh_client()
+        try:
+            code, out, err = ssh_run(
+                client, "cat /sys/kernel/wakeup_reasons/last_suspend_time")
+        finally:
+            client.close()
+        if code != 0:
+            raise RuntimeError((out + err).strip())
+        resume_s, sleep_s = (float(value) for value in out.split())
+        return {"resume_s": round(resume_s, 2), "sleep_s": round(sleep_s, 2)}
+    except Exception as exc:                                # noqa: BLE001
+        if notes is not None:
+            notes.append("last_suspend_time не прочитан: %s" % exc)
+        return {}
+
+
+def sleep_table(reading):
+    return ["| Resume-путь, с | Сон, с |", "|---|---|",
+            "| %.2f | %.2f |" % (reading["resume_s"], reading["sleep_s"])]
 
 
 def suspend_table(durations):
@@ -976,8 +1008,8 @@ def scenario_levels(args, outdir, events):
                           floor["threshold_ma"], floor["fraction"]))
         if durations:
             table, stats = suspend_table(durations)
-            tables.append(("Длительности deep suspend (dmesg)", table))
-            notes.append("dmesg: последние %d окон deep suspend, среднее "
+            tables.append(("Resume-путь suspend entry→exit (dmesg, без сна)", table))
+            notes.append("dmesg: последние %d окон entry→exit (resume-путь), среднее "
                          "%.2f с (кольцевой буфер)." %
                          (stats["count"], stats["mean_s"]))
         else:
@@ -1044,6 +1076,7 @@ def scenario_cycle(args, outdir, events):
         handle.set_phase("restore")
         wait_reachable(180)
         durations = kernel_suspend_durations(notes)
+        last_sleep = last_suspend_sleep(notes)
         restored = True
         if not args.keep_config:
             restored = restore_config(original)
@@ -1067,10 +1100,16 @@ def scenario_cycle(args, outdir, events):
                          "ниже порога %.1f мА — %.1f %% отсчётов." %
                          (floor["min_ma"], floor["p05_ma"], floor["p10_ma"],
                           floor["threshold_ma"], floor["fraction"]))
+        if last_sleep:
+            tables.append(("Фактический сон последнего цикла (sysfs)",
+                           sleep_table(last_sleep)))
+            notes.append("Сон последнего цикла: %.2f с (resume-путь %.2f с); "
+                         "интервал должен совпадать с wake_interval_s." %
+                         (last_sleep["sleep_s"], last_sleep["resume_s"]))
         if durations:
             table, stats = suspend_table(durations)
-            tables.append(("Длительности deep suspend (dmesg)", table))
-            notes.append("dmesg: последние %d окон deep suspend, среднее "
+            tables.append(("Resume-путь suspend entry→exit (dmesg, без сна)", table))
+            notes.append("dmesg: последние %d окон entry→exit (resume-путь), среднее "
                          "%.2f с (кольцевой буфер)." %
                          (stats["count"], stats["mean_s"]))
         else:
@@ -1081,6 +1120,7 @@ def scenario_cycle(args, outdir, events):
         write_report(outdir / "report.md", "cycle", args, summary, extras)
         result = {"summary": summary, "original": original,
                   "durations": durations, "restored": restored,
+                  "last_sleep": last_sleep,
                   "floor_valid": bool(durations)}
     return result
 
@@ -1276,8 +1316,8 @@ def scenario_soak(args, outdir, events):
                           floor["threshold_ma"], floor["fraction"]))
         if durations:
             table, stats = suspend_table(durations)
-            tables.append(("Длительности deep suspend (dmesg)", table))
-            notes.append("dmesg: последние %d окон deep suspend, среднее "
+            tables.append(("Resume-путь suspend entry→exit (dmesg, без сна)", table))
+            notes.append("dmesg: последние %d окон entry→exit (resume-путь), среднее "
                          "%.2f с (кольцевой буфер)." %
                          (stats["count"], stats["mean_s"]))
         else:
@@ -1496,11 +1536,17 @@ def scenario_aov(args, outdir, events):
                 table = table[:10] + ["| … | … | … | … | … |"] + table[-10:]
             tables.append(("Интервалы пробуждения", table))
         durations = kernel_suspend_durations(notes)
+        last_sleep = last_suspend_sleep(notes)
         if durations:
             lines, stats = suspend_table(durations)
-            tables.append(("Длительности deep suspend (dmesg)", lines))
-            notes.append("dmesg: последние %d окон deep suspend, среднее "
+            tables.append(("Resume-путь suspend entry→exit (dmesg, без сна)", lines))
+            notes.append("dmesg: последние %d окон entry→exit (resume-путь), среднее "
                          "%.2f с." % (stats["count"], stats["mean_s"]))
+        if last_sleep:
+            tables.append(("Фактический сон последнего цикла (sysfs)",
+                           sleep_table(last_sleep)))
+            notes.append("Сон последнего цикла: %.2f с (resume-путь %.2f с)." %
+                         (last_sleep["sleep_s"], last_sleep["resume_s"]))
         suspend_rows = [row for row in rows
                         if row.get("phase") in ("suspend", "await-suspend")]
         floor = floor_stats(suspend_rows, args.channel)
@@ -1517,7 +1563,8 @@ def scenario_aov(args, outdir, events):
                   "stm8_start": start_probe,
                   "stm8_lost": lost_at is not None,
                   "stm8_lost_at": lost_at,
-                  "wake_intervals_s": intervals, "durations": durations}
+                  "wake_intervals_s": intervals, "durations": durations,
+                  "last_sleep": last_sleep}
     return result
 
 
@@ -2028,9 +2075,9 @@ def scenario_motion(args, outdir, events):
         durations = kernel_suspend_durations(notes)
         if durations:
             suspend_table_lines, stats = suspend_table(durations)
-            tables.append(("Длительности deep suspend (dmesg)",
+            tables.append(("Resume-путь suspend entry→exit (dmesg, без сна)",
                            suspend_table_lines))
-            notes.append("dmesg: последние %d окон deep suspend, среднее "
+            notes.append("dmesg: последние %d окон entry→exit (resume-путь), среднее "
                          "%.2f с (кольцевой буфер)." %
                          (stats["count"], stats["mean_s"]))
         suspend_rows = [row for row in rows

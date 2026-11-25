@@ -41,7 +41,7 @@ U-Boot — Maskrom, USB-порт занят хабом (TESTBENCH §7).
 | `power.py` | питание DUT через ESP32-мост: `off`, `on`, `cycle --off-seconds N`, `reset`; вход `admin`/`admin` (env `OKO_BRIDGE*`) и обязательный logout — мост держит не больше трёх сессий, иначе логин отвечает `429 Too many active sessions`; `--cookie-file` переиспользует готовую сессию |
 | `recover_dut.py` | аварийное восстановление DUT после неудачного `[sleep]`: ровно один power cycle через мост (одна cookie-сессия, logout), затем немедленное `POST /api/sleep?enable=false&idle_timeout_s=3600`, чтобы камера не уснула снова; `--ssh` правит `[sleep] enable:false` и `idle_timeout_s:15` в `/userdata/divinus.yaml`, `--restart` перезапускает divinus; при `429` не логинится повторно, а просит ручной ребут моста |
 | `ina_log.py` | опрос `GET /sensor` ESP32-моста и запись INA3221 CH1..CH3 в CSV: `ts_host_epoch_ms`, `ts_bridge_uptime_ms`, `phase`, `ch`, `bus_mv`, `shunt_uv`, `cur_ma`, `power_mw`, `err`; keep-alive, `--hz` (по умолчанию 2), `--duration`, `--until-marker`, `--channel`, `--summary-json`; импортируемый API `start_logging()`/`set_phase()`/`stop()`, logout по умолчанию; артефакты в `output/bench/power/` |
-| `sleep_power.py` | матрица замеров сна и потребления: `--scenario levels` (off/boot/idle/полка), `cycle` (один цикл), `motion` (сон с включённой IVS), `aov` (PMU/AOV-MCU: интервал пробуждения, `aov_state`, meta, проба STM8/I2C/EC на старте и каждом пробуждении), `i2c` (T1.1: N циклов `oko-motor sleep show` + `move` без suspend), `soak` (heartbeat + энергия на цикл + пост-проверки), `peaks` (YOLO/мотор/поток), `stm8` (T8, сверка с бортовым INA3221); окна deep suspend — из `dmesg`, границы циклов — по провалам тока; поднимает и восстанавливает `[sleep]`/`[http_post]`/аналитику, одна cookie-сессия моста; `--expect-present` — код 3 и запись `stm8-recovery.md` при пропаже `0x60`, `--motor-sleep keep|on|off` — правка `[motor] sleep_enable` с перезапуском divinus, unbind/rebind i2c3 (`ff460000.i2c`) в лестнице включён по умолчанию, между unbind и rebind — дампы регистров/падов и bit-bang 9 тактов SCL (`--no-ladder-bitbang` отключает, `--no-ladder-rebind` убирает весь шаг), сценарий `aov` пишет iomux и уровни падов на каждом пробуждении (артефакты `i2c_regs-*.txt`); SSH с баннер-ретраями; артефакты — `output/bench/power/<stamp>-<scenario>/` |
+| `sleep_power.py` | матрица замеров сна и потребления: `--scenario levels` (off/boot/idle/полка), `cycle` (один цикл), `motion` (сон с включённой IVS), `aov` (PMU/AOV-MCU: интервал пробуждения, `aov_state`, meta, проба STM8/I2C/EC на старте и каждом пробуждении), `i2c` (T1.1: N циклов `oko-motor sleep show` + `move` без suspend), `soak` (heartbeat + энергия на цикл + пост-проверки), `peaks` (YOLO/мотор/поток), `stm8` (T8, сверка с бортовым INA3221); resume-путь suspend — из `dmesg`, фактический сон — из `last_suspend_time`, границы циклов — по провалам тока; поднимает и восстанавливает `[sleep]`/`[http_post]`/аналитику, одна cookie-сессия моста; `--expect-present` — код 3 и запись `stm8-recovery.md` при пропаже `0x60`, `--motor-sleep keep|on|off` — правка `[motor] sleep_enable` с перезапуском divinus, unbind/rebind i2c3 (`ff460000.i2c`) в лестнице включён по умолчанию, между unbind и rebind — дампы регистров/падов и bit-bang 9 тактов SCL (`--no-ladder-bitbang` отключает, `--no-ladder-rebind` убирает весь шаг), сценарий `aov` пишет iomux и уровни падов на каждом пробуждении (артефакты `i2c_regs-*.txt`); SSH с баннер-ретраями; артефакты — `output/bench/power/<stamp>-<scenario>/` |
 | `dut.py` | выполнение команд по SSH через `paramiko` |
 | `netboot.py` | управление U-Boot (та же консоль: telnet-мост или `/dev/ttyACM*`): `catch` (спам Ctrl-C до `=>`, затем netboot-команды), `reboot` (перезагрузка DUT с перехватом U-Boot), `cmd '<команда>'` (одна команда в U-Boot); ядро берётся по TFTP из `output/image/boot.img`, rootfs — по NFS |
 | `tftp_flash.py` | прошивка SPI NAND по TFTP из U-Boot (режим по умолчанию): входит в prompt, грузит `output/image/*.img` на `ramdisk_addr_r`, `mtd erase` + `mtd write` с явным размером, восстанавливает NAND-`sys_bootargs` и `mtdparts`, `saveenv` и `reset`; раскладка читается из `output/image/.env.txt` (работают и продуктовый 256K idblock, и `-AOV` 1M); `--components` (`env,idblock,uboot,boot,oem,rootfs,userdata`, по умолчанию `boot,oem,rootfs`), `--userdata`, `--no-reset`; при `idblock` обязателен SSH-бэкап `/dev/mtdblock1` в `output/bench/backup/` (`--dut-host`, `--skip-backup` — только для восстановления из U-Boot); `--power-cycle` — холодный цикл питания через мост и перехват U-Boot на подъёме (нужно после зависшего HPMCU); если консольный логин недоступен, плата перезагружается по SSH и Ctrl-C начинает бить сразу |
@@ -470,8 +470,12 @@ bench/run.sh heartbeat_check.py --neg           # приёмник выключ�
 профили сна снимаются хост-опросом.
 
 `ina_log.py` пишет CSV с метками фаз; `sleep_power.py` управляет сценарием и
-сводит отчёт. Окна глубокого сна берутся из `dmesg` (`PM: suspend entry/exit`),
-потому что по HTTP DUT недоступен за секунды до и после реального suspend.
+сводит отчёт. Окно `PM: suspend entry/exit` в `dmesg` — это **resume-путь**:
+метки ядра идут по `CLOCK_MONOTONIC`, которая в deep suspend не
+продвигается. Фактический сон отчёта берётся из
+`/sys/kernel/wakeup_reasons/last_suspend_time` (`<resume-путь> <сон>`,
+последний цикл прогона); для длинных серий это единственный надёжный
+источник, потому что по HTTP DUT недоступен за секунды до и после сна.
 
 ```sh
 bench/run.sh ina_log.py --duration 30 --label idle
@@ -490,10 +494,20 @@ docker compose -f services/events/docker-compose.yml up -d
 bench/run.sh sleep_power.py --scenario soak --soak-minutes 60
 ```
 
-Базовая линия 2026-11-22: `off` 0.8 мА, `idle` 364 мА / 1.72 Вт, полка deep
-suspend 86 мА (min 47, p05 124), окно 2.4 с за цикл ≈13 с, 4.9 мВт·ч/цикл
-(медиана), 60-мин soak — 279 циклов и ≥200 heartbeat; подробности и ограничения
-— `TESTBENCH.md` §8.
+Базовая линия 2026-11-24 (после правки единиц PMU-таймаута, KI-072): сон
+10.08 с при `wake_interval_s=10` и 60.08 с при 60; полка deep suspend
+32.8–36 мА, доля низкого тока в цикле 10 с ≈49 %; AOV `aov_mcu=1`+
+`keep_isp=1` (60 с) — интервалы 68–79 с. Прежняя линия 2026-11-22 (`idle`
+364 мА, «полка 86 мА», 4.9 мВт·ч/цикл) относилась к циклу с 81-мс сном и
+2.4-с resume-путём, поэтому как полка глубокого сна недействительна;
+подробности и ограничения — `TESTBENCH.md` §8.
+
+2026-11-25, ядро #38: окно mailbox 500 мс (`RV1106_HPMCU_FAST_WKUP_TIMEOUT`);
+сценарий `aov` дал 4/4 `-h-mbox-` и 0 `-h-timeout-`, сценарий `motion`
+(3 цикла) — без ложных полнокадровых событий, `cycle` — сон 10.07/60.09 с.
+Кадентность по-прежнему проверяется read-only монитором
+`bench/run.sh aov_cadence.py` параллельно с прогоном; артефакты —
+`output/bench/power/20261125-*`, `output/bench/aov-test/`.
 
 2026-11-23: сценарий `i2c` — 300 циклов к STM8 без suspend, 0 ошибок и
 `present=true`; `aov` с `--expect-present` при `aov_mcu=1` фиксирует отказ
