@@ -337,7 +337,12 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   процесс через `mem` держит живым, но паркует пайплайн (drain frames,
   `ISP_SingleFrame`, `VI_PauseChn`, `Unbind SD/Ethernet/audio`, затем
   `EnterSleep`; после — `MultiFrame`/`ResumeChn`/`Bind*`) — именно этот парк
-  и нужно реализовать для быстрого resume.
+  и нужно реализовать для быстрого resume. Проверка in-process park
+  (2026-11-25): полный `sdk_stop`/`sdk_start` шторм снимает (0
+  `mipi-csi2-hw`), но сервер/RTSP/IVS-потоки не восстанавливаются (3 потока,
+  `/api/status` 000, `mpp: ctx is no found in chan server`); нужен
+  гранулярный HAL pause/resume, а не полный stop/start. Код эксперимента
+  откатан, стенд восстановлен.
 - **KI-072: keep-process across suspend rejected (2026-11-25).** The
   experimental "do not exec after resume" variant was tested: a live CSI/ISP
   across mem produces a continuous `mipi-csi2-hw ERR1:0x10 (fs/fe mis)`
@@ -349,7 +354,12 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   keeps the process across mem but parks the pipeline (drain frames,
   `ISP_SingleFrame`, `VI_PauseChn`, `Unbind SD/Ethernet/audio`, then
   `EnterSleep`; on wake `MultiFrame`/`ResumeChn`/`Bind*`) - that park is what
-  must be implemented for a fast resume.
+  must be implemented for a fast resume. The in-process park test
+  (2026-11-25): a full `sdk_stop`/`sdk_start` clears the storm (0
+  `mipi-csi2-hw`), but the server/RTSP/IVS threads do not come back (3
+  threads, `/api/status` 000, `mpp: ctx is no found in chan server`); a
+  granular HAL pause/resume is required instead of a full stop/start. The
+  experiment code was reverted and the bench restored.
 - **`bench/`: буфер dmesg для PM-профиля и heartbeat в AOV-прогоне.**
   `netboot.py` принимает `OKO_LOG_BUF_LEN` (например `1M`) и добавляет
   `log_buf_len=` в `sys_bootargs`: штатные 16 КиБ меньше одного цикла

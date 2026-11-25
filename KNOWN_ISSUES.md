@@ -689,6 +689,23 @@
   audio, затем `EnterSleep`; после пробуждения — `ISP_MultiFrame`,
   `VI_ResumeChn`, `Bind*`. Наш эксперимент этот парк пропустил, поэтому и
   получил шторм. Код эксперимента откатан, стенд восстановлен.
+  **2026-11-25, park/restart в процессе — тоже отклонён.** Попытка по
+  вендорской модели: остановить медиастек штатным `sdk_stop` (без живого
+  CSI через mem — шторм `mipi-csi2-hw` = 0, в dmesg чистые `stream OFF` /
+  `vi_release`), пережить `mem` и поднять `sdk_start`/`media_start`/IVS
+  в том же процессе, сохранив сервер и сеть. Результат: `sdk_start`
+  вызывается каждый цикл (маркеры `sys_init`), но процесс остаётся с
+  **3 потоками** вместо 21 — HTTP-сервер и RTSP/IVS-потоки не
+  восстанавливаются (нет слушателя :80, `/api/status` 000), в консоли
+  каждый цикл `mpp: mpp_chan: ctx is no found in chan server`; камера
+  продолжает циклы сна/резюма в деградированном виде. Вывод: сама идея
+  парковки верна (в живом CSI через mem и была причина шторма), но полный
+  `RK_MPI_SYS_Exit/Init` в одном процессе не восстанавливает граф потоков
+  и вендорский контекст; вендор делает гранулярно `VI_PauseChn` →
+  `ISP_SingleFrame` → `Mem` → `ISP_MultiFrame` → `VI_ResumeChn` в одном
+  приложении со своими потоками, а не полный stop/start. Нужен HAL-слой
+  для pause/resume и согласование сервера/IVS — отдельный проект. Код
+  эксперимента откатан, стенд восстановлен power cycle.
 
 - **KI-073. в `rk3x_i2c_irq` на I2C3 при циклах `[sleep]`.**
   2026-11-17 в AOV-прогоне (idle 30 s, `aov_mcu=1`) шина I2C3
@@ -1839,6 +1856,24 @@ Status: **experimental, not for release** (refreshed 2026-11-25). The MCU
   Ethernet/audio, then `EnterSleep`; on wake it calls `ISP_MultiFrame`,
   `VI_ResumeChn`, `Bind*`. Our experiment skipped that park, hence the storm.
   The experiment code was reverted and the bench restored.
+  **2026-11-25, in-process park/restart also rejected.** The vendor-style
+  attempt stopped the media stack with the normal `sdk_stop` (no live CSI
+  across mem - the `mipi-csi2-hw` storm count was 0, dmesg showed clean
+  `stream OFF` / `vi_release`), survived `mem` and restarted
+  `sdk_start`/`media_start`/IVS in the same process while keeping the server
+  and network. Result: `sdk_start` runs every cycle (the `sys_init` markers
+  appear), but the process is left with **3 threads instead of 21** - the
+  HTTP server and the RTSP/IVS threads do not come back (no :80 listener,
+  `/api/status` 000) and the console shows `mpp: mpp_chan: ctx is no found
+  in chan server` every cycle; the camera keeps cycling sleep/resume in a
+  degraded state. Conclusion: the parking idea is right (the live CSI across
+  mem was the storm cause), but a full `RK_MPI_SYS_Exit/Init` in one process
+  does not restore the thread graph and the vendor context; the vendor parks
+  granularly with `VI_PauseChn` -> `ISP_SingleFrame` -> `Mem` ->
+  `ISP_MultiFrame` -> `VI_ResumeChn` inside one coordinated application, not
+  a full stop/start. A HAL pause/resume layer plus server/IVS coordination is
+  a separate project. The experiment code was reverted and the bench
+  restored with a power cycle.
 
 - **KI-073. in `rk3x_i2c_irq` on I2C3 during `[sleep]` cycles.**
   On 2026-11-17 an AOV run (idle 30 s, `aov_mcu=1`) got a burst of
