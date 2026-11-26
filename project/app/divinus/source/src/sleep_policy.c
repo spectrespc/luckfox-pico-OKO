@@ -29,6 +29,10 @@
 
 #include "app_config.h"
 #include "focus_motor.h"
+#include "gating.h"
+#include "record.h"
+#include "record_clip.h"
+#include "update.h"
 #include "hal/macros.h"
 #include "heartbeat_task.h"
 #include "sleep_logic.h"
@@ -52,6 +56,14 @@
  * unbound before mem and bound again only when a wake needs WiFi/streaming. */
 #define XHCI_DRIVER_DIR "/sys/bus/platform/drivers/xhci-hcd"
 #define XHCI_DEVICE "xhci-hcd.0.auto"
+/* Poll interval for the sysfs bind/unbind predicate.  The vendor sample waits
+ * for a netlink uevent; the product path polls because the usb_lock already
+ * serialises the writers and a second socket in the motion path costs more. */
+#define USB_WAIT_POLL_US 10000
+/* microSD controller of the RV1106 SDMMC block; the vendor AOV sample binds and
+ * unbinds ffaa0000.mmc from dwmmc_rockchip around deep suspend. */
+#define MMC_DRIVER_DIR "/sys/bus/platform/drivers/dwmmc_rockchip"
+#define MMC_DEVICE "ffaa0000.mmc"
 #define META_IMAGE_PATH "/oem/usr/share/oko/meta.img"
 #define META_ADDR 0x1000000UL
 #define META_MAP_SIZE 0x60000UL
@@ -87,6 +99,14 @@ static int request;
 static int state = SLEEP_DISABLED;
 static int last_wake_src = -1;
 static int last_event = -1;
+/* Outcome of the last USB bind/unbind wait, published in /api/status.sleep. */
+static const char *usb_wait_status = "idle";
+static unsigned int usb_wait_ms;
+/* [sleep] sd_off state: the card is detached for mem and restored on resume. */
+static int sd_detached;
+static int sd_off_recording;
+static const char *sd_off_status = "idle";
+static char sd_off_reason[32] = "";
 static unsigned long motion_seq;
 static unsigned long request_seq;
 static unsigned long suspend_seq;
@@ -203,6 +223,65 @@ static int usb_host_bound(void)
     return access(XHCI_DRIVER_DIR "/" XHCI_DEVICE, F_OK) == 0;
 }
 
+static unsigned int ms_since(const struct timespec *since)
+{
+    struct timespec now;
+    long long ns;
+
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    ns = (long long)(now.tv_sec - since->tv_sec) * 1000000000LL +
+         (now.tv_nsec - since->tv_nsec);
+    if (ns < 0)
+    {
+        return 0;
+    }
+    return (unsigned int)(ns / 1000000LL);
+}
+
+/* The sysfs write only starts the operation: the driver attaches asynchronously
+ * and, on resume, wlan0 exists only after the host is bound.  Waiting here is
+ * what makes oko-wifi apply run against a live HCD (vendor
+ * SAMPLE_COMM_AOV_BindUsb waits for the same transition). */
+static int usb_wait_for(int want)
+{
+    struct timespec start;
+    unsigned int timeout = app_config.sleep_usb_bind_timeout_ms;
+    int result;
+
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    for (;;)
+    {
+        unsigned int elapsed = ms_since(&start);
+
+        result = sleep_usb_wait_result(usb_host_bound(), want, elapsed,
+                                       timeout);
+        if (result != 0)
+        {
+            break;
+        }
+        usleep(USB_WAIT_POLL_US);
+    }
+    usb_wait_ms = ms_since(&start);
+    usb_wait_status = timeout == 0 ? "skipped"
+                                   : sleep_usb_wait_name(result);
+    if (result < 0 && timeout != 0)
+    {
+        HAL_WARNING("sleep", "USB host %s did not complete in %u ms\n",
+                    want ? "bind" : "unbind", timeout);
+    }
+    else if (timeout == 0)
+    {
+        HAL_INFO("sleep", "USB host %s wait disabled\n",
+                 want ? "bind" : "unbind");
+    }
+    else
+    {
+        HAL_INFO("sleep", "USB host %s settled in %u ms\n",
+                 want ? "bind" : "unbind", usb_wait_ms);
+    }
+    return result;
+}
+
 static int usb_host_set(int bind)
 {
     char path[80];
@@ -219,9 +298,14 @@ static int usb_host_set(int bind)
     {
         HAL_WARNING("sleep", "cannot %s the USB host: %s\n",
                     bind ? "bind" : "unbind", strerror(errno));
+        usb_wait_status = sleep_usb_wait_name(-2);
+        usb_wait_ms = 0;
         result = -1;
         goto out;
     }
+    /* A timeout is not fatal: the caller logs it and the sleep decision stands
+     * (a missing HCD only costs the old resume time). */
+    (void)usb_wait_for(bind);
     HAL_INFO("sleep", "USB host %s\n", bind ? "bound" : "unbound");
     if (bind && access("/usr/bin/oko-wifi", X_OK) == 0)
     {
@@ -259,6 +343,146 @@ static void usb_bind_async(void)
     else
     {
         (void)usb_host_set(1);
+    }
+}
+
+static int sd_driver_bound(void)
+{
+    return access(MMC_DRIVER_DIR "/" MMC_DEVICE, F_OK) == 0;
+}
+
+static int sd_driver_set(int bind)
+{
+    char path[80];
+    struct timespec start;
+    unsigned int timeout = app_config.sleep_usb_bind_timeout_ms;
+    int result;
+
+    if (sd_driver_bound() == bind)
+    {
+        return 0;
+    }
+    snprintf(path, sizeof(path), "%s/%s", MMC_DRIVER_DIR,
+             bind ? "bind" : "unbind");
+    if (sysfs_write_str(path, MMC_DEVICE "\n") < 0)
+    {
+        HAL_WARNING("sleep", "cannot %s the microSD controller: %s\n",
+                    bind ? "bind" : "unbind", strerror(errno));
+        return -1;
+    }
+    if (timeout == 0)
+    {
+        /* Fire-and-forget: the same meaning as the USB wait switch. */
+        return 0;
+    }
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    for (;;)
+    {
+        unsigned int elapsed = ms_since(&start);
+
+        result = sleep_usb_wait_result(sd_driver_bound(), bind, elapsed,
+                                       timeout);
+        if (result != 0)
+        {
+            break;
+        }
+        usleep(USB_WAIT_POLL_US);
+    }
+    if (result < 0 && timeout != 0)
+    {
+        HAL_WARNING("sleep", "microSD %s did not complete in %u ms\n",
+                    bind ? "bind" : "unbind", timeout);
+        return -1;
+    }
+    return 0;
+}
+
+/* Detach the card so the SDMMC block is out of the resume path (the vendor
+ * AOV sample unbinds ffaa0000.mmc for the same reason).  The recorder is
+ * stopped and synced, then /api/storage's helper owns the unmount so the
+ * mount options and the udev state stay consistent with a manual unmount. */
+static int sd_off_prepare(void)
+{
+    sleep_sd_gate gate = sleep_sd_off_gate(gating_sd_mounted(),
+                                           record_clip_busy(), update_busy());
+
+    if (gate != SLEEP_SD_GATE_OK)
+    {
+        snprintf(sd_off_reason, sizeof(sd_off_reason), "%s",
+                 sleep_sd_off_gate_name(gate));
+        HAL_INFO("sleep", "microSD stays attached: %s\n", sd_off_reason);
+        return -1;
+    }
+
+    sd_off_recording = record_active();
+    if (sd_off_recording)
+    {
+        record_stop();
+    }
+    storageBusy = 1;
+    sync();
+    if (system("/usr/bin/oko-sdcard unmount >/dev/null 2>&1") != 0)
+    {
+        storageBusy = 0;
+        snprintf(sd_off_reason, sizeof(sd_off_reason), "unmount");
+        HAL_WARNING("sleep", "microSD unmount failed; keeping it attached\n");
+        if (sd_off_recording)
+        {
+            (void)record_start();
+            sd_off_recording = 0;
+        }
+        return -1;
+    }
+    if (sd_driver_set(0) < 0)
+    {
+        storageBusy = 0;
+        snprintf(sd_off_reason, sizeof(sd_off_reason), "unbind");
+        (void)system("/usr/bin/oko-sdcard mount >/dev/null 2>&1");
+        if (sd_off_recording)
+        {
+            (void)record_start();
+            sd_off_recording = 0;
+        }
+        return -1;
+    }
+    storageBusy = 0;
+    sd_detached = 1;
+    sd_off_status = "detached";
+    sd_off_reason[0] = '\0';
+    HAL_INFO("sleep", "microSD detached before mem\n");
+    return 0;
+}
+
+static void sd_off_restore(void)
+{
+    if (!sd_detached)
+    {
+        return;
+    }
+    sd_detached = 0;
+    if (sd_driver_set(1) == 0)
+    {
+        /* The udev add rule usually mounts the card; the explicit call is
+         * idempotent and covers images without the rule. */
+        (void)system("/usr/bin/oko-sdcard mount >/dev/null 2>&1");
+        sd_off_status = gating_sd_mounted() ? "mounted" : "mount_failed";
+        if (!gating_sd_mounted())
+        {
+            HAL_WARNING("sleep", "microSD did not remount after resume\n");
+        }
+    }
+    else
+    {
+        sd_off_status = "bind_failed";
+    }
+    if (sd_off_recording)
+    {
+        sd_off_recording = 0;
+        if (!record_start())
+        {
+            HAL_WARNING("sleep", "recording did not resume after the microSD "
+                        "remount\n");
+        }
     }
 }
 
@@ -962,6 +1186,15 @@ int sleep_policy_suspend(void)
              count, app_config.sleep_wake_interval_s,
              aov_armed ? "armed" : "off");
 
+    /* Take the microSD out of the resume path before the USB unbind: the
+     * recorder is closed and synced, the helper unmounts, then the SDMMC
+     * controller is unbound.  Refusals (OTA, event clip, no card) leave the
+     * card attached and are reported in /api/status.sleep. */
+    if (app_config.sleep_sd_off)
+    {
+        (void)sd_off_prepare();
+    }
+
     /* The USB host loses power in deep suspend anyway; unbinding it here
      * keeps the hub and the WiFi dongle out of the resume path.  A failed
      * unbind only costs the old resume time, so it is never fatal. */
@@ -979,6 +1212,7 @@ int sleep_policy_suspend(void)
         {
             (void)sysfs_write_str(AOV_PROXY_PATH, "0\n");
         }
+        sd_off_restore();
         if (app_config.sleep_usb_on_motion)
         {
             (void)usb_host_set(1);
@@ -990,6 +1224,9 @@ int sleep_policy_suspend(void)
         pthread_mutex_unlock(&lock);
         return -1;
     }
+
+    /* Bring the card back before the media pipeline can want it again. */
+    sd_off_restore();
 
     /* Resume: turn the STM8 sleep off and prove that the controller answers
        again before anything else talks to it. */
@@ -1134,7 +1371,9 @@ void sleep_policy_api_json(char *out, size_t size)
              "{\"enable\":%s,\"pmu_timer_wake\":%s,\"aov_mcu\":%s,"
              "\"aov_keep_isp\":%s,\"usb_on_motion\":%s,"
              "\"fast_resume\":\"%s\","
-             "\"usb_bound\":%s,"
+             "\"usb_bound\":%s,\"usb_wait\":\"%s\",\"usb_wait_ms\":%u,"
+             "\"usb_bind_timeout_ms\":%u,"
+             "\"sd_off\":%s,\"sd_state\":\"%s\",\"sd_reason\":\"%s\","
              "\"aov_available\":%s,\"aov_state\":\"%s\","
              "\"idle_timeout_s\":%u,\"wake_interval_s\":%u,"
              "\"wake_check_s\":%u,\"pmu_timeout_hz\":%u,"
@@ -1148,6 +1387,10 @@ void sleep_policy_api_json(char *out, size_t size)
              app_config.sleep_usb_on_motion ? "true" : "false",
              sleep_fast_resume_name(app_config.sleep_fast_resume),
              usb_host_bound() ? "true" : "false",
+             usb_wait_status, usb_wait_ms,
+             app_config.sleep_usb_bind_timeout_ms,
+             app_config.sleep_sd_off ? "true" : "false",
+             sd_off_status, sd_off_reason,
              aov_supported ? "true" : "false", aov_state_name(),
              app_config.sleep_idle_timeout_s,
              app_config.sleep_wake_interval_s,
@@ -1185,7 +1428,9 @@ void sleep_policy_status_json(char *out, size_t size)
              "\"sleep\":{\"enabled\":%s,\"state\":\"%s\","
              "\"pmu_timer\":%s,\"aov\":%s,\"aov_available\":%s,"
              "\"aov_state\":\"%s\",\"usb_on_motion\":%s,"
-             "\"usb_bound\":%s,\"heartbeat_wakes\":%u,"
+             "\"usb_bound\":%s,\"usb_wait\":\"%s\",\"usb_wait_ms\":%u,"
+             "\"sd_off\":%s,\"sd_state\":\"%s\",\"sd_reason\":\"%s\","
+             "\"heartbeat_wakes\":%u,"
              "\"timeout_streak\":%u,\"idle_s\":%ld,"
              "\"last_wake_src\":%d,\"reason\":\"%s\",%s}",
              enabled ? "true" : "false", state_name(state),
@@ -1194,6 +1439,9 @@ void sleep_policy_status_json(char *out, size_t size)
              aov_supported ? "true" : "false", aov_state_name(),
              app_config.sleep_usb_on_motion ? "true" : "false",
              usb_host_bound() ? "true" : "false",
+             usb_wait_status, usb_wait_ms,
+             app_config.sleep_sd_off ? "true" : "false",
+             sd_off_status, sd_off_reason,
              sysfs_read_uint(AOV_HEARTBEAT_WAKES_PATH),
              sysfs_read_uint(AOV_TIMEOUT_STREAK_PATH),
              idle > 0 ? idle : 0, last_wake_src, reason, heartbeat);

@@ -864,6 +864,37 @@ Connect failures back off at 30 s / 2 min / 10 min. A graceful shutdown
 publishes the retained `{"online":false}` status before DISCONNECT; an
 ungraceful death is covered by the broker LWT.
 
+#### `/api/sleep`
+
+**OKO.** Idle camera sleep: the AP enters deep suspend and returns on the PMU
+timeout, an optional AOV MCU wake or a motion event. `GET` returns the stored
+switches and the live state; `POST` stores the switches and needs a streamer
+restart to apply them (the response says so).
+
+| Method | Parameters | Description |
+|--------|------------|-------------|
+| POST | `enable` | `1`/`0` — idle sleep on/off |
+| POST | `pmu_timer_wake` | `1`/`0` — program the PMU timeout before `mem`; required while `enable=1` |
+| POST | `aov_mcu` | `1`/`0` — release the AOV MCU after the PMU wake (needs the -AOV image) |
+| POST | `aov_keep_isp` | `1`/`0` — keep CSI/ISP streaming for the MCU (experimental) |
+| POST | `usb_on_motion` | `1`/`0` — unbind the USB host before `mem`; bind it back only on a motion wake |
+| POST | `usb_bind_timeout_ms` | `0..10000` — how long to wait for the sysfs bind/unbind to settle; `0` disables the wait (default `2000`) |
+| POST | `sd_off` | `1`/`0` — unmount and unbind the microSD before `mem`, remount on resume (default `0`) |
+| POST | `fast_resume` | `exec`, `live`, `stopstart` or `aiq` — resume strategy (default `exec`) |
+| POST | `idle_timeout_s`, `wake_interval_s`, `wake_check_s` | Positive seconds |
+| POST | `heartbeat`, `heartbeat_interval_s`, `heartbeat_retries` | Proof-of-life snapshot and its cadence |
+| POST | `motion=1` | Bench-only motion injection (needs `OKO_BENCH_API` in the environment) |
+
+`sleep` refuses `enable=1` without a wake source (`pmu_timer_wake=0` alone is
+rejected) and refuses `aov_mcu=1`/`fast_resume≠exec` when the kernel has no AOV
+proxy. The live object adds `state`, `idle_s`, `aov_state`, `usb_bound`,
+`usb_wait` (`idle`, `done`, `pending`, `timeout`, `skipped`, `error`), `usb_wait_ms`,
+`sd_state` (`idle`, `detached`, `mounted`, `mount_failed`, `bind_failed`) and
+`sd_reason` (`not_mounted`, `clip_busy`, `update`, `unmount`, `unbind` — why
+the card was left attached). `sd_off` never detaches the card during OTA, an
+in-flight event clip or a delivery attempt; continuous recording is stopped
+and synced before the unmount and restarted after the remount.
+
 #### `/api/focus`
 
 **OKO.** Focus assistant: AF measurement metric and the optional STM8 motors.

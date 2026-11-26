@@ -53,6 +53,7 @@ GET_JSON = [
     "/api/clip",
     "/api/models",
     "/api/focus",
+    "/api/sleep",
     "/api/flash",
     "/api/firmware",
     # KI-064: GET /api/update kills divinus; do not poll it in the smoke test.
@@ -84,6 +85,7 @@ POST_NOOP = [
     "/api/yolo",
     "/api/models",
     "/api/focus",
+    "/api/sleep",
     "/api/network",
     "/api/mdns",
     "/api/storage",
@@ -801,6 +803,23 @@ def main():
         if status != 200:
             failures.append("POST %s: HTTP %s" % (path, status))
         print("POST %-18s %s" % (path, status))
+
+    # [sleep] must expose the USB/SD hardening switches and their live state
+    # (keys were added with AIGLASS-driven bind-wait and sd_off).
+    checks += 1
+    status, _headers, body = request("/api/sleep")
+    try:
+        dec = json.loads(body.decode())
+    except Exception:                              # noqa: BLE001
+        dec = {}
+    missing = [k for k in ("usb_on_motion", "usb_bind_timeout_ms", "sd_off",
+                           "usb_wait", "usb_wait_ms", "sd_state")
+               if k not in dec]
+    if status != 200 or missing:
+        failures.append("GET /api/sleep: HTTP %s, missing %r" %
+                        (status, missing))
+    print("GET  %-18s %s usb_wait=%s sd_state=%s" %
+          ("/api/sleep", status, dec.get("usb_wait"), dec.get("sd_state")))
 
     # Attachments: the export must look like YAML, the log like text.
     checks += 1

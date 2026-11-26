@@ -8,13 +8,13 @@
 Активная конфигурация платы задаётся симлинком `.BoardConfig.mk`:
 
 ```
-.BoardConfig.mk -> project/cfg/BoardConfig_IPC/BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI.mk
+.BoardConfig.mk -> project/cfg/BoardConfig_IPC/BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI-AOV.mk
 ```
 
-Продуктовый профиль — SPI NAND, Buildroot, Luckfox Pico Pro Max, SC230AI
-(`...-SC230AI.mk`). Тем же симлинком переключаются экспериментальные
-`...-IPC_FASTBOOT.mk` и `...-SC230AI-AOV.mk`; AOV-профиль включался для
-экспериментов 2026-11-17–25, после работ возвращён продуктовый.
+Основной профиль — SPI NAND, Buildroot, Luckfox Pico Pro Max, SC230AI с
+AOV-MCU (`...-SC230AI-AOV.mk`: 1M idblock, meta в OEM, AOV DTS/ядро).
+Запасной без AOV — `...-SC230AI.mk` (256K idblock, продуктовая разметка);
+тем же симлинком переключается экспериментальный `...-IPC_FASTBOOT.mk`.
 Фактическую цель проверяйте `readlink -f .BoardConfig.mk`.
 
 ## Корневые папки
@@ -158,8 +158,8 @@
   стейджит оба скрипта в `/oem/usr/bin`. Перенос тела из вендорского
   `RkLunch.sh` и список удалённых веток — в `README.md` пакета.
 - `cfg/BoardConfig_IPC/` — конфигурации плат (`BoardConfig-*.mk`), папка `overlay/`
-  (включая экспериментальный `...-SC230AI-AOV.mk` с 1M idblock и meta в OEM;
-  активный профиль — продуктовый `...-SC230AI.mk`).
+  (активный профиль — `...-SC230AI-AOV.mk` с 1M idblock и meta в OEM;
+  `...-SC230AI.mk` остаётся запасным без AOV/MCU).
   с оверлеями rootfs и pre/post-скрипты (`*-pre.sh`, `*-post.sh`),
   `oko-prune.list` (пути, вырезаемые из rootfs и `oem` при упаковке; применяет
   `__RUN_POST_CLEAN_FILES`). В оверлее OKO

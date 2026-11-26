@@ -741,6 +741,26 @@
   cycle вернул `rw`, матрица теперь считает `sfc`/`ubi` и останавливается
   на первой новой ошибке.
 
+**2026-11-26, развязка периферии (USB wait + sd_off).** На прошивке
+  NAND #38 проверены новые ключи `[sleep]`: `usb_on_motion=1` теперь ждёт
+  предикат sysfs (`usb_bind_timeout_ms`, по умолчанию 2000 мс), `sd_off=1`
+  отвязывает `ffaa0000.mmc` после `oko-sdcard unmount` и монтирует обратно
+  на resume. Тихий продукт-путь (`aov_mcu=0`, `wake_interval_s=15`,
+  `sd_off=1`): 9 пробуждений, фактический сон 15.07 с, resume-путь ядра
+  2.25–2.26 с, STM8 2.3.2 и `i2c3m1` на каждом wake, новая запись после
+  resume декодируется (ffmpeg: 320 кадров 1920×1080, 10.7 с). С
+  `usb_on_motion=1` HCD остаётся отвязанным весь тихий прогон, resume-путь
+  падает до 0.20–0.21 с; bind на motion-wake в этом прогоне не сработал
+  (IVS не увидел движение объектива), проверен restore-путь
+  (bind → wlan0 192.168.43.1). AOV-MCU (`aov_mcu=1`+`keep_isp=1`+
+  `usb_on_motion=1`+`sd_off=1`) после первого пробуждения завис в
+  `/tmp/aiq0.lock` (5 потоков, main в `locks_lock_inode_wait`, HAL не
+  стартует); лечится kill + ручным стартом divinus с
+  `LD_LIBRARY_PATH=/oem/usr/lib`, gate ISP-handover не изменился.
+  Артефакты: `output/bench/power/20261126-092412-aov` (sd_off, 9 циклов),
+  `.../20261126-094513-motion` (usb), `.../20261126-095045-aov`,
+  `output/bench/aov-test/quiet_sdoff-usbwait.20261126-095519.log`.
+
   **2026-11-26, вендорский battery-IPC референс в дереве.** Сверка
   `sysdrv/source/mcu/rt-thread` с `LuckfoxTECH/luckfox-pico` `main`
   (последний коммит по пути — `8f34c2760d53`, 2024-08-21): 7 505 файлов
@@ -763,6 +783,16 @@
   используется. В сборке с `RT_USING_RK_AOV` `board_base.c` намеренно не
   вызывает `rt_console_set_device()` и маскирует `GPIO0_IRQn` — учитывать
   при отладке логов MCU.
+
+  **2026-11-26, решение владельца: `-AOV` — основной build-профиль.**
+  `.BoardConfig.mk` переключён на `...-SC230AI-AOV.mk`; `divinus.yaml`
+  поставляет AOV-дефолты (`aov_mcu: true`, `aov_keep_isp: true`,
+  `wake_interval_s: 2`, `heartbeat: true`, `heartbeat_interval_s: 300`,
+  `wake_check_s: 10`), но `[sleep] enable` остаётся `false`. Gate KI-072
+  это решение не закрывает: AOV-сон по-прежнему не выпускается, а образ
+  без включённого `[sleep]` работает как продуктовая камера. Запасной
+  профиль без AOV — `...-SC230AI.mk` (256K idblock); переход между
+  профилями требует перепрошивки idblock/разметки.
 
 - **KI-073. в `rk3x_i2c_irq` на I2C3 при циклах `[sleep]`.**
   2026-11-17 в AOV-прогоне (idle 30 s, `aov_mcu=1`) шина I2C3
@@ -1163,6 +1193,15 @@
   (возможно, жгут/перезагрузка моста); до полного цикла netboot/flash
   запись остаётся открытой. Пул HTTP-сессий моста по-прежнему 3/3 (`429`),
   это отдельная проблема, на telnet не влияет.
+  **2026-11-26:** консоль работала в начале сессии (`serial_exec.py` отдал
+  приглашение и выполнил команды), но после серии AOV/sleep-прогонов
+  telnet `:23` перестал отдавать shell (`no shell`), тогда как read-only
+  монитор `:2324` продолжал транслировать RX/TX DUT (в потоке видны
+  kernel- и divinus-логи). DUT оставался полностью управляем по SSH/HTTP
+  (`/api/status`, `/api/sleep`, запись и OSD-проверки прошли), поэтому
+  прогоны продолжены по сети. Это подтверждает, что отказ в линии
+  управления telnet моста не связан с DUT; перед следующим U-Boot/netboot
+  нужен ребут моста или проверка жгута. Статус: **открыто**.
 
 - **KI-081. microSD: FAT рвётся и запись блокируется; coredump-handler пишет
   дампы в `/mnt/sdcard` без проверки монтирования.**
@@ -1968,6 +2007,26 @@ Status: **experimental, not for release** (refreshed 2026-11-25). The MCU
   cycle restored `rw`, and the matrix now counts `sfc`/`ubi` and stops on the
   first new error.
 
+**2026-11-26, peripheral detach (USB wait + sd_off).** The new `[sleep]`
+  keys were exercised on the NAND #38 image: `usb_on_motion=1` now waits for
+  the sysfs predicate (`usb_bind_timeout_ms`, 2000 ms by default) and
+  `sd_off=1` unbinds `ffaa0000.mmc` after `oko-sdcard unmount` and remounts it
+  on resume. The quiet product path (`aov_mcu=0`, `wake_interval_s=15`,
+  `sd_off=1`) produced 9 wakes, an actual sleep of 15.07 s, a kernel resume
+  path of 2.25–2.26 s, STM8 2.3.2 and `i2c3m1` on every wake, and a new
+  recording that decodes (ffmpeg: 320 frames, 1920×1080, 10.7 s). With
+  `usb_on_motion=1` the HCD stays unbound for the whole quiet run and the
+  resume path drops to 0.20–0.21 s; the motion-wake bind was not exercised in
+  that run (IVS did not see the lens move), only the restore path
+  (bind → wlan0 192.168.43.1). AOV-MCU (`aov_mcu=1`+`keep_isp=1`+
+  `usb_on_motion=1`+`sd_off=1`) hung in `/tmp/aiq0.lock` after the first wake
+  (5 threads, main in `locks_lock_inode_wait`, HAL never starts); a kill plus
+  a manual divinus start with `LD_LIBRARY_PATH=/oem/usr/lib` recovered the
+  DUT. The ISP-handover gate is unchanged. Artifacts:
+  `output/bench/power/20261126-092412-aov` (sd_off, 9 cycles),
+  `.../20261126-094513-motion` (usb), `.../20261126-095045-aov`,
+  `output/bench/aov-test/quiet_sdoff-usbwait.20261126-095519.log`.
+
   **2026-11-26, the vendor battery-IPC reference is already in the tree.**
   `sysdrv/source/mcu/rt-thread` was compared with `LuckfoxTECH/luckfox-pico`
   `main` (the last commit touching the path is `8f34c2760d53`, 2024-08-21):
@@ -1991,6 +2050,16 @@ Status: **experimental, not for release** (refreshed 2026-11-25). The MCU
   `RT_USING_RK_AOV` build `board_base.c` deliberately skips
   `rt_console_set_device()` and masks `GPIO0_IRQn` — keep that in mind when
   debugging MCU logs.
+
+  **2026-11-26, owner decision: `-AOV` is the default build profile.**
+  `.BoardConfig.mk` now points at `...-SC230AI-AOV.mk`; `divinus.yaml` ships
+  the AOV defaults (`aov_mcu: true`, `aov_keep_isp: true`,
+  `wake_interval_s: 2`, `heartbeat: true`, `heartbeat_interval_s: 300`,
+  `wake_check_s: 10`) while `[sleep] enable` stays `false`. This does not
+  close the KI-072 gate: AOV sleep is still not released, and the image with
+  sleep off behaves as the product camera. The fallback without AOV is
+  `...-SC230AI.mk` (256K idblock); switching profiles requires reflashing the
+  idblock/partition table.
 
 - **KI-073. in `rk3x_i2c_irq` on I2C3 during `[sleep]` cycles.**
   On 2026-11-17 an AOV run (idle 30 s, `aov_mcu=1`) got a burst of
@@ -2393,6 +2462,15 @@ DDR re-init.
   is unknown (wiring or a bridge reboot); the entry stays open until a full
   netboot/flash cycle. The bridge HTTP session pool is still 3/3 (`429`);
   that is a separate problem and does not affect telnet.
+  **2026-11-26:** the console worked at the start of the session
+  (`serial_exec.py` returned a prompt and ran commands), but after a series
+  of AOV/sleep runs telnet `:23` stopped returning a shell (`no shell`) while
+  the `:2324` read-only monitor kept streaming the DUT RX/TX (kernel and
+  divinus logs visible). The DUT stayed fully manageable over SSH/HTTP
+  (`/api/status`, `/api/sleep`, recording and OSD checks passed), so the runs
+  continued over the network. This confirms the failed link is the bridge
+  telnet control path, not the DUT; reboot the bridge or check the wiring
+  before the next U-Boot/netboot attempt. Status: **open**.
 
 - **KI-081. microSD: the FAT gets corrupted and recording is blocked; the
   coredump handler writes to `/mnt/sdcard` without checking the mount.**

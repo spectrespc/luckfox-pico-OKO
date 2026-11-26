@@ -4,9 +4,12 @@
 # 	Board Config
 #################################################
 export LF_ORIGIN_BOARD_CONFIG=BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI.mk
-# OKO AOV profile: product image plus the AOV MCU in the idblock and the
-# kernel HPMCU wake proxy.  All three runtime switches (sleep, PMU timer,
-# AOV) stay OFF by default; the image is otherwise the product image.
+# OKO AOV profile: the default build profile.  Product image plus the AOV MCU
+# in the idblock and the kernel HPMCU wake proxy.  Idle sleep still stays OFF
+# until [sleep] enable is set; the shipped divinus.yaml already selects the
+# AOV cadence (wake_interval_s=2, heartbeat every 300 s) and
+# aov_mcu/aov_keep_isp.  The product profile
+# ...-SC230AI.mk remains as the fallback without the MCU/1M-idblock layout.
 # The MCU image is loaded by BootROM from the idblock (LOADER2=Hpmcu) and
 # released by the kernel only when divinus writes aov_wakeproxy=1.
 export RK_CHIP=rv1106

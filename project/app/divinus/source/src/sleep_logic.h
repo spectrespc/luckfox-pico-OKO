@@ -53,6 +53,32 @@ int sleep_aov_state_needs_heal(const char *state);
  * sleep again.  Without AOV the wake is decided later by report_motion(). */
 int sleep_usb_bind_on_wake(int usb_on_motion, const char *aov_state);
 
+/* Deterministic wait after a sysfs bind/unbind write.  The vendor AOV sample
+ * waits for the matching NETLINK_KOBJECT_UEVENT; the product path polls the
+ * driver link instead (no extra socket in the motion event path).
+ * Returns 1 when the predicate is met, 0 while it is not, -1 on timeout.
+ * timeout_ms == 0 disables waiting: only the current predicate is checked. */
+int sleep_usb_wait_result(int bound, int want_bound, unsigned int elapsed_ms,
+                          unsigned int timeout_ms);
+/* "done", "pending", "timeout" or "error" for /api/status.sleep. */
+const char *sleep_usb_wait_name(int result);
+/* Vendor uses 2 s; the value is a config key because the resume window is
+ * bounded by KI-072. */
+unsigned int sleep_default_usb_wait_timeout_ms(void);
+
+/* Why the microSD may or may not be detached before mem ([sleep] sd_off).
+ * Event clips and OTA own the card: tearing it down under them loses data. */
+typedef enum {
+    SLEEP_SD_GATE_OK = 0,
+    SLEEP_SD_GATE_NOT_MOUNTED,
+    SLEEP_SD_GATE_CLIP_BUSY,
+    SLEEP_SD_GATE_UPDATE
+} sleep_sd_gate;
+
+sleep_sd_gate sleep_sd_off_gate(int mounted, int clip_busy, int update_busy);
+/* "ok", "not_mounted", "clip_busy" or "update" for logs and the API. */
+const char *sleep_sd_off_gate_name(sleep_sd_gate gate);
+
 /* AOV-profile defaults applied only when the key is absent from the YAML. */
 unsigned int sleep_default_wake_interval(int aov_available);
 unsigned int sleep_default_heartbeat_interval(int aov_available);

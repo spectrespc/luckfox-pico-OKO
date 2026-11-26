@@ -6564,6 +6564,8 @@ if (EQUALS(req->uri, "/api/storage")) {
             bool aov = app_config.sleep_aov_mcu;
             bool aovKeepIsp = app_config.sleep_aov_keep_isp;
             bool usbOnMotion = app_config.sleep_usb_on_motion;
+            unsigned int usbWait = app_config.sleep_usb_bind_timeout_ms;
+            bool sdOff = app_config.sleep_sd_off;
             unsigned int idle = app_config.sleep_idle_timeout_s;
             unsigned int interval = app_config.sleep_wake_interval_s;
             unsigned int check = app_config.sleep_wake_check_s;
@@ -6598,6 +6600,17 @@ if (EQUALS(req->uri, "/api/storage")) {
                     aovKeepIsp = query_bool(value); changed = true;
                 } else if (EQUALS(key, "usb_on_motion")) {
                     usbOnMotion = query_bool(value); changed = true;
+                } else if (EQUALS(key, "usb_bind_timeout_ms")) {
+                    number = strtol(value, &endptr, 10);
+                    if (*endptr || number < 0 || number > 10000) {
+                        reply_error(req->clntFd, "blocked",
+                            "usb_bind_timeout_ms must be 0..10000", "");
+                        return;
+                    }
+                    usbWait = (unsigned int)number;
+                    changed = true;
+                } else if (EQUALS(key, "sd_off")) {
+                    sdOff = query_bool(value); changed = true;
                 } else if (EQUALS(key, "fast_resume")) {
                     sleep_fast_resume_mode mode;
 
@@ -6673,6 +6686,8 @@ if (EQUALS(req->uri, "/api/storage")) {
                 app_config.sleep_aov_mcu = aov;
                 app_config.sleep_aov_keep_isp = aovKeepIsp;
                 app_config.sleep_usb_on_motion = usbOnMotion;
+                app_config.sleep_usb_bind_timeout_ms = usbWait;
+                app_config.sleep_sd_off = sdOff;
                 app_config.sleep_idle_timeout_s = idle;
                 app_config.sleep_wake_interval_s = interval;
                 app_config.sleep_wake_check_s = check;
@@ -6707,7 +6722,7 @@ if (EQUALS(req->uri, "/api/storage")) {
             return;
         }
         {
-            char sleepJson[1280];
+            char sleepJson[1536];
             sleep_policy_api_json(sleepJson, sizeof(sleepJson));
             reply_json(req->clntFd, sleepJson, strlen(sleepJson));
         }
@@ -6731,7 +6746,7 @@ if (EQUALS(req->uri, "/api/storage")) {
             sprintf(uptime, "%ld:%02ld:%02ld", si.uptime / 3600, (si.uptime % 3600) / 60, si.uptime % 60);
         else
             sprintf(uptime, "%ld:%02ld", si.uptime / 60, si.uptime % 60);
-        char sleepJson[640];
+        char sleepJson[1024];
         sleep_policy_status_json(sleepJson, sizeof(sleepJson));
         respLen = sprintf(response,
             "HTTP/1.1 200 OK\r\n"

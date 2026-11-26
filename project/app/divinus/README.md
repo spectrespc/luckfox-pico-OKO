@@ -486,6 +486,35 @@ U-Boot вызывает `sd_update` при каждой загрузке, поэ
 размера); A/B-разделов нет; обновление возможно только при смонтированной
 FAT32 microSD.
 
+## OKO: сон камеры (`[sleep]`) и развязка периферии
+
+`source/src/sleep_policy.c` держит AP в deep suspend и возвращается по
+таймауту PMU/AOV-прокси; чистые решения (стратегия resume, tier-2 heartbeat,
+предикаты ожидания) вынесены в `source/src/sleep_logic.c` и покрыты
+`tests/sleep_logic_test.c`.
+
+Периферия убирается из resume-пути по образцу вендорского AOV-сэмпла:
+
+- `usb_on_motion: true` — перед `mem` отвязать `xhci-hcd.0.auto` от
+  `/sys/bus/platform/drivers/xhci-hcd`, при пробуждении по движению привязать
+  обратно и только потом выполнить `oko-wifi apply`;
+- `usb_bind_timeout_ms` (по умолчанию `2000`) — сколько ждать, пока предикат
+  sysfs подтвердит bind/unbind; `0` возвращает прежнее поведение без
+  ожидания. Таймаут не фатален и виден в `/api/status` как
+  `sleep.usb_wait`/`sleep.usb_wait_ms`;
+- `sd_off: false` — перед `mem` остановить и `fsync` запись, `sync`,
+  `oko-sdcard unmount`, отвязать `ffaa0000.mmc` от `dwmmc_rockchip`; после
+  пробуждения привязать, смонтировать (`oko-sdcard mount`), возобновить
+  запись. Отвязка запрещена при активном OTA, незавершённом event-clip или
+  передаче outbox, а также без смонтированной карты; причина отказа —
+  `sleep.sd_reason`.
+
+Ключи читаются из `[sleep]` (`files/divinus.yaml`), меняются через
+`POST /api/sleep`, отдаются в `GET /api/sleep` и `/api/status.sleep`; полное
+описание параметров — `source/doc/endpoints.md`, раздел `/api/sleep`.
+`fast_resume=aiq` (парковка AIQ + drain VI) остаётся экспериментальным и на
+текущем media даёт `mipi-csi2-hw ERR` (KI-072).
+
 ## Правила обновления
 
 1. Клонировать upstream с `--depth 1`, заменить `source/src`, `source/res`, `source/doc`,

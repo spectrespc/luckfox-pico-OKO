@@ -1268,6 +1268,14 @@ Recorder (services/mqtt, port 8092):
 					<div class="ctl"><input type="number" id="sleep_wake_interval_s" min="1" max="3600" data-group="sleep" data-k="wake_interval_s"></div></div>
 				<div class="field"><label data-i18n="sleep_check">Motion check after wake, s</label>
 					<div class="ctl"><input type="number" id="sleep_wake_check_s" min="1" max="60" data-group="sleep" data-k="wake_check_s"></div></div>
+				<div class="field"><label data-i18n="sleep_usb_on_motion">USB host on motion only</label>
+					<div class="ctl"><select id="sleep_usb_on_motion" data-group="sleep" data-k="usb_on_motion">
+						<option value="false">OFF</option><option value="true">ON</option></select></div></div>
+				<div class="field"><label data-i18n="sleep_usb_wait">Bind/unbind wait, ms</label>
+					<div class="ctl"><input type="number" id="sleep_usb_bind_timeout_ms" min="0" max="10000" data-group="sleep" data-k="usb_bind_timeout_ms"></div></div>
+				<div class="field"><label data-i18n="sleep_sd_off">Detach microSD before sleep</label>
+					<div class="ctl"><select id="sleep_sd_off" data-group="sleep" data-k="sd_off">
+						<option value="false">OFF</option><option value="true">ON</option></select></div></div>
 				<div class="field"><label data-i18n="sleep_hb">Heartbeat snapshot</label>
 					<div class="ctl"><select id="sleep_heartbeat" data-group="sleep" data-k="heartbeat" onchange="updateSleepCard(lastStatus &amp;&amp; lastStatus.sleep)">
 						<option value="false">OFF</option><option value="true">ON</option></select></div></div>
@@ -2637,6 +2645,12 @@ I18N.en.sleep_interval = "PMU wake interval, s";
 I18N.ru.sleep_interval = "Интервал пробуждения PMU, с";
 I18N.en.sleep_check = "Motion check after wake, s";
 I18N.ru.sleep_check = "Окно проверки движения после пробуждения, с";
+I18N.en.sleep_usb_on_motion = "USB host on motion only";
+I18N.ru.sleep_usb_on_motion = "USB-хост только при движении";
+I18N.en.sleep_usb_wait = "Bind/unbind wait, ms";
+I18N.ru.sleep_usb_wait = "Ожидание bind/unbind, мс";
+I18N.en.sleep_sd_off = "Detach microSD before sleep";
+I18N.ru.sleep_sd_off = "Отвязывать microSD перед сном";
 I18N.en.sleep_hb = "Heartbeat snapshot";
 I18N.ru.sleep_hb = "Кадр-подтверждение (Snapshot)";
 I18N.en.sleep_hb_interval = "Heartbeat interval, s";

@@ -12,7 +12,7 @@
 Активная конфигурация задаётся симлинком `.BoardConfig.mk`:
 
 ```
-.BoardConfig.mk -> project/cfg/BoardConfig_IPC/BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI.mk
+.BoardConfig.mk -> project/cfg/BoardConfig_IPC/BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI-AOV.mk
 ```
 
 Что выбрано в этом файле:
@@ -23,11 +23,13 @@
 | SoC на плате | `RV1106G3` | заказной код RV1106 с SIP 2 Гбит (256 МБ) DDR3L, NPU 1 Топс; `RK_CHIP` в SDK остаётся `rv1106` ([Datasheet Rev 2.0, §2.1](https://rockchip.fr/RV1106%20datasheet%20V2.0.pdf)) |
 | `RK_APP_TYPE` | `RKIPC_RV1106` | тип приложения SDK; сборка `rkipc` отключена, лаунчер — `oko-lunch.sh` |
 | `RK_BOOT_MEDIUM` | `spi_nand` | загрузка с SPI NAND |
-| `RK_PARTITION_CMD_IN_ENV` | `256K(env),256K@256K(idblock),512K(uboot),6M(boot),40M(oem),40M(userdata),168M(rootfs)` | разметка 256 МБ NAND: `boot` 6 МБ, `oem` 40 МБ, `userdata` 40 МБ, `rootfs` 168 МБ |
+| `RK_PARTITION_CMD_IN_ENV` | `256K(env),1M@256K(idblock),512K(uboot),6M(boot),40M(oem),40M(userdata),167M(rootfs)` | разметка 256 МБ NAND: `idblock` 1 МБ (Hpmcu+SPL+DDR+usbplug), `boot` 6 МБ, `oem` 40 МБ, `userdata` 40 МБ, `rootfs` 167 МБ |
 | `LF_TARGET_ROOTFS` | `buildroot` | корневая ФС Buildroot (busybox init) |
 | Режим | **SPI NAND** | автономная загрузка с flash (`root=ubi0:rootfs`) |
 | Сенсор | **SC230AI** | драйвер `sc230ai` + `rv1106-sc230ai.config`; 1080p30 и 480p120, `HDR_X2` экспериментально |
-| `RK_KERNEL_DTS` | `rv1106g-luckfox-pico-pro-max-sc230ai.dts` | device tree платы; `&sc3336`/`&mis5001` выключены |
+| `RK_KERNEL_DTS` | `rv1106g-luckfox-pico-pro-max-sc230ai-aov.dts` | продуктовая плата + reserved-memory `rtos@40000`, `meta@1000000`, `isp@1060000`; `&i2c4 rockchip,amp-shared`; `&rockchip_suspend oko,aov-mcu` |
+| `RK_KERNEL_DEFCONFIG_FRAGMENT` | продуктовый набор + `rv1106-pmu-timeout.config rv1106-hpmcu-aov.config` | PMU-таймаут и HPMCU fast wake/AOV proxy (`aov_wakeproxy`/`aov_state`) |
+| `RK_UBOOT_RKBIN_INI_OVERLAY` / `RK_META_SIZE` | `..._HPMCU.ini` / `393216` | MCU-образ в idblock (`LOADER2=Hpmcu`), meta (IQ/параметры MCU) в `oem` |
 | USB | **host (`dr_mode = "host"`)** | фрагмент `rv1106-usb-host.config` включает HID/USB-сеть/Bluetooth; хаб на порту DUT, gadget/adb недоступны (KI-057); прошивка по умолчанию — TFTP |
 | I2C3-M1 | **включён, 100 кГц** | `pinctrl-0 = <&i2c3m1_xfer>` (`GPIO1_D2`/`GPIO1_D3`), устройство `/dev/i2c-3` |
 | `RK_BOOTARGS_CMA_SIZE` | `66M` | CMA для медиастека |
@@ -39,6 +41,13 @@
 MIS5001, IMX415, MIA1321) выключены в DTS и config-фрагменте, их модули и IQ
 удаляются из oem. Демонстрационные `sample_*` и `simple_*` из образа удалены;
 диагностические `rk_*_test`/`rk_mpi_*_test` сохранены.
+
+Профиль `-AOV` — основной с 2026-11-26; запасной без AOV/MCU — `...-SC230AI.mk`
+(256K idblock, разметка и DTS продукта). Переключение на запасной профиль
+требует полной перепрошивки NAND (меняется idblock и таблица разделов).
+Сам сон остаётся выключенным (`[sleep] enable: false` в `divinus.yaml`):
+AOV-кадентность (`wake_interval_s=2`, heartbeat 300 с) применяется после
+включения сна через `/api/sleep`, а gate KI-072 пока открыт.
 
 Сменить конфигурацию можно интерактивным меню:
 

@@ -112,6 +112,47 @@ int main(void)
     CHECK(!sleep_usb_bind_on_wake(0, "motion"), "usb defer disabled");
     CHECK(!sleep_usb_bind_on_wake(1, NULL), "usb NULL state");
 
+    CHECK(sleep_usb_wait_result(1, 1, 0, 2000) == 1, "usb wait bound");
+    CHECK(sleep_usb_wait_result(0, 0, 0, 2000) == 1, "usb wait unbound");
+    CHECK(sleep_usb_wait_result(1, 0, 0, 2000) == 0,
+        "usb wait keeps polling");
+    CHECK(sleep_usb_wait_result(1, 0, 1999, 2000) == 0,
+        "usb wait before deadline");
+    CHECK(sleep_usb_wait_result(1, 0, 2000, 2000) == -1,
+        "usb wait deadline");
+    CHECK(sleep_usb_wait_result(1, 0, 5000, 2000) == -1,
+        "usb wait past deadline");
+    CHECK(sleep_usb_wait_result(0, 1, 0, 0) == -1,
+        "usb wait disabled checks once");
+    CHECK(sleep_usb_wait_result(1, 1, 0, 0) == 1,
+        "usb wait disabled but done");
+    CHECK(strcmp(sleep_usb_wait_name(1), "done") == 0, "usb name done");
+    CHECK(strcmp(sleep_usb_wait_name(0), "pending") == 0,
+        "usb name pending");
+    CHECK(strcmp(sleep_usb_wait_name(-1), "timeout") == 0,
+        "usb name timeout");
+    CHECK(strcmp(sleep_usb_wait_name(-2), "error") == 0, "usb name error");
+    CHECK(sleep_default_usb_wait_timeout_ms() == 2000,
+        "usb default wait 2 s");
+
+    CHECK(sleep_sd_off_gate(1, 0, 0) == SLEEP_SD_GATE_OK, "sd gate ok");
+    CHECK(sleep_sd_off_gate(0, 0, 0) == SLEEP_SD_GATE_NOT_MOUNTED,
+        "sd gate needs a mounted card");
+    CHECK(sleep_sd_off_gate(1, 1, 0) == SLEEP_SD_GATE_CLIP_BUSY,
+        "sd gate blocks a busy clip");
+    CHECK(sleep_sd_off_gate(1, 0, 1) == SLEEP_SD_GATE_UPDATE,
+        "sd gate blocks OTA");
+    CHECK(sleep_sd_off_gate(1, 1, 1) == SLEEP_SD_GATE_UPDATE,
+        "sd gate prefers OTA over clips");
+    CHECK(strcmp(sleep_sd_off_gate_name(SLEEP_SD_GATE_OK), "ok") == 0,
+        "sd gate name ok");
+    CHECK(strcmp(sleep_sd_off_gate_name(SLEEP_SD_GATE_NOT_MOUNTED),
+        "not_mounted") == 0, "sd gate name not mounted");
+    CHECK(strcmp(sleep_sd_off_gate_name(SLEEP_SD_GATE_CLIP_BUSY),
+        "clip_busy") == 0, "sd gate name clip busy");
+    CHECK(strcmp(sleep_sd_off_gate_name(SLEEP_SD_GATE_UPDATE), "update") == 0,
+        "sd gate name update");
+
     CHECK(sleep_default_wake_interval(1) == 2, "aov default interval 2 s");
     CHECK(sleep_default_wake_interval(0) == 10, "product default interval");
     CHECK(sleep_default_heartbeat_interval(1) == 300, "aov default heartbeat");

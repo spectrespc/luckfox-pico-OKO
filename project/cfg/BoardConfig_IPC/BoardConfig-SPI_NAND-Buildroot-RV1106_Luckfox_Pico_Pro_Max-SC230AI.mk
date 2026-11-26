@@ -3,6 +3,9 @@
 #################################################
 # 	Board Config
 #################################################
+# Fallback product profile (no AOV MCU, 256K idblock).  The default OKO build
+# profile is ...-SC230AI-AOV.mk; switch .BoardConfig.mk to this file only when
+# the AOV idblock/kernel is not wanted.
 export LF_ORIGIN_BOARD_CONFIG=BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI.mk
 # Target CHIP
 export RK_CHIP=rv1106

@@ -122,6 +122,76 @@ int sleep_usb_bind_on_wake(int usb_on_motion, const char *aov_state)
     return strcmp(aov_state, "motion") == 0;
 }
 
+int sleep_usb_wait_result(int bound, int want_bound, unsigned int elapsed_ms,
+                          unsigned int timeout_ms)
+{
+    if (!!bound == !!want_bound)
+    {
+        return 1;
+    }
+    /* timeout_ms == 0 keeps the old fire-and-forget behaviour: the predicate
+     * is checked once and an unmet predicate counts as a timeout. */
+    if (timeout_ms == 0 || elapsed_ms >= timeout_ms)
+    {
+        return -1;
+    }
+    return 0;
+}
+
+const char *sleep_usb_wait_name(int result)
+{
+    if (result == 1)
+    {
+        return "done";
+    }
+    if (result == 0)
+    {
+        return "pending";
+    }
+    if (result == -1)
+    {
+        return "timeout";
+    }
+    return "error";
+}
+
+unsigned int sleep_default_usb_wait_timeout_ms(void)
+{
+    return 2000;
+}
+
+sleep_sd_gate sleep_sd_off_gate(int mounted, int clip_busy, int update_busy)
+{
+    if (!mounted)
+    {
+        return SLEEP_SD_GATE_NOT_MOUNTED;
+    }
+    if (update_busy)
+    {
+        return SLEEP_SD_GATE_UPDATE;
+    }
+    if (clip_busy)
+    {
+        return SLEEP_SD_GATE_CLIP_BUSY;
+    }
+    return SLEEP_SD_GATE_OK;
+}
+
+const char *sleep_sd_off_gate_name(sleep_sd_gate gate)
+{
+    switch (gate)
+    {
+    case SLEEP_SD_GATE_NOT_MOUNTED:
+        return "not_mounted";
+    case SLEEP_SD_GATE_CLIP_BUSY:
+        return "clip_busy";
+    case SLEEP_SD_GATE_UPDATE:
+        return "update";
+    default:
+        return "ok";
+    }
+}
+
 unsigned int sleep_default_wake_interval(int aov_available)
 {
     /* The product profile keeps its historical 10 s cadence; the AOV profile

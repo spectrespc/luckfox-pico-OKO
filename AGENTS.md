@@ -12,10 +12,11 @@
 
 OKO — форк Luckfox Pico SDK (RV1103/RV1106): нативная сборка на Debian 13, автономная загрузка
 с SPI NAND, сенсор SC230AI. Активная плата задаётся симлинком `.BoardConfig.mk` →
-`project/cfg/BoardConfig_IPC/BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI.mk`
-(SPI NAND, Buildroot, Pico Pro Max, SC230AI; продуктовый профиль). Тем же симлинком
-переключаются экспериментальные `...-IPC_FASTBOOT.mk` и `...-SC230AI-AOV.mk`. Перед выводами
-о конфигурации проверяй цель симлинка: `readlink -f .BoardConfig.mk`.
+`project/cfg/BoardConfig_IPC/BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI-AOV.mk`
+(SPI NAND, Buildroot, Pico Pro Max, SC230AI, AOV-MCU; основной профиль с 2026-11-26).
+Запасной профиль без AOV — `...-SC230AI.mk` (256K idblock); тем же симлинком
+переключаются `...-SC230AI.mk` и экспериментальный `...-IPC_FASTBOOT.mk`.
+Перед выводами о конфигурации проверяй цель симлинка: `readlink -f .BoardConfig.mk`.
 
 ## 2. Карта документации
 

@@ -25,5 +25,9 @@ int record_clip_trigger(const char *eventId, const char *cause,
 /* JSON object for GET /api/clip (without the surrounding braces). */
 size_t record_clip_status_json(char *out, size_t size);
 
+/* 1 while an event clip is still being cut or delivered.  [sleep] sd_off
+ * refuses to detach the card in that window. */
+int record_clip_busy(void);
+
 /* Human-readable reason when the feature cannot run, or NULL when it can. */
 const char *record_clip_unavailable(void);

@@ -363,9 +363,17 @@ def main():
         for selector in ("#fw-versions", "#flash_target",
                          "#flash_file", "#flash_confirm", "#flash_start",
                          "#upd_current", "#upd_file", "#upd_url",
-                         "#upd_upload_btn", "#upd_apply_btn", "#upd_clear_btn"):
+                         "#upd_upload_btn", "#upd_apply_btn", "#upd_clear_btn",
+                         "#sleep_usb_on_motion", "#sleep_usb_bind_timeout_ms",
+                         "#sleep_sd_off"):
             if page.locator(selector).count() == 0:
                 failures.append("system element %s is missing" % selector)
+        # The [sleep] hardening controls must carry a translated label, not a
+        # raw data-i18n key.
+        for key in ("sleep_usb_on_motion", "sleep_usb_wait", "sleep_sd_off"):
+            label = page.text_content('[data-i18n="%s"]' % key) or ""
+            if not label.strip() or label.strip() == key:
+                failures.append("sleep i18n label %s is empty" % key)
         page.screenshot(path=os.path.join(SHOTS, "system-firmware.png"), full_page=True)
 
         # Status card: the SD capacity and free rows sit next to Memory and are

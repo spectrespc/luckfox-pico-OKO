@@ -936,6 +936,21 @@ void record_clip_stop(void)
     pthread_mutex_unlock(&ringMtx);
 }
 
+int record_clip_busy(void)
+{
+    int busy = 0;
+
+    pthread_mutex_lock(&jobMtx);
+    for (int i = 0; i < CLIP_JOBS; i++)
+        if (jobs[i].state == JOB_RECORDING ||
+            jobs[i].state == JOB_DELIVERING) {
+            busy = 1;
+            break;
+        }
+    pthread_mutex_unlock(&jobMtx);
+    return busy;
+}
+
 size_t record_clip_status_json(char *out, size_t size)
 {
     int recording = 0, delivering = 0;

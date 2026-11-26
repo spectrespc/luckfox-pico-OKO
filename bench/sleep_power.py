@@ -66,7 +66,8 @@ RECEIVER = os.environ.get("OKO_EVENTS_ADDR", "192.168.52.200:8090")
 COMPOSE = ROOT / "services" / "events" / "docker-compose.yml"
 
 SLEEP_KEYS = ["enable", "pmu_timer_wake", "aov_mcu", "aov_keep_isp",
-              "usb_on_motion", "idle_timeout_s", "wake_interval_s",
+              "usb_on_motion", "usb_bind_timeout_ms", "sd_off",
+              "idle_timeout_s", "wake_interval_s",
               "wake_check_s", "heartbeat", "heartbeat_interval_s",
               "heartbeat_retries", "fast_resume"]
 HTTP_KEYS = ["enable", "host", "url", "login", "width", "height", "interval",
@@ -1427,13 +1428,17 @@ def scenario_aov(args, outdir, events):
             "wake_check_s": str(args.aov_wake_check),
             "heartbeat": "true" if args.heartbeat_seconds > 0 else "false",
             "heartbeat_interval_s": str(args.heartbeat_seconds),
-            "usb_on_motion": "true" if args.usb_on_motion else "false"})
+            "usb_on_motion": "true" if args.usb_on_motion else "false",
+            "usb_bind_timeout_ms": str(args.usb_bind_timeout_ms),
+            "sd_off": "true" if args.sd_off else "false"})
         events.write("setup", wake_interval=args.wake_interval,
                      wake_check=args.aov_wake_check,
                      aov_mcu=args.aov_mcu,
                      aov_keep_isp=args.aov_keep_isp,
                      heartbeat_seconds=args.heartbeat_seconds,
                      usb_on_motion=args.usb_on_motion,
+                     usb_bind_timeout_ms=args.usb_bind_timeout_ms,
+                     sd_off=args.sd_off,
                      seconds=args.aov_seconds)
         handle.set_phase("await-suspend")
         if wait_until_state(DOWN_STATES, 180) is None:
@@ -1973,10 +1978,15 @@ def scenario_motion(args, outdir, events):
             "idle_timeout_s": str(args.idle),
             "wake_interval_s": str(args.wake_interval),
             "wake_check_s": str(args.motion_wake_check),
-            "heartbeat": "false"})
+            "heartbeat": "false",
+            "usb_on_motion": "true" if args.usb_on_motion else "false",
+            "usb_bind_timeout_ms": str(args.usb_bind_timeout_ms),
+            "sd_off": "true" if args.sd_off else "false"})
         events.write("setup", idle=args.idle,
                      wake_interval=args.wake_interval,
                      wake_check=args.motion_wake_check,
+                     usb_on_motion=args.usb_on_motion,
+                     sd_off=args.sd_off,
                      min_area=args.motion_min_area,
                      cycles=args.motion_cycles,
                      ivs_enable=(ivs_snapshot() or {}).get("enable"))
@@ -2346,6 +2356,12 @@ def main():
     parser.add_argument("--usb-on-motion", action="store_true",
                         help="[sleep] usb_on_motion: unbind the USB host "
                              "before mem, bind it only on a motion wake")
+    parser.add_argument("--usb-bind-timeout-ms", type=int, default=2000,
+                        help="[sleep] usb_bind_timeout_ms: wait for the "
+                             "sysfs bind/unbind to settle (0 disables)")
+    parser.add_argument("--sd-off", action="store_true",
+                        help="[sleep] sd_off: unmount and unbind the microSD "
+                             "before mem, remount on resume")
     parser.add_argument("--expect-present", action="store_true",
                         help="exit 3 when STM8 motor answers disappear")
     parser.add_argument("--motor-sleep", default="keep",

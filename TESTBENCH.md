@@ -8,7 +8,7 @@ Pro Max (RV1106G3) с автономной загрузкой из SPI NAND. З�
 
 | Поле | Значение |
 |---|---|
-| Дата обновления | `2026-11-25` |
+| Дата обновления | `2026-11-26` |
 | Ответственный | `<ФИО>` |
 | Статус | активен |
 | Назначение | сборка прошивки и прошивка SPI NAND для отладки IPC |
@@ -154,9 +154,13 @@ bench/run.sh tftp_flash.py --no-reset                 # остаться в U-Bo
 через Maskrom, §7A); при обрыве питания во время `mtd write` прошивка
 повторяется тем же способом (U-Boot остаётся доступен по UART).
 
-### 7-AOV. Экспериментальный профиль `-AOV` (не для выпуска)
+### 7-AOV. Основной профиль `-AOV` (сон — не для выпуска)
 
-Профиль `BoardConfig ...-SC230AI-AOV.mk` (KI-072) меняет idblock и таблицу
+`BoardConfig ...-SC230AI-AOV.mk` — основной build-профиль с 2026-11-26
+(1M idblock, AOV-ядро и MCU в idblock). Сам сон остаётся выключенным
+(`[sleep] enable: false`), AOV-ветка не выпускается, пока открыт gate
+KI-072. Запасной профиль без AOV — `...-SC230AI.mk` (256K idblock,
+продуктовая разметка). Профиль `-AOV` меняет idblock и таблицу
 разделов: Hpmcu+SPL+DDR+usbplug ~300 КБ, поэтому idblock 1M, а `uboot`,
 `boot`, `oem`, `userdata`, `rootfs` сдвинуты на 768K (rootfs 167M). Ядро
 линкуется по 0x208000, и `boot.img` собирается FIT-ом `boot-aov.its` из
@@ -171,7 +175,8 @@ ln -sfn project/cfg/BoardConfig_IPC/BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfo
 ./build.sh kernel && ./build.sh uboot && ./build.sh firmware
 # прошить минимум компонентов, дождавшись холодного цикла питания
 bench/run.sh tftp_flash.py --components boot --power-cycle
-# возврат на продукт: symlink на ...-SC230AI.mk, ./build.sh, затем
+# переключение на запасной профиль без AOV: symlink на ...-SC230AI.mk,
+# ./build.sh, затем
 # bench/run.sh tftp_flash.py --components env,idblock,boot,oem --power-cycle
 ```
 
@@ -196,7 +201,35 @@ MCU не отвечает по mailbox, AP возвращается по тай�
 (PMU-only) циклится штатно (`rv1106 enter/exit sleep`). В этих же прогонах
 шина I2C3 падает в панику `rk3x_i2c_irq` (KI-073) — до её разбора
 `sleep enable` держать `false`, иначе плата уходит в reset на каждом
-цикле. Профиль остаётся NO-GO (KI-072).
+цикле. AOV-сон остаётся NO-GO (KI-072); сам build-профиль — основной.
+
+### Развязка периферии перед `mem` (2026-11-26)
+
+`[sleep] usb_on_motion` + `usb_bind_timeout_ms` и `sd_off` проверены на
+NAND #38 в тихом продукт-пути (`aov_mcu=0`). Порядок прогона:
+
+```sh
+# microSD: запись закрывается и синхронизируется, карта отвязывается
+bench/run.sh sleep_power.py --scenario aov --idle 20 --wake-interval 15 \
+  --aov-wake-check 8 --aov-seconds 300 --sd-off
+
+# USB: хост отвязан в тихом цикле, bind только на движение
+bench/run.sh sleep_power.py --scenario aov --idle 20 --wake-interval 20 \
+  --aov-wake-check 10 --aov-seconds 200 --usb-on-motion
+
+# фактический сон и состояние развязки
+cat /sys/kernel/wakeup_reasons/last_suspend_time
+curl -s -u admin:… http://192.168.52.33/api/sleep   # usb_wait, sd_state, sd_reason
+```
+
+Ожидаемо: интервалы равны `wake_interval_s` (фактический сон, не окно
+`PM: suspend`), новый файл в `/mnt/sdcard/recordings` читается
+`ffmpeg -i`, при `usb_on_motion=1` resume-путь 0.20–0.21 с и `wlan0`
+поднимается на движении. `sd_off` не отвязывает карту при OTA,
+незавершённом event-clip или передаче outbox — причина в
+`/api/status.sleep.sd_reason`. AOV-MCU (`aov_mcu=1`+`keep_isp=1`)
+по-прежнему NO-GO (зависание в `/tmp/aiq0.lock` после первого
+пробуждения), не смешивать эти режимы в одном прогоне.
 
 Перед прогоном sleep на стенде проверьте конфиг приложения: если включены
 одновременно `mjpeg`, `jpeg` и `ivs`, старт падает (`[jpeg] No free

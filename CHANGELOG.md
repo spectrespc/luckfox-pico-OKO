@@ -423,7 +423,61 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   `research/rv1106-aov/`). `research/README.md`, `STRUCTURE.md` and the
   `TO_DO.md` §15.7 link were updated.
 
+- **`[sleep]`: ожидание bind/unbind, `sd_off` и ключ `usb_bind_timeout_ms`.**
+  `usb_host_set()` после записи в sysfs ждёт предикат
+  `xhci-hcd.0.auto` (`sleep_logic.c::sleep_usb_wait_result`, опрос 10 мс,
+  таймаут из `[sleep] usb_bind_timeout_ms`, 0 — без ожидания); исход
+  виден в `/api/status.sleep` как `usb_wait`/`usb_wait_ms`. Новый ключ
+  `[sleep] sd_off` (дефолт `false`) перед `mem` закрывает и синхронизирует
+  запись, делает `sync`, `oko-sdcard unmount`, отвязывает `ffaa0000.mmc`
+  от `dwmmc_rockchip`, а на resume привязывает, монтирует и возобновляет
+  запись; gate — OTA, event-clip/outbox, отсутствие карты
+  (`sleep.sd_reason`). `POST /api/sleep` принимает `sd_off` и
+  `usb_bind_timeout_ms`, WebUI получил три контрола, `api_check.py`/
+  `ui_check.py` — проверки. Хост-тест расширен ожиданием bind и гейтом SD.
+  Стенд 2026-11-26 (NAND #38, `aov_mcu=0`, 15 с): 9 циклов, сон 15.07 с,
+  STM8/`i2c3m1` живы, запись декодируется; `usb_on_motion=1` — resume-путь
+  0.20–0.21 с.
+- **`[sleep]`: the bind/unbind wait, `sd_off` and the `usb_bind_timeout_ms`
+  key.** `usb_host_set()` now waits for the `xhci-hcd.0.auto` sysfs predicate
+  after the write (`sleep_logic.c::sleep_usb_wait_result`, 10 ms polling,
+  timeout from `[sleep] usb_bind_timeout_ms`, 0 disables the wait); the
+  outcome is exposed as `usb_wait`/`usb_wait_ms` in `/api/status.sleep`. The
+  new `[sleep] sd_off` key (default `false`) closes and syncs the recording,
+  runs `sync` and `oko-sdcard unmount`, unbinds `ffaa0000.mmc` from
+  `dwmmc_rockchip` before `mem`, then binds it, mounts and resumes recording
+  on resume; the gate is OTA, an event clip/outbox transfer or a missing card
+  (`sleep.sd_reason`). `POST /api/sleep` accepts `sd_off` and
+  `usb_bind_timeout_ms`, the WebUI has three new controls, and
+  `api_check.py`/`ui_check.py` cover them. The host test now covers the wait
+  predicate and the SD gate. Bench 2026-11-26 (NAND #38, `aov_mcu=0`, 15 s):
+  9 cycles, a 15.07 s sleep, STM8/`i2c3m1` alive and the recording decodes;
+  `usb_on_motion=1` gives a 0.20–0.21 s resume path.
+
 ### Изменено
+
+- **Профиль `-AOV` назначен основным.** `.BoardConfig.mk` переключён на
+  `BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI-AOV.mk`
+  (1M idblock, AOV DTS/ядро, MCU в idblock). `divinus.yaml` поставляет
+  AOV-дефолты: `aov_mcu: true`, `aov_keep_isp: true`,
+  `wake_interval_s: 2`, `wake_check_s: 10`, `heartbeat: true`,
+  `heartbeat_interval_s: 300`; `[sleep] enable` остаётся `false`, поэтому
+  образ без включённого сна работает как продуктовая камера. Запасной
+  профиль без AOV — `...-SC230AI.mk` (256K idblock). Gate KI-072 не закрыт:
+  AOV-сон по-прежнему не для выпуска. Обновлены `AGENTS.md`, `README_RU.md`,
+  `STRUCTURE.md`, `INIT_ORDER.md`, `TESTBENCH.md` §7-AOV,
+  `FEATURES_UNVERIFIED.md` и `KNOWN_ISSUES.md` (KI-072, RU+EN).
+- **The `-AOV` profile is now the default.** `.BoardConfig.mk` points at
+  `BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI-AOV.mk`
+  (1M idblock, AOV DTS/kernel, MCU in the idblock). `divinus.yaml` ships the
+  AOV defaults: `aov_mcu: true`, `aov_keep_isp: true`,
+  `wake_interval_s: 2`, `wake_check_s: 10`, `heartbeat: true`,
+  `heartbeat_interval_s: 300`; `[sleep] enable` stays `false`, so an image
+  with sleep off behaves as the product camera. The fallback without AOV is
+  `...-SC230AI.mk` (256K idblock). The KI-072 gate is not closed: AOV sleep
+  is still not released. `AGENTS.md`, `README_RU.md`, `STRUCTURE.md`,
+  `INIT_ORDER.md`, `TESTBENCH.md` §7-AOV, `FEATURES_UNVERIFIED.md` and
+  `KNOWN_ISSUES.md` (KI-072, RU+EN) were updated.
 
 - **`research/`, KNOWN_ISSUES: сверка MCU-дерева с upstream Luckfox.**
   `sysdrv/source/mcu/rt-thread` совпадает с `LuckfoxTECH/luckfox-pico` `main`

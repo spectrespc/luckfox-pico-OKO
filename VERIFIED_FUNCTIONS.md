@@ -14,7 +14,7 @@
 | Стенд | `192.168.52.97` (DHCP, SSH), UART `/dev/ttyACM0` 115200 |
 | Методы | SSH, RTSP (PyAV), HTTP API (`curl`, `bench/api_check.py`), WebUI (`bench/ui_check.py`, headless Chromium), скриншоты в `output/bench/ui/` |
 | Примечание | 2026-11-05 выполнен полный `./rkflash.sh update` образа с разметкой `userdata` 40 МБ / `rootfs` 168 МБ; вход в Maskrom — `download` из U-Boot по UART (см. `TESTBENCH.md` §7A). 2026-11-06 полный `update.img` не заливался: USB OTG не подключён, компоненты `oem`/`rootfs` обновлены по SSH; образ собран из этих же исходников (`output/image/update.img`) |
-| Сборка | нативная на Debian 13 (`tools/native/`), активный BoardConfig `BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI.mk` |
+| Сборка | нативная на Debian 13 (`tools/native/`); прогон выполнен на продуктовом `BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI.mk`, с 2026-11-26 активный профиль — `...-SC230AI-AOV.mk` |
 
 ## 2. Функции
 
@@ -314,6 +314,35 @@ STM8, а не отказ шины; артефакты `output/bench/power/202611
 все — `sleep show` с `device reports 0.0.0` (нулевой ответ GET_STATE во время
 движения мотора), `present=true` в конце, шина `i2c3m1`, SDA/SCL=1; артефакты
 `output/bench/power/20261125-075350-i2c/`, `.../20261125-075624-i2c/`.
+
+### Сон камеры: развязка USB и microSD (2026-11-26)
+
+```sh
+# тихий цикл с отвязкой microSD (recording включается отдельно)
+bench/run.sh sleep_power.py --scenario aov --idle 20 --wake-interval 15 \
+  --aov-wake-check 8 --aov-seconds 300 --sd-off
+
+# USB-хост только на движение (USB остаётся отвязанным в тихом цикле)
+bench/run.sh sleep_power.py --scenario aov --idle 20 --wake-interval 20 \
+  --aov-wake-check 10 --aov-seconds 200 --usb-on-motion
+
+# проверить новые ключи и состояние ожидания
+curl -s -u admin:… http://192.168.52.33/api/sleep
+# ожидаемо: usb_bind_timeout_ms, usb_wait ("done"/"timeout"/"idle"),
+#           sd_off, sd_state, sd_reason
+```
+
+Результаты 2026-11-26 (NAND #38, `aov_mcu=0`):
+`sd_off=1`, `wake_interval_s=15`, 9 пробуждений — фактический сон 15.07 с
+(`last_suspend_time`), resume-путь 2.25–2.26 с, STM8 2.3.2 и `i2c3m1` на
+каждом wake, новая запись после resume декодируется (320 кадров
+1920×1080); `usb_on_motion=1` — HCD отвязан весь тихий прогон, resume-путь
+0.20–0.21 с, restore-путь поднимает wlan0 192.168.43.1. Артефакты:
+`output/bench/power/20261126-092412-aov`,
+`.../20261126-094513-motion`, `.../20261126-095045-aov`. Ограничение:
+`aov_mcu=1`+`aov_keep_isp=1` остаётся NO-GO (зависание в `/tmp/aiq0.lock`
+после первого пробуждения, KI-072); `sd_off` не отвязывает карту при OTA,
+event-clip и передаче outbox.
 
 ### Запись и защита от NAND
 

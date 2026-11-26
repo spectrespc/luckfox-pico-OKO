@@ -280,6 +280,12 @@ struct AppConfig {
      * wake: the HCD loses power in deep suspend and re-enumerates the hub
      * and the WiFi dongle on every resume (measured 2.06 s of 2.22 s). */
     bool sleep_usb_on_motion;
+    /* How long to wait for the sysfs bind/unbind to take effect; 0 keeps the
+     * old fire-and-forget behaviour. */
+    unsigned int sleep_usb_bind_timeout_ms;
+    /* Detach the microSD controller before mem and remount on resume.
+     * Off by default: the recorder, event clips and OTA use the card. */
+    bool sleep_sd_off;
     unsigned int sleep_idle_timeout_s;
     unsigned int sleep_wake_interval_s;
     unsigned int sleep_wake_check_s;

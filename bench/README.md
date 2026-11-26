@@ -500,6 +500,12 @@ bench/run.sh sleep_power.py --scenario aov --aov-mcu --heartbeat-seconds 300
 bench/run.sh sleep_power.py --scenario aov --usb-on-motion
 # USB-хост отвязывается перед mem и возвращается на движение:
 # resume-путь ~0.2 с вместо ~2.3 с, usb_bound=false в тихом цикле
+bench/run.sh sleep_power.py --scenario aov --sd-off --wake-interval 15 \
+  --aov-seconds 300
+# microSD: запись закрывается/синхронизируется, карта отвязывается перед mem
+# и монтируется обратно; причина отказа — sleep.sd_reason в /api/status
+bench/run.sh sleep_power.py --scenario aov --usb-bind-timeout-ms 0
+# 0 возвращает прежнее поведение без ожидания sysfs bind/unbind
 bench/run.sh recover_dut.py --ssh --restart             # после зависшего сна
 bench/run.sh sleep_power.py --scenario i2c --i2c-cycles 300 --expect-present
 bench/run.sh sleep_power.py --scenario aov --aov-seconds 60 --expect-present
