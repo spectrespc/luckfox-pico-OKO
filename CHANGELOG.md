@@ -47,6 +47,20 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   `*MotionDetect` or `rknn_api.h`; `DevEnableSinglelFrame` and AIQ
   pause/resume are present). Not part of the build.
 
+- **`research/`: charter эксперимента always-on MCU fast-AE/MD (ветка
+  `feature/aov-mcu-alwayson-fastae`).** Гипотезы H1–H5 (MCU живёт в `mem`,
+  будит AP по GPIO0, ISP/сенсор удерживаются), read-only гейт S0 (wake-регистры
+  TRM, удержание ISP, свободный PMUIO-пин), критерии приёмки (≤1.5 с,
+  ≤80 мА @5 В, soak 60 мин) и стоп-правила. Ветка экспериментальная, в `main`
+  не мержится; код и дефолты `main` не менялись.
+- **`research/`: the always-on MCU fast-AE/MD experiment charter (branch
+  `feature/aov-mcu-alwayson-fastae`).** Hypotheses H1–H5 (the MCU lives
+  through `mem`, wakes the AP over GPIO0, the ISP/sensor stay up), the
+  read-only S0 gate (TRM wake registers, ISP retention, a free PMUIO pin),
+  the acceptance criteria (≤1.5 s, ≤80 mA @5 V, a 60 min soak) and the stop
+  rules. The branch is experimental and is not merged into `main`; no code or
+  `main` defaults are changed.
+
 - **`[sleep] fast_resume`: переключатель стратегии resume (`exec|live|stopstart|aiq`).**
   Экспериментальный ключ YAML и `POST /api/sleep?fast_resume=` (по умолчанию
   `exec`, продуктовое поведение не меняется; не-`exec` принимается только при
