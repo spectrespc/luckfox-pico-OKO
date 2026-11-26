@@ -335,15 +335,18 @@ mjpeg:
 #   sleep_idle_s: 3       # bus silence before Halt, 1..60
 #
 sleep:
+  # Branch feature/aov-mcu-alwayson-fastae: the always-on S0 gate failed, so
+  # this file carries the fallback cadence (1 s, USB bound only on motion).
+  # main keeps wake_interval_s=2 and usb_on_motion=false.
   enable: false         # AOV is the default build profile; idle sleep stays opt-in
   pmu_timer_wake: true  # program the PMU timeout before suspend; required
   aov_mcu: true         # the -AOV idblock carries the MCU wake proxy
   aov_keep_isp: true    # AOV: keep CSI/ISP streaming for the MCU while the AP sleeps
-  usb_on_motion: false  # unbind the USB host before mem; bind it only on a motion wake
+  usb_on_motion: true   # unbind the USB host before mem; bind it only on a motion wake
   usb_bind_timeout_ms: 2000 # wait for the sysfs bind/unbind to settle; 0 — no wait
   sd_off: false         # unmount and unbind the microSD before mem, remount on resume
   idle_timeout_s: 600   # motion-free time before the first suspend, 10..86400
-  wake_interval_s: 2    # AOV tier-1: MCU fast-AE/MD cadence, 1..3600
+  wake_interval_s: 1    # AOV tier-1: MCU fast-AE/MD cadence, 1..3600
   wake_check_s: 10      # motion-check window after resume, 1..60
   pmu_timeout_hz: 32768 # PMU wake-timeout clock, ticks per second (32 kHz)
   heartbeat: true       # send one JPEG proof-of-life before a quiet re-suspend

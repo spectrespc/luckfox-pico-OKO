@@ -470,6 +470,26 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Изменено
 
+- **Эксперимент always-on MCU: гейт S0 не пройден, fallback `wake_interval_s=1`.**
+  В ветке `feature/aov-mcu-alwayson-fastae` проверено, что HPMCU не может
+  непрерывно считать fast-AE/MD в `mem`: он в `VD_CORE`, его код (DDR
+  0x40000..0x7c000) и такты снимаются (DDR self-refresh, OSC/PLL off),
+  ISP/VICAP/CSIPHY в `VD_LOGIC` отключаются, а PMU будится только по
+  GPIO0/таймауту (mailbox не wake-источник). Ветка оставляет
+  `wake_interval_s: 1` и `usb_on_motion: true` как fallback; `main` и дефолты
+  AOV-профиля не меняются. Доказательства — KI-072 и
+  `research/rv1106-aov/README.md`.
+- **The always-on MCU experiment: the S0 gate failed, fallback
+  `wake_interval_s=1`.** The branch `feature/aov-mcu-alwayson-fastae` proved
+  that the HPMCU cannot sample fast-AE/MD continuously in `mem`: it lives in
+  `VD_CORE`, so its code (the DDR window 0x40000..0x7c000) and clocks are
+  gone (DDR self-refresh, OSC/PLL off), the ISP/VICAP/CSIPHY sit in
+  `VD_LOGIC` and are powered off, and the PMU wakes only on GPIO0/timeout
+  (the mailbox is not a wake source). The branch keeps
+  `wake_interval_s: 1` and `usb_on_motion: true` as the fallback; `main` and
+  the AOV profile defaults are unchanged. Evidence: KI-072 and
+  `research/rv1106-aov/README.md`.
+
 - **Профиль `-AOV` назначен основным.** `.BoardConfig.mk` переключён на
   `BoardConfig-SPI_NAND-Buildroot-RV1106_Luckfox_Pico_Pro_Max-SC230AI-AOV.mk`
   (1M idblock, AOV DTS/ядро, MCU в idblock). `divinus.yaml` поставляет

@@ -581,7 +581,58 @@ KI-071/KI-078/KI-080.
   число и остановить оптимизацию.
 - Ветка не мержится в `main` без решения владельца.
 
-**Статус 2026-11-26:** S0 выполняется; S1–S4 не начаты.
+**Статус 2026-11-26:** S0 закрыт — гейт **не пройден**; S1–S4 не начаты.
+
+### S0: результат (2026-11-26) — гейт не пройден
+
+**1. Wake MCU→AP.** Регистрово PMU будится только от перечисленных
+источников (TRM V0.3 7.4.2, `PMU_WAKEUP_INT_CON` 0x0010): CPU-int, **GPIO0
+int (bit 1)**, SDMMC, SDIO, USB-dev, HPTIMER, TIMEOUT, software. Mailbox-бита
+нет. Ядро включает `GPIO0 + TIMEOUT` (`rv1106_pm.c:957-967`), а GPIO0-банк —
+единственный GPIO в домене `VDD_PMU` (TRM Table 7-1; даташит Rev 2.0:
+`GPIO0_A0..A6`, стр. 65–66), то есть живёт во сне. Но HPMCU находится в
+`VD_CORE` (TRM Table 7-1; даташит: «MCU in VD_CORE»), а не в `VDD_PMU`; из
+MCU в `VDD_PMU` есть только LPMCU. На живом DUT `GPIO0 INT_EN=0xFFFF`,
+`INT_MASK=0xFFFF` (`0xff380010`/`0xff380018`) — ни одна линия GPIO0 не
+вооружена как wake; DT `rv1106.dtsi:338-381` только переводит A0–A6 в input
+с pull, `gpio-keys`/`wakeup-source` нет. Следствие: AP может быть разбужен
+фронтом на GPIO0A0–A6, но HPMCU во время `mem` остановлен — его код лежит в
+DDR-окне 0x40000..0x7c000 (AOV DTS), а PMU переводит DDR в self-refresh
+(`rv1106_pm.c:1015-1024`); образ `rtthread.bin` — 119 804 Б против 16 КБ
+кэша MCU. Питание/такт MCU также снимаются: PMU выключает OSC и PLL
+(`rv1106_pm.c:995-1031`). Значит источником GPIO0-wake может быть только
+LPMCU (TRM 7.6.2 — software low power mode), но у LPMCU нет доступа к ISP.
+
+**2. Удержание ISP/VICAP/сенсора в `mem`.** ISP, VICAP, CSIHOST0/1,
+CSIPHY_WRAPPER, SDMMC, GPIO3 и VIIO_IOC — в `VD_LOGIC` (TRM Table 7-1);
+§7.1 прямо говорит «clamp all VD_PMU input before power off VD_LOGIC in low
+power mode». Гайд Rockchip AOV V1.1.0 (§2) повторяет: после входа в сон
+«only PMUIO remains powered, while all other regular I/Os are powered down»,
+§5 — около 5 мВт на всё устройство. Ядро дополнительно глушит все
+CRU/PMUCRU/PERICRU/VICRU/… гейты (`rv1106_pm.c:733-778`), выставляет
+`IDLE_REQ_VI` и выключает PLL (`:981-1031`). Замеры: сенсор отвечает на
+i2c4 только в awake (`0x0100=0x01`, `0x4801=0x0d`); питание сенсора
+`regulator-always-on`, но MIPI/ISP-путь не тактируется; прогоны
+`keep_isp=1` (KI-072, 2026-11-25/26) не дают AP остаться в `mem` — возврат
+через ~20 мс и шторм `mipi-csi2-hw ERR1:0x10`, а `keep_isp=0` — MCU не может
+писать регистры SC230AI. Рабочая схема — кадры только в окне пробуждения AP.
+
+**3. Свободный пин.** В продукте нет ни одного потребителя GPIO0 (UART0 и
+I2C1 выключены, PMIC нет), поэтому в SoC линия A2–A6 формально свободна, но
+вывод на разъём/пайку без схемы Luckfox Pico Pro Max не подтверждается. Для
+гейта это уже не важно: пункты 1–2 запрещают непрерывный контур.
+
+**Вывод.** «Непрерывный fast-AE/MD на HPMCU во время `mem`» на RV1106 не
+реализуем: HPMCU не в always-on домене, его код и такты снимаются, а
+ISP/VICAP/CSI отключаются вместе с `VD_LOGIC`; вендорская AOV-архитектура
+(сон → кадр → сон, только PMUIO под питанием) это подтверждает. Ветка
+фиксирует fallback `wake_interval_s=1` (S1–S4 не выполнялись) и остаётся
+экспериментальной; в `main` дефолт 2 с не меняется.
+
+Артефакты: `output/bench/aov-test/s0-20261126/` (`measurements.md`,
+`dmesg.txt`, `uar0.log`), `last_suspend_time` 2.2595/10.0761 с после
+`wake_interval_s=10`; рецидив KI-071 в тестовом прогоне и восстановление
+power cycle — в `measurements.md`.
 
 ## Проверенные факты
 

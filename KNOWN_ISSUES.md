@@ -794,6 +794,22 @@
   профиль без AOV — `...-SC230AI.mk` (256K idblock); переход между
   профилями требует перепрошивки idblock/разметки.
 
+  **2026-11-26, эксперимент always-on MCU: гейт S0 не пройден.** Ветка
+  `feature/aov-mcu-alwayson-fastae` проверяла схему «HPMCU непрерывно
+  считает fast-AE/MD, AP спит и просыпается по детекции». TRM V0.3 7.4.2
+  перечисляет wake-источники PMU: CPU-int, GPIO0-int, SDMMC, SDIO, USB-dev,
+  HPTIMER, TIMEOUT, software — mailbox там нет; GPIO0A0–A6 — единственные
+  GPIO в `VDD_PMU`, но HPMCU в `VD_CORE` (TRM Table 7-1, даташит Rev 2.0),
+  его код лежит в DDR-окне 0x40000..0x7c000, а `mem` переводит DDR в
+  self-refresh и выключает OSC/PLL; на DUT `GPIO0 INT_MASK=0xFFFF`, wake-линия
+  не вооружена. ISP/VICAP/CSIPHY — в `VD_LOGIC`, который PMU гасит (TRM
+  §7.1), гайд AOV V1.1.0 §2 говорит «только PMUIO под питанием», §5 — около
+  5 мВт; `keep_isp=1` в `mem` не удерживается (2026-11-25). Итог: непрерывный
+  контур на этом железе не реализуем; ветка оставляет fallback
+  `wake_interval_s=1` и не мержится. Доказательства —
+  `research/rv1106-aov/README.md` («Эксперимент…»), артефакты
+  `output/bench/aov-test/s0-20261126/`.
+
 - **KI-073. в `rk3x_i2c_irq` на I2C3 при циклах `[sleep]`.**
   2026-11-17 в AOV-прогоне (idle 30 s, `aov_mcu=1`) шина I2C3
   (`ff460000.i2c`, STM32 EC; в исходной записи было ошибочно указано
@@ -2060,6 +2076,23 @@ Status: **experimental, not for release** (refreshed 2026-11-25). The MCU
   sleep off behaves as the product camera. The fallback without AOV is
   `...-SC230AI.mk` (256K idblock); switching profiles requires reflashing the
   idblock/partition table.
+
+  **2026-11-26, always-on MCU experiment: the S0 gate failed.** The branch
+  `feature/aov-mcu-alwayson-fastae` tested the "the HPMCU samples fast-AE/MD
+  continuously and the AP sleeps until detection" scheme.  TRM V0.3 7.4.2
+  lists the PMU wake sources: CPU-int, GPIO0-int, SDMMC, SDIO, USB-dev,
+  HPTIMER, TIMEOUT, software - there is no mailbox bit.  GPIO0A0-A6 are the
+  only GPIOs in `VDD_PMU`, but the HPMCU is in `VD_CORE` (TRM Table 7-1,
+  datasheet Rev 2.0), its code lives in the DDR window 0x40000..0x7c000, and
+  `mem` puts DDR into self-refresh and turns the OSC/PLLs off; on the DUT
+  `GPIO0 INT_MASK=0xFFFF`, so no wake line is armed.  The ISP/VICAP/CSIPHY
+  are in `VD_LOGIC`, which the PMU powers off (TRM 7.1); the AOV guide
+  V1.1.0 says "only PMUIO remains powered" (section 2) and about 5 mW total
+  (section 5), and `keep_isp=1` does not survive `mem` (2026-11-25).
+  Verdict: the continuous loop is not implementable on this hardware; the
+  branch keeps only the `wake_interval_s=1` fallback and is not merged.
+  Evidence: `research/rv1106-aov/README.md` (the experiment section) and
+  `output/bench/aov-test/s0-20261126/`.
 
 - **KI-073. in `rk3x_i2c_irq` on I2C3 during `[sleep]` cycles.**
   On 2026-11-17 an AOV run (idle 30 s, `aov_mcu=1`) got a burst of
