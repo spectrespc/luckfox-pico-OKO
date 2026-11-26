@@ -257,6 +257,15 @@ jetkvm/rv1106-system) сохранён отдельной темой:
 (`rk_aiq_uapi_sysctl_pause/resume` + `stop/startMotionDetect`) и вычитывает
 кадры перед `mem`, а не делает `RK_MPI_SYS_Exit`/VI stop.
 
+Ревизия AIGLASS `AIGLASS_DEV_ENV` (RV1106B/RV1103B SDK V1.0.0, 2024-10-12)
+добавила к этому детерминированное ожидание `bind`/`unbind` по
+`NETLINK_KOBJECT_UEVENT`, `BindUsb/UnbindUsb` и `sample_aov_bind_test`; разбор
+и решение по переносимости — там же, в
+[`../rv1106-aov-vendor-sample/README.md`](../rv1106-aov-vendor-sample/README.md).
+PDF этой ревизии (API-Differential, Rockit Runtime, VENC, AOV EN V1.1.0 и
+другой выпуск Camera trouble-shooting) лежат в
+`snapshot/rockchip-docs-aiglass/`.
+
 ### Что взять из кода и скриптов dehai
 
 Ссылки на файлы и номера строк ниже — из снимка до зачистки 2026-11-25:
@@ -761,9 +770,9 @@ mcutool, LPMCU), медиа-грабли и soak-инструментация. �
 
 ## Провенанс снимков
 
-Снимок: 38 файлов, 39 799 861 Б. Лимита на число файлов и размер нет.
-Дата снятия — 2026-11-24 (Rev 2.0 даташита добавлен 2026-11-25); зачистка
-отработавших файлов — 2026-11-25
+Снимок: 43 файла, 48 558 657 Б. Лимита на число файлов и размер нет.
+Дата снятия — 2026-11-24 (Rev 2.0 даташита и PDF AIGLASS добавлены 2026-11-25/26);
+зачистка отработавших файлов — 2026-11-25
 (удалено 7 файлов dehai, 107 191 Б; повторное снятие — «Как обновить
 снимок»). Файлы не редактировались.
 
@@ -821,6 +830,29 @@ mcutool, LPMCU), медиа-грабли и soak-инструментация. �
 | `Common/POWER/Rockchip_Developer_Guide_Power_Analysis_EN.pdf` | `snapshot/rockchip-docs/Common/POWER/Rockchip_Developer_Guide_Power_Analysis_EN.pdf` | Rockchip public doc; all rights reserved (research copy) | `0e38ef1ccd4c04aa33050ec2d9591d278856938835457ca57b6d78b2215aa1ff` | 1 139 838 | 2026-11-24 | `a1717bfc5f2412d7b1c06633debb896154699807` |
 | `Common/RGA/Rockchip_Developer_Guide_RGA_EN.pdf` | `snapshot/rockchip-docs/Common/RGA/Rockchip_Developer_Guide_RGA_EN.pdf` | Rockchip public doc; all rights reserved (research copy) | `4b5845e3093bfc4d2611352307ac14a73c9d3dd5ff69fc3c5f2443c5d3fd0999` | 494 388 | 2026-11-24 | `a1717bfc5f2412d7b1c06633debb896154699807` |
 | `Linux/Camera/Rockchip_Trouble_Shooting_Linux5.10_Camera_EN.pdf` | `snapshot/rockchip-docs/Linux/Camera/Rockchip_Trouble_Shooting_Linux5.10_Camera_EN.pdf` | Rockchip public doc; all rights reserved (research copy) | `222405ebd79df4045ddededd8bcf56d1be81225f15eb43984ef7b7a72275b355` | 403 306 | 2026-11-24 | `a1717bfc5f2412d7b1c06633debb896154699807` |
+
+### makevary/AIGLASS_DEV_ENV (pin `1baceb45…`)
+
+PDF из SDK AIGLASS (RV1106B/RV1103B IPC V1.0.0, 2024-10-12), путь сохранён
+после `rk_docs/en/`. `Rockchip_Developer_Guide_Linux_AOV_EN.pdf` — V1.1.0
+(2024-10-14, 37 с.) новее нашей CN V1.0.4 (2024-04-27, 26 с.), поэтому взят;
+`Rockchip_Trouble_Shooting_Linux5.10_Camera_EN.pdf` — другой выпуск, чем в
+`rockchip-docs/` (429 753 Б против 403 306 Б, sha не совпадает), хранится как
+отдельная копия. README репозитория Apache-2.0, сами PDF — Rockchip public
+doc, all rights reserved (research copy).
+
+| Upstream path | Локальный путь | Лицензия | sha256 | Размер | Дата | Pin |
+|---|---|---|---|---|---|---|
+| `rk_docs/en/ipc/Rockchip_RV1106_RV1103B_Instructions_API_Differential_EN.pdf` | `snapshot/rockchip-docs-aiglass/ipc/Rockchip_RV1106_RV1103B_Instructions_API_Differential_EN.pdf` | Rockchip public doc; all rights reserved (research copy) | `23a45d656de514bbc40d76cbd31112e24c4a858b87f81057163ba16e52ddb53f` | 116 956 | 2026-11-26 | `1baceb45c22deb0a3d086ad5c128aeb18c6fae6f`; V1.0.0, 2024-09-01 |
+| `rk_docs/en/media/Rockchip_Developer_Guide_Linux_Rockit_Runtime_EN.pdf` | `snapshot/rockchip-docs-aiglass/media/Rockchip_Developer_Guide_Linux_Rockit_Runtime_EN.pdf` | Rockchip public doc; all rights reserved (research copy) | `2c3a34dfdbe1d5682257f71e205e369f61f1cebd0809246d4477a9c033d86d17` | 201 500 | 2026-11-26 | `1baceb45c22deb0a3d086ad5c128aeb18c6fae6f` |
+| `rk_docs/en/media/Rockchip_Trouble_Shooting_Linux_VENC_EN.pdf` | `snapshot/rockchip-docs-aiglass/media/Rockchip_Trouble_Shooting_Linux_VENC_EN.pdf` | Rockchip public doc; all rights reserved (research copy) | `9d4b03521049900e0328988802daf30cd17eedbb5daae1ee45a1d8f300a86ac7` | 251 363 | 2026-11-26 | `1baceb45c22deb0a3d086ad5c128aeb18c6fae6f` |
+| `rk_docs/en/media/Rockchip_Developer_Guide_Linux_AOV_EN.pdf` | `snapshot/rockchip-docs-aiglass/media/Rockchip_Developer_Guide_Linux_AOV_EN.pdf` | Rockchip public doc; all rights reserved (research copy) | `e29ebad7598f12fb7245e0dd6c821c4da2fb62cf306da65d4e554cc152addeac` | 7 759 224 | 2026-11-26 | `1baceb45c22deb0a3d086ad5c128aeb18c6fae6f`; V1.1.0, 2024-10-14 |
+| `rk_docs/en/media/Rockchip_Trouble_Shooting_Linux5.10_Camera_EN.pdf` | `snapshot/rockchip-docs-aiglass/media/Rockchip_Trouble_Shooting_Linux5.10_Camera_EN.pdf` | Rockchip public doc; all rights reserved (research copy) | `287a43249b924eba1a9ef1e355a3a5f61de4df81d11b6780295f47cf70d8ef38` | 429 753 | 2026-11-26 | `1baceb45c22deb0a3d086ad5c128aeb18c6fae6f` |
+
+Причина хранения 7.7 МБ AOV EN: единственная версия новее CN V1.0.4, содержит
+раздел 3.1.3 (resume периферии, включая `SAMPLE_COMM_AOV_BindUsb`) и раздел
+5.x с потреблением RV1106B; без неё нельзя проверить, что AOV-API чипа не
+менялись.
 
 ### D-Robotics/x5-libcam-sensor (pin `8c41592…`)
 
@@ -905,3 +937,15 @@ Rockchip-Docs — 5 путей, для X5 — 4 пути из соответст
 `snapshot/`. Затем пересчитать `sha256sum`, обновить таблицу провенанса, дату
 снятия и запись в `CHANGELOG.md` → `[Не выпущено]`. Править файлы внутри `snapshot/` нельзя:
 обновление — только новой копией с новым пином.
+
+AIGLASS PDF (путь после `rk_docs/en/`):
+
+```bash
+AIGLASS=https://raw.githubusercontent.com/makevary/AIGLASS_DEV_ENV/1baceb45c22deb0a3d086ad5c128aeb18c6fae6f
+curl -fsSL -o research/rv1106-aov/snapshot/rockchip-docs-aiglass/ipc/Rockchip_RV1106_RV1103B_Instructions_API_Differential_EN.pdf "$AIGLASS/rk_docs/en/ipc/Rockchip_RV1106_RV1103B_Instructions_API_Differential_EN.pdf"
+curl -fsSL -o research/rv1106-aov/snapshot/rockchip-docs-aiglass/media/Rockchip_Developer_Guide_Linux_Rockit_Runtime_EN.pdf "$AIGLASS/rk_docs/en/media/Rockchip_Developer_Guide_Linux_Rockit_Runtime_EN.pdf"
+curl -fsSL -o research/rv1106-aov/snapshot/rockchip-docs-aiglass/media/Rockchip_Trouble_Shooting_Linux_VENC_EN.pdf "$AIGLASS/rk_docs/en/media/Rockchip_Trouble_Shooting_Linux_VENC_EN.pdf"
+curl -fsSL -o research/rv1106-aov/snapshot/rockchip-docs-aiglass/media/Rockchip_Developer_Guide_Linux_AOV_EN.pdf "$AIGLASS/rk_docs/en/media/Rockchip_Developer_Guide_Linux_AOV_EN.pdf"
+curl -fsSL -o research/rv1106-aov/snapshot/rockchip-docs-aiglass/media/Rockchip_Trouble_Shooting_Linux5.10_Camera_EN.pdf "$AIGLASS/rk_docs/en/media/Rockchip_Trouble_Shooting_Linux5.10_Camera_EN.pdf"
+sha256sum research/rv1106-aov/snapshot/rockchip-docs-aiglass/*/*.pdf
+```

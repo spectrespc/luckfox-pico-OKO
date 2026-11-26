@@ -26,6 +26,27 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
 
 ### Добавлено
 
+- **`research/`: снимок AIGLASS_DEV_ENV (RV1106B/RV1103B IPC SDK V1.0.0).**
+  Read-only копии `project/app/aov_sample` (`sample_comm_aov*_rv1106/rv1106b/rv1126`,
+  `sample_aov_bind_test`, `sample_aov_npu_test`, `sample_aov_aiisp_iva_venc`,
+  `sample_aov_multi_vi_venc`, BoardConfig BatteryIPC AOV/FASTBOOT,
+  `release_rockit-ko_rv1103b_arm`) в теме `rv1106-aov-vendor-sample` и PDF
+  (`API_Differential`, Rockit Runtime, VENC, AOV EN V1.1.0, Camera
+  trouble-shooting) в `rv1106-aov`; провенанс с sha256/pin, разбор отличий от
+  LubanCat-снимка и сверка API-переносимости (нет `SetModParam`,
+  `*MotionDetect`, `rknn_api.h`; есть `DevEnableSinglelFrame`, AIQ
+  pause/resume). В сборку не входит.
+- **`research/`: the AIGLASS_DEV_ENV snapshot (RV1106B/RV1103B IPC SDK V1.0.0).**
+  Read-only copies of `project/app/aov_sample` (`sample_comm_aov*_rv1106/rv1106b/rv1126`,
+  `sample_aov_bind_test`, `sample_aov_npu_test`, `sample_aov_aiisp_iva_venc`,
+  `sample_aov_multi_vi_venc`, the BatteryIPC AOV/FASTBOOT BoardConfigs,
+  `release_rockit-ko_rv1103b_arm`) in the `rv1106-aov-vendor-sample` topic and
+  the PDFs (`API_Differential`, Rockit Runtime, VENC, AOV EN V1.1.0, Camera
+  trouble-shooting) in `rv1106-aov`; provenance with sha256/pin, a diff against
+  the LubanCat snapshot and an API portability review (no `SetModParam`,
+  `*MotionDetect` or `rknn_api.h`; `DevEnableSinglelFrame` and AIQ
+  pause/resume are present). Not part of the build.
+
 - **`[sleep] fast_resume`: переключатель стратегии resume (`exec|live|stopstart|aiq`).**
   Экспериментальный ключ YAML и `POST /api/sleep?fast_resume=` (по умолчанию
   `exec`, продуктовое поведение не меняется; не-`exec` принимается только при
@@ -403,6 +424,25 @@ V1.4. История V1.0–V1.4 в этот файл не переноситс�
   `TO_DO.md` §15.7 link were updated.
 
 ### Изменено
+
+- **`research/`, KNOWN_ISSUES: сверка MCU-дерева с upstream Luckfox.**
+  `sysdrv/source/mcu/rt-thread` совпадает с `LuckfoxTECH/luckfox-pico` `main`
+  (7 505 файлов, pin `8f34c2760d53`, 2024-08-21), кроме OKO-борды и
+  сборочных артефактов; новых upstream-материалов нет. В дереве найден
+  вендорский battery-IPC референс постоянного владения ISP
+  (`rv1103g-battery-ipc-v10/v11.dts` + `battery_ipc_demo_v10-SC230AI-ADC`),
+  что подтверждает NO-GO динамического ISP-handover (KI-072), и выключенные
+  компоненты для диагностики MCU (`cmbacktrace`, `coredump`, `rpmsg_cmd`,
+  `jpeg_enc`, `ota`, `aupipe`).
+- **`research/`, KNOWN_ISSUES: the MCU tree against upstream Luckfox.**
+  `sysdrv/source/mcu/rt-thread` is identical to `LuckfoxTECH/luckfox-pico`
+  `main` (7,505 files, pin `8f34c2760d53`, 2024-08-21) apart from the OKO
+  board and build artifacts; there is no new upstream material. The tree
+  contains the vendor battery-IPC reference for permanent ISP ownership
+  (`rv1103g-battery-ipc-v10/v11.dts` + `battery_ipc_demo_v10-SC230AI-ADC`),
+  which confirms the dynamic ISP-handover NO-GO (KI-072), and dormant MCU
+  diagnostics (`cmbacktrace`, `coredump`, `rpmsg_cmd`, `jpeg_enc`, `ota`,
+  `aupipe`).
 
 - **KI-072: keep-process через suspend отклонён (2026-11-25).** Проверен
   экспериментальный вариант «не делать `exec` после resume»: живой CSI/ISP

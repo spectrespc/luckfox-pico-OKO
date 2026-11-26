@@ -741,6 +741,29 @@
   cycle вернул `rw`, матрица теперь считает `sfc`/`ubi` и останавливается
   на первой новой ошибке.
 
+  **2026-11-26, вендорский battery-IPC референс в дереве.** Сверка
+  `sysdrv/source/mcu/rt-thread` с `LuckfoxTECH/luckfox-pico` `main`
+  (последний коммит по пути — `8f34c2760d53`, 2024-08-21): 7 505 файлов
+  совпадают побайтово, отличия — только OKO-борда (7 файлов), сборочные
+  артефакты и `battery_ipc_demo_v10-SC230AI-ADC/board.c` (локально
+  `i2c_addr=0x32`). Новых upstream-материалов нет. При этом в дереве уже
+  лежит вендорский референс «MCU владеет ISP»: AP-DTS
+  `rv1103g-battery-ipc-v10.dts`/`v11.dts` (`rkisp_thunderboot` @0x860000 с
+  пометкой «reg's offset MUST match with RTOS», `rockchip,amp-shared` на
+  i2c4, SC230AI@30) и MCU-борда `battery_ipc_demo_v10-SC230AI-ADC`
+  (`CONFIG_RT_USING_ISP_DDR_ADRESS=0x860000`, ISP3+SC230AI, без
+  `CONFIG_RT_USING_RK_AOV`). Это не динамическая передача ISP на suspend, а
+  постоянное владение MCU с общим буфером кадров, поэтому handover в нашей
+  архитектуре остаётся NO-GO; для смены архитектуры это готовый референс.
+  Не включены и могут пригодиться как диагностика: `cmbacktrace` (стек
+  вызовов MCU), `coredump` (flash/SD; нужен раздел `breakpad` или SD-ФС,
+  конфликтует с AP), `rpmsg_cmd` (нужен `CONFIG_RPMSG_ROCKCHIP`),
+  `jpeg_enc` (аппаратный JPEG на MCU), `ota` (A/B-слоты, несовместимо с
+  нашей раскладкой), `aupipe`; `libfastawb_gcc.a` слинкован, но AWB-путь не
+  используется. В сборке с `RT_USING_RK_AOV` `board_base.c` намеренно не
+  вызывает `rt_console_set_device()` и маскирует `GPIO0_IRQn` — учитывать
+  при отладке логов MCU.
+
 - **KI-073. в `rk3x_i2c_irq` на I2C3 при циклах `[sleep]`.**
   2026-11-17 в AOV-прогоне (idle 30 s, `aov_mcu=1`) шина I2C3
   (`ff460000.i2c`, STM32 EC; в исходной записи было ошибочно указано
@@ -1944,6 +1967,30 @@ Status: **experimental, not for release** (refreshed 2026-11-25). The MCU
   `rockchip-sfc ... DMA timeout` and `ubi_io_read: error -5` (KI-071); a power
   cycle restored `rw`, and the matrix now counts `sfc`/`ubi` and stops on the
   first new error.
+
+  **2026-11-26, the vendor battery-IPC reference is already in the tree.**
+  `sysdrv/source/mcu/rt-thread` was compared with `LuckfoxTECH/luckfox-pico`
+  `main` (the last commit touching the path is `8f34c2760d53`, 2024-08-21):
+  7,505 files are byte-identical, and the only differences are the OKO board
+  (7 files), build artifacts and
+  `battery_ipc_demo_v10-SC230AI-ADC/board.c` (local `i2c_addr=0x32`). There
+  is no new upstream material. The tree already contains the vendor "MCU owns
+  the ISP" reference: the AP DTS `rv1103g-battery-ipc-v10.dts`/`v11.dts`
+  (`rkisp_thunderboot` at 0x860000 with "reg's offset MUST match with RTOS",
+  `rockchip,amp-shared` on i2c4, SC230AI@30) and the MCU board
+  `battery_ipc_demo_v10-SC230AI-ADC` (`CONFIG_RT_USING_ISP_DDR_ADRESS=0x860000`,
+  ISP3+SC230AI, no `CONFIG_RT_USING_RK_AOV`). That is not a dynamic ISP
+  handover at suspend but permanent MCU ownership with a shared frame buffer,
+  so the handover stays NO-GO for our architecture; it is a ready reference
+  for a different architecture. Dormant diagnostics that may help:
+  `cmbacktrace` (MCU call stacks), `coredump` (flash/SD; needs a `breakpad`
+  partition or an SD filesystem and conflicts with the AP), `rpmsg_cmd`
+  (needs `CONFIG_RPMSG_ROCKCHIP`), `jpeg_enc` (hardware JPEG on the MCU),
+  `ota` (A/B slots, incompatible with our layout), `aupipe`;
+  `libfastawb_gcc.a` is linked but the AWB path is unused. In a
+  `RT_USING_RK_AOV` build `board_base.c` deliberately skips
+  `rt_console_set_device()` and masks `GPIO0_IRQn` — keep that in mind when
+  debugging MCU logs.
 
 - **KI-073. in `rk3x_i2c_irq` on I2C3 during `[sleep]` cycles.**
   On 2026-11-17 an AOV run (idle 30 s, `aov_mcu=1`) got a burst of
